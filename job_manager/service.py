@@ -82,8 +82,14 @@ class JobService(QObject):
         name: str,
         local_files: List[str],
         auto_download: Optional[bool] = None,
+        after_job: Optional[Job] = None,
     ) -> Job:
-        """Create the job record and start the upload/submit on a worker."""
+        """Create the job record and start the upload/submit on a worker.
+
+        ``after_job`` chains this one behind another job on the same host: its
+        wrapper waits for that job's process before starting. Only meaningful
+        for the no-queue scheduler.
+        """
         job = Job(
             name=name or (os.path.basename(local_files[0]) if local_files else "job"),
             host_id=host.id,
@@ -94,15 +100,20 @@ class JobService(QObject):
             auto_download=preset.auto_download if auto_download is None else auto_download,
             local_dir=self._local_dir_for(name or "job"),
             preset=preset.to_dict(),
+            after_job_id=after_job.id if after_job is not None else "",
         )
         job.touch(STATE_UPLOADING)
         self.store.add_job(job)
         self.jobs_changed.emit()
 
+        wait_for_pid = after_job.remote_job_id if after_job is not None else ""
+
         def work() -> Job:
             transport = self.transport_for(host)
             try:
-                return submit_job(transport, host, preset, job, local_files)
+                return submit_job(
+                    transport, host, preset, job, local_files, wait_for_pid=wait_for_pid
+                )
             finally:
                 transport.close()
 

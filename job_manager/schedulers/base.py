@@ -21,6 +21,7 @@ from typing import Dict, Iterable, List
 
 from ..models import (
     SENTINEL_NAME,
+    STARTED_NAME,
     STATE_COMPLETING,
     STATE_PENDING,
     STATE_RUNNING,
@@ -31,6 +32,11 @@ from ..models import (
 #: Queue reported something we do not recognise; the poller falls back to the
 #: sentinel file rather than guessing.
 STATE_UNKNOWN = "UNKNOWN"
+
+#: How often a chained job checks whether its predecessor has exited. Long
+#: enough to cost nothing (kill -0 is a shell builtin), short enough that a
+#: queue of short jobs still moves briskly.
+CHAIN_POLL_SECONDS = 5
 
 
 #: Both spellings are accepted: ``{input}`` and ``[input]``. Square brackets
@@ -91,12 +97,17 @@ class Scheduler(ABC):
     def directives(self, job_name: str, preset: SubmitPreset, log_file: str) -> List[str]:
         """The ``#SBATCH`` / ``#PBS`` / ``#$`` block, without the shebang."""
 
+    #: A queue already serialises work, so only the no-queue scheduler needs
+    #: the wrapper to wait for its predecessor itself.
+    supports_chaining: bool = False
+
     def build_script(
         self,
         job_name: str,
         preset: SubmitPreset,
         input_name: str,
         log_file: str,
+        wait_for_pid: str = "",
     ) -> str:
         """Assemble the complete run script, sentinel included."""
         lines: List[str] = ["#!/bin/bash"]
@@ -120,6 +131,7 @@ class Scheduler(ABC):
             "trap 'exit 129' HUP",
             "",
         ]
+        lines += self._wait_block(wait_for_pid)
         for module in preset.modules or []:
             if module.strip():
                 lines.append(f"module load {module.strip()}")
@@ -132,6 +144,29 @@ class Scheduler(ABC):
             "",
         ]
         return "\n".join(lines)
+
+    def _wait_block(self, wait_for_pid: str) -> List[str]:
+        """Hold the job until the process it was chained behind has exited.
+
+        The waiting happens on the remote machine, not in the plugin: a queue
+        held on this side would stall the moment MoleditPy is closed, while a
+        wrapper that waits for itself keeps the chain running over a lunch
+        break, a reboot, or a lost network.
+
+        ``kill -0`` is a shell builtin and needs no ``ps``, so this also works
+        where the process table is restricted. A predecessor that is already
+        gone -- finished, killed, never started -- fails the test immediately
+        and the job simply runs.
+        """
+        pid = str(wait_for_pid or "").strip()
+        if not pid.isdigit():
+            return []
+        return [
+            f"# Chained: wait for job {pid} on this machine to finish first.",
+            f"while kill -0 {pid} 2>/dev/null; do sleep {CHAIN_POLL_SECONDS}; done",
+            f"touch {STARTED_NAME}",
+            "",
+        ]
 
     # --- submit -------------------------------------------------------------
 

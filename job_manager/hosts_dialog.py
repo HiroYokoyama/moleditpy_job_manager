@@ -28,11 +28,12 @@ from PyQt6.QtWidgets import (
 )
 
 from .credentials import ensure_password
-from .models import BACKEND_OPENSSH, BACKEND_PARAMIKO, HostProfile
+from .models import BACKEND_LOCAL, BACKEND_OPENSSH, BACKEND_PARAMIKO, HostProfile
 from .schedulers import available_schedulers
 from .service import JobService
 from .tasks import run_async
-from .transport import paramiko_available
+from .transport import local_shell_available, paramiko_available
+from .transport.local import INSTALL_HINT as LOCAL_INSTALL_HINT
 from .transport.base import HostKeyRejected
 
 
@@ -83,6 +84,7 @@ class HostsDialog(QDialog):
         self.cmb_backend = QComboBox()
         self.cmb_backend.addItem("OpenSSH (system ssh, keys/agent)", BACKEND_OPENSSH)
         self.cmb_backend.addItem("paramiko (password supported)", BACKEND_PARAMIKO)
+        self.cmb_backend.addItem("This machine (no SSH)", BACKEND_LOCAL)
         self.cmb_backend.currentIndexChanged.connect(self._update_backend_hint)
 
         self.lbl_backend_hint = QLabel("")
@@ -261,6 +263,16 @@ class HostsDialog(QDialog):
 
     def _update_backend_hint(self) -> None:
         backend = self.cmb_backend.currentData()
+        self._set_ssh_fields_enabled(backend != BACKEND_LOCAL)
+        if backend == BACKEND_LOCAL:
+            if local_shell_available():
+                self.lbl_backend_hint.setText(
+                    "Runs the job here, with no network at all. Remote root is a "
+                    "directory on this machine; hostname and keys are not used."
+                )
+            else:
+                self.lbl_backend_hint.setText(LOCAL_INSTALL_HINT)
+            return
         if backend == BACKEND_PARAMIKO and not paramiko_available():
             self.lbl_backend_hint.setText(
                 "paramiko is not installed - run 'pip install paramiko' to use this backend."
@@ -274,6 +286,19 @@ class HostsDialog(QDialog):
                 "Uses your ~/.ssh/config, agent and keys. Batch mode: password logins are not "
                 "possible with this backend."
             )
+
+    def _set_ssh_fields_enabled(self, enabled: bool) -> None:
+        """Nothing about the network applies when the host is this machine."""
+        for widget in (
+            self.txt_hostname,
+            self.txt_username,
+            self.spin_port,
+            self.txt_key,
+            self.txt_jump,
+            self.chk_ask_password,
+            self.spin_connect_timeout,
+        ):
+            widget.setEnabled(enabled)
 
     def _collect(self, host: HostProfile) -> HostProfile:
         host.name = self.txt_name.text().strip() or "cluster"
@@ -311,7 +336,7 @@ class HostsDialog(QDialog):
         host = self._save_current()
         if host is None:
             return
-        if not host.hostname:
+        if not host.hostname and not host.is_local:
             self.lbl_test.setText("Enter a hostname first.")
             return
         if not ensure_password(self.service, host, self):

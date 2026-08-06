@@ -37,6 +37,7 @@ from .models import (
     STATE_FAILED,
     STATE_LOST,
     STATE_PENDING,
+    STATE_QUEUED,
     STATE_RUNNING,
     Job,
 )
@@ -60,6 +61,7 @@ _STATE_COLORS = {
     STATE_DONE: "#0a7d8c",
     STATE_FAILED: "#c62828",
     STATE_LOST: "#8e24aa",
+    STATE_QUEUED: "#6c757d",
 }
 
 
@@ -103,6 +105,13 @@ class JobTableModel(QAbstractTableModel):
         else:
             self._rows = self.service.store.job_list()
         self.endResetModel()
+
+    def _is_waiting(self, job: Job) -> bool:
+        """True while a chained job is still waiting for its predecessor."""
+        if not job.after_job_id or not job.is_active:
+            return False
+        predecessor = self.service.store.jobs.get(job.after_job_id)
+        return predecessor is not None and predecessor.is_active
 
     def job_at(self, row: int) -> Optional[Job]:
         if 0 <= row < len(self._rows):
@@ -153,6 +162,8 @@ class JobTableModel(QAbstractTableModel):
             if column == 2:
                 return job.remote_job_id or "-"
             if column == 3:
+                if self._is_waiting(job):
+                    return STATE_QUEUED
                 suffix = ""
                 if job.state == STATE_FAILED and job.rc is not None:
                     suffix = f" (rc={job.rc})"

@@ -30,7 +30,7 @@ from PyQt6.QtWidgets import (
 
 from .command_templates import CommandTemplate, suggest, templates_for
 from .credentials import ensure_password
-from .models import HostProfile, SubmitPreset
+from .models import HostProfile, Job, SubmitPreset
 from .schedulers import get_scheduler
 from .service import JobService
 
@@ -175,6 +175,17 @@ class SubmitDialog(QDialog):
         self.txt_globs = QLineEdit("*.out, *.log, *.xyz, *.hess, *.fchk")
         self.chk_auto_download = QCheckBox("Download results automatically when the job ends")
         self.chk_auto_download.setChecked(True)
+        self.chk_chain = QCheckBox("Run after the job already queued on this host")
+        self.chk_chain.setToolTip(
+            "With no queue on the host, submitting twice starts both jobs at once. "
+            "Chaining makes this one wait for the previous job to finish first.\n\n"
+            "The waiting happens on the machine itself, so the chain keeps going "
+            "even with MoleditPy closed."
+        )
+        self.chk_chain.setChecked(True)
+        self.lbl_chain = QLabel("")
+        self.lbl_chain.setWordWrap(True)
+        self.lbl_chain.setStyleSheet("color: palette(mid);")
 
         for widget in (
             self.txt_queue,
@@ -206,6 +217,8 @@ class SubmitDialog(QDialog):
         form.addRow("Command", command_row)
         form.addRow("Fetch patterns", self.txt_globs)
         form.addRow("", self.chk_auto_download)
+        form.addRow("", self.chk_chain)
+        form.addRow("", self.lbl_chain)
         return page
 
     def _build_preview_tab(self) -> QWidget:
@@ -247,6 +260,36 @@ class SubmitDialog(QDialog):
         if self.cmb_preset.count() > 1:
             self.cmb_preset.setCurrentIndex(1)
         self._on_preset_changed()
+        self._update_chain_row()
+
+    def _update_chain_row(self) -> None:
+        """Offer chaining only where nothing else serialises the work."""
+        host = self.current_host()
+        predecessor = self.chain_predecessor()
+        try:
+            chainable = bool(host) and get_scheduler(host.scheduler).supports_chaining
+        except ValueError:
+            chainable = False
+
+        self.chk_chain.setVisible(chainable)
+        self.lbl_chain.setVisible(chainable)
+        self.chk_chain.setEnabled(chainable and predecessor is not None)
+        if not chainable:
+            return
+        if predecessor is None:
+            self.lbl_chain.setText("Nothing running on this host: this job starts immediately.")
+        else:
+            self.lbl_chain.setText(
+                f"Would start after “{predecessor.name}” "
+                f"({predecessor.remote_job_id or 'not yet submitted'}) finishes."
+            )
+
+    def chain_predecessor(self) -> Optional["Job"]:
+        """The job this one would queue behind, or None."""
+        host = self.current_host()
+        if host is None:
+            return None
+        return self.store.chain_tail(host.id)
 
     def _on_preset_changed(self) -> None:
         preset = self.store.presets.get(self.cmb_preset.currentData())
@@ -458,5 +501,8 @@ class SubmitDialog(QDialog):
         if not ensure_password(self.service, host, self):
             return
         name = self.txt_job_name.text().strip() or os.path.basename(files[0])
-        self.service.submit(host, preset, name, files)
+        after = None
+        if self.chk_chain.isVisible() and self.chk_chain.isEnabled() and self.chk_chain.isChecked():
+            after = self.chain_predecessor()
+        self.service.submit(host, preset, name, files, after_job=after)
         self.accept()

@@ -9,7 +9,7 @@ The normal path, end to end, plus what to do when a job goes wrong.
 | Field | Notes |
 |---|---|
 | Hostname / Username / Port | Or just the alias from your `~/.ssh/config` |
-| Backend | **OpenSSH** unless the host needs a password |
+| Backend | **OpenSSH** unless the host needs a password, or **This machine** for no SSH at all |
 | Scheduler | SLURM, PBS/Torque, SGE/UGE, or None (background process) |
 | Private key | Optional. Leave empty to use your agent and `ssh_config` |
 | Jump host | `user@bastion` — OpenSSH backend only |
@@ -86,6 +86,37 @@ Type a command, then **Template... → Save current command as...** and give it 
 name. It is stored in `settings.json` next to your hosts and presets, appears in
 the same dropdown from then on, and can be removed with **Delete a saved
 template...**.
+
+### Running on this machine
+
+Pick **This machine (no SSH)** as the backend and the same workflow runs
+locally: no hostname, no keys, no network. *Remote root* becomes an ordinary
+directory here, and "upload" and "download" are file copies.
+
+It still needs a POSIX shell, because the run script is bash — free on macOS and
+Linux, and on Windows it means Git Bash or WSL. The Hosts dialog says so if it
+cannot find one.
+
+### Running jobs one after another
+
+On a host with **no queue** — that includes this machine — two submissions would
+otherwise start at once and fight over the same cores. Tick **Run after the job
+already queued on this host** in the wizard and the job waits for the previous
+one to finish first. The wizard names the job it will follow.
+
+Submit again and the third job queues behind the *second*, not the first, so a
+chain of any length lines up in order. A job still waiting shows as **QUEUED**
+in the table rather than RUNNING, since its wrapper is alive but the calculation
+has not started.
+
+The waiting happens on the machine itself, not in MoleditPy: close the
+application, log out, lose the network, and the chain keeps moving. A
+predecessor that is killed or already gone does not hold anything up — the next
+job simply starts.
+
+Real schedulers do not offer this, because SLURM, PBS and SGE already decide the
+order themselves. For a dependency there, put your scheduler's own flag in
+*Extra directives*, e.g. `#SBATCH --dependency=afterok:12345`.
 
 ## 4. Watch
 
@@ -178,6 +209,7 @@ save migrates it.
 | `FAILED` | wrapper finished, non-zero — the code is shown in the table |
 | `CANCELLED` | you cancelled it |
 | `LOST` | gone from the queue with no exit code recorded |
+| `QUEUED` | chained behind another job that has not finished yet |
 
 `FAILED (rc=143)` is the signature of a job the scheduler killed: 143 is
 `128 + SIGTERM`, i.e. walltime exceeded, preemption or a node drain. `130` is
@@ -190,20 +222,11 @@ vanished. The remote directory is still listed in the tooltip; **Download** and
 
 ## What it does not do
 
-**No job chaining or dependencies.** Every submission is independent: there is
-no "run B when A finishes", no `--dependency=afterok:`, `-W depend=`, or
-`-hold_jid` support, and no local queue that holds jobs back. If you submit ten
-jobs they all go to the queue at once and the scheduler decides the order.
-
-Two ways around it today:
-
-* **Put the chain in one job.** The command field is a shell line and
-  pre-commands run before it, so `orca a.inp > a.out && orca b.inp > b.out`
-  runs sequentially inside a single allocation.
-* **Use the scheduler's own dependency flag** via *Extra directives*, e.g.
-  `#SBATCH --dependency=afterok:12345` with the id of a job you already
-  submitted. Job Manager tracks the resulting job normally; it just does not
-  fill the id in for you.
+**No dependencies on a real scheduler.** Chaining is offered only where nothing
+else serialises the work (the no-queue mode, including this machine). On SLURM,
+PBS or SGE the queue decides the order, and a dependency belongs in *Extra
+directives* — `#SBATCH --dependency=afterok:12345` — which Job Manager passes
+through and then tracks normally.
 
 **No file browser.** Fetch patterns decide what comes back.
 

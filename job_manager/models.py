@@ -27,6 +27,10 @@ STATE_DONE = "DONE"
 STATE_FAILED = "FAILED"
 STATE_CANCELLED = "CANCELLED"
 STATE_LOST = "LOST"
+#: Display only: a chained job whose predecessor has not finished. The wrapper
+#: is alive and waiting, so the queue reports it running -- but "RUNNING" would
+#: tell the user their calculation had started when it has not.
+STATE_QUEUED = "QUEUED"
 
 ALL_STATES = (
     STATE_NEW,
@@ -57,6 +61,8 @@ TERMINAL_STATES = frozenset({STATE_DONE, STATE_FAILED, STATE_CANCELLED, STATE_LO
 
 BACKEND_OPENSSH = "openssh"
 BACKEND_PARAMIKO = "paramiko"
+#: This machine, no SSH at all.
+BACKEND_LOCAL = "local"
 
 SCHEDULER_SLURM = "slurm"
 SCHEDULER_PBS = "pbs"
@@ -65,6 +71,9 @@ SCHEDULER_SHELL = "shell"
 
 #: Written by the generated run script; see schedulers.base.
 SENTINEL_NAME = ".moleditpy_rc"
+#: Touched by a chained job once its predecessor has finished and it starts
+#: for real. Only chained jobs write it.
+STARTED_NAME = ".moleditpy_started"
 
 _SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -117,7 +126,13 @@ class HostProfile:
     login_commands: List[str] = field(default_factory=list)
 
     @property
+    def is_local(self) -> bool:
+        return self.backend == BACKEND_LOCAL
+
+    @property
     def target(self) -> str:
+        if self.is_local:
+            return "this machine"
         return f"{self.username}@{self.hostname}" if self.username else self.hostname
 
     def to_dict(self) -> Dict[str, Any]:
@@ -189,6 +204,9 @@ class Job:
     #: The SubmitPreset used, snapshotted so Resubmit can reproduce the job
     #: even after the named preset is edited or deleted.
     preset: Dict[str, Any] = field(default_factory=dict)
+    #: Id of the job this one was chained behind, on the same host. Its
+    #: wrapper waits for that job's process before running anything.
+    after_job_id: str = ""
     last_error: str = ""
 
     @property

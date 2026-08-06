@@ -17,14 +17,24 @@ from .base import STATE_RUNNING, Scheduler, register
 class ShellScheduler(Scheduler):
     name = "shell"
     label = "None (background process)"
+    # Nothing else serialises work on a machine with no queue, so this is the
+    # one scheduler where "run after that job" has to be arranged by hand.
+    supports_chaining = True
 
     def directives(self, job_name: str, preset: SubmitPreset, log_file: str) -> List[str]:
         return [f"# job: {job_name}"]
 
     def submit_command(self, script_name: str, log_file: str) -> str:
+        # The braces matter. Written as `A && nohup B ... & echo $!`, the `&`
+        # backgrounds the whole `&&` list, and that subshell keeps the caller's
+        # stdout and stderr open for as long as the job runs -- so submitting
+        # blocked until the calculation finished, holding an ssh connection and
+        # a worker thread the entire time. Backgrounding only the nohup, whose
+        # three streams all go elsewhere, lets the shell exit at once.
+        # It also makes $! the wrapper's own pid rather than a subshell's.
         return (
             f"chmod +x {script_name} && "
-            f"nohup bash {script_name} > {log_file} 2>&1 < /dev/null & echo $!"
+            f"{{ nohup bash {script_name} > {log_file} 2>&1 < /dev/null & }} && echo $!"
         )
 
     def parse_submit_output(self, stdout: str, stderr: str) -> str:

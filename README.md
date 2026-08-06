@@ -17,7 +17,11 @@ fetch, open.
 ## What it does
 
 - **Submit** an input file to SLURM, PBS/Torque, SGE/UGE — or to a plain
-  background process on a machine with no queue at all.
+  background process on a machine with no queue at all, including **this
+  machine**, with no SSH involved.
+- **Chain** jobs where there is no queue to do it for you: each waits for the
+  previous one to finish, and the waiting happens on the machine itself, so the
+  chain keeps running with MoleditPy closed.
 - **Track** every job in one table: queue id, state, elapsed time. Status
   survives closing the window, closing the project, and restarting MoleditPy.
 - **Fetch** the outputs automatically when a job ends, then hand the result to
@@ -42,11 +46,10 @@ and signature will not change without a major version.
 
 ### What it does not do
 
-**No job chaining.** Every submission is independent — there is no "run B when A
-finishes", and no `--dependency=afterok:` / `-W depend=` / `-hold_jid` support.
-Chain the commands inside one job (`orca a.inp > a.out && orca b.inp > b.out`),
-or put your scheduler's own dependency flag in *Extra directives*; Job Manager
-tracks the resulting job normally either way.
+**No dependencies on a real scheduler.** Chaining is offered only where nothing
+else serialises the work. On SLURM, PBS or SGE the queue already decides the
+order — put a dependency in *Extra directives*
+(`#SBATCH --dependency=afterok:12345`) and Job Manager tracks the job normally.
 
 ## Documentation
 
@@ -65,13 +68,14 @@ tracks the resulting job normally either way.
 
 ## Two SSH backends
 
-| | OpenSSH (default) | paramiko (optional) |
-|---|---|---|
-| Install | nothing | `pip install paramiko` |
-| Auth | keys and ssh-agent | keys, agent **and passwords** |
-| `~/.ssh/config` | inherited automatically | `HostName`, `User`, `Port`, `IdentityFile` |
-| `ProxyJump` | yes | refused, with an explanation |
-| Connection | one process per command (multiplexed on macOS/Linux) | one persistent session |
+| | OpenSSH (default) | paramiko (optional) | This machine |
+|---|---|---|---|
+| Install | nothing | `pip install paramiko` | nothing (needs bash) |
+| Auth | keys and ssh-agent | keys, agent **and passwords** | none needed |
+| `~/.ssh/config` | inherited automatically | `HostName`, `User`, `Port`, `IdentityFile` | not applicable |
+| `ProxyJump` | yes | refused, with an explanation | not applicable |
+| Connection | one process per command (multiplexed on macOS/Linux) | one persistent session | no network at all |
+| Job chaining | — | — | **yes**, with the no-queue scheduler |
 
 The OpenSSH backend runs `ssh` in batch mode on purpose: a background thread must
 never block on an invisible password prompt — and it also means **no password can

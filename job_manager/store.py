@@ -272,6 +272,19 @@ class JobStore:
     def active_jobs(self) -> List[Job]:
         return [j for j in self.jobs.values() if j.is_active]
 
+    def chain_tail(self, host_id: str) -> Optional[Job]:
+        """The job a new one should queue behind on this host, if any.
+
+        The tail of the chain, not whatever happens to be running: each job
+        waits for its predecessor, so appending to the newest active job is
+        what makes a third, fourth and fifth submission line up behind the
+        others instead of all starting at once.
+        """
+        candidates = [job for job in self.jobs.values() if job.host_id == host_id and job.is_active]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda job: (job.submitted_at or job.updated_at))
+
     def active_jobs_by_host(self) -> Dict[str, List[Job]]:
         grouped: Dict[str, List[Job]] = {}
         for job in self.active_jobs():

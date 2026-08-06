@@ -51,8 +51,14 @@ def submit_job(
     preset: SubmitPreset,
     job: Job,
     local_files: Sequence[str],
+    wait_for_pid: str = "",
 ) -> Job:
-    """Create the remote directory, upload everything, enqueue the script."""
+    """Create the remote directory, upload everything, enqueue the script.
+
+    ``wait_for_pid`` chains this job behind another process on the same
+    machine: the wrapper waits for it before running anything. Only the
+    no-queue scheduler uses it -- a real queue does its own serialising.
+    """
     scheduler = get_scheduler(host.scheduler)
     if not local_files:
         raise ValueError("No input file selected")
@@ -65,7 +71,13 @@ def submit_job(
         transport.upload(path, remote_paths.join(job.remote_dir, os.path.basename(path)))
 
     input_name = os.path.basename(local_files[0])
-    script = scheduler.build_script(sanitize_name(job.name), preset, input_name, job.log_file)
+    script = scheduler.build_script(
+        sanitize_name(job.name),
+        preset,
+        input_name,
+        job.log_file,
+        wait_for_pid=wait_for_pid if scheduler.supports_chaining else "",
+    )
     job.command = script
     script_remote = remote_paths.join(job.remote_dir, scheduler.script_name)
     _upload_text(transport, script, script_remote)
