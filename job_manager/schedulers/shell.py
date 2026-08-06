@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Dict, Iterable, List
 
 from ..models import SubmitPreset
+from ..remote_paths import quote
 from .base import STATE_RUNNING, Scheduler, register
 
 
@@ -53,7 +54,10 @@ class ShellScheduler(Scheduler):
 
     def cancel_command(self, job_id: str) -> str:
         # Kill the whole process group so the payload dies with the wrapper.
-        return f"kill -- -$(ps -o pgid= -p {job_id} | tr -d ' ') 2>/dev/null || kill {job_id}"
+        # The pid is quoted: a job list can come from anywhere, and this string
+        # is executed by the user's shell on the remote machine.
+        pid = quote(job_id)
+        return f"kill -- -$(ps -o pgid= -p {pid} | tr -d ' ') 2>/dev/null || kill {pid}"
 
 
 SHELL = register(ShellScheduler())

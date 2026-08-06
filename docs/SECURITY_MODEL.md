@@ -122,6 +122,33 @@ the feature. The safeguards are:
 * **Cancel kills a process group** (`shell` scheduler) or calls the queue's own
   `scancel`/`qdel`. It never runs a broad `pkill`.
 
+## Opening a job list from somewhere else
+
+A `.pmejbs` file can come from a colleague, a backup or an email, so every field
+in it is untrusted input the moment the user opens one. Two consequences are
+handled explicitly:
+
+* **The queue id is quoted** before it reaches a remote shell. It is
+  interpolated into `scancel` / `qdel` / `kill`, so an id of
+  `12345; rm -rf ~` in a crafted list would otherwise have been a command the
+  user's own account ran on the cluster the moment they pressed Cancel.
+* **A job list carries no host details.** No hostname, username, key path or
+  anything resembling a credential is in a job record, so opening one cannot
+  add or alter a host profile — you can only ever act on hosts you configured
+  yourself. Both are asserted in `tests/test_security.py`.
+
+A job list still names remote directories and commands, and opening one as your
+working list means the plugin will poll those jobs on *your* hosts. Treat an
+unfamiliar file the way you would treat an unfamiliar script.
+
+## Downloading results
+
+File names in the remote directory listing are checked to be plain names before
+being joined onto the local download directory. A compromised or hostile host
+answering `../../.bashrc` to `ls` would otherwise have written outside the
+download folder — the one place where a remote machine's output becomes a local
+path.
+
 ## Trust boundaries
 
 | You are trusting | Because |

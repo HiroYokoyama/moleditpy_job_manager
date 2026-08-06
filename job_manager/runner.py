@@ -196,14 +196,34 @@ def _classify_sentinel(raw: str, job: Job) -> str:
 
 
 def list_remote_files(transport: Transport, remote_dir: str) -> List[str]:
-    """File names directly inside ``remote_dir`` (no recursion)."""
+    """File names directly inside ``remote_dir`` (no recursion).
+
+    Only plain names are returned. The listing comes from the remote machine,
+    and every name is later joined onto a local directory to download into --
+    so anything with a path separator in it (``../../.bashrc``) would write
+    outside the download folder.
+    """
     result = transport.run(f"ls -p -1 {remote_paths.quote(remote_dir)} 2>/dev/null || true")
     names = []
     for line in (result.stdout or "").splitlines():
         name = line.strip()
-        if name and not name.endswith("/"):
-            names.append(name)
+        if not name or name.endswith("/"):
+            continue
+        if name != safe_download_name(name):
+            logging.warning("Job Manager: skipping suspicious remote file name %r", name)
+            continue
+        names.append(name)
     return names
+
+
+def safe_download_name(name: str) -> str:
+    """The bare file name, or "" if ``name`` is not one."""
+    cleaned = (name or "").replace("\\", "/").strip()
+    if not cleaned or cleaned in (".", "..") or cleaned.startswith("/"):
+        return ""
+    if "/" in cleaned or os.path.splitdrive(cleaned)[0]:
+        return ""
+    return cleaned
 
 
 def select_files(names: Iterable[str], globs: Sequence[str]) -> List[str]:
@@ -230,6 +250,10 @@ def fetch_results(
     os.makedirs(local_dir, exist_ok=True)
     downloaded: List[str] = []
     for name in names:
+        # Belt and braces: the listing is already filtered, but this is the
+        # line that turns a remote string into a local path to write.
+        if not safe_download_name(name):
+            continue
         target = os.path.join(local_dir, name)
         try:
             transport.download(remote_paths.join(job.remote_dir, name), target)

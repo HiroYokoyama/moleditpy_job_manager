@@ -10,6 +10,7 @@ import re
 from typing import Dict, Iterable, List
 
 from ..models import SubmitPreset
+from ..remote_paths import quote
 from .base import (
     STATE_COMPLETING,
     STATE_PENDING,
@@ -88,7 +89,9 @@ class SgeScheduler(Scheduler):
         return states
 
     def cancel_command(self, job_id: str) -> str:
-        return f"qdel {job_id}"
+        # Quoted: a job id is not always ours. One read from a job list file
+        # would otherwise be a command the user's own account runs.
+        return f"qdel {quote(job_id)}"
 
 
 SGE = register(SgeScheduler())

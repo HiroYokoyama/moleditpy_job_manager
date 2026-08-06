@@ -295,7 +295,7 @@ class JobsDialog(QDialog):
         self.btn_resubmit.clicked.connect(self._resubmit_selected)
         self.btn_remove = QPushButton("Remove")
         self.btn_remove.clicked.connect(self._remove_selected)
-        self.btn_export_json = QPushButton(f"Export {JOB_EXTENSION.lstrip('.')}")
+        self.btn_export_json = QPushButton("Save As...")
         self.btn_export_json.setToolTip(
             "Write the job list as raw JSON, the same records as jobs.json."
         )

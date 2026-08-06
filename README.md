@@ -25,7 +25,7 @@ fetch, open.
   the ORCA Result Analyzer with no extra configuration.
 - **Tail** the remote log, or cancel a job, from the same window.
 - **Resubmit** a job with one click: same host, same inputs, same resources.
-- **Export** the list as raw `.pmejbs` JSON or as CSV, **clear** it (the old list
+- **Save** the list as a `.pmejbs` file or **export** it as CSV, **clear** it (the old list
   is archived, never deleted), and **reopen** any saved list — from the button,
   from File ▸ Import, or by dropping it on the window.
 
