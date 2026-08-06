@@ -253,9 +253,23 @@ class TestSubmittingDoesNotBlock(unittest.TestCase):
 
     @unittest.skipUnless(BASH, "no bash available")
     def test_it_really_returns_before_the_job_finishes(self):
+        """Measured against a bare login shell, not against the clock.
+
+        `bash -lc` sources the login profile, and on a loaded CI runner that
+        alone took nearly as long as the job -- which read as "submit blocked"
+        and failed on one leg of the matrix while the same command returned in
+        0.11s on the others. What matters is that submitting costs no more than
+        starting the shell, however slow that happens to be today.
+        """
+        payload = 10
         workdir = tempfile.mkdtemp(prefix="nonblocking_")
         with open(os.path.join(workdir, "run.sh"), "w", encoding="utf-8", newline="\n") as handle:
-            handle.write("#!/bin/bash\nsleep 4\n")
+            handle.write(f"#!/bin/bash\nsleep {payload}\n")
+
+        baseline_start = time.time()
+        subprocess.run([BASH, "-lc", "true"], capture_output=True, timeout=60)
+        baseline = time.time() - baseline_start
+
         command = get_scheduler("shell").submit_command("run.sh", "job.log")
         start = time.time()
         proc = subprocess.run(
@@ -265,7 +279,13 @@ class TestSubmittingDoesNotBlock(unittest.TestCase):
             timeout=60,
         )
         elapsed = time.time() - start
-        self.assertLess(elapsed, 3.0, f"submit blocked for {elapsed:.1f}s")
+
+        self.assertLess(
+            elapsed,
+            baseline + payload / 2,
+            f"submit took {elapsed:.1f}s against a {baseline:.1f}s shell start, "
+            f"so it waited for the {payload}s job",
+        )
         self.assertTrue(proc.stdout.strip().isdigit(), proc.stdout)
 
 
