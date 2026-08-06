@@ -90,6 +90,13 @@ class Scheduler(ABC):
             # reach a trailing line, and the job would look LOST rather than
             # FAILED. The trap's $? is the real final status either way.
             f"trap '__moleditpy_rc=$?; echo \"$__moleditpy_rc\" > {SENTINEL_NAME}' EXIT",
+            # Without these, a job the scheduler kills -- walltime exceeded,
+            # preemption, scancel, node drain -- reaches the EXIT trap with $?
+            # still 0 and is recorded as a clean success. Each killing signal
+            # is turned into its conventional 128+n status first.
+            "trap 'exit 143' TERM",
+            "trap 'exit 130' INT",
+            "trap 'exit 129' HUP",
             "",
         ]
         for module in preset.modules or []:

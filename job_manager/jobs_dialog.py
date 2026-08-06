@@ -264,14 +264,33 @@ class JobsDialog(QDialog):
         layout.addWidget(self.lbl_status)
 
     def _connect_service(self) -> None:
-        self.service.jobs_changed.connect(self.model.reload)
-        self.service.jobs_changed.connect(self._update_buttons)
-        self.service.job_updated.connect(self.model.refresh_job)
-        self.service.job_updated.connect(lambda *_: self._update_buttons())
-        self.service.message.connect(self._append_message)
-        self.service.error.connect(self._append_error)
-        self.service.log_ready.connect(self._show_log)
-        self.service.results_ready.connect(self._on_results_ready)
+        # Kept as a list so closeEvent can undo every one of them. The service
+        # outlives this window, so a connection left behind is a closed dialog
+        # that still reloads its model on every poll and still opens each
+        # finished job's results -- once per window the user ever opened.
+        self._connections = [
+            (self.service.jobs_changed, self.model.reload),
+            (self.service.jobs_changed, self._update_buttons),
+            (self.service.job_updated, self.model.refresh_job),
+            (self.service.job_updated, self._on_job_updated),
+            (self.service.message, self._append_message),
+            (self.service.error, self._append_error),
+            (self.service.log_ready, self._show_log),
+            (self.service.results_ready, self._on_results_ready),
+        ]
+        for signal, slot in self._connections:
+            signal.connect(slot)
+
+    def _disconnect_service(self) -> None:
+        for signal, slot in getattr(self, "_connections", []):
+            try:
+                signal.disconnect(slot)
+            except TypeError:
+                logging.debug("Job Manager: signal already disconnected")
+        self._connections = []
+
+    def _on_job_updated(self, _job_id: str = "") -> None:
+        self._update_buttons()
 
     # --- helpers ------------------------------------------------------------
 
@@ -332,6 +351,17 @@ class JobsDialog(QDialog):
                 self, "Resubmit", f"The original input is no longer on disk:\n{missing[0]}"
             )
             return
+        if job.host_id not in self.service.store.hosts:
+            # Prefill cannot select a host that no longer exists, so the wizard
+            # would silently open on whichever host happens to be first.
+            confirm = QMessageBox.question(
+                self,
+                "Resubmit",
+                f"The host profile '{job.host_name}' no longer exists.\n"
+                "Resubmit against a different host?",
+            )
+            if confirm != QMessageBox.StandardButton.Yes:
+                return
         self.open_submit_dialog(
             files=list(job.input_files),
             name=job.name,
@@ -428,6 +458,7 @@ class JobsDialog(QDialog):
     def closeEvent(self, event) -> None:
         # Deregister so a reopened window is a fresh, live instance; polling
         # continues in the service, which outlives this dialog.
+        self._disconnect_service()
         try:
             from . import forget_window
 
