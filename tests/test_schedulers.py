@@ -66,15 +66,21 @@ class ScriptContractMixin:
     def test_starts_with_a_shebang(self):
         self.assertTrue(self.build().startswith("#!/bin/bash"))
 
-    def test_writes_the_sentinel_last(self):
-        lines = [line for line in self.build().splitlines() if line.strip()]
-        self.assertIn(f'echo "$__moleditpy_rc" > {SENTINEL_NAME}', lines)
-        self.assertEqual(lines[-1], "exit $__moleditpy_rc")
+    def test_the_sentinel_is_written_from_an_exit_trap(self):
+        # A trailing echo would be skipped by a payload that calls exit itself,
+        # and the job would be reported LOST instead of FAILED.
+        script = self.build()
+        self.assertIn(
+            f"""trap '__moleditpy_rc=$?; echo "$__moleditpy_rc" > {SENTINEL_NAME}' EXIT""", script
+        )
 
-    def test_captures_the_payload_exit_code_not_a_later_one(self):
-        script = self.build().splitlines()
-        payload = script.index("run mol.inp")
-        self.assertEqual(script[payload + 1], "__moleditpy_rc=$?")
+    def test_the_trap_is_armed_before_the_payload_runs(self):
+        script = self.build()
+        self.assertLess(script.index("trap '__moleditpy_rc"), script.index("run mol.inp"))
+
+    def test_the_payload_is_the_last_thing_in_the_script(self):
+        lines = [line for line in self.build().splitlines() if line.strip()]
+        self.assertEqual(lines[-1], "run mol.inp")
 
     def test_stale_sentinel_is_removed_before_the_run(self):
         script = self.build()
@@ -304,13 +310,23 @@ class TestShell(ScriptContractMixin, unittest.TestCase):
 
     def test_status_command_lists_only_the_tracked_pids(self):
         cmd = self.scheduler.status_command("alice", ["11", "22"])
-        self.assertEqual(cmd, "ps -o pid= -p 11,22")
+        self.assertIn("for p in 11 22", cmd)
+
+    def test_status_command_uses_a_builtin_not_ps(self):
+        # ps is absent or restricted on some hosts; kill -0 is a shell builtin.
+        cmd = self.scheduler.status_command("alice", ["11"])
+        self.assertIn("kill -0", cmd)
+        self.assertNotIn("ps ", cmd)
+
+    def test_status_command_never_fails_when_every_pid_is_gone(self):
+        # A non-zero rc with no output would look like a broken host.
+        self.assertTrue(self.scheduler.status_command("a", ["1"]).rstrip().endswith("true"))
 
     def test_status_command_with_no_pids_is_a_no_op(self):
         self.assertEqual(self.scheduler.status_command("alice", []), "true")
 
     def test_status_command_ignores_non_numeric_ids(self):
-        self.assertEqual(self.scheduler.status_command("a", ["x", "3"]), "ps -o pid= -p 3")
+        self.assertIn("for p in 3", self.scheduler.status_command("a", ["x", "3"]))
 
     def test_parse_status_marks_live_pids_running(self):
         self.assertEqual(

@@ -38,7 +38,10 @@ class ShellScheduler(Scheduler):
         if not pids:
             # Nothing to ask about; keep the contract of returning a command.
             return "true"
-        return f"ps -o pid= -p {','.join(pids)}"
+        # `kill -0` is a shell builtin: no ps, so this also works where ps is
+        # restricted (hidepid) or cut down (busybox).
+        checks = " ".join(pids)
+        return f"for p in {checks}; do kill -0 $p 2>/dev/null && echo $p; done; true"
 
     def parse_status(self, stdout: str) -> Dict[str, str]:
         states: Dict[str, str] = {}

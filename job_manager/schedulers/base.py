@@ -85,6 +85,11 @@ class Scheduler(ABC):
             "",
             'cd "$(dirname "$0")" || exit 1',
             f"rm -f {SENTINEL_NAME}",
+            # An EXIT trap, not a trailing echo: a payload that calls `exit`
+            # itself (or a pre-command that fails under `set -e`) would never
+            # reach a trailing line, and the job would look LOST rather than
+            # FAILED. The trap's $? is the real final status either way.
+            f"trap '__moleditpy_rc=$?; echo \"$__moleditpy_rc\" > {SENTINEL_NAME}' EXIT",
             "",
         ]
         for module in preset.modules or []:
@@ -96,9 +101,6 @@ class Scheduler(ABC):
         lines += [
             "",
             format_command(preset.command_template, input_name, preset),
-            "__moleditpy_rc=$?",
-            f'echo "$__moleditpy_rc" > {SENTINEL_NAME}',
-            "exit $__moleditpy_rc",
             "",
         ]
         return "\n".join(lines)
