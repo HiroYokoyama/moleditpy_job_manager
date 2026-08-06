@@ -16,15 +16,15 @@ import logging
 from typing import Any, Optional
 
 PLUGIN_NAME = "Job Manager"
-PLUGIN_VERSION = "0.4.0"
+PLUGIN_VERSION = "0.5.0"
 PLUGIN_AUTHOR = "HiroYokoyama"
 PLUGIN_DESCRIPTION = (
     "Submit calculations to remote HPC clusters over SSH, track queue status, "
     "and fetch results back into MoleditPy. Ready-made command lines for ORCA, "
     "Gaussian, CP2K, GAMESS, MOPAC, NWChem, Psi4, PySCF, Quantum ESPRESSO, VASP "
     "and xTB; job lists export to CSV or .pmejbs and reopen by drag and drop. "
-    "Runs on this machine too, with no SSH, and chains jobs where there is no "
-    "queue to order them."
+    "Runs on this machine too, with no SSH; chains jobs with each scheduler's "
+    "own dependency flag; and can hold a job until a chosen time."
 )
 PLUGIN_CATEGORY = "Utility"
 PLUGIN_TAGS = ["hpc", "ssh", "job", "utility"]
