@@ -130,7 +130,13 @@ class TestWithRealPluginContext(unittest.TestCase):
             return
         if _MAIN_APP_SRC not in sys.path:
             sys.path.insert(0, _MAIN_APP_SRC)
-        from moleditpy.plugins.plugin_interface import PluginContext
+        try:
+            from moleditpy.plugins.plugin_interface import PluginContext
+        except ImportError as exc:
+            # `import moleditpy` pulls in PyQt6 via utils/constants, so a
+            # checkout of the main app is not on its own enough to run this
+            # tier. Skip rather than error when its dependencies are absent.
+            raise unittest.SkipTest(f"main app present but not importable: {exc}") from exc
 
         cls.PluginContext = PluginContext
         manager = MagicMock()
