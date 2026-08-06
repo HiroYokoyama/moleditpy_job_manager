@@ -50,6 +50,8 @@ DEFAULT_PREFS: Dict[str, Any] = {
     "download_root": "",
     "open_result_after_download": True,
     "last_input_dir": "",
+    #: The user's own command templates: [{"label": ..., "command": ...}].
+    "command_templates": [],
 }
 
 
@@ -242,6 +244,31 @@ class JobStore:
     def set_pref(self, key: str, value: Any) -> None:
         self.prefs[key] = value
         self.save_settings()
+
+    # --- user command templates ---------------------------------------------
+
+    def user_templates(self) -> List[Dict[str, str]]:
+        """The user's own command templates, as ``{"label", "command"}`` dicts."""
+        raw = self.get_pref("command_templates", []) or []
+        return [
+            {"label": str(item.get("label", "")), "command": str(item.get("command", ""))}
+            for item in raw
+            if isinstance(item, dict) and item.get("label")
+        ]
+
+    def add_user_template(self, label: str, command: str) -> None:
+        """Save (or replace) one template. Persisted in settings.json."""
+        label = (label or "").strip()
+        if not label:
+            return
+        templates = [t for t in self.user_templates() if t["label"] != label]
+        templates.append({"label": label, "command": command or ""})
+        self.set_pref("command_templates", sorted(templates, key=lambda t: t["label"].lower()))
+
+    def remove_user_template(self, label: str) -> None:
+        self.set_pref(
+            "command_templates", [t for t in self.user_templates() if t["label"] != label]
+        )
 
     def download_root(self) -> str:
         configured = str(self.get_pref("download_root", "") or "").strip()

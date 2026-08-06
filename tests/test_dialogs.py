@@ -689,5 +689,88 @@ class TestResubmitWhenTheHostProfileIsGone(DialogTestCase):
         asked.assert_not_called()
 
 
+class TestCommandTemplateDropdown(DialogTestCase):
+    def setUp(self):
+        super().setUp()
+        self.dialog = SubmitDialog(self.service)
+        self.addCleanup(self.dialog.close)
+
+    def labels(self):
+        return [
+            self.dialog.cmb_template.itemText(i) for i in range(self.dialog.cmb_template.count())
+        ]
+
+    def choose(self, label):
+        self.dialog._on_template_chosen(self.labels().index(label))
+
+    def test_the_built_in_programs_are_listed(self):
+        for label in ("ORCA", "Gaussian 16", "VASP", "NWChem", "Psi4"):
+            self.assertIn(label, self.labels())
+
+    def test_choosing_one_fills_the_command_field(self):
+        self.choose("Gaussian 16")
+        self.assertEqual(self.dialog.txt_command.text(), "g16 {input}")
+
+    def test_the_dropdown_returns_to_its_placeholder(self):
+        self.choose("ORCA")
+        self.assertEqual(self.dialog.cmb_template.currentIndex(), 0)
+
+    def test_the_command_stays_editable(self):
+        self.choose("ORCA")
+        self.dialog.txt_command.setText("my own command [input]")
+        self.assertEqual(self.dialog.collect_preset().command_template, "my own command [input]")
+
+    def test_saved_templates_appear_and_can_be_chosen(self):
+        self.store.add_user_template("My VASP", "srun vasp_std > [output]")
+        self.dialog._reload_templates()
+        self.assertIn("My VASP", self.labels())
+        self.choose("My VASP")
+        self.assertEqual(self.dialog.txt_command.text(), "srun vasp_std > [output]")
+
+    def test_saving_the_current_command(self):
+        self.dialog.txt_command.setText("orca [input] > [output]")
+        with patch("job_manager.submit_dialog.QInputDialog.getText", return_value=("Mine", True)):
+            self.dialog._save_user_template()
+        self.assertEqual(
+            JobStore(self.tmp).user_templates(),
+            [{"label": "Mine", "command": "orca [input] > [output]"}],
+        )
+
+    def test_saving_an_empty_command_is_refused(self):
+        self.dialog.txt_command.setText("   ")
+        with patch("job_manager.submit_dialog.QMessageBox.information") as warned:
+            self.dialog._save_user_template()
+        warned.assert_called_once()
+        self.assertEqual(self.store.user_templates(), [])
+
+    def test_deleting_a_saved_template(self):
+        self.store.add_user_template("Mine", "x")
+        self.dialog._reload_templates()
+        with patch("job_manager.submit_dialog.QInputDialog.getItem", return_value=("Mine", True)):
+            self.dialog._delete_user_template()
+        self.assertEqual(JobStore(self.tmp).user_templates(), [])
+
+    def test_prefill_reorders_the_list_for_the_input(self):
+        path = self.make_input("mol.nw")
+        self.dialog.prefill(files=[path], name="p")
+        self.assertEqual(self.labels()[1], "NWChem")
+
+    def test_prefill_fills_an_empty_command_from_the_extension(self):
+        self.dialog.txt_command.setText("")
+        self.dialog.prefill(files=[self.make_input("mol.nw")], name="p")
+        self.assertIn("nwchem", self.dialog.txt_command.text())
+
+    def test_prefill_never_overwrites_a_command_the_user_already_has(self):
+        self.dialog.txt_command.setText("keep me [input]")
+        self.dialog.prefill(files=[self.make_input("mol.nw")], name="p")
+        self.assertEqual(self.dialog.txt_command.text(), "keep me [input]")
+
+    def test_an_ambiguous_extension_leaves_the_command_empty(self):
+        # .inp belongs to ORCA, CP2K and GAMESS alike.
+        self.dialog.txt_command.setText("")
+        self.dialog.prefill(files=[self.make_input("mol.inp")], name="p")
+        self.assertEqual(self.dialog.txt_command.text(), "")
+
+
 if __name__ == "__main__":
     unittest.main()

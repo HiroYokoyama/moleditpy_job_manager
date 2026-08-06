@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from typing import List, Optional
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -14,6 +15,7 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -26,12 +28,17 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from .command_templates import CommandTemplate, suggest, templates_for
 from .credentials import ensure_password
 from .models import HostProfile, SubmitPreset
 from .schedulers import get_scheduler
 from .service import JobService
 
 INPUT_FILTER = "Calculation inputs (*.inp *.com *.gjf *.in *.xyz *.sh *.slurm);;All files (*)"
+
+#: Dropdown entries that are actions rather than templates.
+_SAVE_TEMPLATE = object()
+_DELETE_TEMPLATE = object()
 
 
 class SubmitDialog(QDialog):
@@ -78,6 +85,8 @@ class SubmitDialog(QDialog):
             self.txt_job_name.setText(name)
         elif files:
             self.txt_job_name.setText(os.path.splitext(os.path.basename(files[0]))[0])
+        self._reload_templates()
+        self._apply_suggested_template()
         self._refresh_preview()
 
     # --- construction -------------------------------------------------------
@@ -156,6 +165,13 @@ class SubmitDialog(QDialog):
         self.txt_extra.setMaximumHeight(60)
         self.txt_command = QLineEdit("orca {input} > {stem}.out")
         self.txt_command.textChanged.connect(self._refresh_preview)
+        self.cmb_template = QComboBox()
+        self.cmb_template.setToolTip(
+            "Conventional command line for each program MoleditPy writes input "
+            "for. Picking one fills the Command field, which stays editable."
+        )
+        self.cmb_template.activated.connect(self._on_template_chosen)
+        self._reload_templates()
         self.txt_globs = QLineEdit("*.out, *.log, *.xyz, *.hess, *.fchk")
         self.chk_auto_download = QCheckBox("Download results automatically when the job ends")
         self.chk_auto_download.setChecked(True)
@@ -182,7 +198,12 @@ class SubmitDialog(QDialog):
         form.addRow("Modules", self.txt_modules)
         form.addRow("Pre-commands", self.txt_pre)
         form.addRow("Extra directives", self.txt_extra)
-        form.addRow("Command", self.txt_command)
+        command_row = QWidget()
+        command_layout = QHBoxLayout(command_row)
+        command_layout.setContentsMargins(0, 0, 0, 0)
+        command_layout.addWidget(self.txt_command, 1)
+        command_layout.addWidget(self.cmb_template)
+        form.addRow("Command", command_row)
         form.addRow("Fetch patterns", self.txt_globs)
         form.addRow("", self.chk_auto_download)
         return page
@@ -271,6 +292,86 @@ class SubmitDialog(QDialog):
         )
         return preset
 
+    # --- command templates --------------------------------------------------
+
+    def _reload_templates(self) -> None:
+        """Refill the dropdown, most likely program first for these inputs."""
+        files = self.selected_files() if hasattr(self, "list_files") else []
+        self.cmb_template.blockSignals(True)
+        self.cmb_template.clear()
+        self.cmb_template.addItem("Template...", None)
+
+        for template in templates_for(os.path.basename(files[0]) if files else ""):
+            self.cmb_template.addItem(template.label, template)
+            if template.note:
+                self.cmb_template.setItemData(
+                    self.cmb_template.count() - 1,
+                    f"{template.command or '(type your own)'}\n\n{template.note}",
+                    Qt.ItemDataRole.ToolTipRole,
+                )
+
+        saved = self.store.user_templates()
+        if saved:
+            self.cmb_template.insertSeparator(self.cmb_template.count())
+            for entry in saved:
+                self.cmb_template.addItem(
+                    entry["label"], CommandTemplate(entry["label"], entry["command"])
+                )
+                self.cmb_template.setItemData(
+                    self.cmb_template.count() - 1,
+                    entry["command"],
+                    Qt.ItemDataRole.ToolTipRole,
+                )
+
+        self.cmb_template.insertSeparator(self.cmb_template.count())
+        self.cmb_template.addItem("Save current command as...", _SAVE_TEMPLATE)
+        if saved:
+            self.cmb_template.addItem("Delete a saved template...", _DELETE_TEMPLATE)
+        self.cmb_template.blockSignals(False)
+
+    def _on_template_chosen(self, index: int) -> None:
+        choice = self.cmb_template.itemData(index)
+        self.cmb_template.setCurrentIndex(0)
+        if choice is _SAVE_TEMPLATE:
+            self._save_user_template()
+        elif choice is _DELETE_TEMPLATE:
+            self._delete_user_template()
+        elif choice is not None:
+            self.txt_command.setText(choice.command)
+
+    def _save_user_template(self) -> None:
+        command = self.txt_command.text().strip()
+        if not command:
+            QMessageBox.information(self, "Save template", "Enter a command first.")
+            return
+        label, accepted = QInputDialog.getText(
+            self, "Save template", "Name for this command template:"
+        )
+        if not accepted or not label.strip():
+            return
+        self.store.add_user_template(label.strip(), command)
+        self._reload_templates()
+
+    def _delete_user_template(self) -> None:
+        labels = [entry["label"] for entry in self.store.user_templates()]
+        if not labels:
+            return
+        label, accepted = QInputDialog.getItem(
+            self, "Delete template", "Remove which template?", labels, 0, False
+        )
+        if accepted and label:
+            self.store.remove_user_template(label)
+            self._reload_templates()
+
+    def _apply_suggested_template(self) -> None:
+        """Fill an empty command from the input's extension; never overwrite."""
+        files = self.selected_files()
+        if not files or self.txt_command.text().strip():
+            return
+        template = suggest(os.path.basename(files[0]))
+        if template is not None and template.command:
+            self.txt_command.setText(template.command)
+
     # --- files --------------------------------------------------------------
 
     def selected_files(self) -> List[str]:
@@ -286,6 +387,8 @@ class SubmitDialog(QDialog):
             self.store.set_pref("last_input_dir", os.path.dirname(paths[0]))
             if not self.txt_job_name.text().strip():
                 self.txt_job_name.setText(os.path.splitext(os.path.basename(paths[0]))[0])
+        self._reload_templates()
+        self._apply_suggested_template()
         self._refresh_preview()
 
     def _remove_file(self) -> None:

@@ -15,6 +15,7 @@ depending on ``sacct`` (frequently disabled) or on parsing site-specific
 from __future__ import annotations
 
 import posixpath
+import re
 from abc import ABC, abstractmethod
 from typing import Dict, Iterable, List
 
@@ -32,13 +33,20 @@ from ..models import (
 STATE_UNKNOWN = "UNKNOWN"
 
 
-def format_command(template: str, input_name: str, preset: SubmitPreset) -> str:
-    """Substitute the placeholders a command template may use."""
+#: Both spellings are accepted: ``{input}`` and ``[input]``. Square brackets
+#: need no shell escaping and do not collide with brace expansion.
+_BRACE_RE = re.compile(r"\{(\w+)\}")
+_SQUARE_RE = re.compile(r"\[(\w+)\]")
+
+
+def placeholder_values(input_name: str, preset: SubmitPreset) -> Dict[str, str]:
+    """Every tag a command template may use, resolved for this job."""
     stem = posixpath.splitext(input_name)[0] if input_name else ""
-    values = {
+    return {
         "input": input_name,
         "basename": input_name,
         "stem": stem,
+        "output": f"{stem}.out" if stem else "",
         "nodes": preset.nodes,
         "ntasks": preset.ntasks,
         "cpus": preset.cpus_per_task,
@@ -47,11 +55,24 @@ def format_command(template: str, input_name: str, preset: SubmitPreset) -> str:
         "walltime": preset.walltime,
         "queue": preset.queue,
     }
-    try:
-        return (template or "").format(**values)
-    except (KeyError, IndexError, ValueError):
-        # An unknown placeholder is a user typo, not a crash: run it verbatim.
-        return template or ""
+
+
+def format_command(template: str, input_name: str, preset: SubmitPreset) -> str:
+    """Substitute the placeholders a command template may use.
+
+    Only *known* tags are touched, one at a time, rather than handing the whole
+    string to ``str.format``: a command containing shell braces or brackets --
+    ``awk '{print $1}'``, ``if [ -f x ]`` -- made format() raise, and the old
+    fallback then ran the template with nothing substituted at all.
+    """
+    values = placeholder_values(input_name, preset)
+
+    def replace(match: "re.Match[str]") -> str:
+        key = match.group(1)
+        return str(values[key]) if key in values else match.group(0)
+
+    text = _BRACE_RE.sub(replace, template or "")
+    return _SQUARE_RE.sub(replace, text)
 
 
 class Scheduler(ABC):
@@ -177,6 +198,7 @@ __all__ = [
     "available_schedulers",
     "canonical_state",
     "format_command",
+    "placeholder_values",
     "get_scheduler",
     "register",
 ]
