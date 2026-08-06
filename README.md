@@ -19,9 +19,11 @@ fetch, open.
 - **Submit** an input file to SLURM, PBS/Torque, SGE/UGE — or to a plain
   background process on a machine with no queue at all, including **this
   machine**, with no SSH involved.
-- **Chain** jobs where there is no queue to do it for you: each waits for the
-  previous one to finish, and the waiting happens on the machine itself, so the
-  chain keeps running with MoleditPy closed.
+- **Chain** jobs — "run this after that one" — using each scheduler's own
+  mechanism (`--dependency=afterok`, `-W depend`, `-hold_jid`), or a wrapper
+  that waits for the previous process where there is no queue at all.
+- **Schedule** a start time (`--begin`, `-a`, or a sleep). The job is handed
+  over now; MoleditPy need not be running when it starts.
 - **Track** every job in one table: queue id, state, elapsed time. Status
   survives closing the window, closing the project, and restarting MoleditPy.
 - **Fetch** the outputs automatically when a job ends, then hand the result to
@@ -46,10 +48,10 @@ and signature will not change without a major version.
 
 ### What it does not do
 
-**No dependencies on a real scheduler.** Chaining is offered only where nothing
-else serialises the work. On SLURM, PBS or SGE the queue already decides the
-order — put a dependency in *Extra directives*
-(`#SBATCH --dependency=afterok:12345`) and Job Manager tracks the job normally.
+**No workflow graph.** Chaining is a straight line: each job waits for one
+predecessor. There is no fan-out, no "run C after both A and B", and no retry
+on failure. For anything branching, write the dependencies by hand in *Extra
+directives* — Job Manager passes them through and tracks the jobs normally.
 
 ## Documentation
 
@@ -75,7 +77,7 @@ order — put a dependency in *Extra directives*
 | `~/.ssh/config` | inherited automatically | `HostName`, `User`, `Port`, `IdentityFile` | not applicable |
 | `ProxyJump` | yes | refused, with an explanation | not applicable |
 | Connection | one process per command (multiplexed on macOS/Linux) | one persistent session | no network at all |
-| Job chaining | — | — | **yes**, with the no-queue scheduler |
+| Job chaining | via the queue's own flag | via the queue's own flag | the wrapper waits for the process |
 
 The OpenSSH backend runs `ssh` in batch mode on purpose: a background thread must
 never block on an invisible password prompt — and it also means **no password can

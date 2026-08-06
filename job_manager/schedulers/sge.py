@@ -7,6 +7,7 @@ layout, so it gets its own parser.
 from __future__ import annotations
 
 import re
+import time
 from typing import Dict, Iterable, List
 
 from ..models import SubmitPreset
@@ -87,6 +88,20 @@ class SgeScheduler(Scheduler):
             # job-ID prior name user state ...
             states[parts[0]] = canonical_state(parts[4], _STATE_MAP)
         return states
+
+    def start_time_directives(self, start_after: float) -> List[str]:
+        target = int(start_after or 0)
+        if target <= 0:
+            return []
+        # SGE -a takes [[CC]YY]MMDDhhmm[.SS].
+        return [f"#$ -a {time.strftime('%Y%m%d%H%M.%S', time.localtime(target))}"]
+
+    def dependency_directives(self, after_id: str) -> List[str]:
+        after_id = str(after_id or "").strip()
+        if not after_id or not self.valid_job_id(after_id):
+            return []
+        # SGE spells it -hold_jid, and holds on completion regardless of status.
+        return [f"#$ -hold_jid {after_id}"]
 
     def cancel_command(self, job_id: str) -> str:
         # Quoted: a job id is not always ours. One read from a job list file

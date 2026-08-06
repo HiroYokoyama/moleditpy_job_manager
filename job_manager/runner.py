@@ -51,11 +51,12 @@ def submit_job(
     preset: SubmitPreset,
     job: Job,
     local_files: Sequence[str],
-    wait_for_pid: str = "",
+    run_after: str = "",
+    start_after: float = 0.0,
 ) -> Job:
     """Create the remote directory, upload everything, enqueue the script.
 
-    ``wait_for_pid`` chains this job behind another process on the same
+    ``run_after`` chains this job behind another process on the same
     machine: the wrapper waits for it before running anything. Only the
     no-queue scheduler uses it -- a real queue does its own serialising.
     """
@@ -76,7 +77,8 @@ def submit_job(
         preset,
         input_name,
         job.log_file,
-        wait_for_pid=wait_for_pid if scheduler.supports_chaining else "",
+        run_after=run_after if scheduler.supports_chaining else "",
+        start_after=start_after or job.start_after,
     )
     job.command = script
     script_remote = remote_paths.join(job.remote_dir, scheduler.script_name)

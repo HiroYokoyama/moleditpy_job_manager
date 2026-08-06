@@ -5,10 +5,11 @@ from __future__ import annotations
 import os
 from typing import List, Optional
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QDateTime, Qt
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDateTimeEdit,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -177,15 +178,42 @@ class SubmitDialog(QDialog):
         self.chk_auto_download.setChecked(True)
         self.chk_chain = QCheckBox("Run after the job already queued on this host")
         self.chk_chain.setToolTip(
-            "With no queue on the host, submitting twice starts both jobs at once. "
-            "Chaining makes this one wait for the previous job to finish first.\n\n"
-            "The waiting happens on the machine itself, so the chain keeps going "
-            "even with MoleditPy closed."
+            "Hold this job until the one already queued on this host has finished.\n\n"
+            "On SLURM, PBS and SGE this becomes the queue's own dependency flag "
+            "(--dependency=afterok, -W depend, -hold_jid). With no queue, the "
+            "wrapper waits for the previous job's process instead -- which is "
+            "the case that needs it most, since two submissions would otherwise "
+            "start at once and fight over the same cores.\n\n"
+            "Either way the waiting happens on the host, so the chain keeps "
+            "moving with MoleditPy closed."
         )
         self.chk_chain.setChecked(True)
         self.lbl_chain = QLabel("")
         self.lbl_chain.setWordWrap(True)
         self.lbl_chain.setStyleSheet("color: palette(mid);")
+
+        self.chk_start_at = QCheckBox("Do not start before")
+        self.chk_start_at.setToolTip(
+            "Hand the job over now, but tell the queue not to start it until "
+            "this moment -- for a nightly window, or to stay off a shared "
+            "machine during the day.\n\n"
+            "Uses the scheduler's own flag (--begin, -a) where there is one, "
+            "and waits in the wrapper where there is not. Either way the job is "
+            "submitted immediately, so MoleditPy need not be running later."
+        )
+        self.dt_start_at = QDateTimeEdit()
+        self.dt_start_at.setCalendarPopup(True)
+        self.dt_start_at.setDisplayFormat("yyyy-MM-dd HH:mm")
+        self.dt_start_at.setDateTime(QDateTime.currentDateTime().addSecs(3600))
+        self.dt_start_at.setEnabled(False)
+        self.chk_start_at.toggled.connect(self.dt_start_at.setEnabled)
+        self.chk_start_at.toggled.connect(self._refresh_preview)
+        self.dt_start_at.dateTimeChanged.connect(self._refresh_preview)
+        start_row = QWidget()
+        start_layout = QHBoxLayout(start_row)
+        start_layout.setContentsMargins(0, 0, 0, 0)
+        start_layout.addWidget(self.chk_start_at)
+        start_layout.addWidget(self.dt_start_at, 1)
 
         for widget in (
             self.txt_queue,
@@ -219,6 +247,7 @@ class SubmitDialog(QDialog):
         form.addRow("", self.chk_auto_download)
         form.addRow("", self.chk_chain)
         form.addRow("", self.lbl_chain)
+        form.addRow("", start_row)
         return page
 
     def _build_preview_tab(self) -> QWidget:
@@ -262,8 +291,16 @@ class SubmitDialog(QDialog):
         self._on_preset_changed()
         self._update_chain_row()
 
+    #: How each scheduler is told to wait, for the hint under the checkbox.
+    _CHAIN_MECHANISM = {
+        "slurm": "--dependency=afterok",
+        "pbs": "-W depend=afterok",
+        "sge": "-hold_jid",
+        "shell": "the wrapper waits for its process",
+    }
+
     def _update_chain_row(self) -> None:
-        """Offer chaining only where nothing else serialises the work."""
+        """Every scheduler can chain; only the mechanism differs."""
         host = self.current_host()
         predecessor = self.chain_predecessor()
         try:
@@ -277,12 +314,37 @@ class SubmitDialog(QDialog):
         if not chainable:
             return
         if predecessor is None:
-            self.lbl_chain.setText("Nothing running on this host: this job starts immediately.")
-        else:
-            self.lbl_chain.setText(
-                f"Would start after “{predecessor.name}” "
-                f"({predecessor.remote_job_id or 'not yet submitted'}) finishes."
-            )
+            self.lbl_chain.setText("Nothing queued on this host: this job starts straight away.")
+            return
+        how = self._CHAIN_MECHANISM.get(host.scheduler, "") if host else ""
+        self.lbl_chain.setText(
+            f"Would start after “{predecessor.name}” "
+            f"({predecessor.remote_job_id or 'not yet submitted'}) finishes"
+            + (f", via {how}." if how else ".")
+        )
+
+    def chain_requested(self) -> bool:
+        """One predicate for both the preview and the submission.
+
+        They asked slightly different questions before, so the Script preview
+        could show a dependency that submitting would not actually apply.
+        """
+        # isHidden(), not isVisible(): a widget on a tab the user has switched
+        # away from is not "visible", so reading isVisible() here dropped the
+        # dependency for anyone who checked the Script preview tab before
+        # pressing Submit -- which is precisely what that tab invites.
+        return (
+            not self.chk_chain.isHidden()
+            and self.chk_chain.isEnabled()
+            and self.chk_chain.isChecked()
+            and self.chain_predecessor() is not None
+        )
+
+    def selected_start_time(self) -> float:
+        """Epoch second the job must not start before, or 0 for "now"."""
+        if not self.chk_start_at.isChecked():
+            return 0.0
+        return float(self.dt_start_at.dateTime().toSecsSinceEpoch())
 
     def chain_predecessor(self) -> Optional["Job"]:
         """The job this one would queue behind, or None."""
@@ -453,11 +515,14 @@ class SubmitDialog(QDialog):
         except ValueError as exc:
             self.txt_preview.setPlainText(str(exc))
             return
+        predecessor = self.chain_predecessor() if self.chain_requested() else None
         script = scheduler.build_script(
             self.txt_job_name.text().strip() or "moleditpy_job",
             self.collect_preset(),
             input_name,
             "job.log",
+            run_after=(predecessor.remote_job_id if predecessor else ""),
+            start_after=self.selected_start_time(),
         )
         self.txt_preview.setPlainText(script)
 
@@ -501,8 +566,8 @@ class SubmitDialog(QDialog):
         if not ensure_password(self.service, host, self):
             return
         name = self.txt_job_name.text().strip() or os.path.basename(files[0])
-        after = None
-        if self.chk_chain.isVisible() and self.chk_chain.isEnabled() and self.chk_chain.isChecked():
-            after = self.chain_predecessor()
-        self.service.submit(host, preset, name, files, after_job=after)
+        after = self.chain_predecessor() if self.chain_requested() else None
+        self.service.submit(
+            host, preset, name, files, after_job=after, start_after=self.selected_start_time()
+        )
         self.accept()

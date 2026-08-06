@@ -132,6 +132,46 @@ class TestDocumentedTemplates(unittest.TestCase):
         self.assertIn("[input]", text)
 
 
+class TestDocumentedChainingAndScheduling(unittest.TestCase):
+    """The per-scheduler tables are the sort of thing that silently rots."""
+
+    def setUp(self):
+        self.workflow = read(DOCS / "WORKFLOW.md")
+
+    def test_every_dependency_mechanism_is_documented(self):
+        for name in ("slurm", "pbs", "sge"):
+            directive = get_scheduler(name).dependency_directives("12345")[0]
+            # The doc writes <id> where a real script has the number.
+            self.assertIn(directive.replace("12345", "<id>"), self.workflow, name)
+
+    def test_the_no_queue_mechanism_is_described(self):
+        self.assertIn("waits for the previous job's process", self.workflow)
+        self.assertEqual(get_scheduler("shell").dependency_directives("12345"), [])
+
+    def test_every_start_time_format_is_documented(self):
+        import re
+
+        for name, sample in (
+            ("slurm", "#SBATCH --begin="),
+            ("pbs", "#PBS -a "),
+            ("sge", "#$ -a "),
+        ):
+            emitted = get_scheduler(name).start_time_directives(1786000000)[0]
+            self.assertTrue(emitted.startswith(sample), emitted)
+            self.assertIn(sample, self.workflow, name)
+            # and the doc's example must be in the same shape the code emits
+            shape = re.sub(r"\d", "0", emitted)
+            documented = [
+                re.sub(r"\d", "0", line) for line in self.workflow.splitlines() if sample in line
+            ]
+            self.assertIn(shape, " ".join(documented), name)
+
+    def test_the_queued_state_is_documented(self):
+        from job_manager.models import STATE_QUEUED
+
+        self.assertIn(f"`{STATE_QUEUED}`", self.workflow)
+
+
 class TestDocumentedPaths(unittest.TestCase):
     def test_the_data_directory(self):
         expected = "~/.moleditpy/job_manager"

@@ -49,9 +49,10 @@ from .store import (
     RECOMMENDED_MIN_POLL_INTERVAL,
 )
 
-#: Job lists this window opens. .json covers pre-extension archives.
-ARCHIVE_EXTENSIONS = (JOB_EXTENSION, ".json")
-ARCHIVE_FILTER = f"Job lists (*{JOB_EXTENSION} *.json);;All files (*)"
+#: Job lists this window opens -- archived or not. .json covers the files
+#: written before the extension existed.
+JOB_LIST_EXTENSIONS = (JOB_EXTENSION, ".json")
+JOB_LIST_FILTER = f"Job lists (*{JOB_EXTENSION} *.json);;All files (*)"
 
 COLUMNS = ("Name", "Host", "Queue ID", "State", "Elapsed", "Updated")
 
@@ -306,11 +307,12 @@ class JobsDialog(QDialog):
         self.btn_resubmit.clicked.connect(self._resubmit_selected)
         self.btn_remove = QPushButton("Remove")
         self.btn_remove.clicked.connect(self._remove_selected)
-        self.btn_export_json = QPushButton("Save As...")
-        self.btn_export_json.setToolTip(
-            "Write the job list as raw JSON, the same records as jobs.json."
+        self.btn_save_as = QPushButton("Save As...")
+        self.btn_save_as.setToolTip(
+            f"Save the job list to a {JOB_EXTENSION} file: the same records the "
+            "plugin stores, and openable again from here or File > Import."
         )
-        self.btn_export_json.clicked.connect(lambda: self._export(".json"))
+        self.btn_save_as.clicked.connect(lambda: self._export(JOB_EXTENSION))
         self.btn_export_csv = QPushButton("Export CSV")
         self.btn_export_csv.setToolTip("Write one row per job: state, exit code, timings, paths.")
         self.btn_export_csv.clicked.connect(lambda: self._export(".csv"))
@@ -334,7 +336,7 @@ class JobsDialog(QDialog):
             actions.addWidget(button)
         actions.addSpacing(16)
         for button in (
-            self.btn_export_json,
+            self.btn_save_as,
             self.btn_export_csv,
             self.btn_archive,
             self.btn_clear,
@@ -415,14 +417,14 @@ class JobsDialog(QDialog):
                 self.btn_tail,
                 self.btn_resubmit,
                 self.btn_remove,
-                self.btn_export_json,
+                self.btn_save_as,
                 self.btn_export_csv,
                 self.btn_clear,
             ):
                 button.setEnabled(False)
             return
 
-        for button in (self.btn_export_json, self.btn_export_csv, self.btn_clear):
+        for button in (self.btn_save_as, self.btn_export_csv, self.btn_clear):
             button.setEnabled(True)
         job = self.selected_job()
         has_job = job is not None
@@ -563,7 +565,7 @@ class JobsDialog(QDialog):
         )
         path, _ = QFileDialog.getSaveFileName(
             self,
-            f"Export the {label}",
+            f"Save the {label}",
             default,
             f"{label.title()} (*{extension});;All files (*)",
         )
@@ -590,7 +592,7 @@ class JobsDialog(QDialog):
             )
             return
         path, _ = QFileDialog.getOpenFileName(
-            self, "Open an archived job list", directory, ARCHIVE_FILTER
+            self, "Open an archived job list", directory, JOB_LIST_FILTER
         )
         if path:
             self.open_job_list(path)
@@ -737,7 +739,7 @@ class JobsDialog(QDialog):
         if len(urls) != 1:
             return ""
         path = urls[0].toLocalFile()
-        return path if path.lower().endswith(ARCHIVE_EXTENSIONS) else ""
+        return path if path.lower().endswith(JOB_LIST_EXTENSIONS) else ""
 
     def dragEnterEvent(self, event) -> None:
         if self._dropped_job_list(event):

@@ -24,7 +24,7 @@ from job_manager.models import (
     SubmitPreset,
 )
 from job_manager.schedulers import get_scheduler
-from job_manager.schedulers.base import CHAIN_POLL_SECONDS
+from job_manager.schedulers.base import WAIT_POLL_SECONDS
 from job_manager.store import JobStore
 
 from .fakes import FakeTransport, make_host
@@ -32,28 +32,158 @@ from .fakes import FakeTransport, make_host
 BASH = shutil.which("bash")
 
 
-class TestOnlyTheQueuelessSchedulerChains(unittest.TestCase):
-    def test_the_plain_scheduler_supports_it(self):
-        self.assertTrue(get_scheduler("shell").supports_chaining)
+class TestEverySchedulerCanRunOneJobAfterAnother(unittest.TestCase):
+    """Same feature, different mechanism: a queue takes a directive, the
+    no-queue mode has the wrapper wait for the process itself."""
 
-    def test_the_real_queues_do_not(self):
+    def script(self, name, after="12345"):
+        return get_scheduler(name).build_script(
+            "j", SubmitPreset(command_template="orca mol.inp"), "mol.inp", "job.log", after
+        )
+
+    def test_all_four_support_it(self):
+        for name in ("slurm", "pbs", "sge", "shell"):
+            self.assertTrue(get_scheduler(name).supports_chaining, name)
+
+    def test_slurm_uses_a_dependency(self):
+        self.assertIn("#SBATCH --dependency=afterok:12345", self.script("slurm"))
+
+    def test_pbs_uses_depend(self):
+        self.assertIn("#PBS -W depend=afterok:12345", self.script("pbs"))
+
+    def test_sge_uses_hold_jid(self):
+        self.assertIn("#$ -hold_jid 12345", self.script("sge"))
+
+    def test_the_no_queue_mode_waits_on_the_process(self):
+        self.assertIn("kill -0 12345", self.script("shell"))
+        self.assertNotIn("hold_jid", self.script("shell"))
+
+    def test_a_directive_must_precede_the_first_command_or_the_queue_ignores_it(self):
+        # Schedulers stop reading directives at the first executable line, and
+        # a silently ignored dependency means the jobs run in the wrong order.
         for name in ("slurm", "pbs", "sge"):
-            self.assertFalse(get_scheduler(name).supports_chaining, name)
+            lines = self.script(name).splitlines()
+            directive = next(i for i, line in enumerate(lines) if "12345" in line)
+            first_command = next(
+                i for i, line in enumerate(lines) if line.strip() and not line.startswith("#")
+            )
+            self.assertLess(directive, first_command, name)
 
-    def test_a_queue_scheduler_ignores_a_pid_even_if_asked(self):
+    def test_extra_directives_are_also_in_the_directive_block(self):
+        # A hand-written `#$ -hold_jid` still has to be honoured.
+        preset = SubmitPreset(
+            command_template="orca mol.inp", extra_directives=["#$ -hold_jid 999"]
+        )
+        lines = get_scheduler("sge").build_script("j", preset, "mol.inp", "job.log").splitlines()
+        directive = lines.index("#$ -hold_jid 999")
+        first_command = next(
+            i for i, line in enumerate(lines) if line.strip() and not line.startswith("#")
+        )
+        self.assertLess(directive, first_command)
+
+    def test_an_unusable_job_id_is_left_out_rather_than_written_into_a_directive(self):
+        for payload in ("; rm -rf ~", "$(id)", "12345 && curl evil", ""):
+            for name in ("slurm", "pbs", "sge"):
+                self.assertEqual(get_scheduler(name).dependency_directives(payload), [], payload)
+
+    def test_the_id_shapes_a_queue_really_uses_are_accepted(self):
+        for job_id in ("12345", "123_4", "123.head.cluster", "123[]"):
+            self.assertTrue(get_scheduler("slurm").dependency_directives(job_id), job_id)
+
+    def test_a_queue_job_carries_the_dependency_end_to_end(self):
         from job_manager import runner
 
         host = make_host(scheduler="slurm")
         transport = FakeTransport(host).when("sbatch", stdout="99\n")
         job = Job(name="j", scheduler="slurm")
-        runner.submit_job(transport, host, SubmitPreset(), job, [__file__], wait_for_pid="4242")
-        self.assertNotIn("kill -0 4242", job.command)
+        runner.submit_job(transport, host, SubmitPreset(), job, [__file__], run_after="4242")
+        self.assertIn("#SBATCH --dependency=afterok:4242", job.command)
+
+
+class TestScheduledStart(unittest.TestCase):
+    """ "Not before this time", using the queue's own flag where there is one."""
+
+    def setUp(self):
+        self.target = time.time() + 3600
+        self.stamp = time.localtime(int(self.target))
+
+    def script(self, name):
+        return get_scheduler(name).build_script(
+            "j",
+            SubmitPreset(command_template="orca mol.inp"),
+            "mol.inp",
+            "job.log",
+            start_after=self.target,
+        )
+
+    def test_slurm_uses_begin(self):
+        expected = time.strftime("#SBATCH --begin=%Y-%m-%dT%H:%M:%S", self.stamp)
+        self.assertIn(expected, self.script("slurm"))
+
+    def test_pbs_uses_its_own_timestamp_format(self):
+        # -a takes [[[[CC]YY]MM]DD]hhmm[.SS], not ISO.
+        expected = time.strftime("#PBS -a %Y%m%d%H%M.%S", self.stamp)
+        self.assertIn(expected, self.script("pbs"))
+
+    def test_sge_uses_its_own_timestamp_format(self):
+        expected = time.strftime("#$ -a %Y%m%d%H%M.%S", self.stamp)
+        self.assertIn(expected, self.script("sge"))
+
+    def test_the_no_queue_mode_sleeps_until_the_moment(self):
+        self.assertIn(f'while [ "$(date +%s)" -lt {int(self.target)} ]', self.script("shell"))
+
+    def test_it_compares_epochs_so_timezones_do_not_matter(self):
+        # The comment shows a local time for the reader; the line that actually
+        # runs must compare epoch seconds, or a remote machine in another
+        # timezone would start the job at the wrong moment.
+        executable = [
+            line
+            for line in self.script("shell").splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        ]
+        waits = [line for line in executable if "date +%s" in line]
+        self.assertEqual(len(waits), 1)
+        self.assertIn(str(int(self.target)), waits[0])
+        self.assertNotIn(time.strftime("%H:%M", self.stamp), waits[0])
+
+    def test_no_time_means_no_waiting(self):
+        for name in ("slurm", "pbs", "sge", "shell"):
+            script = get_scheduler(name).build_script(
+                "j", SubmitPreset(command_template="true"), "mol.inp", "job.log"
+            )
+            self.assertNotIn("--begin", script, name)
+            self.assertNotIn("date +%s", script, name)
+
+    def test_a_time_in_the_past_is_still_emitted_and_simply_passes(self):
+        script = get_scheduler("shell").build_script(
+            "j", SubmitPreset(command_template="true"), "mol.inp", "job.log", start_after=1000
+        )
+        self.assertIn('while [ "$(date +%s)" -lt 1000 ]', script)
+
+    def test_scheduled_and_chained_together(self):
+        script = get_scheduler("slurm").build_script(
+            "j",
+            SubmitPreset(command_template="true"),
+            "mol.inp",
+            "job.log",
+            run_after="12345",
+            start_after=self.target,
+        )
+        self.assertIn("--dependency=afterok:12345", script)
+        self.assertIn("--begin=", script)
+
+    def test_the_job_record_remembers_the_time(self):
+        job = Job(name="later", start_after=self.target)
+        self.assertEqual(Job.from_dict(job.to_dict()).start_after, self.target)
+
+    def test_an_older_record_without_the_field_loads(self):
+        self.assertEqual(Job.from_dict({"id": "j1"}).start_after, 0.0)
 
 
 class TestTheWaitBlock(unittest.TestCase):
-    def script(self, wait_for_pid=""):
+    def script(self, run_after=""):
         return get_scheduler("shell").build_script(
-            "j", SubmitPreset(command_template="true"), "mol.inp", "job.log", wait_for_pid
+            "j", SubmitPreset(command_template="true"), "mol.inp", "job.log", run_after
         )
 
     def test_no_pid_means_no_waiting(self):
@@ -61,9 +191,7 @@ class TestTheWaitBlock(unittest.TestCase):
 
     def test_the_wait_loop_is_generated(self):
         script = self.script("4242")
-        self.assertIn(
-            f"while kill -0 4242 2>/dev/null; do sleep {CHAIN_POLL_SECONDS}; done", script
-        )
+        self.assertIn(f"while kill -0 4242 2>/dev/null; do sleep {WAIT_POLL_SECONDS}; done", script)
 
     def test_it_comes_before_the_payload_and_the_pre_commands(self):
         preset = SubmitPreset(command_template="orca mol.inp", pre_commands=["module load orca"])
@@ -173,7 +301,7 @@ class TestAChainRunsInOrder(unittest.TestCase):
             SubmitPreset(command_template="date +%s > second_started"),
             "mol.inp",
             "job.log",
-            wait_for_pid=pid,
+            run_after=pid,
         )
         second = os.path.join(workdir, "second.sh")
         with open(second, "w", encoding="utf-8", newline="\n") as handle:
@@ -210,14 +338,14 @@ class TestAChainRunsInOrder(unittest.TestCase):
             SubmitPreset(command_template="date +%s > ran"),
             "mol.inp",
             "job.log",
-            wait_for_pid="999999",  # no such process
+            run_after="999999",  # no such process
         )
         path = os.path.join(workdir, "run.sh")
         with open(path, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(script)
         start = time.time()
         subprocess.run([BASH, path], capture_output=True, timeout=30)
-        self.assertLess(time.time() - start, CHAIN_POLL_SECONDS + 2)
+        self.assertLess(time.time() - start, WAIT_POLL_SECONDS + 2)
         self.assertTrue(os.path.exists(os.path.join(workdir, "ran")))
 
 

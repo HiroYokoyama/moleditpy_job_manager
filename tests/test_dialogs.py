@@ -706,7 +706,7 @@ class TestExportAndClearButtons(DialogTestCase):
         return target
 
     def test_the_three_buttons_exist(self):
-        self.assertTrue(self.dialog.btn_export_json.isEnabled())
+        self.assertTrue(self.dialog.btn_save_as.isEnabled())
         self.assertTrue(self.dialog.btn_export_csv.isEnabled())
         self.assertTrue(self.dialog.btn_clear.isEnabled())
 
@@ -816,7 +816,7 @@ class TestOpeningAJobList(DialogTestCase):
             self.dialog.btn_tail,
             self.dialog.btn_resubmit,
             self.dialog.btn_remove,
-            self.dialog.btn_export_json,
+            self.dialog.btn_save_as,
             self.dialog.btn_export_csv,
             self.dialog.btn_clear,
         ):
@@ -835,7 +835,7 @@ class TestOpeningAJobList(DialogTestCase):
         self.dialog._exit_archive()
         self.assertFalse(self.dialog.viewing_archive())
         self.assertTrue(self.dialog.lbl_archive.isHidden())
-        self.assertTrue(self.dialog.btn_export_json.isEnabled())
+        self.assertTrue(self.dialog.btn_save_as.isEnabled())
 
     def test_an_unflagged_list_is_offered_for_import(self):
         path = self.exported_file()
@@ -928,6 +928,124 @@ class TestDropOpensAJobList(DialogTestCase):
     def test_a_pre_extension_json_list_is_still_accepted(self):
         path = self.store.export_jobs(os.path.join(self.tmp, "old.json"))
         self.assertTrue(self.dialog._dropped_job_list(self.drop_event(path)))
+
+
+class TestChainingAndScheduledStartInTheWizard(DialogTestCase):
+    def setUp(self):
+        super().setUp()
+        self.store.add_job(
+            Job(
+                id="prev",
+                name="geom-opt",
+                host_id=self.host.id,
+                state=STATE_RUNNING,
+                remote_job_id="98765",
+                submitted_at=1000.0,
+            )
+        )
+        self.dialog = SubmitDialog(self.service)
+        self.addCleanup(self.dialog.close)
+        self.dialog.prefill(files=[self.make_input()], name="freq", host_id=self.host.id)
+
+    def preview(self):
+        self.dialog._refresh_preview()
+        return self.dialog.txt_preview.toPlainText()
+
+    def test_the_predecessor_is_named(self):
+        self.assertIn("geom-opt", self.dialog.lbl_chain.text())
+        self.assertIn("98765", self.dialog.lbl_chain.text())
+
+    def test_the_hint_names_the_mechanism(self):
+        self.assertIn("depend", self.dialog.lbl_chain.text().lower())
+
+    def test_the_dependency_reaches_the_preview(self):
+        self.dialog.chk_chain.setChecked(True)
+        self.assertIn("--dependency=afterok:98765", self.preview())
+
+    def test_unticking_removes_it(self):
+        self.dialog.chk_chain.setChecked(False)
+        self.assertNotIn("dependency", self.preview())
+
+    def test_nothing_to_chain_behind_disables_the_box(self):
+        self.store.jobs["prev"].touch("DONE")
+        self.dialog._update_chain_row()
+        self.assertFalse(self.dialog.chk_chain.isEnabled())
+        self.assertFalse(self.dialog.chain_requested())
+
+    def test_the_preview_and_the_submission_agree(self):
+        # They asked different questions once, so the preview could show a
+        # dependency that submitting would not apply.
+        self.store.jobs["prev"].touch("DONE")
+        self.dialog._update_chain_row()
+        self.dialog.chk_chain.setChecked(True)
+        self.assertNotIn("dependency", self.preview())
+        submitted = []
+        self.service.submit = lambda *a, **k: submitted.append(k)
+        self.dialog._submit()
+        self.assertIsNone(submitted[0]["after_job"])
+
+    def test_switching_to_the_preview_tab_does_not_drop_the_dependency(self):
+        # A widget on a tab the user has switched away from is not "visible",
+        # so reading isVisible() dropped the chaining for anyone who checked
+        # the script before pressing Submit.
+        from PyQt6.QtWidgets import QTabWidget
+
+        self.dialog.chk_chain.setChecked(True)
+        self.dialog.show()
+        self.addCleanup(self.dialog.hide)
+        tabs = self.dialog.findChild(QTabWidget)
+        for index in range(tabs.count()):
+            tabs.setCurrentIndex(index)
+            self.assertTrue(
+                self.dialog.chain_requested(), f"dependency lost on tab {tabs.tabText(index)!r}"
+            )
+
+    def test_a_genuinely_hidden_checkbox_still_means_no(self):
+        self.dialog.chk_chain.setVisible(False)
+        self.assertFalse(self.dialog.chain_requested())
+
+    def test_a_scheduled_start_reaches_the_preview(self):
+        from PyQt6.QtCore import QDateTime
+
+        self.dialog.chk_start_at.setChecked(True)
+        self.dialog.dt_start_at.setDateTime(QDateTime.currentDateTime().addSecs(7200))
+        self.assertIn("--begin=", self.preview())
+
+    def test_the_time_field_follows_the_checkbox(self):
+        self.dialog.chk_start_at.setChecked(False)
+        self.assertFalse(self.dialog.dt_start_at.isEnabled())
+        self.dialog.chk_start_at.setChecked(True)
+        self.assertTrue(self.dialog.dt_start_at.isEnabled())
+
+    def test_unchecked_means_start_now(self):
+        self.dialog.chk_start_at.setChecked(False)
+        self.assertEqual(self.dialog.selected_start_time(), 0.0)
+        self.assertNotIn("--begin", self.preview())
+
+    def test_both_are_passed_to_submit(self):
+        from PyQt6.QtCore import QDateTime
+
+        self.dialog.chk_chain.setChecked(True)
+        self.dialog.chk_start_at.setChecked(True)
+        self.dialog.dt_start_at.setDateTime(QDateTime.currentDateTime().addSecs(3600))
+        submitted = []
+        self.service.submit = lambda *a, **k: submitted.append(k)
+        self.dialog._submit()
+        self.assertEqual(submitted[0]["after_job"].id, "prev")
+        self.assertGreater(submitted[0]["start_after"], 0)
+
+    def test_the_job_record_keeps_both(self):
+        job = self.service.submit(
+            self.host,
+            make_preset(),
+            "later",
+            [self.make_input()],
+            after_job=self.store.jobs["prev"],
+            start_after=1786000000.0,
+        )
+        self.assertEqual(job.after_job_id, "prev")
+        self.assertEqual(job.start_after, 1786000000.0)
+        self.assertEqual(JobStore(self.tmp).jobs[job.id].start_after, 1786000000.0)
 
 
 class TestCommandTemplateDropdown(DialogTestCase):

@@ -83,6 +83,7 @@ class JobService(QObject):
         local_files: List[str],
         auto_download: Optional[bool] = None,
         after_job: Optional[Job] = None,
+        start_after: float = 0.0,
     ) -> Job:
         """Create the job record and start the upload/submit on a worker.
 
@@ -101,6 +102,7 @@ class JobService(QObject):
             local_dir=self._local_dir_for(name or "job"),
             preset=preset.to_dict(),
             after_job_id=after_job.id if after_job is not None else "",
+            start_after=float(start_after or 0.0),
         )
         job.touch(STATE_UPLOADING)
         self.store.add_job(job)
@@ -112,11 +114,17 @@ class JobService(QObject):
             # reading it too early chained the second job behind nothing at
             # all -- so both ran at once, which is the one thing chaining is
             # for.
-            wait_for_pid = self._chain_pid(after_job)
+            run_after = self._chain_pid(after_job)
             transport = self.transport_for(host)
             try:
                 return submit_job(
-                    transport, host, preset, job, local_files, wait_for_pid=wait_for_pid
+                    transport,
+                    host,
+                    preset,
+                    job,
+                    local_files,
+                    run_after=run_after,
+                    start_after=job.start_after,
                 )
             finally:
                 transport.close()

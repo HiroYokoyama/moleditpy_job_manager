@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import Dict, Iterable, List
 
 from ..models import SubmitPreset
@@ -88,6 +89,19 @@ class PbsScheduler(Scheduler):
             states[job_id] = canonical_state(parts[-2], _STATE_MAP)
             states.setdefault(job_id.split(".")[0], states[job_id])
         return states
+
+    def start_time_directives(self, start_after: float) -> List[str]:
+        target = int(start_after or 0)
+        if target <= 0:
+            return []
+        # PBS -a takes [[[[CC]YY]MM]DD]hhmm[.SS], not an ISO timestamp.
+        return [f"#PBS -a {time.strftime('%Y%m%d%H%M.%S', time.localtime(target))}"]
+
+    def dependency_directives(self, after_id: str) -> List[str]:
+        after_id = str(after_id or "").strip()
+        if not after_id or not self.valid_job_id(after_id):
+            return []
+        return [f"#PBS -W depend=afterok:{after_id}"]
 
     def cancel_command(self, job_id: str) -> str:
         # Quoted: a job id is not always ours. One read from a job list file

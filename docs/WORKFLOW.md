@@ -99,24 +99,52 @@ cannot find one.
 
 ### Running jobs one after another
 
-On a host with **no queue** — that includes this machine — two submissions would
-otherwise start at once and fight over the same cores. Tick **Run after the job
-already queued on this host** in the wizard and the job waits for the previous
-one to finish first. The wizard names the job it will follow.
+Tick **Run after the job already queued on this host** and the job is held until
+the previous one has finished. The wizard names the job it will follow and how
+it will be held.
+
+Each scheduler is told in its own language:
+
+| Scheduler | Mechanism |
+|---|---|
+| SLURM | `#SBATCH --dependency=afterok:<id>` |
+| PBS / Torque | `#PBS -W depend=afterok:<id>` |
+| SGE / UGE | `#$ -hold_jid <id>` |
+| None (background) | the wrapper waits for the previous job's process |
 
 Submit again and the third job queues behind the *second*, not the first, so a
-chain of any length lines up in order. A job still waiting shows as **QUEUED**
-in the table rather than RUNNING, since its wrapper is alive but the calculation
-has not started.
+chain of any length lines up in order.
 
-The waiting happens on the machine itself, not in MoleditPy: close the
+It matters most where there is **no queue** — including this machine — because
+nothing else would stop two submissions starting at once and fighting over the
+same cores. A job still waiting there shows as **QUEUED** rather than RUNNING,
+since its wrapper is alive but the calculation has not begun.
+
+The waiting always happens on the host, never in MoleditPy: close the
 application, log out, lose the network, and the chain keeps moving. A
-predecessor that is killed or already gone does not hold anything up — the next
-job simply starts.
+predecessor that is killed or already gone does not hold anything up.
 
-Real schedulers do not offer this, because SLURM, PBS and SGE already decide the
-order themselves. For a dependency there, put your scheduler's own flag in
-*Extra directives*, e.g. `#SBATCH --dependency=afterok:12345`.
+You can still write a dependency by hand in *Extra directives* — anything you
+put there lands in the directive block, ahead of the first command, which is
+where a scheduler stops reading.
+
+### Starting later
+
+Tick **Do not start before** and pick a moment. The job is handed over
+immediately — MoleditPy need not be running when it starts — and the scheduler
+is told to hold it:
+
+| Scheduler | Mechanism |
+|---|---|
+| SLURM | `#SBATCH --begin=2026-08-07T22:00:00` |
+| PBS / Torque | `#PBS -a 202608072200.00` |
+| SGE / UGE | `#$ -a 202608072200.00` |
+| None (background) | the wrapper sleeps until that moment |
+
+Useful for a nightly window, or for staying off a shared workstation during the
+day. The no-queue wait compares epoch seconds, so a machine in another timezone
+still starts at the instant you meant. Chaining and a start time can be combined:
+"after that job, and not before 10 pm".
 
 ## 4. Watch
 

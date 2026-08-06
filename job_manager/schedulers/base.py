@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import posixpath
 import re
+import time
 from abc import ABC, abstractmethod
 from typing import Dict, Iterable, List
 
@@ -33,10 +34,16 @@ from ..models import (
 #: sentinel file rather than guessing.
 STATE_UNKNOWN = "UNKNOWN"
 
-#: How often a chained job checks whether its predecessor has exited. Long
-#: enough to cost nothing (kill -0 is a shell builtin), short enough that a
-#: queue of short jobs still moves briskly.
-CHAIN_POLL_SECONDS = 5
+#: How often a waiting wrapper looks again -- at its predecessor's process, or
+#: at the clock. Long enough to cost nothing (both checks are shell builtins),
+#: short enough that a queue of short jobs still moves briskly.
+WAIT_POLL_SECONDS = 5
+
+#: Job ids a queue will accept: digits, array suffixes (123_4, 123[]), and the
+#: host suffix PBS appends (123.head.cluster). Anything else is not put into a
+#: directive line -- a queue silently ignores a directive it cannot parse, and
+#: a silently ignored dependency means the jobs run in the wrong order.
+_JOB_ID_RE = re.compile(r"^[A-Za-z0-9_.\[\]:-]+$")
 
 
 #: Both spellings are accepted: ``{input}`` and ``[input]``. Square brackets
@@ -97,9 +104,10 @@ class Scheduler(ABC):
     def directives(self, job_name: str, preset: SubmitPreset, log_file: str) -> List[str]:
         """The ``#SBATCH`` / ``#PBS`` / ``#$`` block, without the shebang."""
 
-    #: A queue already serialises work, so only the no-queue scheduler needs
-    #: the wrapper to wait for its predecessor itself.
-    supports_chaining: bool = False
+    #: Every scheduler can run one job after another; only the mechanism
+    #: differs. A queue takes a directive, the no-queue mode has the wrapper
+    #: wait for the process itself.
+    supports_chaining: bool = True
 
     def build_script(
         self,
@@ -107,11 +115,14 @@ class Scheduler(ABC):
         preset: SubmitPreset,
         input_name: str,
         log_file: str,
-        wait_for_pid: str = "",
+        run_after: str = "",
+        start_after: float = 0.0,
     ) -> str:
         """Assemble the complete run script, sentinel included."""
         lines: List[str] = ["#!/bin/bash"]
         lines += self.directives(sanitize_name(job_name), preset, log_file)
+        lines += self.dependency_directives(run_after)
+        lines += self.start_time_directives(start_after)
         lines += [directive for directive in (preset.extra_directives or []) if directive.strip()]
         lines += [
             "",
@@ -131,7 +142,8 @@ class Scheduler(ABC):
             "trap 'exit 129' HUP",
             "",
         ]
-        lines += self._wait_block(wait_for_pid)
+        lines += self._start_time_block(start_after)
+        lines += self._predecessor_wait_block(run_after)
         for module in preset.modules or []:
             if module.strip():
                 lines.append(f"module load {module.strip()}")
@@ -145,7 +157,45 @@ class Scheduler(ABC):
         ]
         return "\n".join(lines)
 
-    def _wait_block(self, wait_for_pid: str) -> List[str]:
+    def dependency_directives(self, after_id: str) -> List[str]:
+        """Directive lines telling the queue to hold this job until ``after_id``.
+
+        Empty for the no-queue scheduler, which waits in the wrapper instead.
+        Directives have to precede the first executable line or the queue never
+        reads them, which :meth:`build_script` guarantees by placing them with
+        the rest of the directive block.
+        """
+        return []
+
+    def start_time_directives(self, start_after: float) -> List[str]:
+        """Directive lines telling the queue to hold this job until a time.
+
+        Empty for the no-queue scheduler, which sleeps in the wrapper instead.
+        """
+        return []
+
+    def _start_time_block(self, start_after: float) -> List[str]:
+        """Sleep until the requested time, for a scheduler that cannot wait.
+
+        Compares epoch seconds so a clock in another timezone, or a machine
+        whose idea of "now" differs from this one's, still starts the job at
+        the instant the user meant.
+        """
+        target = int(start_after or 0)
+        if target <= 0:
+            return []
+        return [
+            f"# Scheduled: hold until epoch {target}"
+            f" ({time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(target))} here).",
+            f'while [ "$(date +%s)" -lt {target} ]; do sleep {WAIT_POLL_SECONDS}; done',
+            "",
+        ]
+
+    @staticmethod
+    def valid_job_id(job_id: str) -> bool:
+        return bool(_JOB_ID_RE.match(str(job_id or "").strip()))
+
+    def _predecessor_wait_block(self, run_after: str) -> List[str]:
         """Hold the job until the process it was chained behind has exited.
 
         The waiting happens on the remote machine, not in the plugin: a queue
@@ -158,12 +208,12 @@ class Scheduler(ABC):
         gone -- finished, killed, never started -- fails the test immediately
         and the job simply runs.
         """
-        pid = str(wait_for_pid or "").strip()
+        pid = str(run_after or "").strip()
         if not pid.isdigit():
             return []
         return [
             f"# Chained: wait for job {pid} on this machine to finish first.",
-            f"while kill -0 {pid} 2>/dev/null; do sleep {CHAIN_POLL_SECONDS}; done",
+            f"while kill -0 {pid} 2>/dev/null; do sleep {WAIT_POLL_SECONDS}; done",
             f"touch {STARTED_NAME}",
             "",
         ]

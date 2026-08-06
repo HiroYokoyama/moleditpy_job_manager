@@ -207,6 +207,8 @@ class Job:
     #: Id of the job this one was chained behind, on the same host. Its
     #: wrapper waits for that job's process before running anything.
     after_job_id: str = ""
+    #: Epoch second before which the job must not start. 0 means "now".
+    start_after: float = 0.0
     last_error: str = ""
 
     @property
