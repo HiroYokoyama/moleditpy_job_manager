@@ -2,7 +2,9 @@
 
 [![Tests](https://github.com/HiroYokoyama/moleditpy_job_manager/actions/workflows/tests.yml/badge.svg)](https://github.com/HiroYokoyama/moleditpy_job_manager/actions/workflows/tests.yml)
 ![Coverage](https://img.shields.io/badge/coverage-%3E90%25-brightgreen)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![GitHub tag](https://img.shields.io/github/v/tag/HiroYokoyama/moleditpy_job_manager?label=version)](https://github.com/HiroYokoyama/moleditpy_job_manager/tags)
+[![GitHub Downloads](https://img.shields.io/github/downloads/HiroYokoyama/moleditpy_job_manager/total)](https://github.com/HiroYokoyama/moleditpy_job_manager/releases)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
 A [MoleditPy](https://github.com/HiroYokoyama/python_molecular_editor) plugin that
 runs your calculations on a remote cluster without leaving the editor.
@@ -141,4 +143,4 @@ one in the log.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Licensed under the GNU General Public License v3.0 — see [LICENSE](LICENSE) for details.
