@@ -39,7 +39,7 @@ from .models import (
     Job,
 )
 from .service import JobService
-from .store import MAX_POLL_INTERVAL, MIN_POLL_INTERVAL
+from .store import MAX_POLL_INTERVAL, MIN_POLL_INTERVAL, RECOMMENDED_MIN_POLL_INTERVAL
 
 COLUMNS = ("Name", "Host", "Queue ID", "State", "Elapsed", "Updated")
 
@@ -166,6 +166,7 @@ class JobsDialog(QDialog):
         self._build_ui()
         self._connect_service()
         self._update_buttons()
+        self._update_interval_warning()
 
     # --- construction -------------------------------------------------------
 
@@ -190,11 +191,15 @@ class JobsDialog(QDialog):
         self.spin_interval.setSuffix(" s")
         self.spin_interval.setValue(self.service.store.poll_interval)
         self.spin_interval.setToolTip(
-            "Status checks share one query per host. Keep this slow: a login node is "
-            "not a status API."
+            "One status query per host per cycle. Fast intervals are allowed, but a "
+            f"shared login node is not a status API -- {RECOMMENDED_MIN_POLL_INTERVAL} s "
+            "or slower is the courteous setting."
         )
         self.spin_interval.valueChanged.connect(self._on_interval_changed)
         toolbar.addWidget(self.spin_interval)
+        self.lbl_interval_warning = QLabel("")
+        self.lbl_interval_warning.setStyleSheet("color: #d08000;")
+        toolbar.addWidget(self.lbl_interval_warning)
         layout.addLayout(toolbar)
 
         splitter = QSplitter(Qt.Orientation.Vertical)
@@ -309,6 +314,21 @@ class JobsDialog(QDialog):
     def _on_interval_changed(self, value: int) -> None:
         self.service.store.set_pref("poll_interval", int(value))
         self.service.poller.reschedule()
+        self._update_interval_warning()
+
+    def _update_interval_warning(self) -> None:
+        """Fast polling is permitted, but never silent."""
+        if not self.service.store.poll_interval_is_aggressive:
+            self.lbl_interval_warning.setText("")
+            self.lbl_interval_warning.setToolTip("")
+            return
+        self.lbl_interval_warning.setText("⚠ fast")
+        self.lbl_interval_warning.setToolTip(
+            f"Polling faster than {RECOMMENDED_MIN_POLL_INTERVAL} s hits the login node "
+            "with a queue query every few seconds, for every host you have jobs on. "
+            "Fine against your own machine or while debugging; on a shared cluster it "
+            "is the kind of thing admins complain about."
+        )
 
     def _refresh_now(self) -> None:
         if not self.service.poller.refresh_now():

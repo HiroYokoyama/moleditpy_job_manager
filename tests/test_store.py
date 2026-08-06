@@ -9,6 +9,7 @@ from job_manager.models import STATE_DONE, STATE_RUNNING, HostProfile, Job, Subm
 from job_manager.store import (
     MAX_POLL_INTERVAL,
     MIN_POLL_INTERVAL,
+    RECOMMENDED_MIN_POLL_INTERVAL,
     JobStore,
     atomic_write_json,
     default_data_dir,
@@ -190,8 +191,28 @@ class TestPrefs(StoreTestCase):
         self.assertEqual(self.store.poll_interval, 120)
 
     def test_poll_interval_is_floored(self):
-        self.store.set_pref("poll_interval", 1)
+        self.store.set_pref("poll_interval", 0)
         self.assertEqual(self.store.poll_interval, MIN_POLL_INTERVAL)
+
+    def test_fast_polling_is_permitted(self):
+        # Allowed on purpose -- for a local host or a short debug job -- but
+        # the UI flags it; see poll_interval_is_aggressive.
+        self.store.set_pref("poll_interval", 10)
+        self.assertEqual(self.store.poll_interval, 10)
+
+    def test_a_fast_interval_is_flagged_as_aggressive(self):
+        self.store.set_pref("poll_interval", RECOMMENDED_MIN_POLL_INTERVAL - 1)
+        self.assertTrue(self.store.poll_interval_is_aggressive)
+
+    def test_the_recommended_interval_is_not_flagged(self):
+        self.store.set_pref("poll_interval", RECOMMENDED_MIN_POLL_INTERVAL)
+        self.assertFalse(self.store.poll_interval_is_aggressive)
+
+    def test_the_default_is_not_flagged(self):
+        self.assertFalse(self.store.poll_interval_is_aggressive)
+
+    def test_the_floor_is_below_the_recommendation(self):
+        self.assertLess(MIN_POLL_INTERVAL, RECOMMENDED_MIN_POLL_INTERVAL)
 
     def test_poll_interval_is_capped(self):
         self.store.set_pref("poll_interval", 10**6)

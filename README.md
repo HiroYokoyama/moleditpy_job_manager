@@ -52,7 +52,10 @@ silently trusted — you are shown the fingerprint and asked.
 A login node is not a status API, so:
 
 - one `squeue`/`qstat` per **host** per cycle, no matter how many jobs you have;
-- 120 s by default, and the interval cannot be set below 30 s;
+- 120 s by default. You *can* go faster — down to 5 s, which is useful against
+  your own workstation or while debugging — but anything under 30 s is flagged
+  with a **⚠ fast** warning next to the field explaining what it costs the login
+  node;
 - the timer stops entirely when no job is active;
 - a host that errors backs off exponentially, up to 15 minutes;
 - **Refresh Now** is there when you actually need an answer immediately.

@@ -85,8 +85,12 @@ class TestTimerLifecycle(PollerTestCase):
         self.assertEqual(self.poller.timer.interval(), 300_000)
 
     def test_interval_is_floored_even_if_the_pref_is_absurd(self):
-        self.store.set_pref("poll_interval", 1)
-        self.assertEqual(self.poller.interval_ms(), 30_000)
+        self.store.set_pref("poll_interval", 0)
+        self.assertEqual(self.poller.interval_ms(), 5_000)
+
+    def test_a_fast_interval_is_honoured(self):
+        self.store.set_pref("poll_interval", 10)
+        self.assertEqual(self.poller.interval_ms(), 10_000)
 
     def test_reschedule_applies_a_new_interval(self):
         self.add_job("j1")

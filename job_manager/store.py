@@ -35,7 +35,12 @@ SETTINGS_FILENAME = "settings.json"
 JOBS_FILENAME = "jobs.json"
 
 DEFAULT_POLL_INTERVAL = 120
-MIN_POLL_INTERVAL = 30
+#: Absolute floor. Low enough for a local test host or a short debug job;
+#: anything faster is a busy loop, not a status check.
+MIN_POLL_INTERVAL = 5
+#: Below this the user is warned. A shared login node charges every `squeue`
+#: to the whole cluster, and site admins do notice.
+RECOMMENDED_MIN_POLL_INTERVAL = 30
 MAX_POLL_INTERVAL = 3600
 DEFAULT_PRUNE_DAYS = 90
 
@@ -244,9 +249,14 @@ class JobStore:
 
     @property
     def poll_interval(self) -> int:
-        """Effective poll interval, clamped to the safe range."""
+        """Effective poll interval, clamped to the permitted range."""
         try:
             value = int(self.get_pref("poll_interval", DEFAULT_POLL_INTERVAL))
         except (TypeError, ValueError):
             value = DEFAULT_POLL_INTERVAL
         return max(MIN_POLL_INTERVAL, min(MAX_POLL_INTERVAL, value))
+
+    @property
+    def poll_interval_is_aggressive(self) -> bool:
+        """True when the interval is fast enough to be worth warning about."""
+        return self.poll_interval < RECOMMENDED_MIN_POLL_INTERVAL

@@ -215,8 +215,22 @@ class TestJobsDialog(DialogTestCase):
         self.assertEqual(self.dialog.spin_interval.value(), self.store.poll_interval)
 
     def test_interval_floor_is_enforced_by_the_widget(self):
-        self.dialog.spin_interval.setValue(1)
-        self.assertGreaterEqual(self.dialog.spin_interval.value(), 30)
+        self.dialog.spin_interval.setValue(0)
+        self.assertGreaterEqual(self.dialog.spin_interval.value(), 5)
+
+    def test_a_fast_interval_is_accepted_but_flagged(self):
+        self.dialog.spin_interval.setValue(10)
+        self.assertEqual(self.store.poll_interval, 10)
+        self.assertTrue(self.dialog.lbl_interval_warning.text())
+        self.assertIn("login node", self.dialog.lbl_interval_warning.toolTip())
+
+    def test_the_warning_clears_when_the_interval_is_courteous(self):
+        self.dialog.spin_interval.setValue(10)
+        self.dialog.spin_interval.setValue(120)
+        self.assertEqual(self.dialog.lbl_interval_warning.text(), "")
+
+    def test_no_warning_at_the_default_interval(self):
+        self.assertEqual(self.dialog.lbl_interval_warning.text(), "")
 
     def test_changing_the_interval_persists_and_reschedules(self):
         self.dialog.spin_interval.setValue(300)
