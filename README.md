@@ -22,6 +22,18 @@ fetch, open.
   whichever plugin already claims that file type — a finished ORCA run opens in
   the ORCA Result Analyzer with no extra configuration.
 - **Tail** the remote log, or cancel a job, from the same window.
+- **Resubmit** a job with one click: same host, same inputs, same resources.
+
+### Submitting straight from an input generator
+
+ORCA Input Generator Pro and Gaussian Input Generator Pro show a
+**Submit to Cluster...** button beside Save when this plugin is installed. It
+saves the input and hands it here, prefilled -- no file picker, no retyping the
+job name. Without this plugin the button is not shown at all.
+
+Other plugins can do the same by calling `job_manager.submit_file(paths,
+name="")`, found through the host's plugin list. It is a public API: the name
+and signature will not change without a major version.
 
 ## Requirements
 
