@@ -115,6 +115,18 @@ have been sent, so submit → poll → complete → download is exercised end to
 without a cluster. GUI tests need PyQt6 and skip themselves without it, which is
 what lets the whole suite run on a bare `pip install pytest`.
 
+Three tiers skip themselves unless their prerequisites are present:
+
+| Tier | Needs |
+|---|---|
+| GUI (`test_dialogs`, `test_poller`, `test_service`, `test_plugin_entry`) | `PyQt6` |
+| Script execution (`test_script_execution`) | a `bash` on `PATH` |
+| Real `PluginContext` (`TestWithRealPluginContext`) | a `python_molecular_editor` checkout **and** `PyQt6` + `rdkit` — importing the main app pulls in both |
+
+CI runs all three; the integration job fails deliberately if the real-context
+tier skips, since a silently skipped tier is indistinguishable from a passing
+one in the log.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).

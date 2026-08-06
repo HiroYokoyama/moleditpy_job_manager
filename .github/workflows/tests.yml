@@ -86,11 +86,12 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libegl1 libgl1 libxkbcommon-x11-0 libdbus-1-3
 
-      # PyQt6 is required to import the main app at all: moleditpy/__init__.py
-      # reaches PyQt6.QtGui through utils/constants. Without it this job could
-      # only ever skip the real-context tier.
+      # Importing the main app at all needs PyQt6 *and* rdkit:
+      # moleditpy/__init__.py reaches PyQt6.QtGui through utils/constants, and
+      # the plugin_interface chain reaches rdkit. Without both, the real-context
+      # tier can only ever skip itself.
       - name: Install dependencies
-        run: pip install pytest pytest-cov PyQt6
+        run: pip install pytest pytest-cov PyQt6 rdkit
 
       - name: Clone main MoleditPy application
         run: |
@@ -107,4 +108,19 @@ jobs:
         env:
           CI_MAIN_APP_SRC: ${{ github.workspace }}/../python_molecular_editor/moleditpy/src
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest tests/test_plugin_integration.py tests/test_api.py -v
+        # -rs prints skip reasons: a silently skipped real-context tier looks
+        # exactly like a passing one in the log.
+        run: python -m pytest tests/test_plugin_integration.py tests/test_api.py -v -rs
+
+      - name: Fail if the real-context tier did not actually run
+        env:
+          CI_MAIN_APP_SRC: ${{ github.workspace }}/../python_molecular_editor/moleditpy/src
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python -m pytest tests/test_plugin_integration.py \
+            -k TestWithRealPluginContext -q --no-header -rs > tier.log 2>&1 || true
+          cat tier.log
+          if grep -q "skipped" tier.log; then
+            echo "::error::The real-PluginContext tests skipped; this job exists to run them."
+            exit 1
+          fi
