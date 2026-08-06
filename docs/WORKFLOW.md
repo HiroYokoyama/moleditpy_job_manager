@@ -125,7 +125,7 @@ The row of buttons on the right of the table deals with the list as a whole.
 
 | Button | Does |
 |---|---|
-| **Export JSON** | Writes the records exactly as the plugin stores them, as a `.pmejbs` file |
+| **Export pmejbs** | Writes the records exactly as the plugin stores them, as a `.pmejbs` file |
 | **Export CSV** | One row per job — state, exit code, timings, remote and local paths, the command |
 | **Load Archive...** | Opens a previously cleared list |
 | **Clear List...** | Empties the table, after saving it to `archived/` |
