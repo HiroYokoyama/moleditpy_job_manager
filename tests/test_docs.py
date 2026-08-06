@@ -11,7 +11,9 @@ import pathlib
 import unittest
 from unittest.mock import patch
 
-from job_manager import poller, runner, store
+import pytest
+
+from job_manager import runner, store
 from job_manager.command_templates import TEMPLATES
 from job_manager.models import SubmitPreset
 from job_manager.schedulers import get_scheduler
@@ -23,6 +25,15 @@ DOCS = ROOT / "docs"
 
 def read(path):
     return path.read_text(encoding="utf-8")
+
+
+def _poller():
+    """The poller module, or a skip: it imports PyQt6, which the pytest-only
+    CI job does not install."""
+    pytest.importorskip("PyQt6.QtCore", reason="PyQt6 is not installed")
+    from job_manager import poller
+
+    return poller
 
 
 class TestTheDocsExist(unittest.TestCase):
@@ -51,12 +62,13 @@ class TestDocumentedNumbers(unittest.TestCase):
         self.assertIn(f"under {store.RECOMMENDED_MIN_POLL_INTERVAL} s", text)
 
     def test_the_backoff_ceiling(self):
+        poller = _poller()
         minutes = poller.MAX_BACKOFF // 60
         self.assertIn(f"{minutes} minutes", read(DOCS / "WORKFLOW.md"))
         self.assertIn(f"{minutes} minutes", read(DOCS / "ARCHITECTURE.md"))
 
     def test_the_manual_refresh_cooldown(self):
-        seconds = int(poller.MANUAL_REFRESH_COOLDOWN)
+        seconds = int(_poller().MANUAL_REFRESH_COOLDOWN)
         self.assertIn(f"once every {seconds} s", read(DOCS / "WORKFLOW.md"))
 
     def test_the_tail_length(self):
