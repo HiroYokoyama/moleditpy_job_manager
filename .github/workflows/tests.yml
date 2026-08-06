@@ -1,0 +1,100 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Standard unit tests — no external dependencies required
+  # -------------------------------------------------------------------------
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: pip install pytest pytest-cov
+
+      - name: Run tests with coverage
+        run: python -m pytest tests/ -v --tb=short --cov=job_manager --cov-report=term-missing
+
+  # -------------------------------------------------------------------------
+  # GUI tests — real PyQt6, headless. Roughly half of this plugin is dialogs
+  # and a QTimer-driven poller; the pytest-only job above skips all of it.
+  # -------------------------------------------------------------------------
+  test-gui:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Qt runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon-x11-0 libdbus-1-3 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0
+
+      - name: Install dependencies
+        run: pip install pytest pytest-cov PyQt6
+
+      - name: Run the full suite with real Qt
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest tests/ -v --tb=short --cov=job_manager --cov-report=term-missing
+
+  # -------------------------------------------------------------------------
+  # Integration tests — clones the main MoleditPy app to enable real
+  # PluginContext tests (TestWithRealPluginContext)
+  # -------------------------------------------------------------------------
+  test-integration:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pytest pytest-cov
+
+      - name: Clone main MoleditPy application
+        run: |
+          git clone --depth 1 \
+            https://github.com/HiroYokoyama/python_molecular_editor.git \
+            ../python_molecular_editor
+
+      - name: Install main app package (no heavy deps)
+        run: |
+          pip install -e ../python_molecular_editor/moleditpy \
+            --no-deps --quiet || true
+
+      - name: Run integration tests with real PluginContext
+        env:
+          CI_MAIN_APP_SRC: ${{ github.workspace }}/../python_molecular_editor/moleditpy/src
+        run: python -m pytest tests/test_plugin_integration.py tests/test_api.py -v

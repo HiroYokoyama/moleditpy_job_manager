@@ -1,0 +1,328 @@
+import unittest
+
+from job_manager.models import (
+    SENTINEL_NAME,
+    STATE_COMPLETING,
+    STATE_PENDING,
+    STATE_RUNNING,
+    SubmitPreset,
+)
+from job_manager.schedulers import (
+    STATE_UNKNOWN,
+    available_schedulers,
+    format_command,
+    get_scheduler,
+)
+
+
+class TestRegistry(unittest.TestCase):
+    def test_all_four_are_registered(self):
+        names = {s.name for s in available_schedulers()}
+        self.assertEqual(names, {"slurm", "pbs", "sge", "shell"})
+
+    def test_unknown_scheduler_raises(self):
+        with self.assertRaises(ValueError):
+            get_scheduler("condor")
+
+    def test_every_scheduler_has_a_label(self):
+        self.assertTrue(all(s.label for s in available_schedulers()))
+
+
+class TestFormatCommand(unittest.TestCase):
+    def setUp(self):
+        self.preset = SubmitPreset(cpus_per_task=8, memory="16G", queue="short")
+
+    def test_input_and_stem(self):
+        result = format_command("orca {input} > {stem}.out", "mol.inp", self.preset)
+        self.assertEqual(result, "orca mol.inp > mol.out")
+
+    def test_resource_placeholders(self):
+        result = format_command("mpirun -np {cpus} x {memory}", "a.inp", self.preset)
+        self.assertEqual(result, "mpirun -np 8 x 16G")
+
+    def test_unknown_placeholder_is_left_alone_instead_of_crashing(self):
+        template = "run {nonsense}"
+        self.assertEqual(format_command(template, "a.inp", self.preset), template)
+
+    def test_empty_template(self):
+        self.assertEqual(format_command("", "a.inp", self.preset), "")
+
+    def test_stem_of_a_dotted_name(self):
+        result = format_command("{stem}", "job.step1.inp", self.preset)
+        self.assertEqual(result, "job.step1")
+
+
+class ScriptContractMixin:
+    """Every scheduler's script must obey the same completion contract."""
+
+    scheduler_name = ""
+
+    def build(self, **preset_kwargs):
+        preset = SubmitPreset(command_template="run {input}", **preset_kwargs)
+        return get_scheduler(self.scheduler_name).build_script(
+            "my job", preset, "mol.inp", "job.log"
+        )
+
+    def test_starts_with_a_shebang(self):
+        self.assertTrue(self.build().startswith("#!/bin/bash"))
+
+    def test_writes_the_sentinel_last(self):
+        lines = [line for line in self.build().splitlines() if line.strip()]
+        self.assertIn(f'echo "$__moleditpy_rc" > {SENTINEL_NAME}', lines)
+        self.assertEqual(lines[-1], "exit $__moleditpy_rc")
+
+    def test_captures_the_payload_exit_code_not_a_later_one(self):
+        script = self.build().splitlines()
+        payload = script.index("run mol.inp")
+        self.assertEqual(script[payload + 1], "__moleditpy_rc=$?")
+
+    def test_stale_sentinel_is_removed_before_the_run(self):
+        script = self.build()
+        self.assertLess(
+            script.index(f"rm -f {SENTINEL_NAME}"),
+            script.index("run mol.inp"),
+        )
+
+    def test_job_name_is_sanitized_into_the_directives(self):
+        # A raw name with a space would break every directive syntax.
+        self.assertNotIn("my job", self.build())
+        self.assertIn("my_job", self.build())
+
+    def test_modules_and_pre_commands_run_before_the_payload(self):
+        script = self.build(modules=["orca/5"], pre_commands=["export X=1"])
+        self.assertLess(script.index("module load orca/5"), script.index("run mol.inp"))
+        self.assertLess(script.index("export X=1"), script.index("run mol.inp"))
+
+    def test_extra_directives_are_included(self):
+        self.assertIn("#custom directive", self.build(extra_directives=["#custom directive"]))
+
+    def test_blank_modules_are_skipped(self):
+        self.assertNotIn("module load \n", self.build(modules=["", "  "]))
+
+
+class TestSlurm(ScriptContractMixin, unittest.TestCase):
+    scheduler_name = "slurm"
+
+    def setUp(self):
+        self.scheduler = get_scheduler("slurm")
+
+    def test_directives(self):
+        preset = SubmitPreset(
+            walltime="02:00:00",
+            nodes=2,
+            ntasks=4,
+            cpus_per_task=8,
+            memory="16G",
+            queue="short",
+            account="proj1",
+        )
+        lines = self.scheduler.directives("job", preset, "job.log")
+        self.assertIn("#SBATCH --job-name=job", lines)
+        self.assertIn("#SBATCH --time=02:00:00", lines)
+        self.assertIn("#SBATCH --nodes=2", lines)
+        self.assertIn("#SBATCH --ntasks=4", lines)
+        self.assertIn("#SBATCH --cpus-per-task=8", lines)
+        self.assertIn("#SBATCH --mem=16G", lines)
+        self.assertIn("#SBATCH --partition=short", lines)
+        self.assertIn("#SBATCH --account=proj1", lines)
+
+    def test_single_cpu_omits_cpus_per_task(self):
+        lines = self.scheduler.directives("job", SubmitPreset(cpus_per_task=1), "job.log")
+        self.assertFalse(any("cpus-per-task" in line for line in lines))
+
+    def test_empty_optional_fields_are_omitted(self):
+        lines = self.scheduler.directives("job", SubmitPreset(walltime="", memory=""), "job.log")
+        self.assertFalse(any("--mem" in line for line in lines))
+        self.assertFalse(any("--time" in line for line in lines))
+
+    def test_submit_uses_parsable(self):
+        self.assertIn("--parsable", self.scheduler.submit_command("run.sh", "job.log"))
+
+    def test_parse_parsable_output(self):
+        self.assertEqual(self.scheduler.parse_submit_output("4823917\n", ""), "4823917")
+
+    def test_parse_parsable_output_with_cluster_suffix(self):
+        self.assertEqual(self.scheduler.parse_submit_output("4823917;mycluster\n", ""), "4823917")
+
+    def test_parse_human_readable_output(self):
+        self.assertEqual(self.scheduler.parse_submit_output("Submitted batch job 991\n", ""), "991")
+
+    def test_parse_submit_failure_returns_empty(self):
+        self.assertEqual(self.scheduler.parse_submit_output("", "sbatch: error"), "")
+
+    def test_status_command_is_one_call_for_the_whole_user(self):
+        cmd = self.scheduler.status_command("alice", ["1", "2", "3"])
+        self.assertEqual(cmd.count("squeue"), 1)
+        self.assertIn("-u alice", cmd)
+
+    def test_parse_status(self):
+        out = "101 PENDING\n102 RUNNING\n103 COMPLETING\n"
+        self.assertEqual(
+            self.scheduler.parse_status(out),
+            {"101": STATE_PENDING, "102": STATE_RUNNING, "103": STATE_COMPLETING},
+        )
+
+    def test_parse_status_ignores_blank_and_short_lines(self):
+        self.assertEqual(self.scheduler.parse_status("\n \n999\n"), {})
+
+    def test_parse_status_maps_array_tasks_to_the_parent(self):
+        states = self.scheduler.parse_status("55_3 RUNNING\n")
+        self.assertEqual(states["55_3"], STATE_RUNNING)
+        self.assertEqual(states["55"], STATE_RUNNING)
+
+    def test_unknown_state_code(self):
+        self.assertEqual(self.scheduler.parse_status("1 WEIRD\n"), {"1": STATE_UNKNOWN})
+
+    def test_state_with_a_parenthesised_reason(self):
+        self.assertEqual(
+            self.scheduler.parse_status("1 PENDING(Resources)\n"), {"1": STATE_PENDING}
+        )
+
+    def test_cancel(self):
+        self.assertEqual(self.scheduler.cancel_command("77"), "scancel 77")
+
+
+class TestPbs(ScriptContractMixin, unittest.TestCase):
+    scheduler_name = "pbs"
+
+    def setUp(self):
+        self.scheduler = get_scheduler("pbs")
+
+    def test_directives(self):
+        preset = SubmitPreset(walltime="10:00:00", nodes=2, cpus_per_task=4, queue="batch")
+        lines = self.scheduler.directives("job", preset, "job.log")
+        self.assertIn("#PBS -N job", lines)
+        self.assertIn("#PBS -l walltime=10:00:00", lines)
+        self.assertIn("#PBS -l nodes=2:ppn=4", lines)
+        self.assertIn("#PBS -q batch", lines)
+        self.assertIn("#PBS -j oe", lines)
+
+    def test_serial_job_omits_the_nodes_line(self):
+        lines = self.scheduler.directives("job", SubmitPreset(nodes=1, cpus_per_task=1), "job.log")
+        self.assertFalse(any("ppn=" in line for line in lines))
+
+    def test_parse_submit_output_with_a_host_suffix(self):
+        self.assertEqual(
+            self.scheduler.parse_submit_output("58231.headnode.cluster\n", ""),
+            "58231.headnode.cluster",
+        )
+
+    def test_parse_submit_output_plain(self):
+        self.assertEqual(self.scheduler.parse_submit_output("58231\n", ""), "58231")
+
+    def test_parse_status(self):
+        out = (
+            "headnode:\n"
+            "                                                            Req'd  Req'd   Elap\n"
+            "Job ID    Username Queue    Jobname   SessID NDS TSK Memory Time  S Time\n"
+            "--------- -------- -------- --------- ------ --- --- ------ ----- - -----\n"
+            "58231.hea alice    batch    myjob      12345   1   4    --  10:00 R 00:12\n"
+            "58232.hea alice    batch    other        --    1   1    --  10:00 Q   --\n"
+        )
+        states = self.scheduler.parse_status(out)
+        self.assertEqual(states["58231.hea"], STATE_RUNNING)
+        self.assertEqual(states["58232.hea"], STATE_PENDING)
+
+    def test_parse_status_also_keys_the_bare_number(self):
+        out = "58231.hea alice batch myjob 1 1 1 -- 10:00 R 00:12\n"
+        self.assertEqual(self.scheduler.parse_status(out)["58231"], STATE_RUNNING)
+
+    def test_parse_status_ignores_headers(self):
+        self.assertEqual(self.scheduler.parse_status("Job ID Username Queue\n"), {})
+
+    def test_cancel(self):
+        self.assertEqual(self.scheduler.cancel_command("1.a"), "qdel 1.a")
+
+
+class TestSge(ScriptContractMixin, unittest.TestCase):
+    scheduler_name = "sge"
+
+    def setUp(self):
+        self.scheduler = get_scheduler("sge")
+
+    def test_directives(self):
+        preset = SubmitPreset(walltime="4:00:00", memory="8G", queue="all.q")
+        lines = self.scheduler.directives("job", preset, "job.log")
+        self.assertIn("#$ -N job", lines)
+        self.assertIn("#$ -l h_rt=4:00:00", lines)
+        self.assertIn("#$ -l h_vmem=8G", lines)
+        self.assertIn("#$ -q all.q", lines)
+        self.assertIn("#$ -cwd", lines)
+
+    def test_parse_submit_output(self):
+        out = 'Your job 4711 ("myjob") has been submitted\n'
+        self.assertEqual(self.scheduler.parse_submit_output(out, ""), "4711")
+
+    def test_parse_array_submit_output(self):
+        out = 'Your job-array 4712.1-10:1 ("j") has been submitted\n'
+        self.assertEqual(self.scheduler.parse_submit_output(out, ""), "4712")
+
+    def test_parse_submit_failure(self):
+        self.assertEqual(self.scheduler.parse_submit_output("", "denied"), "")
+
+    def test_parse_status(self):
+        out = (
+            "job-ID  prior   name  user  state submit/start at     queue slots\n"
+            "-----------------------------------------------------------------\n"
+            "   4711 0.55500 myjob alice r     01/02/2026 10:00:00 all.q     1\n"
+            "   4712 0.00000 other alice qw    01/02/2026 10:01:00           1\n"
+        )
+        states = self.scheduler.parse_status(out)
+        self.assertEqual(states["4711"], STATE_RUNNING)
+        self.assertEqual(states["4712"], STATE_PENDING)
+
+    def test_error_state_stays_pending_because_the_job_is_still_queued(self):
+        out = "   4713 0.0 j alice Eqw 01/02/2026 10:00:00 q 1\n"
+        self.assertEqual(self.scheduler.parse_status(out)["4713"], STATE_PENDING)
+
+    def test_deleting_state_maps_to_completing(self):
+        out = "   4714 0.0 j alice dr 01/02/2026 10:00:00 q 1\n"
+        self.assertEqual(self.scheduler.parse_status(out)["4714"], STATE_COMPLETING)
+
+    def test_cancel(self):
+        self.assertEqual(self.scheduler.cancel_command("9"), "qdel 9")
+
+
+class TestShell(ScriptContractMixin, unittest.TestCase):
+    scheduler_name = "shell"
+
+    def setUp(self):
+        self.scheduler = get_scheduler("shell")
+
+    def test_submit_detaches_and_prints_the_pid(self):
+        cmd = self.scheduler.submit_command("run.sh", "job.log")
+        self.assertIn("nohup", cmd)
+        self.assertIn("< /dev/null", cmd)
+        self.assertTrue(cmd.rstrip().endswith("echo $!"))
+
+    def test_parse_submit_output_takes_the_pid(self):
+        self.assertEqual(self.scheduler.parse_submit_output("21841\n", ""), "21841")
+
+    def test_parse_submit_output_ignores_leading_noise(self):
+        out = "nohup: ignoring input\n21841\n"
+        self.assertEqual(self.scheduler.parse_submit_output(out, ""), "21841")
+
+    def test_status_command_lists_only_the_tracked_pids(self):
+        cmd = self.scheduler.status_command("alice", ["11", "22"])
+        self.assertEqual(cmd, "ps -o pid= -p 11,22")
+
+    def test_status_command_with_no_pids_is_a_no_op(self):
+        self.assertEqual(self.scheduler.status_command("alice", []), "true")
+
+    def test_status_command_ignores_non_numeric_ids(self):
+        self.assertEqual(self.scheduler.status_command("a", ["x", "3"]), "ps -o pid= -p 3")
+
+    def test_parse_status_marks_live_pids_running(self):
+        self.assertEqual(
+            self.scheduler.parse_status(" 11\n 22\n"), {"11": STATE_RUNNING, "22": STATE_RUNNING}
+        )
+
+    def test_parse_status_of_an_empty_listing(self):
+        self.assertEqual(self.scheduler.parse_status(""), {})
+
+    def test_cancel_targets_the_process_group(self):
+        self.assertIn("pgid", self.scheduler.cancel_command("42"))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1,0 +1,5 @@
+line-length = 100
+
+# Vendored from the other MoleditPy plugin repos and kept byte-identical so the
+# shared API checker can be diffed across them; not ours to reformat.
+exclude = ["tests/plugin_api_checker.py"]

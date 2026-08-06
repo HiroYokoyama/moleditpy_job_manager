@@ -1,0 +1,440 @@
+"""Job monitor: the live table of tracked jobs.
+
+A model/view table rather than a QTableWidget, so a poll result repaints the
+affected rows instead of rebuilding every cell on a timer.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import time
+from typing import List, Optional
+
+from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, QVariant
+from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import (
+    QAbstractItemView,
+    QCheckBox,
+    QDialog,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QSpinBox,
+    QSplitter,
+    QTableView,
+    QVBoxLayout,
+    QWidget,
+)
+
+from .models import (
+    STATE_DONE,
+    STATE_FAILED,
+    STATE_LOST,
+    STATE_PENDING,
+    STATE_RUNNING,
+    Job,
+)
+from .service import JobService
+from .store import MAX_POLL_INTERVAL, MIN_POLL_INTERVAL
+
+COLUMNS = ("Name", "Host", "Queue ID", "State", "Elapsed", "Updated")
+
+_STATE_COLORS = {
+    STATE_RUNNING: "#2e7d32",
+    STATE_PENDING: "#b58900",
+    STATE_DONE: "#0a7d8c",
+    STATE_FAILED: "#c62828",
+    STATE_LOST: "#8e24aa",
+}
+
+
+def format_duration(seconds: float) -> str:
+    total = int(max(0, seconds))
+    hours, remainder = divmod(total, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m"
+    if minutes:
+        return f"{minutes}m {secs:02d}s"
+    return f"{secs}s"
+
+
+def format_stamp(stamp: float) -> str:
+    if not stamp:
+        return "-"
+    return time.strftime("%m-%d %H:%M", time.localtime(stamp))
+
+
+class JobTableModel(QAbstractTableModel):
+    """Read-only view of the store's job list."""
+
+    def __init__(self, service: JobService, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.service = service
+        self._rows: List[Job] = []
+        self.reload()
+
+    def reload(self) -> None:
+        self.beginResetModel()
+        self._rows = self.service.store.job_list()
+        self.endResetModel()
+
+    def job_at(self, row: int) -> Optional[Job]:
+        if 0 <= row < len(self._rows):
+            return self._rows[row]
+        return None
+
+    def row_of(self, job_id: str) -> int:
+        for index, job in enumerate(self._rows):
+            if job.id == job_id:
+                return index
+        return -1
+
+    def refresh_job(self, job_id: str) -> None:
+        row = self.row_of(job_id)
+        if row < 0:
+            self.reload()
+            return
+        self.dataChanged.emit(self.index(row, 0), self.index(row, len(COLUMNS) - 1))
+
+    # --- Qt model interface -------------------------------------------------
+
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
+        return 0 if parent.isValid() else len(self._rows)
+
+    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
+        return 0 if parent.isValid() else len(COLUMNS)
+
+    def headerData(self, section: int, orientation, role=Qt.ItemDataRole.DisplayRole):
+        if role != Qt.ItemDataRole.DisplayRole:
+            return QVariant()
+        if orientation == Qt.Orientation.Horizontal and 0 <= section < len(COLUMNS):
+            return COLUMNS[section]
+        return QVariant()
+
+    def data(self, index: QModelIndex, role=Qt.ItemDataRole.DisplayRole):
+        if not index.isValid():
+            return QVariant()
+        job = self.job_at(index.row())
+        if job is None:
+            return QVariant()
+
+        if role == Qt.ItemDataRole.DisplayRole:
+            column = index.column()
+            if column == 0:
+                return job.name
+            if column == 1:
+                return job.host_name
+            if column == 2:
+                return job.remote_job_id or "-"
+            if column == 3:
+                suffix = ""
+                if job.state == STATE_FAILED and job.rc is not None:
+                    suffix = f" (rc={job.rc})"
+                return f"{job.state}{suffix}"
+            if column == 4:
+                return format_duration(job.elapsed())
+            if column == 5:
+                return format_stamp(job.updated_at)
+        elif role == Qt.ItemDataRole.ForegroundRole and index.column() == 3:
+            color = _STATE_COLORS.get(job.state)
+            if color:
+                return QColor(color)
+        elif role == Qt.ItemDataRole.ToolTipRole:
+            lines = [f"Remote: {job.remote_dir or '-'}"]
+            if job.local_dir:
+                lines.append(f"Local: {job.local_dir}")
+            if job.last_error:
+                lines.append(f"Error: {job.last_error}")
+            return "\n".join(lines)
+        return QVariant()
+
+
+class JobsDialog(QDialog):
+    """The main Job Manager window."""
+
+    def __init__(self, service: JobService, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.service = service
+        self.setWindowTitle("Job Manager")
+        self.resize(940, 560)
+        self.model = JobTableModel(service, self)
+        self._build_ui()
+        self._connect_service()
+        self._update_buttons()
+
+    # --- construction -------------------------------------------------------
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+
+        toolbar = QHBoxLayout()
+        self.btn_new = QPushButton("New Job...")
+        self.btn_new.clicked.connect(self.open_submit_dialog)
+        self.btn_hosts = QPushButton("Hosts...")
+        self.btn_hosts.clicked.connect(self.open_hosts_dialog)
+        self.btn_refresh = QPushButton("Refresh Now")
+        self.btn_refresh.clicked.connect(self._refresh_now)
+        toolbar.addWidget(self.btn_new)
+        toolbar.addWidget(self.btn_hosts)
+        toolbar.addWidget(self.btn_refresh)
+        toolbar.addStretch(1)
+        toolbar.addWidget(QLabel("Poll every"))
+        self.spin_interval = QSpinBox()
+        self.spin_interval.setRange(MIN_POLL_INTERVAL, MAX_POLL_INTERVAL)
+        self.spin_interval.setSingleStep(30)
+        self.spin_interval.setSuffix(" s")
+        self.spin_interval.setValue(self.service.store.poll_interval)
+        self.spin_interval.setToolTip(
+            "Status checks share one query per host. Keep this slow: a login node is "
+            "not a status API."
+        )
+        self.spin_interval.valueChanged.connect(self._on_interval_changed)
+        toolbar.addWidget(self.spin_interval)
+        layout.addLayout(toolbar)
+
+        splitter = QSplitter(Qt.Orientation.Vertical)
+
+        self.table = QTableView()
+        self.table.setModel(self.model)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.verticalHeader().setVisible(False)
+        header = self.table.horizontalHeader()
+        header.setStretchLastSection(True)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table.selectionModel().selectionChanged.connect(lambda *_: self._update_buttons())
+        splitter.addWidget(self.table)
+
+        self.txt_log = QPlainTextEdit()
+        self.txt_log.setReadOnly(True)
+        self.txt_log.setPlaceholderText("Job output and messages appear here.")
+        splitter.addWidget(self.txt_log)
+        splitter.setSizes([380, 160])
+        layout.addWidget(splitter, 1)
+
+        actions = QHBoxLayout()
+        self.btn_cancel = QPushButton("Cancel Job")
+        self.btn_cancel.clicked.connect(self._cancel_selected)
+        self.btn_download = QPushButton("Download")
+        self.btn_download.clicked.connect(self._download_selected)
+        self.btn_open = QPushButton("Open Result")
+        self.btn_open.clicked.connect(self._open_selected_result)
+        self.btn_tail = QPushButton("Tail Log")
+        self.btn_tail.clicked.connect(self._tail_selected)
+        self.btn_remove = QPushButton("Remove")
+        self.btn_remove.clicked.connect(self._remove_selected)
+        for button in (
+            self.btn_cancel,
+            self.btn_download,
+            self.btn_open,
+            self.btn_tail,
+            self.btn_remove,
+        ):
+            actions.addWidget(button)
+        actions.addStretch(1)
+        self.chk_auto_open = QCheckBox("Open results automatically")
+        self.chk_auto_open.setChecked(
+            bool(self.service.store.get_pref("open_result_after_download", True))
+        )
+        self.chk_auto_open.toggled.connect(
+            lambda checked: self.service.store.set_pref("open_result_after_download", checked)
+        )
+        actions.addWidget(self.chk_auto_open)
+        layout.addLayout(actions)
+
+        self.lbl_status = QLabel("")
+        layout.addWidget(self.lbl_status)
+
+    def _connect_service(self) -> None:
+        self.service.jobs_changed.connect(self.model.reload)
+        self.service.jobs_changed.connect(self._update_buttons)
+        self.service.job_updated.connect(self.model.refresh_job)
+        self.service.job_updated.connect(lambda *_: self._update_buttons())
+        self.service.message.connect(self._append_message)
+        self.service.error.connect(self._append_error)
+        self.service.log_ready.connect(self._show_log)
+        self.service.results_ready.connect(self._on_results_ready)
+
+    # --- helpers ------------------------------------------------------------
+
+    def selected_job(self) -> Optional[Job]:
+        rows = self.table.selectionModel().selectedRows() if self.table.selectionModel() else []
+        if not rows:
+            return None
+        return self.model.job_at(rows[0].row())
+
+    def _append_message(self, text: str) -> None:
+        self.txt_log.appendPlainText(f"[{time.strftime('%H:%M:%S')}] {text}")
+        self.lbl_status.setText(text)
+
+    def _append_error(self, text: str) -> None:
+        self._append_message(text)
+
+    def _show_log(self, text: str) -> None:
+        self.txt_log.setPlainText(text)
+
+    def _update_buttons(self) -> None:
+        job = self.selected_job()
+        has_job = job is not None
+        self.btn_cancel.setEnabled(bool(job and job.is_active))
+        self.btn_download.setEnabled(bool(job and job.remote_dir))
+        self.btn_open.setEnabled(bool(job and job.downloaded_files))
+        self.btn_tail.setEnabled(bool(job and job.remote_dir))
+        self.btn_remove.setEnabled(has_job)
+
+    # --- actions ------------------------------------------------------------
+
+    def open_submit_dialog(self) -> None:
+        from .submit_dialog import SubmitDialog
+
+        if not self.service.store.hosts:
+            QMessageBox.information(self, "Job Manager", "Add a host profile first (Hosts...).")
+            self.open_hosts_dialog()
+            return
+        dialog = SubmitDialog(self.service, self)
+        dialog.exec()
+
+    def open_hosts_dialog(self) -> None:
+        from .hosts_dialog import HostsDialog
+
+        dialog = HostsDialog(self.service, self)
+        dialog.exec()
+
+    def _on_interval_changed(self, value: int) -> None:
+        self.service.store.set_pref("poll_interval", int(value))
+        self.service.poller.reschedule()
+
+    def _refresh_now(self) -> None:
+        if not self.service.poller.refresh_now():
+            self._append_message("Refresh is rate limited; try again in a few seconds.")
+
+    def _cancel_selected(self) -> None:
+        job = self.selected_job()
+        if job is None:
+            return
+        confirm = QMessageBox.question(
+            self, "Cancel job", f"Cancel '{job.name}' ({job.remote_job_id}) on the cluster?"
+        )
+        if confirm == QMessageBox.StandardButton.Yes:
+            self.service.cancel(job)
+
+    def _download_selected(self) -> None:
+        job = self.selected_job()
+        if job is not None:
+            self.service.download(job)
+
+    def _tail_selected(self) -> None:
+        job = self.selected_job()
+        if job is not None:
+            self._append_message(f"Reading {job.log_file}...")
+            self.service.tail(job)
+
+    def _remove_selected(self) -> None:
+        job = self.selected_job()
+        if job is None:
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Remove job",
+            f"Remove '{job.name}' from the list?\nNothing is deleted on the cluster or on disk.",
+        )
+        if confirm == QMessageBox.StandardButton.Yes:
+            self.service.remove_job(job.id)
+
+    def _open_selected_result(self) -> None:
+        job = self.selected_job()
+        if job is None or not job.downloaded_files:
+            return
+        self.open_result_files(job.downloaded_files)
+
+    def _on_results_ready(self, job_id: str, paths: list) -> None:
+        if not self.chk_auto_open.isChecked():
+            return
+        self.open_result_files(paths)
+
+    def open_result_files(self, paths: List[str]) -> None:
+        """Hand the most interesting downloaded file to the host application."""
+        target = pick_primary_result(paths)
+        if not target:
+            return
+        opened = open_in_host(target)
+        if opened:
+            self._append_message(f"Opened {os.path.basename(target)}")
+        else:
+            self._append_message(f"Downloaded {target}")
+
+    # --- lifecycle ----------------------------------------------------------
+
+    def closeEvent(self, event) -> None:
+        # Deregister so a reopened window is a fresh, live instance; polling
+        # continues in the service, which outlives this dialog.
+        try:
+            from . import forget_window
+
+            forget_window()
+        except Exception:
+            logging.debug("Job Manager: window deregistration failed", exc_info=True)
+        event.accept()
+
+
+#: Extensions an analyzer plugin is most likely to claim, best first.
+_RESULT_PRIORITY = (".out", ".log", ".fchk", ".hess", ".xyz")
+
+
+def pick_primary_result(paths: List[str]) -> str:
+    for extension in _RESULT_PRIORITY:
+        for path in paths or []:
+            if path.lower().endswith(extension):
+                return path
+    return (paths or [""])[0]
+
+
+def open_in_host(path: str) -> bool:
+    """Route a downloaded file through the application's own file openers.
+
+    Reuses ``MainWindow.init_manager.load_command_line_file``, which walks the
+    registered plugin file openers by priority (that is how the ORCA Result
+    Analyzer claims ``.out``) before falling back to the built-in loaders --
+    so no analyzer plugin needs to be hard-coded here.
+    """
+    from . import get_context
+
+    context = get_context()
+    if context is None or not path or not os.path.exists(path):
+        return False
+    try:
+        main_window = context.get_main_window()
+    except Exception:
+        logging.debug("Job Manager: no main window available", exc_info=True)
+        return False
+
+    init_manager = getattr(main_window, "init_manager", None)
+    loader = getattr(init_manager, "load_command_line_file", None)
+    if callable(loader):
+        try:
+            loader(path)
+            return True
+        except Exception:
+            logging.warning("Job Manager: host could not open %s", path, exc_info=True)
+            return False
+
+    # Older hosts: dispatch to the highest-priority plugin opener directly.
+    plugin_manager = getattr(main_window, "plugin_manager", None)
+    openers = getattr(plugin_manager, "file_openers", {}) or {}
+    extension = os.path.splitext(path)[1].lower()
+    for opener in openers.get(extension, []):
+        callback = opener.get("callback") if isinstance(opener, dict) else None
+        if not callable(callback):
+            continue
+        try:
+            callback(path)
+            return True
+        except Exception:
+            logging.warning("Job Manager: opener failed for %s", path, exc_info=True)
+    return False
