@@ -37,6 +37,22 @@ Other plugins can do the same by calling `job_manager.submit_file(paths,
 name="")`, found through the host's plugin list. It is a public API: the name
 and signature will not change without a major version.
 
+### What it does not do
+
+**No job chaining.** Every submission is independent — there is no "run B when A
+finishes", and no `--dependency=afterok:` / `-W depend=` / `-hold_jid` support.
+Chain the commands inside one job (`orca a.inp > a.out && orca b.inp > b.out`),
+or put your scheduler's own dependency flag in *Extra directives*; Job Manager
+tracks the resulting job normally either way.
+
+## Documentation
+
+| Document | Covers |
+|---|---|
+| [docs/WORKFLOW.md](docs/WORKFLOW.md) | the standard path end to end, command templates, reading job states, troubleshooting |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | layers, threading, polling, the sentinel, persistence, the `submit_file()` handoff |
+| [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) | what is stored and where, how keys and passwords are handled, host-key policy, trust boundaries |
+
 ## Requirements
 
 - MoleditPy 4.x
@@ -50,16 +66,21 @@ and signature will not change without a major version.
 |---|---|---|
 | Install | nothing | `pip install paramiko` |
 | Auth | keys and ssh-agent | keys, agent **and passwords** |
-| `~/.ssh/config`, `ProxyJump` | inherited automatically | not read |
+| `~/.ssh/config` | inherited automatically | `HostName`, `User`, `Port`, `IdentityFile` |
+| `ProxyJump` | yes | refused, with an explanation |
 | Connection | one process per command (multiplexed on macOS/Linux) | one persistent session |
 
 The OpenSSH backend runs `ssh` in batch mode on purpose: a background thread must
-never block on an invisible password prompt. If a host only accepts passwords,
-switch it to the paramiko backend.
+never block on an invisible password prompt — and it also means **no password can
+reach the process table**. If a host only accepts passwords, switch it to the
+paramiko backend and tick *Ask for a password when connecting*.
 
-**Passwords are never written to disk.** They are held in memory for the session
-and asked for again after a restart. Unknown host keys are rejected, not
-silently trusted — you are shown the fingerprint and asked.
+**Passwords are never written to disk.** They are held in memory for the session,
+asked for again after a restart, and forgotten when you delete the host. Unknown
+host keys are rejected, not silently trusted — you are shown the fingerprint and
+asked.
+
+For exactly what is stored where, see [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md).
 
 ## Polling is deliberately slow
 
@@ -76,20 +97,26 @@ A login node is not a status API, so:
 
 ## How completion is detected
 
-Every generated script ends with:
+Every generated script installs these traps before running your command:
 
 ```bash
-your_command
-__moleditpy_rc=$?
-echo "$__moleditpy_rc" > .moleditpy_rc
-exit $__moleditpy_rc
+trap '__moleditpy_rc=$?; echo "$__moleditpy_rc" > .moleditpy_rc' EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
+trap 'exit 129' HUP
 ```
 
 When a job disappears from the queue, the plugin reads that one file: an exit
 code means finished (0 → DONE, anything else → FAILED with the code shown);
-no file means the job was killed before the command returned. This works
+no file means the job was killed before the command returned (→ LOST). This works
 identically on all four schedulers and needs neither `sacct` (often disabled) nor
 site-specific `qstat -f` parsing.
+
+An `EXIT` trap rather than a trailing `echo`, because a payload that calls `exit`
+itself would never reach a trailing line. The signal traps matter just as much:
+without them a job the scheduler *kills* — walltime, preemption, `scancel`, node
+drain — reaches the `EXIT` trap with `$?` still 0 and is recorded as a clean
+success. `FAILED (rc=143)` is what a walltime kill looks like now.
 
 ## Usage
 
@@ -97,20 +124,41 @@ site-specific `qstat -f` parsing.
    hostname, user, scheduler, and a remote working directory. Press
    **Test Connection**.
 2. **New Job…** — pick the host, add your input file, fill in walltime / nodes /
-   memory / modules and the command to run (`orca {input} > {stem}.out`), check
-   the **Script preview** tab, and submit. Save the settings as a named preset to
-   reuse them.
+   memory / modules, and choose the command from the **Template…** dropdown,
+   check the **Script preview** tab, and submit. Save the settings as a named
+   preset to reuse them.
 3. Watch the table. When the job finishes its results are downloaded and the main
    output is opened for you.
 
-Command template placeholders: `{input}`, `{stem}`, `{basename}`, `{nodes}`,
-`{ntasks}`, `{cpus}`, `{memory}`, `{walltime}`, `{queue}`.
+### Command templates
+
+The dropdown beside the Command field carries a conventional invocation for every
+program MoleditPy writes input for — ORCA, Gaussian, CP2K, GAMESS, MOPAC, NWChem,
+Psi4, PySCF, Quantum ESPRESSO, VASP and xTB — with the caveats that matter
+(ORCA needs its own absolute path to start MPI workers; `g16` writes its own
+`.log`; VASP takes no input filename at all). The list puts the likely program
+first for the input you selected, and never overwrites a command you have
+already written.
+
+Type your own and **Template… ▸ Save current command as…** keeps it in
+`settings.json` alongside your hosts and presets.
+
+Placeholders come in two spellings — `{input}` or `[input]`, whichever fights
+your shell less:
+
+`input`, `stem`, `basename`, `output` (`<stem>.out`), `nodes`, `ntasks`, `cpus`,
+`memory`, `walltime`, `queue`.
+
+Unknown tags are left verbatim, and shell syntax that merely looks like one —
+`awk '{print $1}'`, `if [ -f x ]` — is passed through untouched.
 
 ## Where your data lives
 
 `~/.moleditpy/job_manager/`
 
-- `settings.json` — host profiles, submit presets, preferences
+- `settings.json` — host profiles, submit presets, preferences, saved command
+  templates. **No secret is ever written here**: a host profile has no password
+  field, and a key is referenced by path, never copied
 - `jobs.json` — the tracked jobs
 - `downloads/` — fetched results, one directory per job
 

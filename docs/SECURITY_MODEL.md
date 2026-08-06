@@ -1,0 +1,146 @@
+# Security model
+
+What this plugin holds, what it never holds, and what it does on your behalf on
+a remote machine. For reporting a vulnerability, see [SECURITY.md](../SECURITY.md).
+
+## The short version
+
+* **No secret is ever written to disk by this plugin.** Not passwords, not key
+  material, not agent handles.
+* **Keys stay where SSH already keeps them.** The plugin stores a *path* at
+  most, and usually not even that — it lets your `~/.ssh/config`, your agent and
+  your `known_hosts` do their jobs.
+* **Host keys are never auto-accepted.** An unknown key stops the connection and
+  produces an explicit prompt showing the fingerprint.
+* **Everything it runs remotely is a script you can read before it is sent** —
+  the Script preview tab is the exact bytes uploaded.
+
+## What is stored, and where
+
+Everything lives in `~/.moleditpy/job_manager/`, outside the plugin folder.
+
+### `settings.json`
+
+| Field | Example | Secret? |
+|---|---|---|
+| `hostname`, `username`, `port` | `login.hpc.example.org`, `alice`, `22` | no |
+| `key_path` | `~/.ssh/id_ed25519` — a **path**, never the key | no |
+| `jump_host` | `alice@bastion` | no |
+| `remote_root` | `~/moleditpy_jobs` | no |
+| `ssh_options` | `ServerAliveInterval=30` | no |
+| `login_commands` | `module purge` | no |
+| `ask_password` | `true` — a *flag* meaning "prompt me", not a password | no |
+| presets | queue, walltime, modules, command template | no |
+| `command_templates` | your saved command lines | no |
+
+`HostProfile` has **no password field at all**, so there is nothing for
+`asdict()` to serialise even by accident. This is enforced by tests
+(`tests/test_credentials.py::TestNoSecretIsPersisted`), which write a password
+into the live session and then assert it appears in neither `settings.json`,
+the host profile, nor any job record.
+
+### `jobs.json`
+
+Job records: name, host id, remote directory, queue id, state, exit code,
+timestamps, the input paths you selected and the preset snapshot. No
+credentials. It is global on purpose — HPC jobs outlive the open project.
+
+### Nowhere
+
+The password for a paramiko host lives in a plain dict on the session's
+`JobService` and dies with the process. It is not written, not logged, and not
+put on a command line.
+
+## How each backend authenticates
+
+### OpenSSH backend (default)
+
+Shells out to the `ssh` and `scp` you already have, which means it inherits
+everything you have already configured: `~/.ssh/config`, agent keys,
+`ProxyJump` bastions, per-host options. The plugin adds no key handling of its
+own.
+
+`BatchMode=yes` is always set. That is a deliberate security property, not just
+ergonomics: a host that wants a password fails fast instead of blocking a worker
+thread on a prompt nobody can see, and **no password can ever reach the process
+table**. There is no `sshpass`, and no password is ever passed as an argument.
+
+### paramiko backend (optional)
+
+For hosts that need a password. Notable behaviour:
+
+* `~/.ssh/config` is consulted for `HostName`, `User`, `Port` and
+  `IdentityFile`. Your host profile always wins; the config only fills in what
+  you left blank.
+* The agent and your default keys are used when no password is given
+  (`allow_agent=True`, `look_for_keys=True`).
+* **ProxyJump is refused, not ignored.** paramiko needs a real channel for it,
+  and silently connecting *directly* to a host you told the plugin to reach
+  through a bastion would violate the network path you asked for. Use the
+  OpenSSH backend for jump hosts.
+* Passwords are prompted on the GUI thread, masked
+  (`QLineEdit.EchoMode.Password`), and cached for the session only. Removing a
+  host forgets its password immediately.
+* Polling never prompts. An uncached host simply fails its poll and backs off
+  until you do something interactive.
+
+## Host key verification
+
+`RejectPolicy` — an unknown host key **stops the connection**; it is never
+added silently. The Hosts dialog turns the resulting error into an explicit
+confirmation, and only writes the fingerprint to `~/.ssh/known_hosts` after you
+agree. When `~/.ssh/config` gives the host an alias, the fingerprint is filed
+under the name the connection actually verifies, not under the alias.
+
+A key that *changed* (rather than being unknown) is a different matter and is
+not offered for trusting — that is the case where a warning is the point.
+
+## What runs on the remote machine
+
+Anything you type in the wizard runs on the cluster under your account. That is
+the feature. The safeguards are:
+
+* **The Script preview tab shows the exact script** that will be uploaded —
+  directives, module loads, pre-commands, the payload, and the sentinel traps.
+  Nothing is added afterwards.
+* **Every path is quoted** for a POSIX shell before interpolation
+  (`remote_paths.quote`), with a `~` left expandable. Job names are reduced to
+  `[A-Za-z0-9._-]`, so a name like `../../etc/passwd` becomes `etc_passwd` and
+  `a;rm -rf /` becomes `a_rm_-rf`.
+* **Command templates are yours.** The built-in ones are conventional
+  invocations of well-known programs; a template you save is stored verbatim and
+  is no more privileged than typing the command.
+* **Cancel kills a process group** (`shell` scheduler) or calls the queue's own
+  `scancel`/`qdel`. It never runs a broad `pkill`.
+
+## Trust boundaries
+
+| You are trusting | Because |
+|---|---|
+| the remote host | you gave it a shell command to run |
+| your `~/.ssh` config, keys and agent | both backends use them |
+| the plugin's generated script | preview it before submitting |
+| result files you download | they are handed to the host app's file openers, which is how the ORCA/Gaussian analyzers claim `.out` |
+
+Downloaded results are opened through the application's own openers. A result
+file is data from a machine you chose to trust; the plugin does not execute
+anything it downloads.
+
+## Deliberate non-goals
+
+* **No credential storage, no keyring integration.** Adding a place to save
+  passwords would mean owning their protection; SSH already solved this with
+  keys and agents.
+* **No key generation or upload.** `ssh-keygen` and `ssh-copy-id` do it better.
+* **No password for the OpenSSH backend.** Batch mode is what keeps secrets out
+  of the process table.
+
+## Reviewing this yourself
+
+```bash
+# Nothing secret in the settings file:
+grep -ri "password" ~/.moleditpy/job_manager/settings.json
+
+# The tests that hold the line:
+python -m pytest tests/test_credentials.py -v
+```
