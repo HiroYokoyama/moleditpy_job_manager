@@ -163,9 +163,24 @@ class TestWithRealPluginContext(unittest.TestCase):
     def test_the_result_handoff_target_still_exists(self):
         # jobs_dialog.open_in_host() calls this to reuse the host's registered
         # file openers instead of hard-coding analyzer plugins.
-        from moleditpy.ui.main_window_init import MainInitManager
+        #
+        # Checked by parsing rather than importing: main_window_init pulls in
+        # pyvistaqt/vtk, and requiring the whole 3D stack just to confirm a
+        # method name would make this tier too expensive to keep running.
+        import ast
 
-        self.assertTrue(hasattr(MainInitManager, "load_command_line_file"))
+        source_path = os.path.join(_MAIN_APP_SRC, "moleditpy", "ui", "main_window_init.py")
+        self.assertTrue(os.path.isfile(source_path), source_path)
+        with open(source_path, encoding="utf-8") as handle:
+            tree = ast.parse(handle.read())
+        methods = {
+            node.name
+            for cls in tree.body
+            if isinstance(cls, ast.ClassDef)
+            for node in cls.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        self.assertIn("load_command_line_file", methods)
 
 
 if __name__ == "__main__":
