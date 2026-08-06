@@ -122,7 +122,17 @@ code would be silently destroyed.
 | File | Holds |
 |---|---|
 | `settings.json` | host profiles, submit presets, preferences, user command templates |
-| `jobs.json` | tracked jobs — global on purpose, since HPC jobs outlive both the open project and the session |
+| `jobs.pmejbs` | tracked jobs — global on purpose, since HPC jobs outlive both the open project and the session |
+| `archived/jobs_<date>.pmejbs` | lists written out by **Clear List**, never deleted automatically |
+| `downloads/` | fetched results, one directory per job |
+
+`.pmejbs` is MoleditPy's extension for a job list (`.pmeprj` is a project); the
+contents are ordinary JSON. A `jobs.json` written before the extension existed
+is still read, and the next save migrates it.
+
+Where a job list *sits* decides how it opens: a file inside `archived/` is
+history and is shown read-only, while one from anywhere else is merged into the
+live table. That is the only difference between the two paths.
 
 Both are written atomically (temp file in the same directory + `os.replace`), so
 a crash mid-write cannot leave truncated JSON. Unknown keys are ignored on load,

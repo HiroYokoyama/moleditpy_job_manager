@@ -25,6 +25,9 @@ fetch, open.
   the ORCA Result Analyzer with no extra configuration.
 - **Tail** the remote log, or cancel a job, from the same window.
 - **Resubmit** a job with one click: same host, same inputs, same resources.
+- **Export** the list as raw `.pmejbs` JSON or as CSV, **clear** it (the old list
+  is archived, never deleted), and **reopen** any saved list — from the button,
+  from File ▸ Import, or by dropping it on the window.
 
 ### Submitting straight from an input generator
 
@@ -159,8 +162,15 @@ Unknown tags are left verbatim, and shell syntax that merely looks like one —
 - `settings.json` — host profiles, submit presets, preferences, saved command
   templates. **No secret is ever written here**: a host profile has no password
   field, and a key is referenced by path, never copied
-- `jobs.json` — the tracked jobs
+- `jobs.pmejbs` — the tracked jobs. `.pmejbs` is MoleditPy's extension for a job
+  list, the same idea as `.pmeprj` for a project; the contents are plain JSON
+- `archived/jobs_<date>.pmejbs` — lists written out by **Clear List**. Clearing
+  never deletes: delete these yourself when you want them gone
 - `downloads/` — fetched results, one directory per job
+
+A job list carries an `archived` flag inside the file. An archived list opens
+read-only; any other one — an export, a backup, a file from a colleague — can be
+opened as the list you are working in for that session.
 
 Deliberately **outside** the plugin folder: the Plugin Installer replaces that
 folder wholesale on update, so anything stored there would be lost. Jobs run for

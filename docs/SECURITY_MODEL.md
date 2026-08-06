@@ -39,11 +39,20 @@ Everything lives in `~/.moleditpy/job_manager/`, outside the plugin folder.
 into the live session and then assert it appears in neither `settings.json`,
 the host profile, nor any job record.
 
-### `jobs.json`
+### `jobs.pmejbs`
 
 Job records: name, host id, remote directory, queue id, state, exit code,
 timestamps, the input paths you selected and the preset snapshot. No
 credentials. It is global on purpose — HPC jobs outlive the open project.
+Ordinary JSON inside; `.pmejbs` is MoleditPy's extension for a job list, the
+same idea as `.pmeprj` for a project.
+
+### `archived/jobs_<date>.pmejbs`
+
+Clearing the table writes the current list here first rather than deleting it.
+Same contents, same absence of credentials. Exports you make yourself (`.pmejbs`
+or `.csv`) contain the same fields — including remote directory paths and
+usernames, which is worth remembering before mailing one to anybody.
 
 ### Nowhere
 

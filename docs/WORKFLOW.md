@@ -119,6 +119,55 @@ downloading anything.
 preset *as it was when that job ran* — the snapshot survives editing or deleting
 the named preset. Adjust anything and submit again.
 
+## 7. Keeping, exporting and clearing the list
+
+The row of buttons on the right of the table deals with the list as a whole.
+
+| Button | Does |
+|---|---|
+| **Export JSON** | Writes the records exactly as the plugin stores them, as a `.pmejbs` file |
+| **Export CSV** | One row per job — state, exit code, timings, remote and local paths, the command |
+| **Load Archive...** | Opens a previously cleared list |
+| **Clear List...** | Empties the table, after saving it to `archived/` |
+
+**Clearing never deletes.** The current list is written to
+`~/.moleditpy/job_manager/archived/jobs_<date>_<time>.pmejbs` first, because a
+job's remote directory is often the only way back to results still sitting on
+the cluster. If any jobs are still active, the confirmation says so — clearing
+stops tracking them but cancels nothing.
+
+Archives are never removed automatically. **To delete one permanently, open the
+archived folder** in your file manager; the read-only banner shows its path.
+
+### Opening a job list
+
+Three ways in: **Load Archive...**, **File ▸ Import** in the main window (the
+plugin registers `.pmejbs` with the application), or by dropping the file onto
+the Job Manager window.
+
+What happens next depends on the file, not on where it sits:
+
+* **Marked archived** (written by Clear List) — shown **read only**. Every
+  action is disabled, because an archived job's queue id is stale and its remote
+  directory may be long gone. **Back to current jobs** returns you to the live
+  table.
+* **Not marked archived** (an export, a backup, a colleague's file) — offered as
+  the list to work in. Accept and it becomes the file every later change is
+  written to, with a banner naming it. This lasts for the session only: a
+  restart comes back to your usual list, and **Use the default list** switches
+  back immediately.
+
+The flag lives inside the file, so a cleared list stays read-only after being
+moved, copied or mailed on.
+
+### The `.pmejbs` format
+
+MoleditPy's extension for a saved job list, alongside `.pmeprj` for a project.
+The contents are ordinary JSON — `version`, `archived`, `jobs`, and
+`archived_at` on an archived list — so anything that reads JSON can read it. A
+`jobs.json` written before the extension existed is still read, and the next
+save migrates it.
+
 ## Reading job states
 
 | State | Means |

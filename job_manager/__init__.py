@@ -20,7 +20,9 @@ PLUGIN_VERSION = "0.2.0"
 PLUGIN_AUTHOR = "HiroYokoyama"
 PLUGIN_DESCRIPTION = (
     "Submit calculations to remote HPC clusters over SSH, track queue status, "
-    "and fetch results back into MoleditPy."
+    "and fetch results back into MoleditPy. Ready-made command lines for ORCA, "
+    "Gaussian, CP2K, GAMESS, MOPAC, NWChem, Psi4, PySCF, Quantum ESPRESSO, VASP "
+    "and xTB; job lists export to CSV or .pmejbs and reopen by drag and drop."
 )
 PLUGIN_CATEGORY = "Utility"
 PLUGIN_TAGS = ["hpc", "ssh", "job", "utility"]
@@ -68,12 +70,32 @@ def forget_window() -> None:
             logging.debug("Job Manager: could not deregister the window", exc_info=True)
 
 
+def open_job_file(path: str) -> None:
+    """Open a saved job list in the monitor. Registered with the host.
+
+    Makes ``.pmejbs`` a file type the application knows: File > Import, the
+    command line and a drop onto the main window all land here.
+    """
+    show_monitor(_context)
+    window = _context.get_window(WINDOW_KEY) if _context is not None else None
+    if window is not None:
+        window.open_job_list(path)
+
+
 def initialize(context) -> None:
     """Entry point called by the host at plugin load."""
     global _context
     _context = context
     context.add_plugin_menu("Job Manager/Job Monitor", lambda: show_monitor(context))
     context.add_plugin_menu("Job Manager/Submit Job...", lambda: show_submit(context))
+
+    from .store import JOB_EXTENSION
+
+    try:
+        context.register_file_opener(JOB_EXTENSION, open_job_file)
+    except AttributeError:
+        # Host older than the file-opener API; the menu entries still work.
+        logging.debug("Job Manager: this host has no register_file_opener")
 
 
 def run(mw) -> None:

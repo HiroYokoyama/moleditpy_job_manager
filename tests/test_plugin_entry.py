@@ -136,6 +136,9 @@ class TestContextContract(unittest.TestCase):
         "register_window",
         "get_main_window",
         "show_status_message",
+        # PLUGIN_DEVELOPMENT_MANUAL_V4.md 2.2: makes .pmejbs a file type the
+        # application knows (File > Import, the command line, and drops).
+        "register_file_opener",
     }
 
     def test_only_documented_context_methods_are_called(self):

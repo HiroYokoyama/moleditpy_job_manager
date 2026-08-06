@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QDialog,
+    QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -40,7 +41,16 @@ from .models import (
     Job,
 )
 from .service import JobService
-from .store import MAX_POLL_INTERVAL, MIN_POLL_INTERVAL, RECOMMENDED_MIN_POLL_INTERVAL
+from .store import (
+    JOB_EXTENSION,
+    MAX_POLL_INTERVAL,
+    MIN_POLL_INTERVAL,
+    RECOMMENDED_MIN_POLL_INTERVAL,
+)
+
+#: Job lists this window opens. .json covers pre-extension archives.
+ARCHIVE_EXTENSIONS = (JOB_EXTENSION, ".json")
+ARCHIVE_FILTER = f"Job lists (*{JOB_EXTENSION} *.json);;All files (*)"
 
 COLUMNS = ("Name", "Host", "Queue ID", "State", "Elapsed", "Updated")
 
@@ -77,11 +87,21 @@ class JobTableModel(QAbstractTableModel):
         super().__init__(parent)
         self.service = service
         self._rows: List[Job] = []
+        #: When set, the table shows this fixed list instead of the live store.
+        self._archived: Optional[List[Job]] = None
+        self.reload()
+
+    def show_archive(self, jobs: Optional[List[Job]]) -> None:
+        """Display an archived list, or None to go back to the live store."""
+        self._archived = jobs
         self.reload()
 
     def reload(self) -> None:
         self.beginResetModel()
-        self._rows = self.service.store.job_list()
+        if self._archived is not None:
+            self._rows = list(self._archived)
+        else:
+            self._rows = self.service.store.job_list()
         self.endResetModel()
 
     def job_at(self, row: int) -> Optional[Job]:
@@ -163,6 +183,11 @@ class JobsDialog(QDialog):
         self.service = service
         self.setWindowTitle("Job Manager")
         self.resize(940, 560)
+        #: Non-empty while a cleared list is being viewed read-only.
+        self._archive_path = ""
+        # Dropping a job list opens it: read-only when the file says it is
+        # archived, otherwise it becomes the list in use for this session.
+        self.setAcceptDrops(True)
         self.model = JobTableModel(service, self)
         self._build_ui()
         self._connect_service()
@@ -203,6 +228,35 @@ class JobsDialog(QDialog):
         toolbar.addWidget(self.lbl_interval_warning)
         layout.addLayout(toolbar)
 
+        self.lbl_archive = QLabel("")
+        self.lbl_archive.setWordWrap(True)
+        self.lbl_archive.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+        self.lbl_archive.setStyleSheet(
+            "background: #fff3cd; color: #664d03; padding: 6px; border-radius: 4px;"
+        )
+        self.lbl_archive.setVisible(False)
+        self.lbl_active_file = QLabel("")
+        self.lbl_active_file.setWordWrap(True)
+        self.lbl_active_file.setStyleSheet(
+            "background: #e7f1ff; color: #084298; padding: 6px; border-radius: 4px;"
+        )
+        self.lbl_active_file.setVisible(False)
+        active_row = QHBoxLayout()
+        active_row.addWidget(self.lbl_active_file, 1)
+        self.btn_default_file = QPushButton("Use the default list")
+        self.btn_default_file.clicked.connect(self._use_default_job_list)
+        self.btn_default_file.setVisible(False)
+        active_row.addWidget(self.btn_default_file)
+        layout.addLayout(active_row)
+
+        archive_row = QHBoxLayout()
+        archive_row.addWidget(self.lbl_archive, 1)
+        self.btn_back = QPushButton("Back to current jobs")
+        self.btn_back.clicked.connect(self._exit_archive)
+        self.btn_back.setVisible(False)
+        archive_row.addWidget(self.btn_back)
+        layout.addLayout(archive_row)
+
         splitter = QSplitter(Qt.Orientation.Vertical)
 
         self.table = QTableView()
@@ -241,6 +295,23 @@ class JobsDialog(QDialog):
         self.btn_resubmit.clicked.connect(self._resubmit_selected)
         self.btn_remove = QPushButton("Remove")
         self.btn_remove.clicked.connect(self._remove_selected)
+        self.btn_export_json = QPushButton("Export JSON")
+        self.btn_export_json.setToolTip(
+            "Write the job list as raw JSON, the same records as jobs.json."
+        )
+        self.btn_export_json.clicked.connect(lambda: self._export(".json"))
+        self.btn_export_csv = QPushButton("Export CSV")
+        self.btn_export_csv.setToolTip("Write one row per job: state, exit code, timings, paths.")
+        self.btn_export_csv.clicked.connect(lambda: self._export(".csv"))
+        self.btn_archive = QPushButton("Load Archive...")
+        self.btn_archive.setToolTip("View a previously cleared job list, read only.")
+        self.btn_archive.clicked.connect(self._load_archive)
+        self.btn_clear = QPushButton("Clear List...")
+        self.btn_clear.setToolTip(
+            "Empty the table. The current list is saved to the archived folder "
+            "first, with the date in its name -- nothing is deleted on the cluster."
+        )
+        self.btn_clear.clicked.connect(self._clear_jobs)
         for button in (
             self.btn_cancel,
             self.btn_download,
@@ -248,6 +319,14 @@ class JobsDialog(QDialog):
             self.btn_tail,
             self.btn_resubmit,
             self.btn_remove,
+        ):
+            actions.addWidget(button)
+        actions.addSpacing(16)
+        for button in (
+            self.btn_export_json,
+            self.btn_export_csv,
+            self.btn_archive,
+            self.btn_clear,
         ):
             actions.addWidget(button)
         actions.addStretch(1)
@@ -295,6 +374,9 @@ class JobsDialog(QDialog):
 
     # --- helpers ------------------------------------------------------------
 
+    def viewing_archive(self) -> bool:
+        return bool(self._archive_path)
+
     def selected_job(self) -> Optional[Job]:
         rows = self.table.selectionModel().selectedRows() if self.table.selectionModel() else []
         if not rows:
@@ -312,6 +394,25 @@ class JobsDialog(QDialog):
         self.txt_log.setPlainText(text)
 
     def _update_buttons(self) -> None:
+        if self.viewing_archive():
+            # An archived job's queue id is stale and its remote directory may
+            # be long gone, so every action that would act on one is off.
+            for button in (
+                self.btn_cancel,
+                self.btn_download,
+                self.btn_open,
+                self.btn_tail,
+                self.btn_resubmit,
+                self.btn_remove,
+                self.btn_export_json,
+                self.btn_export_csv,
+                self.btn_clear,
+            ):
+                button.setEnabled(False)
+            return
+
+        for button in (self.btn_export_json, self.btn_export_csv, self.btn_clear):
+            button.setEnabled(True)
         job = self.selected_job()
         has_job = job is not None
         self.btn_cancel.setEnabled(bool(job and job.is_active))
@@ -439,6 +540,159 @@ class JobsDialog(QDialog):
         if confirm == QMessageBox.StandardButton.Yes:
             self.service.remove_job(job.id)
 
+    def _export(self, extension: str) -> None:
+        """Write the whole list out as raw JSON or as CSV."""
+        store = self.service.store
+        if not store.jobs:
+            self._append_message("Nothing to export: the job list is empty.")
+            return
+        label = "CSV" if extension == ".csv" else "job list"
+        default = os.path.join(
+            store.download_root(), f"moleditpy_jobs_{time.strftime('%Y%m%d')}{extension}"
+        )
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            f"Export the {label}",
+            default,
+            f"{label.title()} (*{extension});;All files (*)",
+        )
+        if not path:
+            return
+        if not os.path.splitext(path)[1]:
+            path += extension
+        try:
+            store.export_jobs(path)
+        except OSError as exc:
+            QMessageBox.warning(self, "Export", f"Could not write {path}:\n{exc}")
+            return
+        self._append_message(f"Exported {len(store.jobs)} job(s) to {path}")
+
+    def _load_archive(self) -> None:
+        """Show a previously cleared list, read only."""
+        store = self.service.store
+        directory = store.archive_dir()
+        if not os.path.isdir(directory):
+            QMessageBox.information(
+                self,
+                "Load archive",
+                f"There are no archives yet. Clearing the job list writes one here:\n{directory}",
+            )
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open an archived job list", directory, ARCHIVE_FILTER
+        )
+        if path:
+            self.open_job_list(path)
+
+    def open_job_list(self, path: str) -> bool:
+        """Open a job list: read-only if the file says it is archived.
+
+        The flag travels in the file, so a cleared list stays history after it
+        is moved, copied or mailed on. Anything not flagged -- an export, a
+        backup, a colleague's file -- becomes the list in use for this session.
+        """
+        store = self.service.store
+        jobs, archived = store.read_job_list(path)
+        if not jobs:
+            QMessageBox.warning(self, "Open job list", f"No jobs could be read from:\n{path}")
+            return False
+        if archived:
+            return self._show_archive(path, jobs)
+        return self._use_job_list(path, jobs)
+
+    def _use_job_list(self, path: str, jobs: List[Job]) -> bool:
+        """Switch the live table to this file for the rest of the session."""
+        store = self.service.store
+        confirm = QMessageBox.question(
+            self,
+            "Open job list",
+            f"Use {os.path.basename(path)} ({len(jobs)} jobs) as the current job list?\n\n"
+            "Tracking, polling and every later change go to this file until "
+            "MoleditPy is restarted. Your usual list is not modified.",
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return False
+        count = store.use_jobs_file(path)
+        self.service.jobs_changed.emit()
+        self.service.poller.start()
+        self._update_active_file()
+        self._append_message(f"Now using {path} ({count} jobs)")
+        return True
+
+    def _use_default_job_list(self) -> None:
+        """Back to the usual job list."""
+        store = self.service.store
+        store.use_jobs_file("")
+        self.service.jobs_changed.emit()
+        self.service.poller.start()
+        self._update_active_file()
+        self._append_message("Back to the default job list")
+
+    def _update_active_file(self) -> None:
+        """Say which list is in use whenever it is not the usual one."""
+        store = self.service.store
+        if store.using_default_jobs_file():
+            self.setWindowTitle("Job Manager")
+            self.lbl_active_file.setVisible(False)
+            self.btn_default_file.setVisible(False)
+            return
+        self.setWindowTitle(f"Job Manager — {os.path.basename(store.jobs_path)}")
+        self.lbl_active_file.setText(
+            f"Working in <b>{store.jobs_path}</b> for this session. "
+            "Restarting comes back to the usual list."
+        )
+        self.lbl_active_file.setVisible(True)
+        self.btn_default_file.setVisible(True)
+
+    def _show_archive(self, path: str, jobs: List[Job]) -> bool:
+        """Display an archived list read-only."""
+        store = self.service.store
+        directory = store.archive_dir()
+        self._archive_path = path
+        self.model.show_archive(jobs)
+        self.lbl_archive.setText(
+            f"Viewing <b>{os.path.basename(path)}</b> ({len(jobs)} jobs) — this list is "
+            "marked archived, so it is read only. To delete archives permanently, "
+            f"open {directory}"
+        )
+        self.lbl_archive.setVisible(True)
+        self.btn_back.setVisible(True)
+        self._update_buttons()
+        self._append_message(f"Viewing {os.path.basename(path)} (read only)")
+        return True
+
+    def _exit_archive(self) -> None:
+        """Back to the live job list."""
+        self._archive_path = ""
+        self.model.show_archive(None)
+        self.lbl_archive.setVisible(False)
+        self.btn_back.setVisible(False)
+        self._update_buttons()
+
+    def _clear_jobs(self) -> None:
+        """Empty the table, keeping a dated copy of what was in it."""
+        store = self.service.store
+        if not store.jobs:
+            return
+        active = len(store.active_jobs())
+        warning = (
+            f"\n\n{active} of them are still active: clearing stops tracking them, "
+            "but does not cancel anything on the cluster."
+            if active
+            else ""
+        )
+        confirm = QMessageBox.question(
+            self,
+            "Clear job list",
+            f"Remove all {len(store.jobs)} job(s) from the list?\n"
+            f"The current list is saved to {store.archive_dir()} first.{warning}",
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        archived, count = store.clear_jobs()
+        self.service.jobs_changed.emit()
+        self._append_message(f"Cleared {count} job(s); archived to {archived}")
+
     def _open_selected_result(self) -> None:
         job = self.selected_job()
         if job is None or not job.downloaded_files:
@@ -460,6 +714,35 @@ class JobsDialog(QDialog):
             self._append_message(f"Opened {os.path.basename(target)}")
         else:
             self._append_message(f"Downloaded {target}")
+
+    # --- drag and drop ------------------------------------------------------
+
+    def _dropped_job_list(self, event) -> str:
+        """The path of a single dropped job list, or "" if that is not what it is."""
+        mime = event.mimeData()
+        if not mime.hasUrls():
+            return ""
+        urls = [url for url in mime.urls() if url.isLocalFile()]
+        if len(urls) != 1:
+            return ""
+        path = urls[0].toLocalFile()
+        return path if path.lower().endswith(ARCHIVE_EXTENSIONS) else ""
+
+    def dragEnterEvent(self, event) -> None:
+        if self._dropped_job_list(event):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    dragMoveEvent = dragEnterEvent
+
+    def dropEvent(self, event) -> None:
+        path = self._dropped_job_list(event)
+        if not path:
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        self.open_job_list(path)
 
     # --- lifecycle ----------------------------------------------------------
 

@@ -1,5 +1,6 @@
 """Dialog construction and wiring, against real Qt widgets."""
 
+import json
 import os
 import tempfile
 import unittest
@@ -687,6 +688,246 @@ class TestResubmitWhenTheHostProfileIsGone(DialogTestCase):
         with patch("job_manager.jobs_dialog.QMessageBox.question") as asked:
             self.dialog._resubmit_selected()
         asked.assert_not_called()
+
+
+class TestExportAndClearButtons(DialogTestCase):
+    def setUp(self):
+        super().setUp()
+        self.store.add_job(Job(id="j1", name="alpha", state=STATE_RUNNING, submitted_at=1000.0))
+        self.dialog = JobsDialog(self.service)
+        self.addCleanup(self.dialog.close)
+
+    def export_to(self, name, extension):
+        target = os.path.join(self.tmp, name)
+        with patch(
+            "job_manager.jobs_dialog.QFileDialog.getSaveFileName", return_value=(target, "")
+        ):
+            self.dialog._export(extension)
+        return target
+
+    def test_the_three_buttons_exist(self):
+        self.assertTrue(self.dialog.btn_export_json.isEnabled())
+        self.assertTrue(self.dialog.btn_export_csv.isEnabled())
+        self.assertTrue(self.dialog.btn_clear.isEnabled())
+
+    def test_exporting_json(self):
+        path = self.export_to("jobs.json", ".json")
+        with open(path, encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle)["jobs"][0]["name"], "alpha")
+
+    def test_exporting_csv(self):
+        path = self.export_to("jobs.csv", ".csv")
+        with open(path, encoding="utf-8") as handle:
+            self.assertIn("alpha", handle.read())
+
+    def test_a_missing_extension_is_added(self):
+        target = os.path.join(self.tmp, "noext")
+        with patch(
+            "job_manager.jobs_dialog.QFileDialog.getSaveFileName", return_value=(target, "")
+        ):
+            self.dialog._export(".csv")
+        self.assertTrue(os.path.exists(target + ".csv"))
+
+    def test_cancelling_the_file_dialog_writes_nothing(self):
+        with patch("job_manager.jobs_dialog.QFileDialog.getSaveFileName", return_value=("", "")):
+            self.dialog._export(".json")
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "cancelled.json")))
+
+    def test_exporting_an_empty_list_says_so_instead_of_writing(self):
+        self.store.jobs = {}
+        with patch("job_manager.jobs_dialog.QFileDialog.getSaveFileName") as chooser:
+            self.dialog._export(".csv")
+        chooser.assert_not_called()
+
+    def test_an_unwritable_target_is_reported_not_raised(self):
+        with patch(
+            "job_manager.jobs_dialog.QFileDialog.getSaveFileName",
+            return_value=(os.path.join(self.tmp, "sub", "x.csv"), ""),
+        ):
+            with patch("job_manager.store.JobStore.export_jobs", side_effect=OSError("nope")):
+                with patch("job_manager.jobs_dialog.QMessageBox.warning") as warned:
+                    self.dialog._export(".csv")
+        warned.assert_called_once()
+
+    def test_clearing_empties_the_table_and_archives(self):
+        with patch(
+            "job_manager.jobs_dialog.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ):
+            self.dialog._clear_jobs()
+        self.assertEqual(self.store.jobs, {})
+        self.assertEqual(len(self.store.archived_files()), 1)
+        self.assertEqual(self.dialog.model.rowCount(), 0)
+
+    def test_declining_keeps_everything(self):
+        with patch(
+            "job_manager.jobs_dialog.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.No,
+        ):
+            self.dialog._clear_jobs()
+        self.assertIn("j1", self.store.jobs)
+        self.assertEqual(self.store.archived_files(), [])
+
+    def test_the_confirmation_warns_about_still_active_jobs(self):
+        with patch(
+            "job_manager.jobs_dialog.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.No,
+        ) as asked:
+            self.dialog._clear_jobs()
+        self.assertIn("still active", asked.call_args[0][2])
+
+    def test_clearing_an_empty_list_asks_nothing(self):
+        self.store.jobs = {}
+        with patch("job_manager.jobs_dialog.QMessageBox.question") as asked:
+            self.dialog._clear_jobs()
+        asked.assert_not_called()
+
+
+class TestOpeningAJobList(DialogTestCase):
+    """Read-only if the file says archived; merged into the live table if not."""
+
+    def setUp(self):
+        super().setUp()
+        self.store.add_job(Job(id="j1", name="alpha", state=STATE_RUNNING, submitted_at=1000.0))
+        self.dialog = JobsDialog(self.service)
+        self.addCleanup(self.dialog.close)
+
+    def archived_file(self):
+        path, _ = self.store.clear_jobs()
+        return path
+
+    def exported_file(self):
+        return self.store.export_jobs(os.path.join(self.tmp, "exported.pmejbs"))
+
+    def test_an_archived_list_opens_read_only(self):
+        path = self.archived_file()
+        self.assertTrue(self.dialog.open_job_list(path))
+        self.assertTrue(self.dialog.viewing_archive())
+        self.assertEqual(self.dialog.model.rowCount(), 1)
+        self.assertEqual(self.store.jobs, {}, "an archived list must not be imported")
+
+    def test_every_action_is_disabled_while_viewing_one(self):
+        self.dialog.open_job_list(self.archived_file())
+        self.dialog.table.selectRow(0)
+        for button in (
+            self.dialog.btn_cancel,
+            self.dialog.btn_download,
+            self.dialog.btn_open,
+            self.dialog.btn_tail,
+            self.dialog.btn_resubmit,
+            self.dialog.btn_remove,
+            self.dialog.btn_export_json,
+            self.dialog.btn_export_csv,
+            self.dialog.btn_clear,
+        ):
+            self.assertFalse(button.isEnabled(), button.text())
+
+    def test_the_banner_points_at_the_folder_for_deleting(self):
+        self.dialog.open_job_list(self.archived_file())
+        self.assertFalse(self.dialog.lbl_archive.isHidden())
+        text = self.dialog.lbl_archive.text()
+        self.assertIn("read only", text)
+        self.assertIn("delete", text.lower())
+        self.assertIn(self.store.archive_dir(), text)
+
+    def test_going_back_restores_the_live_list(self):
+        self.dialog.open_job_list(self.archived_file())
+        self.dialog._exit_archive()
+        self.assertFalse(self.dialog.viewing_archive())
+        self.assertTrue(self.dialog.lbl_archive.isHidden())
+        self.assertTrue(self.dialog.btn_export_json.isEnabled())
+
+    def test_an_unflagged_list_is_offered_for_import(self):
+        path = self.exported_file()
+        self.store.clear_jobs()
+        with patch(
+            "job_manager.jobs_dialog.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ):
+            self.assertTrue(self.dialog.open_job_list(path))
+        self.assertFalse(self.dialog.viewing_archive())
+        self.assertIn("j1", self.store.jobs)
+
+    def test_declining_the_import_changes_nothing(self):
+        path = self.exported_file()
+        self.store.clear_jobs()
+        with patch(
+            "job_manager.jobs_dialog.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.No,
+        ):
+            self.assertFalse(self.dialog.open_job_list(path))
+        self.assertEqual(self.store.jobs, {})
+
+    def test_an_empty_file_is_reported(self):
+        path = os.path.join(self.tmp, "empty.pmejbs")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write('{"jobs": []}')
+        with patch("job_manager.jobs_dialog.QMessageBox.warning") as warned:
+            self.assertFalse(self.dialog.open_job_list(path))
+        warned.assert_called_once()
+
+
+class TestDropOpensAJobList(DialogTestCase):
+    def setUp(self):
+        super().setUp()
+        self.store.add_job(Job(id="j1", name="alpha", state=STATE_RUNNING, submitted_at=1000.0))
+        self.dialog = JobsDialog(self.service)
+        self.addCleanup(self.dialog.close)
+
+    def drop_event(self, *paths):
+        from PyQt6.QtCore import QMimeData, QPointF, QUrl
+        from PyQt6.QtCore import Qt as QtCore_Qt
+        from PyQt6.QtGui import QDropEvent
+
+        # The event does not take ownership of the mime data, so it has to
+        # outlive the event or Qt reads freed memory.
+        mime = QMimeData()
+        mime.setUrls([QUrl.fromLocalFile(p) for p in paths])
+        self._mime_keepalive = getattr(self, "_mime_keepalive", [])
+        self._mime_keepalive.append(mime)
+        return QDropEvent(
+            QPointF(10, 10),
+            QtCore_Qt.DropAction.CopyAction,
+            mime,
+            QtCore_Qt.MouseButton.LeftButton,
+            QtCore_Qt.KeyboardModifier.NoModifier,
+        )
+
+    def test_the_window_accepts_drops(self):
+        self.assertTrue(self.dialog.acceptDrops())
+
+    def test_dropping_an_archive_opens_it_read_only(self):
+        path, _ = self.store.clear_jobs()
+        self.dialog.dropEvent(self.drop_event(path))
+        self.assertTrue(self.dialog.viewing_archive())
+
+    def test_dropping_an_export_offers_to_import_it(self):
+        path = self.store.export_jobs(os.path.join(self.tmp, "e.pmejbs"))
+        self.store.clear_jobs()
+        with patch(
+            "job_manager.jobs_dialog.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ):
+            self.dialog.dropEvent(self.drop_event(path))
+        self.assertIn("j1", self.store.jobs)
+
+    def test_a_drag_of_the_right_file_is_accepted(self):
+        path = self.store.export_jobs(os.path.join(self.tmp, "e.pmejbs"))
+        dropped = self.dialog._dropped_job_list(self.drop_event(path))
+        self.assertEqual(os.path.normcase(os.path.normpath(dropped)), os.path.normcase(path))
+
+    def test_other_file_types_are_ignored(self):
+        other = self.make_input("mol.inp")
+        self.assertEqual(self.dialog._dropped_job_list(self.drop_event(other)), "")
+
+    def test_dropping_several_files_is_ignored(self):
+        one = self.store.export_jobs(os.path.join(self.tmp, "a.pmejbs"))
+        two = self.store.export_jobs(os.path.join(self.tmp, "b.pmejbs"))
+        self.assertEqual(self.dialog._dropped_job_list(self.drop_event(one, two)), "")
+
+    def test_a_pre_extension_json_list_is_still_accepted(self):
+        path = self.store.export_jobs(os.path.join(self.tmp, "old.json"))
+        self.assertTrue(self.dialog._dropped_job_list(self.drop_event(path)))
 
 
 class TestCommandTemplateDropdown(DialogTestCase):
