@@ -115,6 +115,35 @@ def show_submit(context=None) -> None:
         window.open_submit_dialog()
 
 
+def submit_file(paths, name: str = "") -> bool:
+    """Open the submit wizard prefilled with an input file. **Public API.**
+
+    This is the handoff other plugins use: an input generator that has just
+    written a file calls it to offer "run this on the cluster" without knowing
+    anything about hosts, schedulers or transports. Callers find this plugin
+    through the host's plugin list and check for this attribute, so the name
+    and signature are a contract -- do not rename either.
+
+    ``paths`` is one path or a list of them; the first is the file passed to
+    the command. Returns True if the wizard was opened.
+    """
+    if isinstance(paths, str):
+        paths = [paths]
+    files = [p for p in (paths or []) if p]
+    if not files or _context is None:
+        return False
+    show_monitor(_context)
+    window = _context.get_window(WINDOW_KEY)
+    if window is None:
+        return False
+    try:
+        window.open_submit_dialog(files=files, name=name)
+    except Exception:
+        logging.exception("Job Manager: could not open the submit wizard")
+        return False
+    return True
+
+
 def shutdown() -> None:
     """Stop polling and release worker threads (called on plugin reload)."""
     global _service

@@ -148,5 +148,52 @@ class TestContextContract(unittest.TestCase):
         self.assertTrue(used.issubset(self.DOCUMENTED), used - self.DOCUMENTED)
 
 
+class TestSubmitFilePublicAPI(PluginEntryTestCase):
+    """The contract input-generator plugins call. Renaming breaks them."""
+
+    def test_the_function_exists_with_the_documented_name(self):
+        self.assertTrue(callable(job_manager.submit_file))
+
+    def test_a_single_path_is_accepted(self):
+        job_manager.initialize(self.context)
+        window = MagicMock()
+        self.context.get_window.side_effect = [None, window, window]
+        with patch("job_manager.jobs_dialog.JobsDialog", return_value=window):
+            self.assertTrue(job_manager.submit_file("/tmp/mol.inp"))
+        window.open_submit_dialog.assert_called_once_with(files=["/tmp/mol.inp"], name="")
+
+    def test_a_list_of_paths_is_accepted(self):
+        job_manager.initialize(self.context)
+        window = MagicMock()
+        self.context.get_window.side_effect = [None, window, window]
+        with patch("job_manager.jobs_dialog.JobsDialog", return_value=window):
+            job_manager.submit_file(["/tmp/a.inp", "/tmp/b.xyz"], name="run")
+        window.open_submit_dialog.assert_called_once_with(
+            files=["/tmp/a.inp", "/tmp/b.xyz"], name="run"
+        )
+
+    def test_no_paths_returns_false(self):
+        job_manager.initialize(self.context)
+        self.assertFalse(job_manager.submit_file([]))
+        self.assertFalse(job_manager.submit_file(""))
+
+    def test_blank_entries_are_dropped(self):
+        job_manager.initialize(self.context)
+        self.assertFalse(job_manager.submit_file(["", None]))
+
+    def test_without_a_context_it_returns_false_instead_of_raising(self):
+        # A generator may call this before the host has initialised us.
+        job_manager._context = None
+        self.assertFalse(job_manager.submit_file("/tmp/mol.inp"))
+
+    def test_a_failure_in_the_wizard_is_contained(self):
+        job_manager.initialize(self.context)
+        window = MagicMock()
+        window.open_submit_dialog.side_effect = RuntimeError("boom")
+        self.context.get_window.side_effect = [None, window, window]
+        with patch("job_manager.jobs_dialog.JobsDialog", return_value=window):
+            self.assertFalse(job_manager.submit_file("/tmp/mol.inp"))
+
+
 if __name__ == "__main__":
     unittest.main()

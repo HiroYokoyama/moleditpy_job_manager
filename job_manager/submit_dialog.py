@@ -45,6 +45,40 @@ class SubmitDialog(QDialog):
         self._build_ui()
         self._reload_hosts()
 
+    # --- prefilling ---------------------------------------------------------
+
+    def prefill(
+        self,
+        files: Optional[List[str]] = None,
+        name: str = "",
+        host_id: str = "",
+        preset: Optional[dict] = None,
+    ) -> None:
+        """Populate the form from outside.
+
+        Used by the input-generator handoff (a file that was just written) and
+        by Resubmit (a previous job's host, preset and inputs).
+        """
+        if host_id:
+            index = self.cmb_host.findData(host_id)
+            if index >= 0:
+                self.cmb_host.setCurrentIndex(index)
+        if preset:
+            self._apply_preset(SubmitPreset.from_dict(preset))
+        if files:
+            self.list_files.clear()
+            for path in files:
+                if path:
+                    self.list_files.addItem(path)
+            first = os.path.dirname(files[0])
+            if first:
+                self.store.set_pref("last_input_dir", first)
+        if name:
+            self.txt_job_name.setText(name)
+        elif files:
+            self.txt_job_name.setText(os.path.splitext(os.path.basename(files[0]))[0])
+        self._refresh_preview()
+
     # --- construction -------------------------------------------------------
 
     def _build_ui(self) -> None:

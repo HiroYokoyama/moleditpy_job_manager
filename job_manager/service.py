@@ -93,6 +93,7 @@ class JobService(QObject):
             fetch_globs=list(preset.fetch_globs),
             auto_download=preset.auto_download if auto_download is None else auto_download,
             local_dir=self._local_dir_for(name or "job"),
+            preset=preset.to_dict(),
         )
         job.touch(STATE_UPLOADING)
         self.store.add_job(job)

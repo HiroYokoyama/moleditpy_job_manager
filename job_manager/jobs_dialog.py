@@ -232,6 +232,12 @@ class JobsDialog(QDialog):
         self.btn_open.clicked.connect(self._open_selected_result)
         self.btn_tail = QPushButton("Tail Log")
         self.btn_tail.clicked.connect(self._tail_selected)
+        self.btn_resubmit = QPushButton("Resubmit")
+        self.btn_resubmit.setToolTip(
+            "Open the submit wizard prefilled from this job: same host, same "
+            "resources, same input files."
+        )
+        self.btn_resubmit.clicked.connect(self._resubmit_selected)
         self.btn_remove = QPushButton("Remove")
         self.btn_remove.clicked.connect(self._remove_selected)
         for button in (
@@ -239,6 +245,7 @@ class JobsDialog(QDialog):
             self.btn_download,
             self.btn_open,
             self.btn_tail,
+            self.btn_resubmit,
             self.btn_remove,
         ):
             actions.addWidget(button)
@@ -291,19 +298,46 @@ class JobsDialog(QDialog):
         self.btn_download.setEnabled(bool(job and job.remote_dir))
         self.btn_open.setEnabled(bool(job and job.downloaded_files))
         self.btn_tail.setEnabled(bool(job and job.remote_dir))
+        self.btn_resubmit.setEnabled(bool(job and job.input_files))
         self.btn_remove.setEnabled(has_job)
 
     # --- actions ------------------------------------------------------------
 
-    def open_submit_dialog(self) -> None:
+    def open_submit_dialog(
+        self,
+        files: Optional[List[str]] = None,
+        name: str = "",
+        host_id: str = "",
+        preset: Optional[dict] = None,
+    ) -> None:
         from .submit_dialog import SubmitDialog
 
         if not self.service.store.hosts:
             QMessageBox.information(self, "Job Manager", "Add a host profile first (Hosts...).")
             self.open_hosts_dialog()
-            return
+            if not self.service.store.hosts:
+                return
         dialog = SubmitDialog(self.service, self)
+        if files or name or host_id or preset:
+            dialog.prefill(files=files, name=name, host_id=host_id, preset=preset)
         dialog.exec()
+
+    def _resubmit_selected(self) -> None:
+        job = self.selected_job()
+        if job is None:
+            return
+        missing = [path for path in job.input_files if not os.path.isfile(path)]
+        if missing:
+            QMessageBox.warning(
+                self, "Resubmit", f"The original input is no longer on disk:\n{missing[0]}"
+            )
+            return
+        self.open_submit_dialog(
+            files=list(job.input_files),
+            name=job.name,
+            host_id=job.host_id,
+            preset=job.preset or None,
+        )
 
     def open_hosts_dialog(self) -> None:
         from .hosts_dialog import HostsDialog

@@ -186,6 +186,9 @@ class Job:
     #: Relative to remote_dir; what "Tail Log" reads and what the round trip opens.
     log_file: str = ""
     command: str = ""
+    #: The SubmitPreset used, snapshotted so Resubmit can reproduce the job
+    #: even after the named preset is edited or deleted.
+    preset: Dict[str, Any] = field(default_factory=dict)
     last_error: str = ""
 
     @property

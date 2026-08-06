@@ -501,5 +501,106 @@ class TestSubmitDialog(DialogTestCase):
         warn.assert_called_once()
 
 
+class TestPrefillAndResubmit(DialogTestCase):
+    def setUp(self):
+        super().setUp()
+        self.dialog = JobsDialog(self.service)
+        self.addCleanup(self.dialog.deleteLater)
+
+    def submitted_job(self, **preset_kwargs):
+        preset = make_preset(**preset_kwargs)
+        return self.service.submit(self.host, preset, "mol", [self.make_input()])
+
+    def test_the_preset_is_snapshotted_onto_the_job(self):
+        job = self.submitted_job(queue="gpu", memory="64G")
+        self.assertEqual(job.preset["queue"], "gpu")
+        self.assertEqual(job.preset["memory"], "64G")
+
+    def test_the_snapshot_survives_a_restart(self):
+        job = self.submitted_job(queue="gpu")
+        self.assertEqual(JobStore(self.tmp).jobs[job.id].preset["queue"], "gpu")
+
+    def test_the_snapshot_outlives_the_named_preset(self):
+        # Resubmit must still work after the preset is edited or deleted.
+        preset = make_preset(queue="gpu")
+        self.store.add_preset(preset)
+        job = self.service.submit(self.host, preset, "mol", [self.make_input()])
+        self.store.remove_preset(preset.id)
+        self.assertEqual(job.preset["queue"], "gpu")
+
+    def test_resubmit_prefills_the_wizard(self):
+        job = self.submitted_job(queue="gpu")
+        self.dialog.model.reload()
+        self.dialog.table.selectRow(0)
+        with patch.object(JobsDialog, "open_submit_dialog") as opener:
+            self.dialog._resubmit_selected()
+        kwargs = opener.call_args.kwargs
+        self.assertEqual(kwargs["files"], job.input_files)
+        self.assertEqual(kwargs["host_id"], self.host.id)
+        self.assertEqual(kwargs["preset"]["queue"], "gpu")
+        self.assertEqual(kwargs["name"], job.name)
+
+    def test_resubmit_refuses_when_the_input_is_gone(self):
+        job = self.submitted_job()
+        os.unlink(job.input_files[0])
+        self.dialog.model.reload()
+        self.dialog.table.selectRow(0)
+        with patch("job_manager.jobs_dialog.QMessageBox.warning") as warn:
+            with patch.object(JobsDialog, "open_submit_dialog") as opener:
+                self.dialog._resubmit_selected()
+        warn.assert_called_once()
+        opener.assert_not_called()
+
+    def test_resubmit_is_enabled_only_with_input_files(self):
+        self.submitted_job()
+        self.dialog.model.reload()
+        self.dialog.table.selectRow(0)
+        self.assertTrue(self.dialog.btn_resubmit.isEnabled())
+
+    def test_resubmit_without_a_selection_is_a_no_op(self):
+        self.dialog._resubmit_selected()
+
+    def test_prefill_populates_the_submit_dialog(self):
+        dialog = SubmitDialog(self.service)
+        self.addCleanup(dialog.deleteLater)
+        path = self.make_input("prefilled.inp")
+        dialog.prefill(
+            files=[path],
+            host_id=self.host.id,
+            preset=make_preset(queue="short", memory="8G").to_dict(),
+        )
+        self.assertEqual(dialog.selected_files(), [path])
+        self.assertEqual(dialog.txt_job_name.text(), "prefilled")
+        self.assertEqual(dialog.txt_queue.text(), "short")
+        self.assertIn("#SBATCH --mem=8G", dialog.txt_preview.toPlainText())
+
+    def test_prefill_replaces_rather_than_appends(self):
+        dialog = SubmitDialog(self.service)
+        self.addCleanup(dialog.deleteLater)
+        dialog.list_files.addItem(self.make_input("stale.inp"))
+        fresh = self.make_input("fresh.inp")
+        dialog.prefill(files=[fresh])
+        self.assertEqual(dialog.selected_files(), [fresh])
+
+    def test_an_explicit_name_wins_over_the_file_stem(self):
+        dialog = SubmitDialog(self.service)
+        self.addCleanup(dialog.deleteLater)
+        dialog.prefill(files=[self.make_input("a.inp")], name="my run")
+        self.assertEqual(dialog.txt_job_name.text(), "my run")
+
+    def test_prefill_remembers_the_directory(self):
+        dialog = SubmitDialog(self.service)
+        self.addCleanup(dialog.deleteLater)
+        path = self.make_input("remembered.inp")
+        dialog.prefill(files=[path])
+        self.assertEqual(self.store.get_pref("last_input_dir"), os.path.dirname(path))
+
+    def test_prefill_with_nothing_is_harmless(self):
+        dialog = SubmitDialog(self.service)
+        self.addCleanup(dialog.deleteLater)
+        dialog.prefill()
+        self.assertEqual(dialog.selected_files(), [])
+
+
 if __name__ == "__main__":
     unittest.main()
