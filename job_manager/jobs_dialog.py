@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from .credentials import ensure_password
 from .models import (
     STATE_DONE,
     STATE_FAILED,
@@ -405,17 +406,24 @@ class JobsDialog(QDialog):
         confirm = QMessageBox.question(
             self, "Cancel job", f"Cancel '{job.name}' ({job.remote_job_id}) on the cluster?"
         )
-        if confirm == QMessageBox.StandardButton.Yes:
+        if confirm == QMessageBox.StandardButton.Yes and self._has_credentials(job):
             self.service.cancel(job)
+
+    def _has_credentials(self, job: Job) -> bool:
+        """Prompt for this job's host password before any worker is dispatched."""
+        host = self.service.store.hosts.get(job.host_id)
+        if host is None:
+            return True  # the service reports the missing profile itself
+        return ensure_password(self.service, host, self)
 
     def _download_selected(self) -> None:
         job = self.selected_job()
-        if job is not None:
+        if job is not None and self._has_credentials(job):
             self.service.download(job)
 
     def _tail_selected(self) -> None:
         job = self.selected_job()
-        if job is not None:
+        if job is not None and self._has_credentials(job):
             self._append_message(f"Reading {job.log_file}...")
             self.service.tail(job)
 

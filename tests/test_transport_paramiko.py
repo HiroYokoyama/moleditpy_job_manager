@@ -393,5 +393,143 @@ class _DummySocket:
         pass
 
 
+REAL_PARAMIKO = None
+try:
+    import paramiko as REAL_PARAMIKO  # noqa: F401
+except ImportError:
+    pass
+
+SSH_CONFIG = "\n".join(
+    [
+        "Host cluster",
+        "  HostName login7.hpc.example.org",
+        "  User alice",
+        "  Port 2222",
+        "  IdentityFile ~/.ssh/id_cluster",
+        "",
+    ]
+)
+
+
+class _StubParamiko:
+    """Just enough of paramiko for ``_connect`` to reach ``client.connect``."""
+
+    class SSHClient:
+        last_kwargs = None
+
+        def load_system_host_keys(self):
+            pass
+
+        def load_host_keys(self, path):
+            pass
+
+        def set_missing_host_key_policy(self, policy):
+            pass
+
+        def connect(self, **kwargs):
+            type(self).last_kwargs = kwargs
+
+    @staticmethod
+    def RejectPolicy():
+        return None
+
+    SSHException = Exception
+    BadHostKeyException = Exception
+    # Config parsing is paramiko's own; faking it would test nothing.
+    SSHConfig = getattr(REAL_PARAMIKO, "SSHConfig", None)
+
+
+@unittest.skipUnless(REAL_PARAMIKO, "needs the real paramiko for SSHConfig")
+class TestSshConfigIsHonoured(unittest.TestCase):
+    """The OpenSSH backend gets ``~/.ssh/config`` for free by shelling out to
+    ``ssh``. paramiko reads none of it, so a host that only works because of an
+    alias, a per-host User, Port or IdentityFile failed here for reasons the
+    user could not see."""
+
+    def setUp(self):
+        self.home = tempfile.mkdtemp(prefix="sshconf_")
+        os.makedirs(os.path.join(self.home, ".ssh"))
+        self.expand = lambda path: path.replace("~", self.home, 1)
+
+    def _write_config(self, text=SSH_CONFIG):
+        target = os.path.join(self.home, ".ssh", "config")
+        with open(target, "w", encoding="utf-8") as handle:
+            handle.write(text)
+
+    def _lookup(self, name):
+        from job_manager.transport import paramiko_backend
+
+        with patch("os.path.expanduser", self.expand):
+            return paramiko_backend.ssh_config_for(name)
+
+    def _connect_with(self, host):
+        from job_manager.transport import paramiko_backend
+
+        transport = paramiko_backend.ParamikoTransport(host)
+        stub = _StubParamiko()
+        with patch("os.path.expanduser", self.expand):
+            with patch.object(paramiko_backend, "paramiko", stub):
+                transport._connect()
+        return stub.SSHClient.last_kwargs
+
+    def test_alias_user_and_port_are_resolved(self):
+        self._write_config()
+        resolved = self._lookup("cluster")
+        self.assertEqual(resolved.get("hostname"), "login7.hpc.example.org")
+        self.assertEqual(resolved.get("user"), "alice")
+        self.assertEqual(resolved.get("port"), "2222")
+
+    def test_an_identity_file_is_resolved(self):
+        self._write_config()
+        self.assertTrue(self._lookup("cluster").get("identityfile"))
+
+    def test_a_host_with_no_stanza_resolves_to_itself(self):
+        self._write_config("Host other\n  HostName elsewhere\n")
+        self.assertEqual(self._lookup("cluster").get("hostname"), "cluster")
+
+    def test_a_missing_config_is_not_an_error(self):
+        self.assertEqual(self._lookup("cluster"), {})
+
+    def test_the_profile_wins_over_the_config(self):
+        self._write_config()
+        kwargs = self._connect_with(
+            make_host(hostname="cluster", username="from_profile", port=2022)
+        )
+        self.assertEqual(kwargs["username"], "from_profile")
+        self.assertEqual(kwargs["port"], 2022)
+
+    def test_the_config_fills_in_what_the_profile_leaves_blank(self):
+        self._write_config()
+        kwargs = self._connect_with(make_host(hostname="cluster", username="", port=0))
+        self.assertEqual(kwargs["hostname"], "login7.hpc.example.org")
+        self.assertEqual(kwargs["username"], "alice")
+        self.assertEqual(kwargs["port"], 2222)
+
+
+class TestAJumpHostIsRefused(unittest.TestCase):
+    """Silently ignoring the bastion would connect somewhere the profile did
+    not ask for. ProxyJump is what the OpenSSH backend is for."""
+
+    def _connect(self, host, config):
+        from job_manager.transport import paramiko_backend
+
+        transport = paramiko_backend.ParamikoTransport(host)
+        with patch.object(paramiko_backend, "ssh_config_for", return_value=config):
+            with patch.object(paramiko_backend, "paramiko", _StubParamiko()):
+                transport._connect()
+
+    def test_a_profile_jump_host_raises(self):
+        with self.assertRaises(TransportError) as caught:
+            self._connect(make_host(jump_host="user@bastion"), {})
+        self.assertIn("jump host", str(caught.exception).lower())
+
+    def test_a_proxyjump_from_the_config_also_raises(self):
+        with self.assertRaises(TransportError):
+            self._connect(make_host(), {"proxyjump": "bastion"})
+
+    def test_a_plain_host_still_connects(self):
+        self._connect(make_host(), {})
+
+
 if __name__ == "__main__":
     unittest.main()

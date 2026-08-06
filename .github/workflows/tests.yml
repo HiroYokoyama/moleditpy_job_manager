@@ -57,8 +57,11 @@ jobs:
             libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
             libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0
 
+      # paramiko is an optional backend, but its ~/.ssh/config handling is the
+      # real SSHConfig parser -- a stub would test nothing, so those tests skip
+      # themselves unless the package is actually here.
       - name: Install dependencies
-        run: pip install pytest pytest-cov PyQt6
+        run: pip install pytest pytest-cov PyQt6 paramiko
 
       - name: Run the full suite with real Qt
         env:

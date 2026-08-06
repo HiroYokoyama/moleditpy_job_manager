@@ -340,5 +340,27 @@ class TestShell(ScriptContractMixin, unittest.TestCase):
         self.assertIn("pgid", self.scheduler.cancel_command("42"))
 
 
+class TestKillSignalTraps(unittest.TestCase):
+    """Every generated script must turn a kill into a non-zero status."""
+
+    def _script(self, name):
+        return get_scheduler(name).build_script(
+            "t", SubmitPreset(command_template="true"), "mol.inp", "job.log"
+        )
+
+    def test_all_three_signals_are_trapped(self):
+        script = self._script("shell")
+        for line in ("trap 'exit 143' TERM", "trap 'exit 130' INT", "trap 'exit 129' HUP"):
+            self.assertIn(line, script)
+
+    def test_every_scheduler_carries_them(self):
+        for name in ("slurm", "pbs", "sge", "shell"):
+            self.assertIn("trap 'exit 143' TERM", self._script(name), name)
+
+    def test_they_come_after_the_exit_trap_that_writes_the_sentinel(self):
+        script = self._script("slurm")
+        self.assertLess(script.index("' EXIT"), script.index("trap 'exit 143' TERM"))
+
+
 if __name__ == "__main__":
     unittest.main()

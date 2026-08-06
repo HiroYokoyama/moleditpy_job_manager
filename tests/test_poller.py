@@ -5,9 +5,11 @@ tested without threads or an event loop; signal delivery is direct because
 everything happens on one thread.
 """
 
+import os
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 import pytest
 
@@ -19,7 +21,15 @@ from job_manager.models import (  # noqa: E402
     STATE_RUNNING,
     Job,
 )
-from job_manager.poller import MANUAL_REFRESH_COOLDOWN, MAX_BACKOFF, JobPoller  # noqa: E402
+from job_manager.models import HostProfile  # noqa: E402
+from job_manager.poller import (  # noqa: E402
+    MANUAL_REFRESH_COOLDOWN,
+    MAX_BACKOFF,
+    JobPoller,
+    _PollTask,
+)
+from job_manager.transport import openssh  # noqa: E402
+from job_manager.transport.openssh import OpenSSHTransport  # noqa: E402
 from job_manager.store import JobStore  # noqa: E402
 from job_manager.transport.base import TransportError  # noqa: E402
 
@@ -285,6 +295,75 @@ class TestJitter(PollerTestCase):
     def test_a_tiny_delay_never_becomes_a_busy_loop(self):
         self.poller._schedule_next(self.host.id, 0.0)
         self.assertGreaterEqual(self.poller._next_poll[self.host.id] - time.time(), 0.9)
+
+
+class TestTheTransportIsAlwaysClosed(unittest.TestCase):
+    """Every other caller closes in a finally; this one runs on a timer.
+
+    Skipping it leaked a ControlMaster socket directory (and a persistent ssh
+    process) or an open paramiko connection on every single poll.
+    """
+
+    class _Recorder:
+        def __init__(self, log):
+            self.log = log
+
+        def close(self):
+            self.log.append(True)
+
+    def test_closed_after_a_successful_poll(self):
+        closed = []
+        host = HostProfile(name="c", hostname="h", scheduler="slurm")
+        with patch("job_manager.poller.poll_host", return_value={}):
+            _PollTask(host, [Job(remote_job_id="1")], lambda h: self._Recorder(closed)).run_sync()
+        self.assertEqual(closed, [True])
+
+    def test_closed_after_a_failed_poll(self):
+        closed = []
+        host = HostProfile(name="c", hostname="h", scheduler="slurm")
+        with patch("job_manager.poller.poll_host", side_effect=TransportError("nope")):
+            _PollTask(host, [Job(remote_job_id="1")], lambda h: self._Recorder(closed)).run_sync()
+        self.assertEqual(closed, [True])
+
+    def test_a_failing_close_does_not_lose_the_result(self):
+        class Exploding:
+            def close(self):
+                raise OSError("socket already gone")
+
+        results = []
+        host = HostProfile(name="c", hostname="h", scheduler="slurm")
+        task = _PollTask(host, [Job(remote_job_id="1")], lambda h: Exploding())
+        task.signals.finished.connect(lambda host_id, updates: results.append(updates))
+        with patch("job_manager.poller.poll_host", return_value={"j": "DONE"}):
+            task.run_sync()
+        self.assertEqual(results, [{"j": "DONE"}])
+
+    def test_no_ssh_control_directory_survives_a_poll(self):
+        made = []
+        real_mkdtemp = tempfile.mkdtemp
+
+        def counting_mkdtemp(*args, **kwargs):
+            path = real_mkdtemp(*args, **kwargs)
+            made.append(path)
+            return path
+
+        class _Completed:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        host = HostProfile(name="c", hostname="h", username="u", scheduler="slurm")
+        job = Job(state=STATE_RUNNING, remote_job_id="12345", remote_dir="~/j/1")
+        with (
+            patch.object(openssh, "SUPPORTS_MULTIPLEXING", True),
+            patch("subprocess.run", return_value=_Completed()),
+            patch("tempfile.mkdtemp", counting_mkdtemp),
+        ):
+            for _ in range(3):
+                _PollTask(host, [job], OpenSSHTransport).run_sync()
+
+        survivors = [path for path in made if os.path.isdir(path)]
+        self.assertEqual(survivors, [], f"{len(survivors)} ssh control dirs leaked")
 
 
 if __name__ == "__main__":

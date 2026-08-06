@@ -38,6 +38,36 @@ def known_hosts_path() -> str:
     return os.path.join(os.path.expanduser("~"), ".ssh", "known_hosts")
 
 
+def ssh_config_path() -> str:
+    return os.path.join(os.path.expanduser("~"), ".ssh", "config")
+
+
+def ssh_config_for(hostname: str) -> dict:
+    """The ``~/.ssh/config`` stanza for ``hostname``, or {} if there is none.
+
+    The OpenSSH backend gets this for free by shelling out to ``ssh``; paramiko
+    reads no config at all, so a host that only works because of an alias, a
+    per-host ``User``, ``Port`` or ``IdentityFile`` would fail here for reasons
+    the user cannot see. ProxyJump is deliberately *not* honoured: paramiko
+    needs a real channel for it, and silently ignoring the bastion would be
+    worse than the explicit error the caller raises.
+    """
+    config_class = getattr(paramiko, "SSHConfig", None)
+    if config_class is None:
+        return {}
+    path = ssh_config_path()
+    if not os.path.exists(path):
+        return {}
+    config = config_class()
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            config.parse(handle)
+    except (OSError, ValueError, paramiko.SSHException):
+        logging.warning("Job Manager: could not parse %s", path)
+        return {}
+    return dict(config.lookup(hostname) or {})
+
+
 class ParamikoTransport(Transport):
     """One long-lived SSHClient per host, guarded by a lock."""
 
@@ -64,16 +94,26 @@ class ParamikoTransport(Transport):
         client.set_missing_host_key_policy(paramiko.RejectPolicy())
 
         host = self.host
+        # The profile always wins; ssh_config only fills in what it leaves blank.
+        ssh_config = ssh_config_for(host.hostname)
         kwargs = {
-            "hostname": host.hostname,
-            "port": int(host.port or 22),
-            "username": host.username or None,
+            "hostname": ssh_config.get("hostname") or host.hostname,
+            "port": int(host.port or ssh_config.get("port") or 22),
+            "username": host.username or ssh_config.get("user") or None,
             "timeout": int(host.connect_timeout or 10),
             "allow_agent": True,
             "look_for_keys": True,
         }
+        if host.jump_host or ssh_config.get("proxyjump"):
+            raise TransportError(
+                "The paramiko backend cannot use a jump host. Use the OpenSSH "
+                "backend for this host, which honours ProxyJump from ~/.ssh/config."
+            )
+        identities = ssh_config.get("identityfile") or []
         if host.key_path:
             kwargs["key_filename"] = os.path.expanduser(host.key_path)
+        elif identities:
+            kwargs["key_filename"] = [os.path.expanduser(p) for p in identities]
         if self.password:
             kwargs["password"] = self.password
 
@@ -166,6 +206,11 @@ def trust_host_key(hostname: str, port: int = 22) -> str:
     """
     if paramiko is None:
         raise TransportError(INSTALL_HINT)
+    # Resolve through ssh_config first: the fingerprint has to be filed under
+    # the name the connection will actually verify, not under an alias.
+    ssh_config = ssh_config_for(hostname)
+    hostname = ssh_config.get("hostname") or hostname
+    port = int(port or ssh_config.get("port") or 22)
     transport = None
     sock = None
     try:

@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from .credentials import ensure_password
 from .models import BACKEND_OPENSSH, BACKEND_PARAMIKO, HostProfile
 from .schedulers import available_schedulers
 from .service import JobService
@@ -247,6 +248,8 @@ class HostsDialog(QDialog):
         if confirm != QMessageBox.StandardButton.Yes:
             return
         self.store.remove_host(host.id)
+        # Do not keep a secret for a host that no longer exists.
+        self.service.set_password(host.id, "")
         self._reload_list()
 
     # --- editing ------------------------------------------------------------
@@ -310,6 +313,9 @@ class HostsDialog(QDialog):
             return
         if not host.hostname:
             self.lbl_test.setText("Enter a hostname first.")
+            return
+        if not ensure_password(self.service, host, self):
+            self.lbl_test.setText("Cancelled.")
             return
         self.btn_test.setEnabled(False)
         self.lbl_test.setText("Connecting...")

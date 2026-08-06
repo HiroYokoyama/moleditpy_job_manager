@@ -27,6 +27,7 @@ from job_manager.models import (  # noqa: E402
 )
 from job_manager.service import JobService  # noqa: E402
 from job_manager.store import JobStore  # noqa: E402
+from PyQt6.QtWidgets import QMessageBox  # noqa: E402
 from job_manager.submit_dialog import SubmitDialog  # noqa: E402
 
 from .fakes import FakeTransport, make_host, make_preset  # noqa: E402
@@ -600,6 +601,92 @@ class TestPrefillAndResubmit(DialogTestCase):
         self.addCleanup(dialog.deleteLater)
         dialog.prefill()
         self.assertEqual(dialog.selected_files(), [])
+
+
+class TestTheMonitorReleasesTheServiceOnClose(DialogTestCase):
+    """The service outlives the window, so a leftover connection is forever.
+
+    Every open/close cycle used to leave a live subscriber behind: a finished
+    job's results were handed to the host application once per window the user
+    had ever opened, and each closed window still reloaded its model on every
+    poll.
+    """
+
+    def test_closing_drops_every_connection(self):
+        before = self.service.receivers(self.service.jobs_changed)
+        dialog = JobsDialog(self.service)
+        self.assertGreater(self.service.receivers(self.service.jobs_changed), before)
+        dialog.close()
+        self.assertEqual(self.service.receivers(self.service.jobs_changed), before)
+
+    def test_results_are_opened_once_not_once_per_window_ever_opened(self):
+        opened = []
+        with patch("job_manager.jobs_dialog.open_in_host", side_effect=lambda p: opened.append(p)):
+            for _ in range(3):
+                JobsDialog(self.service).close()
+            live = JobsDialog(self.service)
+            self.addCleanup(live.close)
+            self.service.results_ready.emit("job1", [os.path.join(self.tmp, "result.out")])
+        self.assertEqual(len(opened), 1, f"opened {len(opened)} times")
+
+    def test_a_closed_window_stops_reloading_its_model(self):
+        dialog = JobsDialog(self.service)
+        reloads = []
+        dialog.model.reload = lambda: reloads.append(1)
+        dialog.close()
+        self.service.jobs_changed.emit()
+        self.assertEqual(reloads, [])
+
+    def test_closing_twice_is_harmless(self):
+        dialog = JobsDialog(self.service)
+        dialog.close()
+        dialog.close()
+
+
+class TestResubmitWhenTheHostProfileIsGone(DialogTestCase):
+    """Prefill cannot select a host that no longer exists, so the wizard would
+    silently open on whichever host sorted first."""
+
+    def setUp(self):
+        super().setUp()
+        self.dialog = JobsDialog(self.service)
+        self.addCleanup(self.dialog.close)
+        self.job = Job(name="orphan", host_id="retired-id", host_name="retired cluster")
+        self.job.input_files = [self.make_input()]
+        self.store.add_job(self.job)
+        self.dialog.model.reload()
+        self.dialog.table.selectRow(self.dialog.model.row_of(self.job.id))
+
+    def test_the_user_is_warned_and_can_decline(self):
+        opened = []
+        self.dialog.open_submit_dialog = lambda **kwargs: opened.append(kwargs)
+        with patch(
+            "job_manager.jobs_dialog.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.No,
+        ) as asked:
+            self.dialog._resubmit_selected()
+        asked.assert_called_once()
+        self.assertIn("no longer exists", asked.call_args[0][2])
+        self.assertEqual(opened, [], "declining still opened the wizard")
+
+    def test_accepting_opens_the_wizard(self):
+        opened = []
+        self.dialog.open_submit_dialog = lambda **kwargs: opened.append(kwargs)
+        with patch(
+            "job_manager.jobs_dialog.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ):
+            self.dialog._resubmit_selected()
+        self.assertEqual(len(opened), 1)
+
+    def test_a_job_whose_host_still_exists_is_not_questioned(self):
+        job = self.service.submit(self.host, make_preset(), "mol", [self.make_input()])
+        self.dialog.model.reload()
+        self.dialog.table.selectRow(self.dialog.model.row_of(job.id))
+        self.dialog.open_submit_dialog = lambda **kwargs: None
+        with patch("job_manager.jobs_dialog.QMessageBox.question") as asked:
+            self.dialog._resubmit_selected()
+        asked.assert_not_called()
 
 
 if __name__ == "__main__":

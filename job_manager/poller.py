@@ -55,6 +55,7 @@ class _PollTask(QRunnable):
 
     def run_sync(self) -> None:
         """The body, callable directly so tests need no thread pool."""
+        transport = None
         try:
             transport = self.transport_factory(self.host)
             updates = poll_host(transport, self.host, self.jobs)
@@ -65,6 +66,16 @@ class _PollTask(QRunnable):
             logging.warning("Job Manager: unexpected poll error: %s", exc, exc_info=True)
             self.signals.failed.emit(self.host.id, str(exc))
             return
+        finally:
+            # Every other caller closes its transport in a finally; this one runs
+            # on a timer, so skipping it leaked a ControlMaster socket directory
+            # (and a persistent ssh process) or an open paramiko connection on
+            # every single poll, for the life of the session.
+            if transport is not None:
+                try:
+                    transport.close()
+                except Exception:
+                    logging.debug("Job Manager: poll transport close failed", exc_info=True)
         self.signals.finished.emit(self.host.id, updates)
 
 

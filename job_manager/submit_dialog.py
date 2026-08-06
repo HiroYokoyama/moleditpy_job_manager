@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from .credentials import ensure_password
 from .models import HostProfile, SubmitPreset
 from .schedulers import get_scheduler
 from .service import JobService
@@ -350,6 +351,8 @@ class SubmitDialog(QDialog):
         preset = self.collect_preset()
         if not preset.command_template.strip():
             QMessageBox.warning(self, "Submit", "Enter the command to run.")
+            return
+        if not ensure_password(self.service, host, self):
             return
         name = self.txt_job_name.text().strip() or os.path.basename(files[0])
         self.service.submit(host, preset, name, files)
