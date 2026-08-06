@@ -106,9 +106,13 @@ class JobService(QObject):
         self.store.add_job(job)
         self.jobs_changed.emit()
 
-        wait_for_pid = after_job.remote_job_id if after_job is not None else ""
-
         def work() -> Job:
+            # Resolved here, not at dispatch: submitting twice in quick
+            # succession queues both workers before the first has a pid, and
+            # reading it too early chained the second job behind nothing at
+            # all -- so both ran at once, which is the one thing chaining is
+            # for.
+            wait_for_pid = self._chain_pid(after_job)
             transport = self.transport_for(host)
             try:
                 return submit_job(
@@ -124,6 +128,26 @@ class JobService(QObject):
             on_error=lambda msg, job_id=job.id: self._on_submit_failed(job_id, msg),
         )
         return job
+
+    def _chain_pid(self, after_job: Optional[Job], timeout: float = 120.0) -> str:
+        """The predecessor's remote pid, waiting for its submission if needed.
+
+        Called from a worker thread, so blocking here is fine. A predecessor
+        that never gets a pid -- its own submission failed -- is not something
+        to wait for, and this job simply runs.
+        """
+        if after_job is None:
+            return ""
+        deadline = time.time() + timeout
+        while not after_job.remote_job_id and time.time() < deadline:
+            if after_job.is_terminal:
+                logging.warning(
+                    "Job Manager: %s never started, so the job chained behind it will not wait",
+                    after_job.name,
+                )
+                return ""
+            time.sleep(0.2)
+        return after_job.remote_job_id
 
     def _local_dir_for(self, name: str) -> str:
         stamp = time.strftime("%Y%m%d_%H%M%S")

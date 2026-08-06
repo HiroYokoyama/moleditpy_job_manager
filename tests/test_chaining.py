@@ -14,6 +14,8 @@ import tempfile
 import time
 import unittest
 
+import pytest
+
 from job_manager.models import (
     SENTINEL_NAME,
     STARTED_NAME,
@@ -217,6 +219,72 @@ class TestAChainRunsInOrder(unittest.TestCase):
         subprocess.run([BASH, path], capture_output=True, timeout=30)
         self.assertLess(time.time() - start, CHAIN_POLL_SECONDS + 2)
         self.assertTrue(os.path.exists(os.path.join(workdir, "ran")))
+
+
+class TestTheChainSurvivesASlowSubmission(unittest.TestCase):
+    """Submitting twice quickly queues both workers before the first job has a
+    pid. Reading it at dispatch time chained the second job behind nothing, so
+    both ran at once -- the one thing chaining exists to prevent."""
+
+    def setUp(self):
+        pytest.importorskip("PyQt6.QtCore", reason="PyQt6 is not installed")
+        from job_manager.service import JobService
+
+        self.tmp = tempfile.mkdtemp(prefix="chain_race_")
+        self.store = JobStore(self.tmp)
+        self.host = make_host(scheduler="shell")
+        self.store.add_host(self.host)
+        self.service = JobService(self.store)
+        self.service.pool = _DeferredPool()
+        self.service.transport_for = lambda host: FakeTransport(host).when("chmod", stdout="4242\n")
+        self.addCleanup(self.service.shutdown)
+        self.input = os.path.join(self.tmp, "mol.inp")
+        with open(self.input, "w", encoding="utf-8") as handle:
+            handle.write("x")
+
+    def submit(self, name, after=None):
+        return self.service.submit(
+            self.host, SubmitPreset(command_template="true"), name, [self.input], after_job=after
+        )
+
+    def test_the_pid_is_read_when_the_worker_runs_not_when_it_is_queued(self):
+        first = self.submit("first")
+        second = self.submit("second", after=first)
+        self.assertEqual(first.remote_job_id, "", "precondition: no pid yet")
+        for task in list(self.service.pool.queued):
+            task.run_sync()
+        self.assertIn("kill -0 4242", second.command)
+
+    def test_a_predecessor_that_never_starts_does_not_hold_the_job_forever(self):
+        first = self.submit("first")
+        second = self.submit("second", after=first)
+        first.touch("FAILED")  # its submission failed; no pid is ever coming
+        start = time.time()
+        self.service.pool.queued[1].run_sync()
+        self.assertLess(time.time() - start, 5)
+        self.assertNotIn("kill -0", second.command or "")
+
+    def test_no_predecessor_means_no_waiting(self):
+        self.assertEqual(self.service._chain_pid(None), "")
+
+
+class _DeferredPool:
+    """Queues tasks instead of running them, like a pool with no free thread."""
+
+    def __init__(self):
+        self.queued = []
+
+    def start(self, task):
+        self.queued.append(task)
+
+    def setMaxThreadCount(self, count):
+        pass
+
+    def clear(self):
+        self.queued.clear()
+
+    def waitForDone(self, msecs=0):
+        return True
 
 
 class TestTheJobRecordRemembersTheChain(unittest.TestCase):
