@@ -58,6 +58,17 @@ class TestEverySchedulerCanRunOneJobAfterAnother(unittest.TestCase):
         self.assertIn("kill -0 12345", self.script("shell"))
         self.assertNotIn("hold_jid", self.script("shell"))
 
+    def test_a_queue_is_never_asked_to_wait_twice(self):
+        # Emitting the directive *and* the wrapper block put
+        # `while kill -0 <queue job id>` into a queue script, where that number
+        # is a pid on the compute node belonging to some unrelated process --
+        # so the job span in `sleep` until either that process exited or the
+        # walltime ran out.
+        for name in ("slurm", "pbs", "sge"):
+            script = self.script(name)
+            self.assertNotIn("kill -0", script, name)
+            self.assertNotIn(STARTED_NAME, script, name)
+
     def test_a_directive_must_precede_the_first_command_or_the_queue_ignores_it(self):
         # Schedulers stop reading directives at the first executable line, and
         # a silently ignored dependency means the jobs run in the wrong order.
@@ -131,6 +142,10 @@ class TestScheduledStart(unittest.TestCase):
 
     def test_the_no_queue_mode_sleeps_until_the_moment(self):
         self.assertIn(f'while [ "$(date +%s)" -lt {int(self.target)} ]', self.script("shell"))
+
+    def test_a_queue_that_takes_a_start_time_does_not_also_sleep(self):
+        for name in ("slurm", "pbs", "sge"):
+            self.assertNotIn("date +%s", self.script(name), name)
 
     def test_it_compares_epochs_so_timezones_do_not_matter(self):
         # The comment shows a local time for the reader; the line that actually

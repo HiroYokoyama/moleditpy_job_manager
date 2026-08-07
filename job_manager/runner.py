@@ -79,6 +79,7 @@ def submit_job(
         job.log_file,
         run_after=run_after if scheduler.supports_chaining else "",
         start_after=start_after or job.start_after,
+        remote_dir=job.remote_dir,
     )
     job.command = script
     script_remote = remote_paths.join(job.remote_dir, scheduler.script_name)
@@ -255,9 +256,11 @@ def fetch_results(
     transport: Transport, job: Job, local_dir: str, globs: Optional[Sequence[str]] = None
 ) -> List[str]:
     """Download everything in the job directory matching the fetch globs."""
-    patterns = list(globs if globs is not None else (job.fetch_globs or []))
-    # The log is what the user reads first; always bring it back.
-    if job.log_file and job.log_file not in patterns:
+    patterns = [p for p in (globs if globs is not None else (job.fetch_globs or [])) if p.strip()]
+    # The log is what the user reads first; always bring it back -- but adding
+    # it to an empty pattern list would turn "no filter, fetch everything" into
+    # "fetch the log and nothing else".
+    if patterns and job.log_file and job.log_file not in patterns:
         patterns.append(job.log_file)
 
     names = select_files(list_remote_files(transport, job.remote_dir), patterns)

@@ -105,6 +105,43 @@ class ScriptContractMixin:
     def test_blank_modules_are_skipped(self):
         self.assertNotIn("module load \n", self.build(modules=["", "  "]))
 
+    # --- working directory --------------------------------------------------
+
+    def build_in(self, remote_dir):
+        return get_scheduler(self.scheduler_name).build_script(
+            "my job",
+            SubmitPreset(command_template="run {input}"),
+            "mol.inp",
+            "job.log",
+            remote_dir=remote_dir,
+        )
+
+    def test_it_cds_into_the_job_directory_it_was_given(self):
+        # sbatch and qsub run a *copy* of the script from their own spool
+        # directory, so `dirname "$0"` is that spool dir and not the directory
+        # holding the uploaded input: the payload could not find its input, and
+        # the sentinel landed somewhere the poller never looks (reported LOST).
+        script = self.build_in("~/moleditpy_jobs/20260101_my_job")
+        self.assertIn("cd ~/moleditpy_jobs/20260101_my_job || exit 1", script)
+        self.assertNotIn('dirname "$0"', script)
+
+    def test_a_job_directory_with_a_space_is_quoted(self):
+        self.assertIn(
+            "cd '/scratch/my jobs/run 1' || exit 1", self.build_in("/scratch/my jobs/run 1")
+        )
+
+    def test_the_cd_comes_before_the_sentinel_and_the_payload(self):
+        script = self.build_in("/scratch/j")
+        self.assertLess(script.index("cd /scratch/j"), script.index(f"rm -f {SENTINEL_NAME}"))
+        self.assertLess(script.index("cd /scratch/j"), script.index("run mol.inp"))
+
+    def test_without_a_job_directory_it_falls_back_to_the_queue_s_own_variable(self):
+        # Only the wizard's preview builds a script before the directory
+        # exists. Each queue exports where the job was submitted from.
+        script = self.build()
+        self.assertIn("SLURM_SUBMIT_DIR", script)
+        self.assertIn("PBS_O_WORKDIR", script)
+
 
 class TestSlurm(ScriptContractMixin, unittest.TestCase):
     scheduler_name = "slurm"

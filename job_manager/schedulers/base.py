@@ -29,6 +29,7 @@ from ..models import (
     SubmitPreset,
     sanitize_name,
 )
+from ..remote_paths import quote
 
 #: Queue reported something we do not recognise; the poller falls back to the
 #: sentinel file rather than guessing.
@@ -117,16 +118,19 @@ class Scheduler(ABC):
         log_file: str,
         run_after: str = "",
         start_after: float = 0.0,
+        remote_dir: str = "",
     ) -> str:
         """Assemble the complete run script, sentinel included."""
         lines: List[str] = ["#!/bin/bash"]
         lines += self.directives(sanitize_name(job_name), preset, log_file)
-        lines += self.dependency_directives(run_after)
-        lines += self.start_time_directives(start_after)
+        dependency = self.dependency_directives(run_after)
+        start_time = self.start_time_directives(start_after)
+        lines += dependency
+        lines += start_time
         lines += [directive for directive in (preset.extra_directives or []) if directive.strip()]
         lines += [
             "",
-            'cd "$(dirname "$0")" || exit 1',
+            self.cd_to_job_dir(remote_dir),
             f"rm -f {SENTINEL_NAME}",
             # An EXIT trap, not a trailing echo: a payload that calls `exit`
             # itself (or a pre-command that fails under `set -e`) would never
@@ -142,8 +146,15 @@ class Scheduler(ABC):
             "trap 'exit 129' HUP",
             "",
         ]
-        lines += self._start_time_block(start_after)
-        lines += self._predecessor_wait_block(run_after)
+        # Only wait in the wrapper for what the queue was not asked to wait for.
+        # Emitting both put `while kill -0 <queue job id>` into a queue script,
+        # where that number is a pid on the compute node belonging to some
+        # unrelated process -- and the job then span in `sleep` until either
+        # that process exited or the walltime ran out.
+        if not start_time:
+            lines += self._start_time_block(start_after)
+        if not dependency:
+            lines += self._predecessor_wait_block(run_after)
         for module in preset.modules or []:
             if module.strip():
                 lines.append(f"module load {module.strip()}")
@@ -156,6 +167,22 @@ class Scheduler(ABC):
             "",
         ]
         return "\n".join(lines)
+
+    #: Fallbacks for a script built without a known job directory (the wizard's
+    #: preview). Each queue exports the directory the job was submitted from.
+    _SUBMIT_DIR_FALLBACK = '"${SLURM_SUBMIT_DIR:-${PBS_O_WORKDIR:-$(dirname "$0")}}"'
+
+    def cd_to_job_dir(self, remote_dir: str = "") -> str:
+        """The line that puts the script in the directory holding the input.
+
+        ``dirname "$0"`` is wrong for every real queue: sbatch and qsub run a
+        *copy* of the script from their own spool directory, so ``$0`` points
+        there and not at the uploaded input. The payload then could not find
+        its input, and the sentinel was written into a spool directory that is
+        deleted with the job -- which the poller reads as LOST. The job
+        directory is known at submit time, so it is baked in instead.
+        """
+        return f"cd {quote(remote_dir) if remote_dir else self._SUBMIT_DIR_FALLBACK} || exit 1"
 
     def dependency_directives(self, after_id: str) -> List[str]:
         """Directive lines telling the queue to hold this job until ``after_id``.

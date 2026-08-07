@@ -32,6 +32,7 @@ from PyQt6.QtWidgets import (
 from .command_templates import CommandTemplate, suggest, templates_for
 from .credentials import ensure_password
 from .models import HostProfile, Job, SubmitPreset
+from .runner import make_remote_dir
 from .schedulers import get_scheduler
 from .service import JobService
 
@@ -516,13 +517,17 @@ class SubmitDialog(QDialog):
             self.txt_preview.setPlainText(str(exc))
             return
         predecessor = self.chain_predecessor() if self.chain_requested() else None
+        name = self.txt_job_name.text().strip() or "moleditpy_job"
         script = scheduler.build_script(
-            self.txt_job_name.text().strip() or "moleditpy_job",
+            name,
             self.collect_preset(),
             input_name,
             "job.log",
             run_after=(predecessor.remote_job_id if predecessor else ""),
             start_after=self.selected_start_time(),
+            # Built the same way submitting will build it, so the preview shows
+            # the directory the script really cds into (bar the timestamp).
+            remote_dir=make_remote_dir(host, name),
         )
         self.txt_preview.setPlainText(script)
 

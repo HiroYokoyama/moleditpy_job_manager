@@ -66,6 +66,14 @@ class TestSubmit(unittest.TestCase):
     def test_returns_the_queue_id(self):
         self.assertEqual(self.submit().remote_job_id, "4823917")
 
+    def test_the_uploaded_script_cds_into_this_job_s_own_directory(self):
+        # sbatch runs a copy of the script from its spool directory, so the
+        # script cannot work out where its input is from $0.
+        job = self.submit()
+        script = self.transport.uploaded_text[f"{job.remote_dir}/moleditpy_run.sh"]
+        self.assertIn(f"cd {job.remote_dir} || exit 1", script)
+        self.assertNotIn('dirname "$0"', script)
+
     def test_state_and_timestamp(self):
         job = self.submit()
         self.assertEqual(job.state, STATE_SUBMITTED)
@@ -302,6 +310,20 @@ class TestFetchResults(unittest.TestCase):
     def test_nothing_matching_returns_empty(self):
         job = make_job(fetch_globs=["*.nothing"], log_file="")
         self.assertEqual(runner.fetch_results(self.transport, job, self.tmp), [])
+
+    def test_no_patterns_at_all_means_fetch_everything(self):
+        # Clearing the Fetch patterns field is "no filter", not "the log only".
+        # Appending the log to an empty list turned it into the latter.
+        job = make_job(fetch_globs=[])
+        names = sorted(
+            os.path.basename(p) for p in runner.fetch_results(self.transport, job, self.tmp)
+        )
+        self.assertEqual(names, ["job.log", "mol.gbw", "mol.out"])
+
+    def test_blank_patterns_count_as_no_patterns(self):
+        job = make_job(fetch_globs=["", "  "])
+        paths = runner.fetch_results(self.transport, job, self.tmp)
+        self.assertEqual(len(paths), 3)
 
 
 class TestCancel(unittest.TestCase):
