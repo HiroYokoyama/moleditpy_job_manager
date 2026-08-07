@@ -368,3 +368,50 @@ class TestTheTransportIsAlwaysClosed(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestWhatReachesDiskAndWhatReachesTheWorker(PollerTestCase):
+    """The store is saved before a state change is announced, and the worker
+    never gets its hands on the store's own records."""
+
+    def test_the_polled_state_is_persisted_not_a_listener_s_transient_one(self):
+        # A listener reacts synchronously: the service starts the auto-download
+        # of a finished job, which moves it to DOWNLOADING. Saving after the
+        # emit wrote that transient state to disk in place of the real outcome,
+        # and DOWNLOADING is neither active nor terminal -- so a job left in it
+        # was never polled again and never pruned.
+        job = self.add_job("j1", state=STATE_RUNNING, queue_id="100")
+
+        def start_a_download(_job_id, _state):
+            job.state = "DOWNLOADING"
+
+        self.poller.job_updated.connect(start_a_download)
+        self.poller._on_poll_finished(self.host.id, {"j1": STATE_DONE})
+
+        reloaded = JobStore(self.store.directory)
+        self.assertEqual(reloaded.jobs["j1"].state, STATE_DONE)
+
+    def test_the_exit_code_is_applied_on_the_gui_thread(self):
+        self.add_job("j1", state=STATE_RUNNING, queue_id="100")
+        self.poller._on_poll_finished(self.host.id, {"j1": "FAILED"}, {"j1": 137})
+        self.assertEqual(self.store.jobs["j1"].rc, 137)
+
+    def test_the_worker_is_handed_copies_of_the_jobs(self):
+        # poll_host records the sentinel's exit code on the jobs it is given.
+        # Handing it the store's own objects made a pool thread the writer of
+        # records the GUI thread owns.
+        stored = self.add_job("j1", state=STATE_RUNNING, queue_id="100")
+        seen = []
+
+        def capture(_transport, _host, jobs):
+            seen.extend(jobs)
+            jobs[0].rc = 3
+            return {}
+
+        with patch("job_manager.poller.poll_host", side_effect=capture):
+            self.poller.tick(force=True)
+
+        self.assertEqual(len(seen), 1)
+        self.assertIsNot(seen[0], stored)
+        self.assertEqual(seen[0].id, stored.id)
+        self.assertIsNone(stored.rc)

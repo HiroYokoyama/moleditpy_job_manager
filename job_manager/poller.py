@@ -36,7 +36,7 @@ MANUAL_REFRESH_COOLDOWN = 10.0
 
 
 class _WorkerSignals(QObject):
-    finished = pyqtSignal(str, dict)  # host_id, {job_id: new_state}
+    finished = pyqtSignal(str, dict, dict)  # host_id, {job_id: state}, {job_id: rc}
     failed = pyqtSignal(str, str)  # host_id, message
 
 
@@ -76,7 +76,11 @@ class _PollTask(QRunnable):
                     transport.close()
                 except Exception:
                     logging.debug("Job Manager: poll transport close failed", exc_info=True)
-        self.signals.finished.emit(self.host.id, updates)
+        # ``poll_host`` records the sentinel's exit code on the job it is given.
+        # Those are this task's private copies, so the codes are carried back as
+        # data and applied on the GUI thread with everything else.
+        exit_codes = {job.id: job.rc for job in self.jobs if job.rc is not None}
+        self.signals.finished.emit(self.host.id, updates, exit_codes)
 
 
 class JobPoller(QObject):
@@ -165,7 +169,11 @@ class JobPoller(QObject):
                 continue
             self._in_flight[host_id] = True
             self.poll_started.emit(host_id)
-            task = _PollTask(host, list(jobs), self.transport_factory)
+            # Copies, not the store's own records: the task runs on a pool
+            # thread, and the GUI thread is the only writer of the job store.
+            task = _PollTask(
+                host, [Job.from_dict(job.to_dict()) for job in jobs], self.transport_factory
+            )
             task.signals.finished.connect(self._on_poll_finished)
             task.signals.failed.connect(self._on_poll_failed)
             self.pool.start(task)
@@ -191,21 +199,30 @@ class JobPoller(QObject):
         jitter = delay * 0.1
         self._next_poll[host_id] = time.time() + max(1.0, delay + random.uniform(-jitter, jitter))
 
-    def _on_poll_finished(self, host_id: str, updates: dict) -> None:
+    def _on_poll_finished(
+        self, host_id: str, updates: dict, exit_codes: Optional[dict] = None
+    ) -> None:
         self._in_flight[host_id] = False
         self._backoff.pop(host_id, None)
         self._schedule_next(host_id, float(self.store.poll_interval))
 
-        changed = False
+        applied: List[tuple] = []
         for job_id, state in (updates or {}).items():
             job = self.store.jobs.get(job_id)
             if job is None or job.state == state:
                 continue
+            if job_id in (exit_codes or {}):
+                job.rc = exit_codes[job_id]
             job.touch(state)
-            changed = True
-            self.job_updated.emit(job_id, state)
-        if changed:
+            applied.append((job_id, state))
+        # Persist before announcing. A listener reacts synchronously -- a
+        # finished job starts its auto-download, which moves the job to
+        # DOWNLOADING -- so saving afterwards wrote that transient state to
+        # disk in place of the real outcome.
+        if applied:
             self.store.save_jobs()
+        for job_id, state in applied:
+            self.job_updated.emit(job_id, state)
         if not self.store.active_jobs():
             self.stop()
         self.poll_finished.emit(host_id)

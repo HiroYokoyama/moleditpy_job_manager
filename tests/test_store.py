@@ -538,3 +538,42 @@ class TestClearingArchivesFirst(ExportAndArchiveTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestJobsInterruptedMidTransfer(StoreTestCase):
+    """UPLOADING and DOWNLOADING belong to a worker thread that died with the
+    process, and neither state is active or terminal -- so a job left in one
+    was invisible for good: never polled again, never aged out by prune."""
+
+    def reload(self, **job_kwargs):
+        self.store.add_job(Job(id="j1", name="alpha", **job_kwargs))
+        return JobStore(self.tmp).jobs["j1"]
+
+    def test_an_interrupted_download_keeps_the_recorded_outcome(self):
+        # The download only starts once the queue has finished, so the exit
+        # code already on the record is the real answer.
+        self.assertEqual(self.reload(state="DOWNLOADING", rc=0).state, STATE_DONE)
+        self.store.jobs.clear()
+        self.assertEqual(self.reload(state="DOWNLOADING", rc=1).state, "FAILED")
+
+    def test_a_download_with_no_exit_code_is_lost_not_invented(self):
+        self.assertEqual(self.reload(state="DOWNLOADING").state, "LOST")
+
+    def test_an_interrupted_upload_never_reached_the_queue(self):
+        job = self.reload(state="UPLOADING")
+        self.assertEqual(job.state, "FAILED")
+        self.assertIn("Interrupted", job.last_error)
+
+    def test_a_settled_job_is_left_exactly_as_it_was(self):
+        for state in (STATE_DONE, STATE_RUNNING, "PENDING", "CANCELLED"):
+            with self.subTest(state=state):
+                self.store.jobs.clear()
+                self.assertEqual(self.reload(state=state).state, state)
+
+    def test_switching_to_another_job_file_settles_it_too(self):
+        other = os.path.join(self.tmp, "other.pmejbs")
+        atomic_write_json(
+            other, {"version": 1, "jobs": [Job(id="k", state="DOWNLOADING").to_dict()]}
+        )
+        self.store.use_jobs_file(other)
+        self.assertEqual(self.store.jobs["k"].state, "LOST")

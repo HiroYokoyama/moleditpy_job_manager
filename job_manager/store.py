@@ -27,6 +27,11 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from .models import (
+    STATE_DONE,
+    STATE_DOWNLOADING,
+    STATE_FAILED,
+    STATE_LOST,
+    STATE_UPLOADING,
     TERMINAL_STATES,
     HostProfile,
     Job,
@@ -96,6 +101,34 @@ DATA_DIR_ENV = "MOLEDITPY_JOB_MANAGER_DIR"
 def _stamp(value: float) -> str:
     """A local ISO timestamp, or empty for "never happened"."""
     return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(value)) if value else ""
+
+
+#: States a worker thread owns while it is uploading or fetching. Nothing can
+#: still be in one after a restart, because the thread that would have moved it
+#: on died with the process.
+INTERRUPTED_STATES = frozenset({STATE_UPLOADING, STATE_DOWNLOADING})
+
+
+def resolve_interrupted(job: Job) -> bool:
+    """Give a job stranded mid-transfer an honest final state. True if changed.
+
+    Neither UPLOADING nor DOWNLOADING is active or terminal, so a job left in
+    one was invisible for good: the poller never looked at it again and prune
+    never aged it out. A download only ever starts once the queue is finished,
+    so the recorded exit code is the real outcome; an upload that never
+    returned never reached the queue at all.
+    """
+    if job.state == STATE_UPLOADING:
+        job.last_error = job.last_error or "Interrupted: MoleditPy closed during submission"
+        job.touch(STATE_FAILED)
+        return True
+    if job.state == STATE_DOWNLOADING:
+        if job.rc is None:
+            job.touch(STATE_LOST)
+        else:
+            job.touch(STATE_DONE if job.rc == 0 else STATE_FAILED)
+        return True
+    return False
 
 
 def default_data_dir() -> str:
@@ -189,6 +222,16 @@ class JobStore:
         for raw in jobs_doc.get("jobs") or []:
             job = Job.from_dict(raw)
             self.jobs[job.id] = job
+        self._resolve_interrupted()
+
+    def _resolve_interrupted(self) -> int:
+        """Settle any job left mid-transfer by a previous session."""
+        stranded = [job for job in self.jobs.values() if resolve_interrupted(job)]
+        for job in stranded:
+            logging.info(
+                "Job Manager: %s was interrupted mid-transfer; recorded as %s", job.name, job.state
+            )
+        return len(stranded)
 
     def save_settings(self) -> None:
         atomic_write_json(
@@ -360,6 +403,7 @@ class JobStore:
         self.jobs_path = target or self.default_jobs_path
         jobs, _archived = self.read_job_list(self.jobs_path)
         self.jobs = {job.id: job for job in jobs}
+        self._resolve_interrupted()
         return len(self.jobs)
 
     def using_default_jobs_file(self) -> bool:
