@@ -858,6 +858,29 @@ class TestOpeningAJobList(DialogTestCase):
             self.assertFalse(self.dialog.open_job_list(path))
         self.assertEqual(self.store.jobs, {})
 
+    def test_opening_a_working_list_leaves_the_archive_view(self):
+        # Switching lists without leaving the read-only view left the table
+        # showing the archive with every button disabled, while tracking and
+        # saving had already moved to the file just opened.
+        path = self.exported_file()
+        self.dialog.open_job_list(self.archived_file())
+        self.assertTrue(self.dialog.viewing_archive())
+        with patch(
+            "job_manager.jobs_dialog.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ):
+            self.assertTrue(self.dialog.open_job_list(path))
+        self.assertFalse(self.dialog.viewing_archive())
+        self.assertTrue(self.dialog.lbl_archive.isHidden())
+        self.assertTrue(self.dialog.btn_remove.isEnabled() or self.dialog.btn_clear.isEnabled())
+        self.assertEqual(self.dialog.model.rowCount(), len(self.store.jobs))
+
+    def test_going_back_to_the_default_list_leaves_the_archive_view_too(self):
+        self.dialog.open_job_list(self.archived_file())
+        self.dialog._use_default_job_list()
+        self.assertFalse(self.dialog.viewing_archive())
+        self.assertTrue(self.store.using_default_jobs_file())
+
     def test_an_empty_file_is_reported(self):
         path = os.path.join(self.tmp, "empty.pmejbs")
         with open(path, "w", encoding="utf-8") as handle:

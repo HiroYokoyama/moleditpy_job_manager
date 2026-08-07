@@ -197,6 +197,26 @@ class TestMultiplexing(OpenSSHTestCase):
             self.assertIn("-O", mocked.call_args[0][0])
         self.assertIsNone(transport._control_dir)
 
+    def test_closing_twice_does_nothing_the_second_time(self):
+        # close() used to ask for the control path, which *creates* the
+        # directory when there is none -- so a second close made a temp dir and
+        # spawned an ssh only to tear both down again.
+        with patch("job_manager.transport.openssh.SUPPORTS_MULTIPLEXING", True):
+            transport = OpenSSHTransport(self.host)
+            transport._control_path()
+            with patch("subprocess.run"):
+                transport.close()
+            with patch("subprocess.run") as mocked:
+                transport.close()
+            mocked.assert_not_called()
+        self.assertIsNone(transport._control_dir)
+
+    def test_closing_an_unused_transport_spawns_nothing(self):
+        with patch("job_manager.transport.openssh.SUPPORTS_MULTIPLEXING", True):
+            with patch("subprocess.run") as mocked:
+                OpenSSHTransport(self.host).close()
+            mocked.assert_not_called()
+
 
 class TestTestConnection(OpenSSHTestCase):
     def test_returns_the_remote_hostname(self):

@@ -154,8 +154,11 @@ class OpenSSHTransport(Transport):
             )
 
     def close(self) -> None:
-        control_path = self._control_path()
-        if control_path:
+        # Not _control_path(): that *creates* the directory when there is none,
+        # so a second close (or a close of a transport that never ran anything)
+        # made a temp dir and spawned an ssh only to tear both down again.
+        if self._control_dir is not None:
+            control_path = os.path.join(self._control_dir, "cm-%r@%h:%p")
             try:
                 subprocess.run(
                     [

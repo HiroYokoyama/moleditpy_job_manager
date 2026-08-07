@@ -625,6 +625,10 @@ class JobsDialog(QDialog):
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return False
+        # Leave the read-only view first, or the table goes on showing the
+        # archive -- with every button disabled -- while tracking and saving
+        # have already moved to the file just opened.
+        self._exit_archive()
         count = store.use_jobs_file(path)
         self.service.jobs_changed.emit()
         self.service.poller.start()
@@ -635,6 +639,7 @@ class JobsDialog(QDialog):
     def _use_default_job_list(self) -> None:
         """Back to the usual job list."""
         store = self.service.store
+        self._exit_archive()
         store.use_jobs_file("")
         self.service.jobs_changed.emit()
         self.service.poller.start()
