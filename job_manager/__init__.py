@@ -27,7 +27,7 @@ PLUGIN_DESCRIPTION = (
     "own dependency flag; and can hold a job until a chosen time."
 )
 PLUGIN_CATEGORY = "Utility"
-PLUGIN_TAGS = ["hpc", "ssh", "job", "utility"]
+PLUGIN_TAGS = ["hpc", "ssh", "job", "Utility"]
 # The default OpenSSH backend needs nothing beyond the host app; paramiko is an
 # opt-in backend and is deliberately not forced on every user.
 PLUGIN_DEPENDENCIES = []
