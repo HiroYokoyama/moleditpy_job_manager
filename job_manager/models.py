@@ -31,6 +31,11 @@ STATE_LOST = "LOST"
 #: is alive and waiting, so the queue reports it running -- but "RUNNING" would
 #: tell the user their calculation had started when it has not.
 STATE_QUEUED = "QUEUED"
+#: Display only: a chained job whose predecessor failed, under a dependency the
+#: queue will now never satisfy. SLURM and PBS leave it sitting in the queue
+#: looking PENDING for ever, which reads as "any minute now" and is the exact
+#: opposite of the truth.
+STATE_BLOCKED = "BLOCKED"
 
 ALL_STATES = (
     STATE_NEW,
@@ -207,6 +212,8 @@ class Job:
     #: Id of the job this one was chained behind, on the same host. Its
     #: wrapper waits for that job's process before running anything.
     after_job_id: str = ""
+    #: Chain on the predecessor *ending* rather than on it succeeding.
+    chain_any: bool = False
     #: Epoch second before which the job must not start. 0 means "now".
     start_after: float = 0.0
     last_error: str = ""

@@ -48,6 +48,8 @@ _STATE_MAP: Dict[str, str] = {
 class SgeScheduler(Scheduler):
     name = "sge"
     label = "SGE / UGE"
+    # -hold_jid releases on the predecessor finishing, however it finished.
+    chain_releases_on_failure = True
 
     def directives(self, job_name: str, preset: SubmitPreset, log_file: str) -> List[str]:
         lines = [
@@ -96,11 +98,12 @@ class SgeScheduler(Scheduler):
         # SGE -a takes [[CC]YY]MMDDhhmm[.SS].
         return [f"#$ -a {time.strftime('%Y%m%d%H%M.%S', time.localtime(target))}"]
 
-    def dependency_directives(self, after_id: str) -> List[str]:
+    def dependency_directives(self, after_id: str, any_outcome: bool = False) -> List[str]:
         after_id = str(after_id or "").strip()
         if not after_id or not self.valid_job_id(after_id):
             return []
-        # SGE spells it -hold_jid, and holds on completion regardless of status.
+        # SGE spells it -hold_jid, and holds on completion regardless of status,
+        # so there is no afterok/afterany distinction to make here.
         return [f"#$ -hold_jid {after_id}"]
 
     def cancel_command(self, job_id: str) -> str:

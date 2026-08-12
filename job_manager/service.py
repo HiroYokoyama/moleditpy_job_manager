@@ -84,12 +84,14 @@ class JobService(QObject):
         auto_download: Optional[bool] = None,
         after_job: Optional[Job] = None,
         start_after: float = 0.0,
+        chain_any: bool = False,
     ) -> Job:
         """Create the job record and start the upload/submit on a worker.
 
-        ``after_job`` chains this one behind another job on the same host: its
-        wrapper waits for that job's process before starting. Only meaningful
-        for the no-queue scheduler.
+        ``after_job`` chains this one behind another job on the same host: a
+        queue is told to hold it, the no-queue mode has the wrapper wait for
+        that job's process. ``chain_any`` makes the predecessor merely having
+        ended enough, instead of it having succeeded.
         """
         job = Job(
             name=name or (os.path.basename(local_files[0]) if local_files else "job"),
@@ -102,6 +104,7 @@ class JobService(QObject):
             local_dir=self._local_dir_for(name or "job"),
             preset=preset.to_dict(),
             after_job_id=after_job.id if after_job is not None else "",
+            chain_any=bool(chain_any),
             start_after=float(start_after or 0.0),
         )
         job.touch(STATE_UPLOADING)
@@ -125,6 +128,7 @@ class JobService(QObject):
                     local_files,
                     run_after=run_after,
                     start_after=job.start_after,
+                    run_after_any=job.chain_any,
                 )
             finally:
                 transport.close()
@@ -196,6 +200,24 @@ class JobService(QObject):
             return
         if state in (STATE_DONE, STATE_FAILED) and job.auto_download and not job.downloaded:
             self.download(job)
+        if job.is_terminal and state != STATE_DONE:
+            self._warn_stranded(job)
+
+    def _warn_stranded(self, job: Job) -> None:
+        """Say so when a failure has left the jobs behind it unable to start.
+
+        Under ``afterok`` the queue keeps reporting those as PENDING for ever.
+        Nothing is cancelled automatically -- the user may well want to fix the
+        input and resubmit -- but they have to be told it will not happen.
+        """
+        for dependent in self.store.dependents_of(job.id):
+            if self.store.chain_blocker(dependent) is not None:
+                self.error.emit(
+                    f"{dependent.name} was queued behind {job.name}, which "
+                    f"{job.state.lower()}: it will never start. Cancel it, or "
+                    f"resubmit without chaining."
+                )
+                self.job_updated.emit(dependent.id)
 
     def _on_host_error(self, host_id: str, message: str) -> None:
         host = self.store.hosts.get(host_id)

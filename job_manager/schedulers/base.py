@@ -110,6 +110,14 @@ class Scheduler(ABC):
     #: wait for the process itself.
     supports_chaining: bool = True
 
+    #: True when a failed predecessor still releases the jobs behind it. SGE
+    #: holds on completion and the wrapper's ``kill -0`` stops testing true the
+    #: moment the process is gone, so for those two a failure costs nothing.
+    #: SLURM and PBS use ``afterok``, where one failure strands the whole rest
+    #: of the chain -- which is why :meth:`dependency_directives` can be asked
+    #: for the ``afterany`` form instead.
+    chain_releases_on_failure: bool = False
+
     def build_script(
         self,
         job_name: str,
@@ -119,11 +127,12 @@ class Scheduler(ABC):
         run_after: str = "",
         start_after: float = 0.0,
         remote_dir: str = "",
+        run_after_any: bool = False,
     ) -> str:
         """Assemble the complete run script, sentinel included."""
         lines: List[str] = ["#!/bin/bash"]
         lines += self.directives(sanitize_name(job_name), preset, log_file)
-        dependency = self.dependency_directives(run_after)
+        dependency = self.dependency_directives(run_after, any_outcome=run_after_any)
         start_time = self.start_time_directives(start_after)
         lines += dependency
         lines += start_time
@@ -184,8 +193,13 @@ class Scheduler(ABC):
         """
         return f"cd {quote(remote_dir) if remote_dir else self._SUBMIT_DIR_FALLBACK} || exit 1"
 
-    def dependency_directives(self, after_id: str) -> List[str]:
+    def dependency_directives(self, after_id: str, any_outcome: bool = False) -> List[str]:
         """Directive lines telling the queue to hold this job until ``after_id``.
+
+        ``any_outcome`` asks for the dependency to be satisfied by the
+        predecessor *ending* rather than by it succeeding -- the difference
+        between a chain that survives one failed calculation and one that
+        strands everything behind it.
 
         Empty for the no-queue scheduler, which waits in the wrapper instead.
         Directives have to precede the first executable line or the queue never

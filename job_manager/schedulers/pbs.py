@@ -97,11 +97,12 @@ class PbsScheduler(Scheduler):
         # PBS -a takes [[[[CC]YY]MM]DD]hhmm[.SS], not an ISO timestamp.
         return [f"#PBS -a {time.strftime('%Y%m%d%H%M.%S', time.localtime(target))}"]
 
-    def dependency_directives(self, after_id: str) -> List[str]:
+    def dependency_directives(self, after_id: str, any_outcome: bool = False) -> List[str]:
         after_id = str(after_id or "").strip()
         if not after_id or not self.valid_job_id(after_id):
             return []
-        return [f"#PBS -W depend=afterok:{after_id}"]
+        kind = "afterany" if any_outcome else "afterok"
+        return [f"#PBS -W depend={kind}:{after_id}"]
 
     def cancel_command(self, job_id: str) -> str:
         # Quoted: a job id is not always ours. One read from a job list file

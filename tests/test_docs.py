@@ -171,6 +171,36 @@ class TestDocumentedChainingAndScheduling(unittest.TestCase):
 
         self.assertIn(f"`{STATE_QUEUED}`", self.workflow)
 
+    def test_the_blocked_state_is_documented(self):
+        from job_manager.models import STATE_BLOCKED
+
+        self.assertIn(f"`{STATE_BLOCKED}`", self.workflow)
+
+    def test_the_afterany_form_is_documented(self):
+        # Both spellings have to be named, since the whole point of the section
+        # is that the user is choosing between them.
+        for name in ("slurm", "pbs"):
+            emitted = get_scheduler(name).dependency_directives("12345", any_outcome=True)[0]
+            self.assertIn("afterany", emitted, name)
+        self.assertIn("afterany", self.workflow)
+        self.assertIn("afterok", self.workflow)
+
+    def test_the_doc_names_the_right_schedulers_as_stranding_a_chain(self):
+        # The row telling the user which queues strand a chain is the whole
+        # point of the section; a wrong name there is worse than no row at all.
+        stranding = sorted(
+            name
+            for name in ("slurm", "pbs", "sge", "shell")
+            if not get_scheduler(name).chain_releases_on_failure
+        )
+        self.assertEqual(stranding, ["pbs", "slurm"])
+        rows = [line for line in self.workflow.splitlines() if "never start" in line]
+        self.assertTrue(rows, "the workflow doc no longer says a chain can be stranded")
+        row = rows[0]
+        self.assertIn("SLURM", row)
+        self.assertIn("PBS", row)
+        self.assertNotIn("SGE", row)
+
 
 class TestDocumentedPaths(unittest.TestCase):
     def test_the_data_directory(self):

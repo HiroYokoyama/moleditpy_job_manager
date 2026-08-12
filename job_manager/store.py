@@ -324,9 +324,38 @@ class JobStore:
         others instead of all starting at once.
         """
         candidates = [job for job in self.jobs.values() if job.host_id == host_id and job.is_active]
-        if not candidates:
+        # A job that will never start is not something to queue behind: joining
+        # a chain that is already stranded strands the new job with it.
+        runnable = [job for job in candidates if self.chain_blocker(job) is None]
+        if not runnable:
             return None
-        return max(candidates, key=lambda job: (job.submitted_at or job.updated_at))
+        return max(runnable, key=lambda job: (job.submitted_at or job.updated_at))
+
+    def chain_blocker(self, job: Job) -> Optional[Job]:
+        """The dead predecessor that will stop ``job`` ever starting, if any.
+
+        Under an ``afterok`` dependency a predecessor that fails or is
+        cancelled leaves everything behind it queued for ever: SLURM and PBS
+        keep reporting PENDING, which reads as "starting soon" and is the
+        opposite of the truth. Schedulers that release on completion, and jobs
+        submitted with ``chain_any``, are never blocked.
+        """
+        from .schedulers import get_scheduler
+
+        if not job.after_job_id or not job.is_active or job.chain_any:
+            return None
+        predecessor = self.jobs.get(job.after_job_id)
+        if predecessor is None or not predecessor.is_terminal or predecessor.state == STATE_DONE:
+            return None
+        try:
+            scheduler = get_scheduler(job.scheduler)
+        except ValueError:
+            return None
+        return None if scheduler.chain_releases_on_failure else predecessor
+
+    def dependents_of(self, job_id: str) -> List[Job]:
+        """Every job chained directly behind this one."""
+        return [job for job in self.jobs.values() if job.after_job_id == job_id]
 
     def active_jobs_by_host(self) -> Dict[str, List[Job]]:
         grouped: Dict[str, List[Job]] = {}

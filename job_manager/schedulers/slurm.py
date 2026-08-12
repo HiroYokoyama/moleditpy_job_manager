@@ -102,11 +102,12 @@ class SlurmScheduler(Scheduler):
         stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(target))
         return [f"#SBATCH --begin={stamp}"]
 
-    def dependency_directives(self, after_id: str) -> List[str]:
+    def dependency_directives(self, after_id: str, any_outcome: bool = False) -> List[str]:
         after_id = str(after_id or "").strip()
         if not after_id or not self.valid_job_id(after_id):
             return []
-        return [f"#SBATCH --dependency=afterok:{after_id}"]
+        kind = "afterany" if any_outcome else "afterok"
+        return [f"#SBATCH --dependency={kind}:{after_id}"]
 
     def cancel_command(self, job_id: str) -> str:
         # Quoted: a job id is not always ours. One read from a job list file

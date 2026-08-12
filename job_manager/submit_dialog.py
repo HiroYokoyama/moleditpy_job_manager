@@ -189,6 +189,20 @@ class SubmitDialog(QDialog):
             "moving with MoleditPy closed."
         )
         self.chk_chain.setChecked(True)
+        self.chk_chain_any = QCheckBox("...even if that job fails")
+        self.chk_chain_any.setToolTip(
+            "SLURM and PBS are asked by default to start this job only if the "
+            "previous one succeeds (afterok). That is usually right for a "
+            "sequence -- an optimisation feeding a frequency job is pointless "
+            "if the optimisation failed -- but it means one failure leaves "
+            "everything behind it queued for ever.\n\n"
+            "Tick this for a dependency the previous job satisfies simply by "
+            "ending (afterany), when the jobs are independent and only being "
+            "serialised to share the machine.\n\n"
+            "SGE and the no-queue mode always release on the predecessor "
+            "ending, so this changes nothing there."
+        )
+        self.chk_chain_any.toggled.connect(self._refresh_preview)
         self.lbl_chain = QLabel("")
         self.lbl_chain.setWordWrap(True)
         self.lbl_chain.setStyleSheet("color: palette(mid);")
@@ -247,6 +261,7 @@ class SubmitDialog(QDialog):
         form.addRow("Fetch patterns", self.txt_globs)
         form.addRow("", self.chk_auto_download)
         form.addRow("", self.chk_chain)
+        form.addRow("", self.chk_chain_any)
         form.addRow("", self.lbl_chain)
         form.addRow("", start_row)
         return page
@@ -305,13 +320,19 @@ class SubmitDialog(QDialog):
         host = self.current_host()
         predecessor = self.chain_predecessor()
         try:
-            chainable = bool(host) and get_scheduler(host.scheduler).supports_chaining
+            scheduler = get_scheduler(host.scheduler) if host else None
         except ValueError:
-            chainable = False
+            scheduler = None
+        chainable = scheduler is not None and scheduler.supports_chaining
+        # Only worth offering where the two forms differ: SGE and the no-queue
+        # mode release on the predecessor ending whatever happened to it.
+        conditional = chainable and not scheduler.chain_releases_on_failure
 
         self.chk_chain.setVisible(chainable)
         self.lbl_chain.setVisible(chainable)
         self.chk_chain.setEnabled(chainable and predecessor is not None)
+        self.chk_chain_any.setVisible(conditional)
+        self.chk_chain_any.setEnabled(conditional and self.chk_chain.isEnabled())
         if not chainable:
             return
         if predecessor is None:
@@ -339,6 +360,15 @@ class SubmitDialog(QDialog):
             and self.chk_chain.isEnabled()
             and self.chk_chain.isChecked()
             and self.chain_predecessor() is not None
+        )
+
+    def chain_any_requested(self) -> bool:
+        """True for an ``afterany`` dependency rather than ``afterok``."""
+        return (
+            self.chain_requested()
+            and not self.chk_chain_any.isHidden()
+            and self.chk_chain_any.isEnabled()
+            and self.chk_chain_any.isChecked()
         )
 
     def selected_start_time(self) -> float:
@@ -524,6 +554,7 @@ class SubmitDialog(QDialog):
             input_name,
             "job.log",
             run_after=(predecessor.remote_job_id if predecessor else ""),
+            run_after_any=self.chain_any_requested(),
             start_after=self.selected_start_time(),
             # Built the same way submitting will build it, so the preview shows
             # the directory the script really cds into (bar the timestamp).
@@ -573,6 +604,12 @@ class SubmitDialog(QDialog):
         name = self.txt_job_name.text().strip() or os.path.basename(files[0])
         after = self.chain_predecessor() if self.chain_requested() else None
         self.service.submit(
-            host, preset, name, files, after_job=after, start_after=self.selected_start_time()
+            host,
+            preset,
+            name,
+            files,
+            after_job=after,
+            start_after=self.selected_start_time(),
+            chain_any=self.chain_any_requested(),
         )
         self.accept()

@@ -20,6 +20,9 @@ class ShellScheduler(Scheduler):
     # Nothing else serialises work on a machine with no queue, so this is the
     # one scheduler where "run after that job" has to be arranged by hand.
     supports_chaining = True
+    # `kill -0` stops testing true the moment the process is gone, whatever its
+    # exit status, so the job behind a failed one starts as normal.
+    chain_releases_on_failure = True
 
     def directives(self, job_name: str, preset: SubmitPreset, log_file: str) -> List[str]:
         return [f"# job: {job_name}"]

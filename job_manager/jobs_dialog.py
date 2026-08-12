@@ -33,6 +33,7 @@ from PyQt6.QtWidgets import (
 
 from .credentials import ensure_password
 from .models import (
+    STATE_BLOCKED,
     STATE_DONE,
     STATE_FAILED,
     STATE_LOST,
@@ -54,7 +55,7 @@ from .store import (
 JOB_LIST_EXTENSIONS = (JOB_EXTENSION, ".json")
 JOB_LIST_FILTER = f"Job lists (*{JOB_EXTENSION} *.json);;All files (*)"
 
-COLUMNS = ("Name", "Host", "Queue ID", "State", "Elapsed", "Updated")
+COLUMNS = ("Name", "Host", "Queue ID", "State", "After", "Elapsed", "Updated")
 
 _STATE_COLORS = {
     STATE_RUNNING: "#2e7d32",
@@ -63,6 +64,7 @@ _STATE_COLORS = {
     STATE_FAILED: "#c62828",
     STATE_LOST: "#8e24aa",
     STATE_QUEUED: "#6c757d",
+    STATE_BLOCKED: "#c62828",
 }
 
 
@@ -114,6 +116,24 @@ class JobTableModel(QAbstractTableModel):
         predecessor = self.service.store.jobs.get(job.after_job_id)
         return predecessor is not None and predecessor.is_active
 
+    def display_state(self, job: Job) -> str:
+        """What the State column says, which is not always ``job.state``.
+
+        A chained job the queue calls PENDING is either still waiting its turn
+        or waiting for something that already failed, and those two deserve
+        very different reactions from the user.
+        """
+        if self.service.store.chain_blocker(job) is not None:
+            return STATE_BLOCKED
+        if self._is_waiting(job):
+            return STATE_QUEUED
+        return job.state
+
+    def predecessor_of(self, job: Job) -> Optional[Job]:
+        if not job.after_job_id:
+            return None
+        return self.service.store.jobs.get(job.after_job_id)
+
     def job_at(self, row: int) -> Optional[Job]:
         if 0 <= row < len(self._rows):
             return self._rows[row]
@@ -163,24 +183,34 @@ class JobTableModel(QAbstractTableModel):
             if column == 2:
                 return job.remote_job_id or "-"
             if column == 3:
-                if self._is_waiting(job):
-                    return STATE_QUEUED
+                state = self.display_state(job)
                 suffix = ""
-                if job.state == STATE_FAILED and job.rc is not None:
+                if state == STATE_FAILED and job.rc is not None:
                     suffix = f" (rc={job.rc})"
-                return f"{job.state}{suffix}"
+                return f"{state}{suffix}"
             if column == 4:
-                return format_duration(job.elapsed())
+                predecessor = self.predecessor_of(job)
+                if predecessor is None:
+                    return "-"
+                return predecessor.name + ("" if job.chain_any else " (on success)")
             if column == 5:
+                return format_duration(job.elapsed())
+            if column == 6:
                 return format_stamp(job.updated_at)
         elif role == Qt.ItemDataRole.ForegroundRole and index.column() == 3:
-            color = _STATE_COLORS.get(job.state)
+            color = _STATE_COLORS.get(self.display_state(job))
             if color:
                 return QColor(color)
         elif role == Qt.ItemDataRole.ToolTipRole:
             lines = [f"Remote: {job.remote_dir or '-'}"]
             if job.local_dir:
                 lines.append(f"Local: {job.local_dir}")
+            blocker = self.service.store.chain_blocker(job)
+            if blocker is not None:
+                lines.append(
+                    f"Will never start: it waits for {blocker.name} to succeed, "
+                    f"and that job {blocker.state.lower()}."
+                )
             if job.last_error:
                 lines.append(f"Error: {job.last_error}")
             return "\n".join(lines)

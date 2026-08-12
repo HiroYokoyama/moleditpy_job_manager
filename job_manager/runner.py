@@ -53,12 +53,15 @@ def submit_job(
     local_files: Sequence[str],
     run_after: str = "",
     start_after: float = 0.0,
+    run_after_any: bool = False,
 ) -> Job:
     """Create the remote directory, upload everything, enqueue the script.
 
     ``run_after`` chains this job behind another process on the same
     machine: the wrapper waits for it before running anything. Only the
     no-queue scheduler uses it -- a real queue does its own serialising.
+    ``run_after_any`` asks for a dependency the predecessor satisfies by
+    ending rather than by succeeding.
     """
     scheduler = get_scheduler(host.scheduler)
     if not local_files:
@@ -80,6 +83,7 @@ def submit_job(
         run_after=run_after if scheduler.supports_chaining else "",
         start_after=start_after or job.start_after,
         remote_dir=job.remote_dir,
+        run_after_any=run_after_any or job.chain_any,
     )
     job.command = script
     script_remote = remote_paths.join(job.remote_dir, scheduler.script_name)

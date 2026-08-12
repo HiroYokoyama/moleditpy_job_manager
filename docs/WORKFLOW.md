@@ -121,8 +121,31 @@ same cores. A job still waiting there shows as **QUEUED** rather than RUNNING,
 since its wrapper is alive but the calculation has not begun.
 
 The waiting always happens on the host, never in MoleditPy: close the
-application, log out, lose the network, and the chain keeps moving. A
-predecessor that is killed or already gone does not hold anything up.
+application, log out, lose the network, and the chain keeps moving.
+
+#### When the job in front fails
+
+The two mechanisms differ here, and the difference matters:
+
+| Scheduler | A predecessor that fails or is cancelled |
+|---|---|
+| SLURM, PBS | the jobs behind it **never start** — `afterok` can no longer be satisfied |
+| SGE | they run anyway — `-hold_jid` releases on the job ending, not on it succeeding |
+| None (background) | they run anyway — `kill -0` stops matching the moment the process is gone |
+
+On SLURM and PBS the queue goes on reporting such a job as PENDING, which reads
+as "starting soon" and is the opposite of the truth. Job Manager shows it as
+**BLOCKED** instead, says which job it is waiting for, and writes a line to the
+log the moment the predecessor fails. Nothing is cancelled for you — the usual
+fix is to correct the input and resubmit — but you are told.
+
+Tick **...even if that job fails** to ask for `afterany` rather than `afterok`,
+which is right when the jobs are independent and only being serialised to share
+a machine. The box appears only on SLURM and PBS; the other two release on the
+predecessor ending regardless, so there is nothing to choose.
+
+A new job never queues behind a job that is itself blocked: joining a dead
+chain would strand it too.
 
 You can still write a dependency by hand in *Extra directives* — anything you
 put there lands in the directive block, ahead of the first command, which is
@@ -238,6 +261,7 @@ save migrates it.
 | `CANCELLED` | you cancelled it |
 | `LOST` | gone from the queue with no exit code recorded |
 | `QUEUED` | chained behind another job that has not finished yet |
+| `BLOCKED` | chained behind a job that failed, under a dependency the queue can never satisfy — it will not start |
 
 `FAILED (rc=143)` is the signature of a job the scheduler killed: 143 is
 `128 + SIGTERM`, i.e. walltime exceeded, preemption or a node drain. `130` is
@@ -250,11 +274,12 @@ vanished. The remote directory is still listed in the tooltip; **Download** and
 
 ## What it does not do
 
-**No dependencies on a real scheduler.** Chaining is offered only where nothing
-else serialises the work (the no-queue mode, including this machine). On SLURM,
-PBS or SGE the queue decides the order, and a dependency belongs in *Extra
-directives* — `#SBATCH --dependency=afterok:12345` — which Job Manager passes
-through and then tracks normally.
+**No workflow graph.** Chaining is a straight line: each job waits for exactly
+one predecessor. There is no fan-out, no "run C after both A and B", and no
+retry on failure. For anything branching, write the dependency by hand in
+*Extra directives* — `#SBATCH --dependency=afterok:12345,afterok:12346` — which
+Job Manager passes through, ahead of the first command, and then tracks
+normally.
 
 **No file browser.** Fetch patterns decide what comes back.
 
