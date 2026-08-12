@@ -33,11 +33,13 @@ class TestInitialize(PluginEntryTestCase):
         job_manager.initialize(self.context)
         self.assertIs(job_manager.get_context(), self.context)
 
-    def test_no_service_is_built_until_a_menu_is_used(self):
+    def test_no_service_is_built_for_an_empty_job_list(self):
+        # A list with active jobs in it does start one, so that a restart keeps
+        # tracking them; see tests/test_background_tracking.py.
         job_manager.initialize(self.context)
         self.assertIsNone(job_manager.get_service(create=False))
 
-    def test_no_network_activity_at_load(self):
+    def test_no_network_activity_at_load_with_nothing_to_track(self):
         with patch("job_manager.service.JobService") as service_cls:
             job_manager.initialize(self.context)
         service_cls.assert_not_called()

@@ -44,6 +44,17 @@ a new backend is one file.
 **The store is the single writer of job state, on the GUI thread.** Workers
 return plain data through signals; nothing touches a widget off-thread.
 
+**The service is not owned by any window.** It is created either by opening a
+window or, at plugin load, by `_resume_tracking()` finding active jobs left
+over from a previous session — because tracking that stops when MoleditPy is
+restarted is not tracking. It then outlives every window: closing the monitor
+must not stop polling. The status-bar counter is the only thing that says so
+while no window is open, and it is installed alongside the service, once.
+
+Cost when there is nothing to do: `_resume_tracking()` reads the job list — a
+file the plugin would read anyway — and stops there if no job is active. No
+service, no timer, no connection.
+
 ## Threading
 
 | Runs on | What |
@@ -112,6 +123,14 @@ NEW → UPLOADING → SUBMITTED → PENDING → RUNNING → COMPLETING ─┬→
 the poller still contacts the host for. `TERMINAL_STATES` never change again on
 their own.
 
+`QUEUED` and `BLOCKED` are **display states**: they are never stored and never
+returned by a scheduler. Both describe a job the queue calls PENDING, and they
+are derived on the way to the screen because the distinction is the user's, not
+the queue's — waiting its turn, or waiting for something that already failed.
+`store.chain_blocker()` decides, and it answers None for schedulers whose
+dependency releases on the predecessor ending (`chain_releases_on_failure`) and
+for jobs submitted with `chain_any`.
+
 ## Persistence
 
 Both files live in `~/.moleditpy/job_manager/`, **outside** the plugin folder:
@@ -154,6 +173,7 @@ so a file written by a newer version does not break an older one.
 | `command_templates.py` | built-in command lines per program |
 | `remote_paths.py` | POSIX path building and shell quoting |
 | `tasks.py` | `BackgroundTask` / `run_async` on the shared pool |
+| `status_widget.py` | the job counter in the host's status bar |
 | `*_dialog.py` | the three windows |
 
 ## The `submit_file()` handoff

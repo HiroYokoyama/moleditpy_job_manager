@@ -38,6 +38,7 @@ WINDOW_KEY = "job_monitor"
 
 _context: Optional[Any] = None
 _service: Optional[Any] = None
+_status_widget: Optional[Any] = None
 
 
 def get_context() -> Optional[Any]:
@@ -45,18 +46,63 @@ def get_context() -> Optional[Any]:
     return _context
 
 
-def get_service(create: bool = True) -> Optional[Any]:
+def get_service(create: bool = True, store: Optional[Any] = None) -> Optional[Any]:
     """The session-scoped :class:`~job_manager.service.JobService`.
 
     Created lazily on first use so merely loading the plugin costs nothing and
-    no network activity starts until the user opens the window.
+    no network activity starts until there is a reason for it. ``store`` adopts
+    an already-loaded :class:`~job_manager.store.JobStore` rather than reading
+    the same files a second time.
     """
     global _service
     if _service is None and create:
         from .service import JobService
 
-        _service = JobService()
+        _service = JobService(store=store)
+        _install_status_widget(_service)
     return _service
+
+
+def _install_status_widget(service) -> None:
+    """Put the job counter in the host's status bar, once."""
+    global _status_widget
+    if _status_widget is not None or _context is None:
+        return
+    try:
+        from .status_widget import install
+
+        _status_widget = install(
+            _context.get_main_window(), service, on_click=lambda: show_monitor(_context)
+        )
+    except Exception:
+        # A missing status bar, or a host that lays its own out differently, is
+        # not a reason to leave the user without a working plugin.
+        logging.debug("Job Manager: no status bar indicator", exc_info=True)
+
+
+def _resume_tracking() -> None:
+    """Start polling at launch when jobs from a previous session are running.
+
+    The service used to be built only by opening the monitor, so a restart with
+    three jobs on a cluster silently stopped tracking every one of them: no
+    polling, no auto-download, until the user happened to open the window. The
+    store is read either way, so peeking at it first costs nothing -- and an
+    empty job list still means not a single byte of network traffic.
+    """
+    if _service is not None:
+        return
+    try:
+        from .store import JobStore
+
+        store = JobStore()
+        if not store.active_jobs():
+            return
+    except Exception:
+        logging.debug("Job Manager: could not read the job list at startup", exc_info=True)
+        return
+    # The store just read is the one the service adopts, rather than parsing
+    # both files again a line later.
+    get_service(store=store)
 
 
 def forget_window() -> None:
@@ -98,6 +144,8 @@ def initialize(context) -> None:
     except AttributeError:
         # Host older than the file-opener API; the menu entries still work.
         logging.debug("Job Manager: this host has no register_file_opener")
+
+    _resume_tracking()
 
 
 def run(mw) -> None:
@@ -170,7 +218,13 @@ def submit_file(paths, name: str = "") -> bool:
 
 def shutdown() -> None:
     """Stop polling and release worker threads (called on plugin reload)."""
-    global _service
+    global _service, _status_widget
+    if _status_widget is not None:
+        try:
+            _status_widget.detach()
+        except Exception:
+            logging.debug("Job Manager: status widget teardown failed", exc_info=True)
+        _status_widget = None
     if _service is not None:
         try:
             _service.shutdown()

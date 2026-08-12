@@ -21,11 +21,19 @@ fetch, open.
   machine**, with no SSH involved.
 - **Chain** jobs — "run this after that one" — using each scheduler's own
   mechanism (`--dependency=afterok`, `-W depend`, `-hold_jid`), or a wrapper
-  that waits for the previous process where there is no queue at all.
+  that waits for the previous process where there is no queue at all. Ask for
+  `afterany` instead when the jobs are independent, and see a job marked
+  **BLOCKED** — rather than a permanent, misleading PENDING — when the job in
+  front of it failed under a dependency the queue can never satisfy.
 - **Schedule** a start time (`--begin`, `-a`, or a sleep). The job is handed
   over now; MoleditPy need not be running when it starts.
-- **Track** every job in one table: queue id, state, elapsed time. Status
-  survives closing the window, closing the project, and restarting MoleditPy.
+- **Track** every job in one table: queue id, state, elapsed time, and what it
+  is queued behind. Status survives closing the window, closing the project,
+  and restarting MoleditPy — tracking resumes by itself at launch when jobs
+  from a previous session are still running.
+- **Watch** from the status bar: a counter appears in MoleditPy's own status
+  bar while anything is running, queued or blocked, and opens the monitor when
+  clicked. Nothing is shown, and nothing is polled, when there are no jobs.
 - **Fetch** the outputs automatically when a job ends, then hand the result to
   whichever plugin already claims that file type — a finished ORCA run opens in
   the ORCA Result Analyzer with no extra configuration.
