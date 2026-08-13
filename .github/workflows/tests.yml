@@ -39,6 +39,49 @@ jobs:
         run: python -m pytest tests/ -v --tb=short -n auto --cov=job_manager --cov-report=term-missing
 
   # -------------------------------------------------------------------------
+  # Windows — the only runner that can execute the PowerShell backend.
+  #
+  # The wrapper in schedulers/windows.py and the queue in remote_runner_ps.py
+  # are a second implementation of exit-code detection in a second language,
+  # and their tests gate themselves on os.name == "nt": correct, because
+  # GitHub's Ubuntu images ship pwsh but have no cmd, no taskkill and no
+  # Windows paths. Without this job that code is never run by CI at all.
+  # -------------------------------------------------------------------------
+  test-windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install pytest pytest-xdist PyQt6
+
+      - name: Run the suite on Windows
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest tests/ -v --tb=short -n auto -rs
+
+      - name: Fail if the Windows-only tests skipped
+        env:
+          QT_QPA_PLATFORM: offscreen
+        # The gate is os.name plus a PowerShell on PATH. If either check ever
+        # changes shape, this job would go green while running nothing -- which
+        # is exactly the state it was added to end.
+        run: |
+          python -m pytest tests/test_windows_scheduler.py tests/test_remote_runner_ps.py `
+            -k "TestItReallyRuns or TestItRunsWhatIsQueued" -q --no-header -rs > tier.log 2>&1
+          type tier.log
+          if (Select-String -Path tier.log -Pattern "skipped" -Quiet) {
+            echo "::error::The PowerShell execution tests skipped; this job exists to run them."
+            exit 1
+          }
+
+  # -------------------------------------------------------------------------
   # GUI tests — real PyQt6, headless. Roughly half of this plugin is dialogs
   # and a QTimer-driven poller; the pytest-only job above skips all of it.
   # -------------------------------------------------------------------------
