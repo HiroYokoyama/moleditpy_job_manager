@@ -65,13 +65,18 @@ class Transport(ABC):
         """Copy one remote file to ``local_path``."""
 
     def mkdirs(self, remote_dir: str) -> None:
-        from .. import remote_paths
+        from .. import dialect
 
-        self.run(f"mkdir -p {remote_paths.quote(remote_dir)}").check("mkdir -p")
+        # The dialect follows the host's scheduler: a Windows host has no
+        # `mkdir -p`, and asking for one is how a PowerShell backend fails at
+        # its very first step.
+        self.run(dialect.for_host(self.host).mkdirs(remote_dir)).check("create the job directory")
 
     def test_connection(self) -> str:
         """Round-trip a trivial command; returns the remote hostname."""
-        result = self.run("echo moleditpy_ok && hostname", timeout=20)
+        from .. import dialect
+
+        result = self.run(dialect.for_host(self.host).probe(), timeout=20)
         result.check("connection test")
         lines = [line for line in result.stdout.splitlines() if line.strip()]
         return lines[-1].strip() if lines else ""

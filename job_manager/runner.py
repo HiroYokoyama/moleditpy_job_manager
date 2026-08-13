@@ -15,7 +15,7 @@ import tempfile
 import time
 from typing import Dict, Iterable, List, Optional, Sequence
 
-from . import remote_paths, remote_runner
+from . import dialect, remote_paths, remote_runner
 from .models import (
     SCHEDULER_SHELL,
     SENTINEL_NAME,
@@ -92,7 +92,7 @@ def submit_job(
 
     submit_cmd = scheduler.submit_command(scheduler.script_name, job.log_file)
     result = transport.run(
-        f"cd {remote_paths.quote(job.remote_dir)} && {submit_cmd}",
+        dialect.for_host(host).run_in(job.remote_dir, submit_cmd),
         timeout=max(60, int(host.command_timeout or 60)),
     )
     if not result.ok:
@@ -279,11 +279,9 @@ def poll_runner(transport: Transport, host: HostProfile, jobs: Sequence[Job]) ->
 
 def _blocked_entries(transport: Transport, directory: str, jobs: Sequence[Job]) -> set:
     """Job ids the runner set aside rather than ran."""
-    parts = []
-    for job in jobs:
-        path = remote_paths.quote(remote_paths.join(directory, "status", job.remote_job_id))
-        parts.append(f'echo "{_SENTINEL_MARK}"; cat {path} 2>/dev/null || echo MISSING')
-    result = transport.run("; ".join(parts))
+    speak = dialect.for_host(transport.host)
+    paths = [remote_paths.join(directory, "status", job.remote_job_id) for job in jobs]
+    result = transport.run(speak.read_files(paths, _SENTINEL_MARK))
     chunks = (result.stdout or "").split(_SENTINEL_MARK)[1:]
     blocked = set()
     for index, job in enumerate(jobs):
@@ -351,11 +349,9 @@ def poll_host(transport: Transport, host: HostProfile, jobs: Sequence[Job]) -> D
 
 def _read_sentinels(transport: Transport, jobs: Sequence[Job]) -> List[str]:
     """One command reads every finished job's exit-code file."""
-    parts: List[str] = []
-    for job in jobs:
-        sentinel = remote_paths.quote(remote_paths.join(job.remote_dir, SENTINEL_NAME))
-        parts.append(f'echo "{_SENTINEL_MARK}"; cat {sentinel} 2>/dev/null || echo MISSING')
-    result = transport.run("; ".join(parts))
+    speak = dialect.for_host(transport.host)
+    paths = [remote_paths.join(job.remote_dir, SENTINEL_NAME) for job in jobs]
+    result = transport.run(speak.read_files(paths, _SENTINEL_MARK))
 
     chunks = (result.stdout or "").split(_SENTINEL_MARK)[1:]
     outcomes: List[str] = []
@@ -387,7 +383,7 @@ def list_remote_files(transport: Transport, remote_dir: str) -> List[str]:
     so anything with a path separator in it (``../../.bashrc``) would write
     outside the download folder.
     """
-    result = transport.run(f"ls -p -1 {remote_paths.quote(remote_dir)} 2>/dev/null || true")
+    result = transport.run(dialect.for_host(transport.host).list_dir(remote_dir))
     names = []
     for line in (result.stdout or "").splitlines():
         name = line.strip()
@@ -466,8 +462,8 @@ def cancel_job(transport: Transport, host: HostProfile, job: Job) -> None:
 def tail_log(transport: Transport, job: Job, lines: int = 200) -> str:
     if not job.remote_dir or not job.log_file:
         return ""
-    path = remote_paths.quote(remote_paths.join(job.remote_dir, job.log_file))
-    result = transport.run(f"tail -n {int(lines)} {path} 2>&1 || true")
+    path = remote_paths.join(job.remote_dir, job.log_file)
+    result = transport.run(dialect.for_host(transport.host).tail(path, lines))
     return result.stdout or result.stderr or ""
 
 
