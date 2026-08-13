@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from . import input_scan
 from .command_templates import CommandTemplate, suggest, templates_for
 from .credentials import ensure_password
 from .models import HostProfile, Job, SubmitPreset
@@ -158,6 +159,18 @@ class SubmitDialog(QDialog):
         self.spin_cpus.setRange(1, 512)
         self.txt_memory = QLineEdit()
         self.txt_memory.setPlaceholderText("e.g. 8G")
+        self.txt_memory.setToolTip(
+            "What this job needs, in total.\n\n"
+            "The helper queue on a host with no scheduler reserves it: the job "
+            "starts when that much memory is free, so two 90 GB jobs do not "
+            "both start on a 120 GB machine because the cores were free.\n\n"
+            "Filled in from the input file where it says. Note that ORCA's "
+            "%maxcore is per core, so it is multiplied by the core count."
+        )
+        self.lbl_scanned = QLabel("")
+        self.lbl_scanned.setWordWrap(True)
+        self.lbl_scanned.setStyleSheet("color: palette(mid);")
+        self.lbl_scanned.setVisible(False)
         self.txt_modules = QPlainTextEdit()
         self.txt_modules.setPlaceholderText("orca/5.0.4\nopenmpi/4.1.1")
         self.txt_modules.setMaximumHeight(60)
@@ -264,6 +277,7 @@ class SubmitDialog(QDialog):
         form.addRow("Tasks", self.spin_ntasks)
         form.addRow("CPUs per task", self.spin_cpus)
         form.addRow("Memory", self.txt_memory)
+        form.addRow("", self.lbl_scanned)
         form.addRow("Modules", self.txt_modules)
         form.addRow("Pre-commands", self.txt_pre)
         form.addRow("Extra directives", self.txt_extra)
@@ -585,9 +599,39 @@ class SubmitDialog(QDialog):
             self.store.set_pref("last_input_dir", os.path.dirname(added[0]))
             if not self.txt_job_name.text().strip():
                 self.txt_job_name.setText(os.path.splitext(os.path.basename(added[0]))[0])
+            self._apply_scanned_resources(added[0])
         self._reload_templates()
         self._apply_suggested_template()
         self._refresh_preview()
+
+    def _apply_scanned_resources(self, path: str) -> None:
+        """Fill Memory and CPUs from what the input file already asks for.
+
+        The user has typed those numbers once, into the input. Asking for them
+        again is asking them to keep two copies of one fact in step -- and the
+        copy the queue schedules on is the one that gets forgotten, which is
+        how two 90 GB jobs end up on a 120 GB machine.
+
+        Never over a value already there, for the same reason the command
+        template is never written over one you have edited: a filled field is
+        a decision, and a guess must not silently replace it.
+        """
+        found = input_scan.scan(path)
+        if not found.found:
+            return
+        filled = []
+        if found.memory_mb and not self.txt_memory.text().strip():
+            self.txt_memory.setText(input_scan.format_memory(found.memory_mb))
+            filled.append(f"memory {input_scan.format_memory(found.memory_mb)}")
+        # 1 is this field's default, so it means "not set" rather than "one".
+        if found.cores > 1 and self.spin_cpus.value() <= 1:
+            self.spin_cpus.setValue(found.cores)
+            filled.append(f"{found.cores} CPUs")
+        if filled:
+            self.lbl_scanned.setText(
+                f"Read from the {found.program} input: {', '.join(filled)}. Edit if wrong."
+            )
+            self.lbl_scanned.setVisible(True)
 
     # --- drops ---------------------------------------------------------------
 

@@ -11,7 +11,15 @@ from typing import Dict, Iterable, List
 
 from ..models import SubmitPreset
 from ..remote_paths import quote
-from .base import STATE_RUNNING, Scheduler, register
+from .base import (
+    CORES_TAG,
+    MEMORY_TAG,
+    STATE_RUNNING,
+    Scheduler,
+    register,
+    requested_cores,
+    requested_memory_mb,
+)
 
 
 class ShellScheduler(Scheduler):
@@ -25,7 +33,15 @@ class ShellScheduler(Scheduler):
     chain_releases_on_failure = True
 
     def directives(self, job_name: str, preset: SubmitPreset, log_file: str) -> List[str]:
-        return [f"# job: {job_name}"]
+        # There is no queue to read directives, so the head of the script is
+        # where the request is *recorded*: a wrapper found on the machine says
+        # how many cores it was asked for, the same way an #SBATCH block does.
+        # Spelled with the helper's own tag so there is one vocabulary for it.
+        lines = [f"# job: {job_name}", f"{CORES_TAG} {requested_cores(preset)}"]
+        memory = requested_memory_mb(preset)
+        if memory:
+            lines.append(f"{MEMORY_TAG} {memory}")
+        return lines
 
     def submit_command(self, script_name: str, log_file: str) -> str:
         # The braces matter. Written as `A && nohup B ... & echo $!`, the `&`

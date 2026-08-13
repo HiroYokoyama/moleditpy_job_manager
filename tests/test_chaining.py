@@ -29,6 +29,7 @@ from job_manager.schedulers import base as scheduler_base
 from job_manager.schedulers.base import WAIT_POLL_SECONDS
 from job_manager.store import JobStore
 
+from job_manager.models import MODE_LANES
 from .fakes import FakeTransport, make_host
 
 BASH = shutil.which("bash")
@@ -412,7 +413,9 @@ class TestTheChainSurvivesASlowSubmission(unittest.TestCase):
 
         self.tmp = tempfile.mkdtemp(prefix="chain_race_")
         self.store = JobStore(self.tmp)
-        self.host = make_host(scheduler="shell")
+        # Lanes on purpose: this class is about the wrapper waiting for a
+        # pid, which is what chaining does when there is no helper queue.
+        self.host = make_host(scheduler="shell", concurrency_mode=MODE_LANES)
         self.store.add_host(self.host)
         self.service = JobService(self.store)
         self.service.pool = _DeferredPool()

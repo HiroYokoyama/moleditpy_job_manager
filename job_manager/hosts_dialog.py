@@ -38,7 +38,7 @@ from .models import (
     SCHEDULER_WINDOWS,
     HostProfile,
 )
-from .runner import apply_queue_limits, queue_paused, set_queue_paused
+from .runner import apply_queue_limits, probe_resources, queue_paused, set_queue_paused
 from .schedulers import available_schedulers
 from .service import JobService
 from .tasks import run_async
@@ -195,10 +195,27 @@ class HostsDialog(QDialog):
             "'detect' asks the machine itself (nproc)."
         )
 
+        self.spin_runner_memory = QSpinBox()
+        self.spin_runner_memory.setRange(0, 8192)
+        self.spin_runner_memory.setSuffix(" GB")
+        self.spin_runner_memory.setSpecialValueText("detect")
+        self.spin_runner_memory.setToolTip(
+            "How much memory the helper may hand out, in total.\n\n"
+            "A second budget beside the cores, and the one that matters most: "
+            "two jobs asking for 90 GB each must not both start on a 120 GB "
+            "machine merely because the cores were free. Overcommitting memory "
+            "does not slow a calculation down, it gets it killed hours in.\n\n"
+            "Each job asks for its preset's Memory field, which the wizard "
+            "fills in from the input file where it can. A job that asks for "
+            "nothing waits for nothing.\n\n"
+            "'detect' asks the machine itself."
+        )
+
         form.addRow("Remote root", self.txt_remote_root)
         form.addRow("Run at most", self.spin_max_concurrent)
         form.addRow("Queueing", self.cmb_concurrency)
         form.addRow("Cores available", self.spin_runner_cores)
+        form.addRow("Memory available", self.spin_runner_memory)
         right.addWidget(form_box)
 
         adv_box = QGroupBox("Advanced")
@@ -258,9 +275,19 @@ class HostsDialog(QDialog):
             "the next submission is no use."
         )
         self.btn_apply_limits.clicked.connect(self._apply_queue_limits)
+        self.btn_detect = QPushButton("Detect")
+        self.btn_detect.setToolTip(
+            "Ask the host how many cores and how much memory it has, and put "
+            "the answers in the two fields above.\n\n"
+            "Left at 'detect' the helper asks for itself, so this is for when "
+            "you want to see the numbers -- or to give the queue a smaller "
+            "share of a machine you do not have to yourself."
+        )
+        self.btn_detect.clicked.connect(self._detect_resources)
         self.lbl_queue = QLabel("")
         self.lbl_queue.setWordWrap(True)
         queue_layout.addWidget(self.chk_pause)
+        queue_layout.addWidget(self.btn_detect)
         queue_layout.addWidget(self.btn_apply_limits)
         queue_layout.addWidget(self.lbl_queue, 1)
         right.addWidget(self.queue_box)
@@ -325,8 +352,9 @@ class HostsDialog(QDialog):
         self.txt_jump.setText("")
         self.txt_remote_root.setText("~/moleditpy_jobs")
         self.spin_max_concurrent.setValue(0)
-        self.cmb_concurrency.setCurrentIndex(0)
+        self.cmb_concurrency.setCurrentIndex(max(0, self.cmb_concurrency.findData(MODE_RUNNER)))
         self.spin_runner_cores.setValue(0)
+        self.spin_runner_memory.setValue(0)
         self.txt_login.setPlainText("")
         self.txt_options.setPlainText("")
         self.spin_connect_timeout.setValue(10)
@@ -356,6 +384,8 @@ class HostsDialog(QDialog):
         index = self.cmb_concurrency.findData(host.concurrency_mode or MODE_LANES)
         self.cmb_concurrency.setCurrentIndex(max(0, index))
         self.spin_runner_cores.setValue(max(0, int(host.runner_cores or 0)))
+        # Stored in MB, shown in GB: nobody sizes a machine in megabytes.
+        self.spin_runner_memory.setValue(max(0, int(host.runner_memory_mb or 0)) // 1024)
         self._update_concurrency_row()
         self.txt_login.setPlainText("\n".join(host.login_commands or []))
         self.txt_options.setPlainText("\n".join(host.ssh_options or []))
@@ -404,6 +434,7 @@ class HostsDialog(QDialog):
             self.cmb_concurrency.setCurrentIndex(self.cmb_concurrency.findData(MODE_LANES))
         runner = shell and self.cmb_concurrency.currentData() == MODE_RUNNER
         self.spin_runner_cores.setEnabled(runner)
+        self.spin_runner_memory.setEnabled(runner)
         # Nothing to hold or to send limits to unless there is a helper.
         self.queue_box.setVisible(runner)
 
@@ -481,6 +512,7 @@ class HostsDialog(QDialog):
         host.max_concurrent = int(self.spin_max_concurrent.value())
         host.concurrency_mode = self.cmb_concurrency.currentData() or MODE_LANES
         host.runner_cores = int(self.spin_runner_cores.value())
+        host.runner_memory_mb = int(self.spin_runner_memory.value()) * 1024
         host.login_commands = [
             line.strip() for line in self.txt_login.toPlainText().splitlines() if line.strip()
         ]
@@ -613,6 +645,61 @@ class HostsDialog(QDialog):
             self._set_pause_checkbox(not checked)
             self.lbl_queue.setText(
                 message.splitlines()[0] if message else "Could not change the queue."
+            )
+
+        run_async(self.service.pool, work, on_success=ok, on_error=failed)
+
+    def _detect_resources(self) -> None:
+        """Fill the two budgets from what the host actually has."""
+        host = self._persist_current()
+        if host is None:
+            return
+        if not ensure_password(self.service, host, self):
+            return
+        self.btn_detect.setEnabled(False)
+        self.lbl_queue.setText("Asking the host...")
+
+        def work() -> tuple:
+            transport = self.service.transport_for(host)
+            try:
+                return probe_resources(transport, host)
+            finally:
+                transport.close()
+
+        def ok(found: tuple) -> None:
+            self.btn_detect.setEnabled(True)
+            cores, memory_mb, threads = found
+            if not cores and not memory_mb:
+                self.lbl_queue.setText("The host did not say what it has.")
+                return
+            if cores:
+                self.spin_runner_cores.setValue(min(cores, self.spin_runner_cores.maximum()))
+            if memory_mb:
+                # Rounded down to whole gigabytes, which is the unit the field
+                # is in: offering a budget larger than the machine would defeat
+                # the point of asking.
+                self.spin_runner_memory.setValue(
+                    min(memory_mb // 1024, self.spin_runner_memory.maximum())
+                )
+            # Threads are named separately on purpose: a user who knows the
+            # machine as "12 cores" should see why the budget says 8, rather
+            # than assume the detection is broken.
+            threads_note = (
+                f" ({threads} hardware threads, but a calculation gains nothing"
+                " from running on more than one thread per core)"
+                if threads > cores > 0
+                else ""
+            )
+            self.lbl_queue.setText(
+                f"{host.name} reports {cores or '?'} cores and "
+                f"{(memory_mb // 1024) if memory_mb else '?'} GB{threads_note}. "
+                "Lower them to leave room for other users."
+            )
+
+        def failed(message: str) -> None:
+            self.btn_detect.setEnabled(True)
+            self.lbl_queue.setText(
+                message.splitlines()[0] if message else "Could not ask the host."
             )
 
         run_async(self.service.pool, work, on_success=ok, on_error=failed)

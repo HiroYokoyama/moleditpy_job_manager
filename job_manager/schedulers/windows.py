@@ -36,7 +36,16 @@ import time
 from typing import Dict, Iterable, List
 
 from ..models import SubmitPreset
-from .base import STATE_RUNNING, Scheduler, format_command, register
+from .base import (
+    CORES_TAG,
+    MEMORY_TAG,
+    STATE_RUNNING,
+    Scheduler,
+    format_command,
+    register,
+    requested_cores,
+    requested_memory_mb,
+)
 
 #: The generated wrapper. ``.ps1`` so PowerShell will run it at all.
 SCRIPT_NAME = "moleditpy_run.ps1"
@@ -73,7 +82,14 @@ class WindowsScheduler(Scheduler):
     chain_releases_on_failure = True
 
     def directives(self, job_name: str, preset: SubmitPreset, log_file: str) -> List[str]:
-        return [f"# job: {job_name}"]
+        # No queue reads these, so the head of the script is where the request
+        # is recorded -- the same tags the helper queue speaks, so a wrapper
+        # found on the machine says what it was asked for.
+        lines = [f"# job: {job_name}", f"{CORES_TAG} {requested_cores(preset)}"]
+        memory = requested_memory_mb(preset)
+        if memory:
+            lines.append(f"{MEMORY_TAG} {memory}")
+        return lines
 
     def build_script(
         self,
@@ -89,8 +105,11 @@ class WindowsScheduler(Scheduler):
         """The whole wrapper, in PowerShell rather than bash."""
         from ..models import SENTINEL_NAME
 
-        lines = [
-            f"# MoleditPy job: {job_name}",
+        # The directive block is built by directives() and used here rather
+        # than being written out a second time: this scheduler overrides
+        # build_script wholesale, so a header added to directives() alone would
+        # never reach the script.
+        lines = list(self.directives(job_name, preset, log_file)) + [
             "$ErrorActionPreference = 'Continue'",
             # `>` in Windows PowerShell 5.1 is Out-File, whose default encoding
             # is UTF-16 with a BOM. A command template of the usual shape --

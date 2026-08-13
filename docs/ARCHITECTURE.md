@@ -231,6 +231,7 @@ working in, so a transfer cut off half way would otherwise leave a truncated
 | `status_widget.py` | the job counter in the host's status bar |
 | `taskbar.py` | the same count on the application icon (Dock / task bar / launcher) |
 | `notify.py` | the desktop notification raised when a job ends |
+| `input_scan.py` | the memory and core request stated in an input file |
 | `*_dialog.py` | the three windows |
 
 ## The `submit_file()` handoff

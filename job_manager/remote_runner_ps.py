@@ -33,6 +33,8 @@ from .remote_runner import (
     CORES_NAME,
     CORES_TAG,
     DIGEST_NAME,
+    MEMORY_NAME,
+    MEMORY_TAG,
     PAUSED_NAME,
     REQUIRE_SUCCESS_TAG,
     RUNNER_LOG_NAME,
@@ -69,6 +71,7 @@ def build_job_script(
     after_job_id: str = "",
     require_success: bool = True,
     cores: int = 1,
+    memory_mb: int = 0,
 ) -> str:
     """The small script the queue holds for one job.
 
@@ -82,6 +85,8 @@ def build_job_script(
     if job_name:
         lines.append(f"# MoleditPy job: {job_name}")
     lines.append(f"{CORES_TAG} {max(1, int(cores or 1))}")
+    if int(memory_mb or 0) > 0:
+        lines.append(f"{MEMORY_TAG} {int(memory_mb)}")
     if after_job_id:
         lines.append(f"{AFTER_TAG} {after_job_id}")
         lines.append(f"{REQUIRE_SUCCESS_TAG} {1 if require_success else 0}")
@@ -142,9 +147,12 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
             f"function Get-Slots {{ return (Read-Limit {ps_quote(SLOTS_NAME)} 1) }}",
             "",
             "function Get-TotalCores {",
-            "    $n = [Environment]::ProcessorCount",
-            "    if ($n -lt 1) { $n = 1 }",
-            f"    return (Read-Limit {ps_quote(CORES_NAME)} $n)",
+            # Physical cores, not hardware threads: ProcessorCount counts the
+            # latter, and a budget of twelve on a six-core machine lets two
+            # six-core jobs thrash each other.
+            f"    {_PS_CORE_COUNT}",
+            "    if ($c -lt 1) { $c = 1 }",
+            f"    return (Read-Limit {ps_quote(CORES_NAME)} $c)",
             "}",
             "",
             "function Get-Header($path, $tag) {",
@@ -166,6 +174,39 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
             "    foreach ($f in @(Get-ChildItem -LiteralPath 'running' -File "
             "-ErrorAction SilentlyContinue)) {",
             "        $total += (Get-JobCores $f.FullName)",
+            "    }",
+            "    return $total",
+            "}",
+            "",
+            "function Get-TotalMemory {",
+            # Not Read-Limit: an explicit 0 in the file means "do not schedule
+            # on memory", and Read-Limit treats 0 as absent and would fall back
+            # to the machine's total. The bash flavour honours a written 0, and
+            # the two must not disagree about what the same file means.
+            f"    $v = Get-Content -LiteralPath {ps_quote(MEMORY_NAME)} "
+            "-ErrorAction SilentlyContinue | Select-Object -First 1",
+            "    if ($v -match '^\\d+$') { return [int]$v }",
+            "    $mb = 0",
+            "    try {",
+            "        $bytes = (Get-CimInstance -ClassName Win32_ComputerSystem "
+            "-ErrorAction Stop).TotalPhysicalMemory",
+            "        if ($bytes) { $mb = [int]([math]::Floor($bytes / 1MB)) }",
+            "    } catch { $mb = 0 }",
+            "    return $mb",
+            "}",
+            "",
+            "# 0 when the job asked for none, which is what a blank field means.",
+            "function Get-JobMemory($path) {",
+            f"    $v = Get-Header $path {ps_quote(MEMORY_TAG)}",
+            "    if ($v -match '^\\d+$') { return [int]$v }",
+            "    return 0",
+            "}",
+            "",
+            "function Get-UsedMemory {",
+            "    $total = 0",
+            "    foreach ($f in @(Get-ChildItem -LiteralPath 'running' -File "
+            "-ErrorAction SilentlyContinue)) {",
+            "        $total += (Get-JobMemory $f.FullName)",
             "    }",
             "    return $total",
             "}",
@@ -231,6 +272,7 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
             "    # make 'pause' mean 'throw away the last six hours'.",
             f"    if (Test-Path -LiteralPath {ps_quote(PAUSED_NAME)}) {{ return }}",
             "    $cap = Get-TotalCores",
+            "    $memcap = Get-TotalMemory",
             "    foreach ($f in @(Get-ChildItem -LiteralPath 'queue' -File "
             "-ErrorAction SilentlyContinue | Sort-Object Name)) {",
             "        if ((Get-DirCount 'running') -ge (Get-Slots)) { break }",
@@ -243,6 +285,14 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
             "        if (((Get-UsedCores) + $want) -gt $cap) {",
             "            # Strict FIFO: wait for room rather than letting small jobs",
             "            # jump the queue, which would starve anything large.",
+            "            break",
+            "        }",
+            "        $wantmem = Get-JobMemory ('queue\\' + $entry)",
+            "        if ($memcap -gt 0 -and $wantmem -gt $memcap) { $wantmem = $memcap }",
+            "        # Memory is a second budget, for the same reason: two jobs of",
+            "        # 90G on a 120G machine must not both start because the cores",
+            "        # were free. Overcommitting memory kills a job hours in.",
+            "        if ($memcap -gt 0 -and ((Get-UsedMemory) + $wantmem) -gt $memcap) {",
             "            break",
             "        }",
             "        # Claiming a job *is* moving it: Move-Item fails when the",
@@ -293,13 +343,14 @@ def prepare_command(directory: str) -> str:
     )
 
 
-def setup_command(directory: str, slots: int, cores: int) -> str:
+def setup_command(directory: str, slots: int, cores: int, memory_mb: int = 0) -> str:
     """Prepare, set the limits, and report the runner script already there."""
     digest_path = ps_quote(_join(directory, DIGEST_NAME))
     parts = [
         prepare_command(directory),
         set_slots_command(directory, slots),
         set_cores_command(directory, cores),
+        set_memory_command(directory, memory_mb),
         f"if (Test-Path -LiteralPath {digest_path}) {{ Get-Content -LiteralPath {digest_path} }}",
     ]
     return "; ".join(parts)
@@ -395,6 +446,37 @@ def set_slots_command(directory: str, slots: int) -> str:
     return f"Set-Content -Path {path} -Value {max(1, int(slots))} -Encoding ascii"
 
 
+#: Physical cores, falling back to logical processors. ProcessorCount counts
+#: hardware threads, so on a hyperthreaded machine it is double the number of
+#: cores a calculation can actually use.
+_PS_CORE_COUNT = (
+    "$t = [Environment]::ProcessorCount; $c = 0; "
+    "try { $c = [int]((Get-CimInstance -ClassName Win32_Processor -ErrorAction Stop "
+    "| Measure-Object -Property NumberOfCores -Sum).Sum) } catch { $c = 0 }; "
+    "if ($c -lt 1) { $c = $t }"
+)
+
+
+def probe_command() -> str:
+    """The host's cores, threads and total memory, spelled as bash spells it."""
+    return (
+        f"{_PS_CORE_COUNT}; $m = 0; "
+        "try { $b = (Get-CimInstance -ClassName Win32_ComputerSystem "
+        "-ErrorAction Stop).TotalPhysicalMemory; "
+        "if ($b) { $m = [int]([math]::Floor($b / 1MB)) } } catch { $m = 0 }; "
+        '"cores=$c threads=$t memory=$m"'
+    )
+
+
+def set_memory_command(directory: str, memory_mb: int) -> str:
+    """Change the memory budget, in MB. 0 restores the machine's own total."""
+    path = ps_quote(_join(directory, MEMORY_NAME))
+    value = max(0, int(memory_mb or 0))
+    if not value:
+        return f"Remove-Item -LiteralPath {path} -Force -ErrorAction SilentlyContinue"
+    return f"Set-Content -Path {path} -Value {value} -Encoding ascii"
+
+
 def set_cores_command(directory: str, cores: int) -> str:
     """Change how many cores the runner may hand out. 0 restores the default."""
     path = ps_quote(_join(directory, CORES_NAME))
@@ -431,6 +513,7 @@ __all__: List[str] = [
     "pause_command",
     "prepare_command",
     "set_cores_command",
+    "set_memory_command",
     "set_slots_command",
     "setup_command",
     "store_digest_command",

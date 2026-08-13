@@ -50,6 +50,13 @@ fetch, open.
 - **Be told** when a job ends: a desktop notification names the job and the
   host when it finishes, fails or vanishes from the queue. On by default, and
   one checkbox away from off.
+- **Schedule by cores *and* memory** on a machine with no queue: the helper
+  queue runs what fits and holds back what does not, so two 90 GB jobs never
+  share a 120 GB machine just because the cores were free. Both budgets
+  default to the machine's own capacity.
+- **Read the request from the input**: ORCA, Gaussian, Psi4, NWChem, Q-Chem
+  and GAMESS all state their memory and cores, so the wizard fills those in
+  for you (ORCA's `%maxcore` is per core, and is multiplied out).
 - **Hold** the helper queue on a host without cancelling anything, and send it
   new limits while jobs are already waiting.
 - **Drop** an input file on the Job Monitor to start: the wizard opens

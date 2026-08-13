@@ -31,7 +31,7 @@ from .models import (
     SubmitPreset,
     sanitize_name,
 )
-from .schedulers import STATE_UNKNOWN, get_scheduler
+from .schedulers import STATE_UNKNOWN, get_scheduler, requested_cores, requested_memory_mb
 from .transport.base import Transport, TransportError
 
 DEFAULT_LOG_NAME = "job.log"
@@ -186,7 +186,12 @@ def submit_to_runner(
 
     directory = remote_runner.runner_dir(host.remote_root)
     setup = transport.run(
-        flavour.setup_command(directory, remote_runner.slots_for(host), host.runner_cores)
+        flavour.setup_command(
+            directory,
+            remote_runner.slots_for(host),
+            host.runner_cores,
+            host.runner_memory_mb,
+        )
     )
     runner_script = flavour.build_runner_script(directory)
     digest = _digest(runner_script)
@@ -215,7 +220,8 @@ def submit_to_runner(
         job_name=job.name,
         after_job_id=after_job.id if after_job is not None else "",
         require_success=not job.chain_any,
-        cores=max(1, int(preset.cpus_per_task or 1)),
+        cores=requested_cores(preset),
+        memory_mb=requested_memory_mb(preset),
     )
     # Into tmp/, then moved: the runner must never see a half-uploaded script.
     _upload_text(transport, job_script, remote_paths.join(directory, "tmp", entry))
@@ -339,6 +345,17 @@ def set_queue_paused(transport: Transport, host: HostProfile, paused: bool) -> b
     return bool(paused)
 
 
+def probe_resources(transport: Transport, host: HostProfile) -> tuple:
+    """Ask the host what it has: ``(cores, memory_mb)``, 0 where unknown.
+
+    The same question the helper answers for itself when a budget is left at
+    "detect" -- asked out loud, so the user can see the numbers, keep them, or
+    set a smaller share of a machine they do not have to themselves.
+    """
+    result = transport.run(remote_runner.flavour_for(host).probe_command(), timeout=30)
+    return remote_runner.parse_probe(result.stdout)
+
+
 def apply_queue_limits(transport: Transport, host: HostProfile) -> None:
     """Push this host's job and core limits to a runner that is already up.
 
@@ -349,7 +366,12 @@ def apply_queue_limits(transport: Transport, host: HostProfile) -> None:
     flavour = remote_runner.flavour_for(host)
     directory = remote_runner.runner_dir(host.remote_root)
     transport.run(
-        flavour.setup_command(directory, remote_runner.slots_for(host), host.runner_cores)
+        flavour.setup_command(
+            directory,
+            remote_runner.slots_for(host),
+            host.runner_cores,
+            host.runner_memory_mb,
+        )
     )
 
 

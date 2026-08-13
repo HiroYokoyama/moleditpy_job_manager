@@ -31,6 +31,50 @@ from ..models import (
 )
 from ..remote_paths import quote
 
+# One spelling of the core request, shared with the helper queue that reads it.
+# Importing it the other way round would be a cycle: the runner modules build
+# on the schedulers, not the reverse.
+from ..remote_runner import CORES_TAG, MEMORY_TAG
+
+#: Multipliers for the suffixes a resource request is written with. Case is
+#: ignored, and a bare number is already megabytes -- the unit every queue
+#: system defaults to.
+_MEMORY_UNITS = {"": 1, "M": 1, "MB": 1, "G": 1024, "GB": 1024, "T": 1024 * 1024, "TB": 1024 * 1024}
+_MEMORY_RE = re.compile(r"^\s*([0-9]+(?:\.[0-9]+)?)\s*([A-Za-z]*)\s*$")
+
+
+def parse_memory_mb(text: str) -> int:
+    """``"8G"`` -> 8192. 0 for anything that is not a size.
+
+    Users write memory the way their cluster spells it -- ``8G``, ``8GB``,
+    ``8192``, ``512M`` -- and the helper needs one unit to do arithmetic in.
+    Anything unparseable means "no request", never a wrong number: a job that
+    asks for nothing waits for nothing, which is the safe direction.
+    """
+    match = _MEMORY_RE.match(str(text or ""))
+    if not match:
+        return 0
+    unit = _MEMORY_UNITS.get(match.group(2).upper())
+    if unit is None:
+        return 0
+    return int(float(match.group(1)) * unit)
+
+
+def requested_memory_mb(preset) -> int:
+    """Megabytes this job asks for, or 0 when it asks for none."""
+    return parse_memory_mb(getattr(preset, "memory", "") or "")
+
+
+def requested_cores(preset) -> int:
+    """How many CPU cores this job asks for.
+
+    The helper queue schedules on this number: a job starts when that many
+    cores are free, so it is the request that decides what runs alongside what
+    on a machine with no queue of its own.
+    """
+    return max(1, int(getattr(preset, "cpus_per_task", 1) or 1))
+
+
 #: Queue reported something we do not recognise; the poller falls back to the
 #: sentinel file rather than guessing.
 STATE_UNKNOWN = "UNKNOWN"
@@ -321,6 +365,11 @@ def canonical_state(raw: str, mapping: Dict[str, str]) -> str:
 
 
 __all__ = [
+    "CORES_TAG",
+    "MEMORY_TAG",
+    "parse_memory_mb",
+    "requested_cores",
+    "requested_memory_mb",
     "Scheduler",
     "STATE_UNKNOWN",
     "STATE_PENDING",

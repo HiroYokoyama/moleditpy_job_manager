@@ -134,10 +134,22 @@ class HostProfile:
     max_concurrent: int = 0
     #: How that limit is kept. ``lanes`` chains submissions together and leaves
     #: nothing on the host; ``runner`` puts a small queue there instead, which
-    #: can reorder, count cores and free a slot the moment a job ends.
-    concurrency_mode: str = "lanes"
+    #: can reorder, count cores and memory, and free a slot the moment a job
+    #: ends.
+    #:
+    #: The runner is the default because it is the only one of the two that can
+    #: schedule on resources at all: chained lanes fix the order at submit time
+    #: and know nothing about cores or memory, so a host left on lanes ignores
+    #: every limit set for it bar the job count. It only ever applies where
+    #: there is no scheduler already (see :attr:`uses_remote_runner`), and it
+    #: exits by itself the moment its queue is empty.
+    concurrency_mode: str = MODE_RUNNER
     #: Cores the remote runner may hand out. 0 asks the machine (``nproc``).
     runner_cores: int = 0
+    #: Megabytes of memory the remote runner may hand out. 0 asks the machine.
+    #: A second budget beside the cores, because two jobs of 90 GB on a 120 GB
+    #: machine must not both start just because the cores happened to be free.
+    runner_memory_mb: int = 0
     ssh_options: List[str] = field(default_factory=list)
     #: paramiko backend only: prompt for a password (never stored on disk).
     ask_password: bool = False
@@ -174,7 +186,14 @@ class HostProfile:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "HostProfile":
-        return _from_dict(cls, data)
+        host = _from_dict(cls, data)
+        if "concurrency_mode" not in (data or {}):
+            # Saved before the helper queue existed, so this host has been
+            # chaining lanes all along. A new profile defaults to the runner,
+            # but an upgrade must not quietly move someone's jobs onto a
+            # different scheduler while they are not looking.
+            host.concurrency_mode = MODE_LANES
+        return host
 
 
 @dataclass

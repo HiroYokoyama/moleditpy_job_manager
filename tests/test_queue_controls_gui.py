@@ -7,6 +7,7 @@ feature of the helper. These tests are the wiring that closes that gap.
 
 from __future__ import annotations
 
+import os
 import unittest
 
 import pytest
@@ -275,3 +276,70 @@ class TestSelectionRaces(QueueControlTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheWizardReadsTheInput(DialogTestCase):
+    """Filling Memory and CPUs from the file the user just added."""
+
+    def dialog(self):
+        from job_manager.submit_dialog import SubmitDialog
+
+        dialog = SubmitDialog(self.service)
+        self.addCleanup(dialog.deleteLater)
+        return dialog
+
+    def orca_input(self, name="mol.inp"):
+        path = os.path.join(self.tmp, name)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("! B3LYP Opt\n%pal nprocs 8 end\n%maxcore 3000\n* xyz 0 1\nH 0 0 0\n*\n")
+        return path
+
+    def test_the_memory_request_is_filled_in(self):
+        dialog = self.dialog()
+
+        dialog.add_files([self.orca_input()])
+
+        # 3000 MB per core times eight cores, not 3000.
+        self.assertEqual(dialog.txt_memory.text(), "24000M")
+
+    def test_the_core_request_is_filled_in(self):
+        dialog = self.dialog()
+        dialog.add_files([self.orca_input()])
+        self.assertEqual(dialog.spin_cpus.value(), 8)
+
+    def test_the_user_is_told_where_the_numbers_came_from(self):
+        dialog = self.dialog()
+        dialog.add_files([self.orca_input()])
+        self.assertTrue(dialog.lbl_scanned.isVisibleTo(dialog))
+        self.assertIn("ORCA", dialog.lbl_scanned.text())
+
+    def test_a_value_already_typed_is_never_written_over(self):
+        # A filled field is a decision; a guess must not replace it.
+        dialog = self.dialog()
+        dialog.txt_memory.setText("4G")
+        dialog.spin_cpus.setValue(2)
+
+        dialog.add_files([self.orca_input()])
+
+        self.assertEqual(dialog.txt_memory.text(), "4G")
+        self.assertEqual(dialog.spin_cpus.value(), 2)
+
+    def test_a_file_that_states_nothing_changes_nothing(self):
+        path = os.path.join(self.tmp, "mol.xyz")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("1\nx\nH 0 0 0\n")
+        dialog = self.dialog()
+
+        dialog.add_files([path])
+
+        self.assertEqual(dialog.txt_memory.text(), "")
+        self.assertFalse(dialog.lbl_scanned.isVisibleTo(dialog))
+
+    def test_the_request_reaches_the_preset_that_is_submitted(self):
+        dialog = self.dialog()
+        dialog.add_files([self.orca_input()])
+
+        preset = dialog.collect_preset()
+
+        self.assertEqual(preset.memory, "24000M")
+        self.assertEqual(preset.cpus_per_task, 8)

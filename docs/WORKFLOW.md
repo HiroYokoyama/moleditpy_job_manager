@@ -250,22 +250,64 @@ the queue is already doing this, and better.
 
 ### What the helper runs at once
 
-Two dials, and they are not the same one:
+The helper queue is the **default** for a host with no scheduler of its own,
+because it is the only one of the two modes that can schedule on resources at
+all — chained lanes fix the order when you submit and know nothing about cores
+or memory. (A host profile saved before the helper existed keeps chaining, so
+an upgrade does not move your jobs onto a different scheduler unasked.)
+
+Three dials, and they are not the same one:
 
 - **Run at most** caps the *number* of jobs. Left at **no limit** — the default
   — the helper puts no ceiling on the count, and the cores below are what
   actually schedule. (Before v0.7.1 "no limit" was sent to the helper as *one*,
   so an untouched host profile ran strictly one job at a time and nothing on
   screen said why.)
-- **Cores available** is the budget. Each job asks for its preset's *CPUs per
-  task*, and starts when that many are free. Left at **detect**, the helper
+- **Cores available** is the CPU budget. Each job asks for its preset's *CPUs
+  per task*, and starts when that many are free. Left at **detect**, the helper
   asks the machine (`nproc`).
+- **Memory available** is the second budget, and usually the one that matters.
+  Each job asks for its preset's *Memory*, and starts when that much is free.
+  Left at **detect**, the helper asks the machine.
+
+**Detect** fills both in from the host itself, so you can see the numbers and
+then lower them to leave room for other users. It counts **physical cores,
+not hardware threads**: `nproc` reports twelve on a six-core machine, and a
+budget of twelve would let two six-core jobs thrash the same six cores. The
+helper uses the same count when a budget is left at *detect*, so the dialog
+and the queue never disagree about the machine.
 
 So an eight-core workstation with the defaults runs eight single-core jobs
 together, or two four-core jobs, and queues the rest. A job asking for more
-cores than the machine has is given the whole machine rather than waiting for
-ever. The queue is strict FIFO: a small job does not jump ahead of a large one
-that is waiting for room, which would otherwise starve it.
+than the machine has is given the whole machine rather than waiting for ever.
+The queue is strict FIFO: a small job does not jump ahead of a large one that
+is waiting for room, which would otherwise starve it.
+
+**Cores alone are not enough.** Two jobs asking for 90 GB each must not both
+start on a 120 GB machine merely because the cores were free — overcommitting
+CPU makes a calculation slow, overcommitting memory gets it killed hours in.
+With a memory budget the second waits. A job that asks for no memory waits for
+no memory, so nothing is held back by a field you left blank.
+
+### Memory and cores are read from your input
+
+You already state both in the input file, so the wizard reads them when you add
+one and fills *Memory* and *CPUs per task* in for you. It never writes over a
+value you have already typed.
+
+| Program | Read from |
+|---|---|
+| ORCA | `%maxcore` × `%pal nprocs` (or `! PALn`) |
+| Gaussian | `%mem`, `%nprocshared` |
+| Psi4 | `memory 8 GB` |
+| NWChem | `memory total 4000 mb` |
+| Q-Chem | `MEM_TOTAL` |
+| GAMESS | `MWORDS` (× 8 MB) |
+
+**ORCA's `%maxcore` is per core**, which is the trap here: `%maxcore 3000` with
+`%pal nprocs 8` is a 24 GB job, not a 3 GB one. Gaussian's `%mem` is a total
+and is taken as one. Anything the wizard cannot read leaves the fields alone
+rather than guessing.
 
 ### Holding the helper's queue
 

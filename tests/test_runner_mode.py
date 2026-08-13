@@ -114,9 +114,14 @@ class TestWhichHostsUseIt(unittest.TestCase):
         # both pointless and the thing sysadmins object to.
         self.assertFalse(make_host(scheduler=SCHEDULER_SLURM).uses_remote_runner)
 
-    def test_lanes_are_the_default(self):
-        self.assertEqual(HostProfile().concurrency_mode, MODE_LANES)
-        self.assertFalse(HostProfile().uses_remote_runner)
+    def test_the_helper_is_the_default(self):
+        # The helper is the default now: it is the only one of the two that
+        # can schedule on cores and memory at all, so a host left on lanes
+        # ignores every limit set for it bar the job count.
+        self.assertEqual(HostProfile().concurrency_mode, MODE_RUNNER)
+        # Still not on a cluster, which has a scheduler of its own.
+        self.assertFalse(HostProfile(scheduler="slurm").uses_remote_runner)
+        self.assertTrue(HostProfile(scheduler="shell").uses_remote_runner)
 
     def test_a_profile_written_before_the_field_existed_still_loads(self):
         raw = HostProfile(name="old").to_dict()

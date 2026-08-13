@@ -63,12 +63,12 @@ RUNNER_SCRIPT_NAME = "moleditpy_runner.sh"
 ENTRY_SUFFIX = ".sh"
 #: The runner's own log, for when a user asks why nothing started.
 RUNNER_LOG_NAME = "runner.log"
-#: Holds the slot count, re-read every pass so the limit can be changed
-#: without restarting the runner.
 #: Records which runner script the host already has, so a submission does not
 #: upload an identical one every time.
 DIGEST_NAME = "runner.sha"
 
+#: Holds the slot count, re-read every pass so the limit can be changed
+#: without restarting the runner.
 SLOTS_NAME = "slots"
 #: What "no limit" means to the helper, which needs a number. High enough never
 #: to be the binding constraint, so the core budget is what actually schedules.
@@ -78,6 +78,12 @@ UNLIMITED_SLOTS = 9999
 CORES_NAME = "cores"
 #: Header line by which a job asks for cores.
 CORES_TAG = "# moleditpy-cores:"
+
+#: Holds the megabytes of memory the runner may hand out. Absent means the
+#: machine's own total; 0 means do not schedule on memory at all.
+MEMORY_NAME = "memory"
+#: Header line by which a job asks for memory, always in megabytes.
+MEMORY_TAG = "# moleditpy-memory:"
 
 #: How often the runner reaps finished jobs and dispatches waiting ones. Every
 #: check is a shell builtin or one ``ls``, so this costs nothing measurable.
@@ -184,6 +190,7 @@ def build_job_script(
     after_job_id: str = "",
     require_success: bool = True,
     cores: int = 1,
+    memory_mb: int = 0,
 ) -> str:
     """The small script the queue holds for one job.
 
@@ -201,6 +208,10 @@ def build_job_script(
     if job_name:
         lines.append(f"# MoleditPy job: {job_name}")
     lines.append(f"{CORES_TAG} {max(1, int(cores or 1))}")
+    # Only when there is one: a job with no memory request waits for no memory,
+    # which is what a blank field in the wizard has always meant.
+    if int(memory_mb or 0) > 0:
+        lines.append(f"{MEMORY_TAG} {int(memory_mb)}")
     if after_job_id:
         lines.append(f"{AFTER_TAG} {after_job_id}")
         lines.append(f"{REQUIRE_SUCCESS_TAG} {1 if require_success else 0}")
@@ -245,19 +256,45 @@ slots() {{
 total_cores() {{
   c=$(cat {CORES_NAME} 2>/dev/null)
   if [ -z "$c" ]; then
-    c=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null)
+    # Physical cores, not hardware threads: `nproc` counts the latter, and a
+    # budget of twelve on a six-core machine lets two six-core jobs thrash.
+    {CORE_COUNT_SH}
   fi
   positive "$c" 1
+}}
+
+total_memory() {{
+  m=$(cat {MEMORY_NAME} 2>/dev/null)
+  if [ -z "$m" ]; then
+    # Nothing found means memory is not scheduled on at all, which is safer
+    # than inventing a budget and stalling the queue on it.
+    {MEMORY_TOTAL_SH}
+  fi
+  case "$m" in ''|*[!0-9]*) echo 0 ;; *) echo "$m" ;; esac
 }}
 
 header() {{ sed -n "s|^$2 *||p" "$1" 2>/dev/null | head -n 1; }}
 
 job_cores() {{ positive "$(header "$1" '{CORES_TAG}')" 1; }}
 
+# 0 when the job asked for none, which is what a blank Memory field means.
+job_memory() {{
+  m=$(header "$1" '{MEMORY_TAG}')
+  case "$m" in ''|*[!0-9]*) echo 0 ;; *) echo "$m" ;; esac
+}}
+
 used_cores() {{
   total=0
   for e in $(ls -1 running 2>/dev/null); do
     total=$((total + $(job_cores "running/$e")))
+  done
+  echo "$total"
+}}
+
+used_memory() {{
+  total=0
+  for e in $(ls -1 running 2>/dev/null); do
+    total=$((total + $(job_memory "running/$e")))
   done
   echo "$total"
 }}
@@ -310,16 +347,26 @@ dispatch() {{
   # "pause" mean "throw away the last six hours".
   [ -f {PAUSED_NAME} ] && return 0
   cap=$(total_cores)
+  memcap=$(total_memory)
   for entry in $(ls -1 queue 2>/dev/null | sort); do
     [ "$(count running)" -lt "$(slots)" ] || break
     ready "$entry" || continue
     want=$(job_cores "queue/$entry")
+    wantmem=$(job_memory "queue/$entry")
     # A job asking for more than the machine has would otherwise wait for ever;
     # give it everything instead, which means it runs on its own.
     [ "$want" -gt "$cap" ] && want=$cap
+    if [ "$memcap" -gt 0 ] && [ "$wantmem" -gt "$memcap" ]; then wantmem=$memcap; fi
     if [ $(($(used_cores) + want)) -gt "$cap" ]; then
       # Strict FIFO: wait for room rather than letting small jobs jump the
       # queue, which would starve anything asking for most of the machine.
+      break
+    fi
+    # Memory is a second budget, checked the same way and for the same reason:
+    # two jobs of 90G on a 120G machine must not both start because the cores
+    # happened to be free. Overcommitting memory does not merely slow a machine
+    # down, it gets a calculation killed hours in.
+    if [ "$memcap" -gt 0 ] && [ $(($(used_memory) + wantmem)) -gt "$memcap" ]; then
       break
     fi
     # Claiming a job *is* moving it: two runners cannot both win this mv, so
@@ -362,7 +409,7 @@ def prepare_command(directory: str) -> str:
     return f"mkdir -p {quote(directory)} && cd {quote(directory)} && mkdir -p {subdirs}"
 
 
-def setup_command(directory: str, slots: int, cores: int) -> str:
+def setup_command(directory: str, slots: int, cores: int, memory_mb: int = 0) -> str:
     """Everything a submission has to settle before queueing, in one call.
 
     Four round trips became one. Each of them was a separate ``ssh`` process,
@@ -381,6 +428,7 @@ def setup_command(directory: str, slots: int, cores: int) -> str:
         prepare_command(directory),
         set_slots_command(directory, slots),
         set_cores_command(directory, cores),
+        set_memory_command(directory, memory_mb),
         f"cat {digest_path} 2>/dev/null || true",
     ]
     return "; ".join(parts)
@@ -471,6 +519,72 @@ def set_slots_command(directory: str, slots: int) -> str:
     return f"cd {quote(directory)} 2>/dev/null && echo {max(1, int(slots))} > {SLOTS_NAME}"
 
 
+#: Counts *physical* cores, not hardware threads.
+#:
+#: ``nproc`` reports logical processors, so hyperthreading doubles it: on a
+#: six-core machine it says twelve, and a budget of twelve lets two jobs that
+#: each asked for six run on six real cores. Quantum chemistry does not gain
+#: from that -- it thrashes. lscpu first (Linux), then sysctl (macOS), then
+#: /proc/cpuinfo counted as socket+core pairs so a two-socket machine is not
+#: counted as one; ``nproc`` only if none of them answered, since a slightly
+#: generous budget beats refusing to schedule at all.
+CORE_COUNT_SH = (
+    "c=$(lscpu -p=core,socket 2>/dev/null | grep -v '^#' | sort -u | wc -l | tr -d ' '); "
+    'if [ -z "$c" ] || [ "$c" = "0" ]; then c=$(sysctl -n hw.physicalcpu 2>/dev/null); fi; '
+    'if [ -z "$c" ] || [ "$c" = "0" ]; then '
+    "c=$(awk -F: '/^physical id/ {p=$2} /^core id/ {print p\"-\"$2}' /proc/cpuinfo 2>/dev/null "
+    "| sort -u | wc -l | tr -d ' '); fi; "
+    'if [ -z "$c" ] || [ "$c" = "0" ]; then '
+    "c=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null); fi"
+)
+
+#: Total memory in MB. /proc/meminfo is kB and is on every Linux; sysctl covers
+#: macOS. Nothing found leaves it 0, which means "do not schedule on memory".
+MEMORY_TOTAL_SH = (
+    "m=$(awk '/^MemTotal:/ {print int($2/1024)}' /proc/meminfo 2>/dev/null); "
+    'if [ -z "$m" ]; then '
+    "m=$(sysctl -n hw.memsize 2>/dev/null | awk '{print int($1/1048576)}'); fi"
+)
+
+#: Asks the machine what it has, with the runner's own fallbacks, so the number
+#: offered in the dialog is the one the queue would have detected for itself.
+#: Threads are reported alongside so the dialog can say which is which.
+PROBE_RESOURCES = (
+    f"{CORE_COUNT_SH}; {MEMORY_TOTAL_SH}; "
+    "t=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null); "
+    'echo "cores=${c:-0} threads=${t:-0} memory=${m:-0}"'
+)
+
+
+def probe_command() -> str:
+    """One command reporting the host's core count and total memory."""
+    return PROBE_RESOURCES
+
+
+def parse_probe(stdout: str) -> tuple:
+    """``(cores, memory_mb, threads)`` from :func:`probe_command`; 0 if unread.
+
+    Shared by both flavours, so bash and PowerShell cannot disagree about how
+    the answer is spelled.
+    """
+    found = {"cores": 0, "threads": 0, "memory": 0}
+    for line in (stdout or "").splitlines():
+        for token in line.split():
+            key, _, value = token.partition("=")
+            if key in found and value.isdigit():
+                found[key] = int(value)
+    return found["cores"], found["memory"], found["threads"]
+
+
+def set_memory_command(directory: str, memory_mb: int) -> str:
+    """Change the memory budget, in MB. 0 restores the machine's own total."""
+    value = max(0, int(memory_mb or 0))
+    path = quote(f"{directory.rstrip('/')}/{MEMORY_NAME}")
+    if not value:
+        return f"rm -f {path}"
+    return f"cd {quote(directory)} 2>/dev/null && echo {value} > {MEMORY_NAME}"
+
+
 def set_cores_command(directory: str, cores: int) -> str:
     """Change how many cores the runner may hand out. 0 restores ``nproc``."""
     value = max(0, int(cores))
@@ -506,6 +620,8 @@ __all__: List[str] = [
     "CORES_NAME",
     "CORES_TAG",
     "DIGEST_NAME",
+    "MEMORY_NAME",
+    "MEMORY_TAG",
     "PAUSED_NAME",
     "UNLIMITED_SLOTS",
     "slots_for",
@@ -517,6 +633,7 @@ __all__: List[str] = [
     "pause_command",
     "prepare_command",
     "set_cores_command",
+    "set_memory_command",
     "status_of",
     "RUNNER_DIRNAME",
     "RUNNER_LOG_NAME",

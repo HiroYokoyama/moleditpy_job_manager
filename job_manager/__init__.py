@@ -16,18 +16,20 @@ import logging
 from typing import Any, Optional
 
 PLUGIN_NAME = "Job Manager"
-PLUGIN_VERSION = "0.7.0"
+PLUGIN_VERSION = "0.8.0"
 PLUGIN_AUTHOR = "HiroYokoyama"
 PLUGIN_DESCRIPTION = (
     "Submit calculations to remote HPC clusters over SSH, track queue status, "
     "and fetch results back into MoleditPy. Drop an input file on the monitor "
-    "and the wizard opens prefilled; results come back next to it. Ready-made "
-    "command lines for ORCA, Gaussian, CP2K, GAMESS, MOPAC, NWChem, Psi4, "
-    "PySCF, Quantum ESPRESSO, VASP and xTB. Runs on this machine too, with no "
-    "SSH -- natively on Windows through PowerShell, with nothing to install. "
-    "Chains jobs with each scheduler's own dependency flag, holds a job until a "
-    "chosen time, limits how many run at once, and can keep a small queue on "
-    "the host that schedules by cores and outlives MoleditPy."
+    "and the wizard opens prefilled, reading the memory and core request "
+    "straight out of the ORCA, Gaussian, Psi4, NWChem, Q-Chem or GAMESS input; "
+    "results come back next to it and a notification says when. Runs on this "
+    "machine too, with no SSH -- natively on Windows through PowerShell, with "
+    "nothing to install. On a machine with no scheduler it keeps a small queue "
+    "of its own that schedules on physical cores and memory, so two large jobs "
+    "never share a machine that cannot hold both, chains jobs with each "
+    "scheduler's own dependency flag, holds a job until a chosen time, and "
+    "outlives MoleditPy."
 )
 PLUGIN_CATEGORY = "Utility"
 PLUGIN_TAGS = ["hpc", "ssh", "job", "Utility"]
