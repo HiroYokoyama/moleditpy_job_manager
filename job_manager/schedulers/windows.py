@@ -148,8 +148,14 @@ class WindowsScheduler(Scheduler):
             # ASCII: Set-Content writes a BOM with most encodings in Windows
             # PowerShell 5.1, and a BOM in front of the exit code makes it
             # unparseable on the reading side.
-            f"    Set-Content -Path {ps_quote(SENTINEL_NAME)} "
+            # Beside itself, then renamed: Set-Content truncates before it
+            # writes, and a poll landing in that window reads an empty file --
+            # indistinguishable from a missing one, so a finished job would be
+            # reported LOST. Move-Item -Force replaces in one step.
+            f"    Set-Content -Path {ps_quote(SENTINEL_NAME + '.tmp')} "
             "-Value $__moleditpy_rc -Encoding ascii",
+            f"    Move-Item -LiteralPath {ps_quote(SENTINEL_NAME + '.tmp')} "
+            f"-Destination {ps_quote(SENTINEL_NAME)} -Force",
             "}",
             "exit $__moleditpy_rc",
             "",

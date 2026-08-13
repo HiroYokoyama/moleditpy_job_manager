@@ -145,7 +145,12 @@ class Scheduler(ABC):
             # itself (or a pre-command that fails under `set -e`) would never
             # reach a trailing line, and the job would look LOST rather than
             # FAILED. The trap's $? is the real final status either way.
-            f"trap '__moleditpy_rc=$?; echo \"$__moleditpy_rc\" > {SENTINEL_NAME}' EXIT",
+            # Written beside itself and renamed, never straight into place:
+            # `>` truncates first, so a poll landing between the truncation and
+            # the write reads an empty file -- which the reading side cannot
+            # tell from a missing one, and reports a finished job as LOST.
+            f'trap \'__moleditpy_rc=$?; echo "$__moleditpy_rc" > {SENTINEL_NAME}.tmp'
+            f" && mv -f {SENTINEL_NAME}.tmp {SENTINEL_NAME}' EXIT",
             # Without these, a job the scheduler kills -- walltime exceeded,
             # preemption, scancel, node drain -- reaches the EXIT trap with $?
             # still 0 and is recorded as a clean success. Each killing signal

@@ -71,8 +71,17 @@ class ScriptContractMixin:
         # and the job would be reported LOST instead of FAILED.
         script = self.build()
         self.assertIn(
-            f"""trap '__moleditpy_rc=$?; echo "$__moleditpy_rc" > {SENTINEL_NAME}' EXIT""", script
+            f"""trap '__moleditpy_rc=$?; echo "$__moleditpy_rc" > {SENTINEL_NAME}.tmp"""
+            f""" && mv -f {SENTINEL_NAME}.tmp {SENTINEL_NAME}' EXIT""",
+            script,
         )
+
+    def test_the_sentinel_is_never_written_in_place(self):
+        # `>` truncates before it writes, and the reading side cannot tell an
+        # empty sentinel from a missing one: it would call a finished job LOST.
+        script = self.build()
+        self.assertNotIn(f'"$__moleditpy_rc" > {SENTINEL_NAME}\'', script)
+        self.assertIn(f"mv -f {SENTINEL_NAME}.tmp {SENTINEL_NAME}", script)
 
     def test_the_trap_is_armed_before_the_payload_runs(self):
         script = self.build()
