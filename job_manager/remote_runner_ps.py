@@ -305,12 +305,16 @@ def list_command(directory: str) -> str:
 
 
 def enqueue_command(directory: str, entry: str) -> str:
-    """Move an uploaded script from ``tmp\\`` into ``queue\\``."""
-    quoted = ps_quote(directory)
+    """Move an uploaded script from ``tmp`` into ``queue``."""
+    # Built before the f-strings, not inside them: a backslash in an f-string
+    # *expression* is a syntax error before Python 3.12, and this plugin
+    # supports 3.9 upwards -- so the module would not even import for most of
+    # its users, which is exactly how CI found this.
+    source = ps_quote(_join("tmp", entry))
+    target = ps_quote(_join("queue", entry))
     return (
-        f"Set-Location -LiteralPath {quoted}; "
-        f"Move-Item -LiteralPath {ps_quote('tmp\\' + entry)} "
-        f"-Destination {ps_quote('queue\\' + entry)} -Force"
+        f"Set-Location -LiteralPath {ps_quote(directory)}; "
+        f"Move-Item -LiteralPath {source} -Destination {target} -Force"
     )
 
 
@@ -348,12 +352,16 @@ def ensure_runner_command(directory: str, script_name: str = RUNNER_SCRIPT_NAME)
 def cancel_command(directory: str, entry: str) -> str:
     """Cancel whether the job is waiting or already running."""
     quoted = ps_quote(directory)
+    # Outside the f-strings; see enqueue_command.
+    queued = ps_quote(_join("queue", entry))
+    finished = ps_quote(_join("done", entry))
+    pid_file = ps_quote(_join("pids", entry))
     return (
         f"Set-Location -LiteralPath {quoted}; "
-        f"try {{ Move-Item -LiteralPath {ps_quote('queue\\' + entry)} "
-        f"-Destination {ps_quote('done\\' + entry)} -ErrorAction Stop; 'dequeued'; exit 0 }} "
+        f"try {{ Move-Item -LiteralPath {queued} "
+        f"-Destination {finished} -ErrorAction Stop; 'dequeued'; exit 0 }} "
         "catch { }; "
-        f"$p = Get-Content -LiteralPath {ps_quote('pids\\' + entry)} "
+        f"$p = Get-Content -LiteralPath {pid_file} "
         "-ErrorAction SilentlyContinue | Select-Object -First 1; "
         "if (-not ($p -match '^\\d+$')) { exit 0 }; "
         # /T for the tree: the queued script is a PowerShell host that started

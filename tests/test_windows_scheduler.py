@@ -22,6 +22,11 @@ from job_manager.schedulers.windows import ps_quote
 
 POWERSHELL = shutil.which("pwsh") or shutil.which("powershell")
 
+#: Running the wrapper needs Windows, not merely a PowerShell. GitHub's Ubuntu
+#: images ship pwsh, so gating on the interpreter alone ran these on Linux --
+#: where the payloads (cmd /c) and the cancel (taskkill) do not exist.
+ON_WINDOWS = os.name == "nt" and POWERSHELL is not None
+
 
 def make_preset(command: str, **kwargs) -> SubmitPreset:
     preset = SubmitPreset(command_template=command)
@@ -136,7 +141,7 @@ class TestCommands(unittest.TestCase):
         self.assertEqual(self.scheduler.cancel_command("1 & calc.exe"), "exit 0")
 
 
-@unittest.skipIf(POWERSHELL is None, "no PowerShell on this machine")
+@unittest.skipUnless(ON_WINDOWS, "the Windows wrapper needs Windows, not just a PowerShell")
 class TestItReallyRuns(unittest.TestCase):
     """The part that cannot be proved by reading."""
 
