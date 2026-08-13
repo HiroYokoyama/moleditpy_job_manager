@@ -28,8 +28,9 @@ fetch, open.
   mechanism (`--dependency=afterok`, `-W depend`, `-hold_jid`), or a wrapper
   that waits for the previous process where there is no queue at all. Ask for
   `afterany` instead when the jobs are independent, and see a job marked
-  **BLOCKED** — rather than a permanent, misleading PENDING — when the job in
-  front of it failed under a dependency the queue can never satisfy.
+  **BLOCKED** — rather than a permanent, misleading PENDING — for every job
+  stranded by a failure under a dependency the queue can never satisfy, not
+  just the one directly behind it.
 - **Limit** how many jobs a host runs at once — the piece `nohup` has no
   scheduler for. Submissions over the limit join the shortest lane, so the
   waiting happens on the host and holds with MoleditPy closed.

@@ -437,30 +437,72 @@ class JobStore:
         return shortest[-1]
 
     def chain_blocker(self, job: Job) -> Optional[Job]:
-        """The dead predecessor that will stop ``job`` ever starting, if any.
+        """The dead job that will stop ``job`` ever starting, if any.
 
         Under an ``afterok`` dependency a predecessor that fails or is
         cancelled leaves everything behind it queued for ever: SLURM and PBS
         keep reporting PENDING, which reads as "starting soon" and is the
-        opposite of the truth. Schedulers that release on completion, and jobs
-        submitted with ``chain_any``, are never blocked.
+        opposite of the truth.
+
+        The whole chain is walked, not just the job in front. Only the first
+        job behind a failure used to count as blocked, so in A(failed) <- B <- C
+        the plugin called B blocked and C merely queued -- and C is exactly as
+        dead, since B will never start and so never end. That cost more than a
+        wrong label: C counted as a live lane, and held one of the host's slots
+        for the rest of the session.
+
+        ``chain_any`` is read at the link that meets the failure, not at the
+        job being asked about. A job chained behind one that *ended* badly is
+        released; a job chained behind one that never starts is not, however
+        loose its own dependency, because it never ends either.
         """
         from .schedulers import get_scheduler
 
-        if not job.after_job_id or not job.is_active or job.chain_any:
+        if not job.is_active:
             return None
-        predecessor = self.jobs.get(job.after_job_id)
-        if predecessor is None or not predecessor.is_terminal or predecessor.state == STATE_DONE:
-            return None
-        try:
-            scheduler = get_scheduler(job.scheduler)
-        except ValueError:
-            return None
-        return None if scheduler.chain_releases_on_failure else predecessor
+        cursor = job
+        # A job list is a file, and one can be opened by drag and drop from
+        # anywhere; a chain running into a cycle would walk it for ever on the
+        # GUI thread.
+        seen = {job.id}
+        while cursor.after_job_id:
+            predecessor = self.jobs.get(cursor.after_job_id)
+            if predecessor is None or predecessor.id in seen:
+                return None
+            if not predecessor.is_terminal:
+                # Still going to run, unless something further back is dead.
+                seen.add(predecessor.id)
+                cursor = predecessor
+                continue
+            if predecessor.state == STATE_DONE or cursor.chain_any:
+                return None
+            try:
+                scheduler = get_scheduler(cursor.scheduler)
+            except ValueError:
+                return None
+            return None if scheduler.chain_releases_on_failure else predecessor
+        return None
 
-    def dependents_of(self, job_id: str) -> List[Job]:
-        """Every job chained directly behind this one."""
-        return [job for job in self.jobs.values() if job.after_job_id == job_id]
+    def dependents_of(self, job_id: str, recursive: bool = False) -> List[Job]:
+        """Every job chained behind this one.
+
+        Directly by default. ``recursive`` follows the chain to its end, which
+        is what "everything this failure has stranded" means.
+        """
+        direct = [job for job in self.jobs.values() if job.after_job_id == job_id]
+        if not recursive:
+            return direct
+        found: List[Job] = []
+        seen = {job_id}
+        queue = list(direct)
+        while queue:
+            job = queue.pop(0)
+            if job.id in seen:
+                continue
+            seen.add(job.id)
+            found.append(job)
+            queue.extend(j for j in self.jobs.values() if j.after_job_id == job.id)
+        return found
 
     def active_jobs_by_host(self) -> Dict[str, List[Job]]:
         grouped: Dict[str, List[Job]] = {}
@@ -538,6 +580,9 @@ class JobStore:
         self.jobs_path = target or self.default_jobs_path
         jobs, _archived = self.read_job_list(self.jobs_path)
         self.jobs = {job.id: job for job in jobs}
+        # Removals applied to the list being left, not to this one: carrying
+        # them over would silently drop a job from the file just opened.
+        self._forgotten = set()
         self._resolve_interrupted()
         return len(self.jobs)
 

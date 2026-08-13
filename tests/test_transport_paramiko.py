@@ -326,6 +326,48 @@ class TestTransfers(ParamikoTestCase):
         transport.upload(self.local, "~/jobs/a.inp")
         self.assertEqual(self.client.sftp.puts[0][1], "/home/tester/jobs/a.inp")
 
+    def test_the_home_directory_is_resolved_once_per_connection(self):
+        # Every remote path this plugin builds starts at ~/moleditpy_jobs, so
+        # without a cache a submission ran one extra command per uploaded file
+        # and a download one per fetched result, all asking the same question.
+        transport = self.cls(self.host)
+        transport.run("x")
+        self.client.stdout_payload = b"/home/tester\n"
+
+        transport.upload(self.local, "~/jobs/a.inp")
+        transport.upload(self.local, "~/jobs/b.inp")
+        transport.upload(self.local, "~/jobs/c.inp")
+
+        self.assertEqual(len([c for c in self.client.commands if "$HOME" in c]), 1)
+
+    def test_every_path_is_still_expanded_from_the_cache(self):
+        transport = self.cls(self.host)
+        transport.run("x")
+        self.client.stdout_payload = b"/home/tester\n"
+
+        transport.upload(self.local, "~/jobs/a.inp")
+        transport.upload(self.local, "~/jobs/b.inp")
+
+        self.assertEqual(
+            [remote for _local, remote in self.client.sftp.puts],
+            ["/home/tester/jobs/a.inp", "/home/tester/jobs/b.inp"],
+        )
+
+    def test_a_reconnection_asks_again(self):
+        # A name can resolve to a different machine after a reconnect, and a
+        # home directory learnt from the old one would send files elsewhere.
+        transport = self.cls(self.host)
+        transport.run("x")
+        self.client.stdout_payload = b"/home/tester\n"
+        transport.upload(self.local, "~/jobs/a.inp")
+
+        transport.close()
+        transport.run("x")
+        self.client.stdout_payload = b"/scratch/tester\n"
+        transport.upload(self.local, "~/jobs/b.inp")
+
+        self.assertEqual(self.client.sftp.puts[-1][1], "/scratch/tester/jobs/b.inp")
+
     def test_unresolvable_home_raises(self):
         transport = self.cls(self.host)
         transport.run("x")

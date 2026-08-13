@@ -161,9 +161,13 @@ The two mechanisms differ here, and the difference matters:
 
 On SLURM and PBS the queue goes on reporting such a job as PENDING, which reads
 as "starting soon" and is the opposite of the truth. Job Manager shows it as
-**BLOCKED** instead, says which job it is waiting for, and writes a line to the
+**BLOCKED** instead, names the job that actually died, and writes a line to the
 log the moment the predecessor fails. Nothing is cancelled for you — the usual
 fix is to correct the input and resubmit — but you are told.
+
+The whole chain is marked, not only the job immediately behind the failure: if
+three jobs are queued in a line and the first fails, all the rest are stranded,
+and each one gives its slot back rather than holding it for the session.
 
 Tick **...even if that job fails** to ask for `afterany` rather than `afterok`,
 which is right when the jobs are independent and only being serialised to share
@@ -387,7 +391,7 @@ save migrates it.
 | `CANCELLED` | you cancelled it |
 | `LOST` | gone from the queue with no exit code recorded |
 | `QUEUED` | chained behind another job that has not finished yet |
-| `BLOCKED` | chained behind a job that failed, under a dependency the queue can never satisfy — it will not start |
+| `BLOCKED` | somewhere behind a job that failed, under a dependency the queue can never satisfy — it will not start |
 
 `FAILED (rc=143)` is the signature of a job the scheduler killed: 143 is
 `128 + SIGTERM`, i.e. walltime exceeded, preemption or a node drain. `130` is

@@ -76,6 +76,8 @@ class ParamikoTransport(Transport):
         self.password = password
         self._client = None
         self._sftp = None
+        #: The remote home directory, resolved once per connection.
+        self._home = ""
         self._lock = threading.RLock()
 
     # --- connection ---------------------------------------------------------
@@ -135,6 +137,9 @@ class ParamikoTransport(Transport):
             transport = self._client.get_transport() if self._client else None
             if transport is None or not transport.is_active():
                 self._sftp = None
+                # A reconnection may land on a different machine behind the same
+                # name, so a home directory learnt from the old one is dropped.
+                self._home = ""
                 self._client = self._connect()
             return self._client
 
@@ -162,14 +167,22 @@ class ParamikoTransport(Transport):
         return CommandResult(rc, out, err)
 
     def _expand_remote(self, path: str) -> str:
-        """SFTP has no shell, so ``~`` must be resolved before use."""
+        """SFTP has no shell, so ``~`` must be resolved before use.
+
+        Cached for the life of the connection. Every remote path this plugin
+        builds starts at ``~/moleditpy_jobs``, so without this a submission ran
+        one extra command per uploaded file, and a download ran one per fetched
+        result -- to ask an unchanging question.
+        """
         if not path.startswith("~"):
             return path
-        result = self.run('printf %s "$HOME"', timeout=20)
-        home = (result.stdout or "").strip()
-        if not home:
-            raise TransportError("Could not resolve the remote home directory")
-        return home + path[1:]
+        with self._lock:
+            if not self._home:
+                result = self.run('printf %s "$HOME"', timeout=20)
+                self._home = (result.stdout or "").strip()
+            if not self._home:
+                raise TransportError("Could not resolve the remote home directory")
+            return self._home + path[1:]
 
     def upload(self, local_path: str, remote_path: str) -> None:
         sftp = self._ensure_sftp()
@@ -196,6 +209,7 @@ class ParamikoTransport(Transport):
                     logging.debug("Job Manager: transport close failed", exc_info=True)
             self._sftp = None
             self._client = None
+            self._home = ""
 
 
 def trust_host_key(hostname: str, port: int = 22) -> str:

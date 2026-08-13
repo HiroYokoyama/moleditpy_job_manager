@@ -160,6 +160,14 @@ the queue's — waiting its turn, or waiting for something that already failed.
 dependency releases on the predecessor ending (`chain_releases_on_failure`) and
 for jobs submitted with `chain_any`.
 
+It walks the **whole chain**, not just the job in front. In A(failed) ← B ← C,
+C is as dead as B: B never starts, so it never ends, so nothing behind it is
+ever released. Only B used to count as blocked — which cost more than a wrong
+label, since C then counted as a live lane and held one of the host's slots for
+the rest of the session. `chain_any` is read at the link that meets the
+failure rather than on the job being asked about, because a loose dependency
+releases on a predecessor that *ended* badly and not on one that never ran.
+
 ## Persistence
 
 Both files live in `~/.moleditpy/job_manager/`, **outside** the plugin folder:

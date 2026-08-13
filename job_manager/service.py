@@ -249,7 +249,11 @@ class JobService(QObject):
         Nothing is cancelled automatically -- the user may well want to fix the
         input and resubmit -- but they have to be told it will not happen.
         """
-        for dependent in self.store.dependents_of(job.id):
+        # The whole chain, not just the job immediately behind: everything
+        # after that one is stranded by the same failure, and being told about
+        # the first while the rest sit silently at QUEUED is the half-truth
+        # this warning exists to avoid.
+        for dependent in self.store.dependents_of(job.id, recursive=True):
             if self.store.chain_blocker(dependent) is not None:
                 self.error.emit(
                     f"{dependent.name} was queued behind {job.name}, which "
