@@ -28,7 +28,15 @@ from PyQt6.QtWidgets import (
 )
 
 from .credentials import ensure_password
-from .models import BACKEND_LOCAL, BACKEND_OPENSSH, BACKEND_PARAMIKO, HostProfile
+from .models import (
+    BACKEND_LOCAL,
+    BACKEND_OPENSSH,
+    BACKEND_PARAMIKO,
+    MODE_LANES,
+    MODE_RUNNER,
+    SCHEDULER_SHELL,
+    HostProfile,
+)
 from .schedulers import available_schedulers
 from .service import JobService
 from .tasks import run_async
@@ -93,6 +101,7 @@ class HostsDialog(QDialog):
         self.cmb_scheduler = QComboBox()
         for scheduler in available_schedulers():
             self.cmb_scheduler.addItem(scheduler.label, scheduler.name)
+        self.cmb_scheduler.currentIndexChanged.connect(self._update_concurrency_row)
 
         key_row = QWidget()
         key_layout = QHBoxLayout(key_row)
@@ -132,8 +141,37 @@ class HostsDialog(QDialog):
         form.addRow("Scheduler", self.cmb_scheduler)
         form.addRow("Private key", key_row)
         form.addRow("Jump host", self.txt_jump)
+        self.cmb_concurrency = QComboBox()
+        self.cmb_concurrency.addItem("Chain the jobs together", MODE_LANES)
+        self.cmb_concurrency.addItem("Queue them with a helper on the host", MODE_RUNNER)
+        self.cmb_concurrency.setToolTip(
+            "How the limit above is kept.\n\n"
+            "Chaining leaves nothing behind on the host: each job is told to "
+            "wait for another, and the order is fixed when you submit.\n\n"
+            "The helper is a small script that holds a real queue on the host. "
+            "It can count cores rather than jobs, free a slot the moment "
+            "something ends, cancel a job that has not started, and reorder "
+            "what is waiting -- and it exits by itself as soon as the queue is "
+            "empty. It needs a POSIX shell, so it is offered only where there "
+            "is no scheduler already doing the job."
+        )
+        self.cmb_concurrency.currentIndexChanged.connect(self._update_concurrency_row)
+
+        self.spin_runner_cores = QSpinBox()
+        self.spin_runner_cores.setRange(0, 4096)
+        self.spin_runner_cores.setSpecialValueText("detect")
+        self.spin_runner_cores.setToolTip(
+            "How many cores the helper may hand out. Each job asks for as many "
+            "as its preset's 'CPUs per task', and starts when that many are "
+            "free.\n\n"
+            "'detect' asks the machine itself (nproc)."
+        )
+
         form.addRow("Remote root", self.txt_remote_root)
         form.addRow("Run at most", self.spin_max_concurrent)
+        form.addRow("Queueing", self.cmb_concurrency)
+        form.addRow("Cores available", self.spin_runner_cores)
+        self._update_concurrency_row()
         right.addWidget(form_box)
 
         adv_box = QGroupBox("Advanced")
@@ -218,6 +256,8 @@ class HostsDialog(QDialog):
         self.txt_jump.setText("")
         self.txt_remote_root.setText("~/moleditpy_jobs")
         self.spin_max_concurrent.setValue(0)
+        self.cmb_concurrency.setCurrentIndex(0)
+        self.spin_runner_cores.setValue(0)
         self.txt_login.setPlainText("")
         self.txt_options.setPlainText("")
         self.spin_connect_timeout.setValue(10)
@@ -242,6 +282,10 @@ class HostsDialog(QDialog):
         self.txt_jump.setText(host.jump_host)
         self.txt_remote_root.setText(host.remote_root)
         self.spin_max_concurrent.setValue(max(0, int(host.max_concurrent or 0)))
+        index = self.cmb_concurrency.findData(host.concurrency_mode or MODE_LANES)
+        self.cmb_concurrency.setCurrentIndex(max(0, index))
+        self.spin_runner_cores.setValue(max(0, int(host.runner_cores or 0)))
+        self._update_concurrency_row()
         self.txt_login.setPlainText("\n".join(host.login_commands or []))
         self.txt_options.setPlainText("\n".join(host.ssh_options or []))
         self.spin_connect_timeout.setValue(int(host.connect_timeout or 10))
@@ -277,6 +321,16 @@ class HostsDialog(QDialog):
         path, _ = QFileDialog.getOpenFileName(self, "Select private key")
         if path:
             self.txt_key.setText(path)
+
+    def _update_concurrency_row(self) -> None:
+        """The helper is only offered where nothing else is scheduling."""
+        shell = self.cmb_scheduler.currentData() == SCHEDULER_SHELL
+        self.cmb_concurrency.setEnabled(shell)
+        if not shell and self.cmb_concurrency.currentData() == MODE_RUNNER:
+            self.cmb_concurrency.setCurrentIndex(self.cmb_concurrency.findData(MODE_LANES))
+        self.spin_runner_cores.setEnabled(
+            shell and self.cmb_concurrency.currentData() == MODE_RUNNER
+        )
 
     def _update_backend_hint(self) -> None:
         backend = self.cmb_backend.currentData()
@@ -328,6 +382,8 @@ class HostsDialog(QDialog):
         host.jump_host = self.txt_jump.text().strip()
         host.remote_root = self.txt_remote_root.text().strip() or "~/moleditpy_jobs"
         host.max_concurrent = int(self.spin_max_concurrent.value())
+        host.concurrency_mode = self.cmb_concurrency.currentData() or MODE_LANES
+        host.runner_cores = int(self.spin_runner_cores.value())
         host.login_commands = [
             line.strip() for line in self.txt_login.toPlainText().splitlines() if line.strip()
         ]

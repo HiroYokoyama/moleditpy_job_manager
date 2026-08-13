@@ -74,6 +74,10 @@ SCHEDULER_PBS = "pbs"
 SCHEDULER_SGE = "sge"
 SCHEDULER_SHELL = "shell"
 
+#: How a host keeps its concurrency limit. See ``HostProfile.concurrency_mode``.
+MODE_LANES = "lanes"
+MODE_RUNNER = "runner"
+
 #: Written by the generated run script; see schedulers.base.
 SENTINEL_NAME = ".moleditpy_rc"
 #: Touched by a chained job once its predecessor has finished and it starts
@@ -124,8 +128,14 @@ class HostProfile:
     remote_root: str = "~/moleditpy_jobs"
     #: Run at most this many jobs at a time here; 0 means no limit. Matters
     #: most with no queue, where nothing else stops submissions piling onto the
-    #: same cores. Enforced by chaining, so it holds with MoleditPy closed.
+    #: same cores.
     max_concurrent: int = 0
+    #: How that limit is kept. ``lanes`` chains submissions together and leaves
+    #: nothing on the host; ``runner`` puts a small queue there instead, which
+    #: can reorder, count cores and free a slot the moment a job ends.
+    concurrency_mode: str = "lanes"
+    #: Cores the remote runner may hand out. 0 asks the machine (``nproc``).
+    runner_cores: int = 0
     ssh_options: List[str] = field(default_factory=list)
     #: paramiko backend only: prompt for a password (never stored on disk).
     ask_password: bool = False
@@ -137,6 +147,11 @@ class HostProfile:
     @property
     def is_local(self) -> bool:
         return self.backend == BACKEND_LOCAL
+
+    @property
+    def uses_remote_runner(self) -> bool:
+        """A queue on the host only makes sense where there is not one already."""
+        return self.concurrency_mode == MODE_RUNNER and self.scheduler == SCHEDULER_SHELL
 
     @property
     def target(self) -> str:

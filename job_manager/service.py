@@ -26,7 +26,14 @@ from .models import (
     sanitize_name,
 )
 from .poller import JobPoller
-from .runner import cancel_job, fetch_results, submit_job, tail_log
+from .runner import (
+    cancel_in_runner,
+    cancel_job,
+    fetch_results,
+    submit_job,
+    submit_to_runner,
+    tail_log,
+)
 from .store import JobStore
 from .tasks import run_async
 from .transport import create_transport
@@ -112,14 +119,20 @@ class JobService(QObject):
         self.jobs_changed.emit()
 
         def work() -> Job:
-            # Resolved here, not at dispatch: submitting twice in quick
-            # succession queues both workers before the first has a pid, and
-            # reading it too early chained the second job behind nothing at
-            # all -- so both ran at once, which is the one thing chaining is
-            # for.
-            run_after = self._chain_pid(after_job)
             transport = self.transport_for(host)
             try:
+                if host.uses_remote_runner:
+                    # The runner takes the dependency by job id and resolves it
+                    # itself, so there is no pid to wait for here.
+                    return submit_to_runner(
+                        transport, host, preset, job, local_files, after_job=after_job
+                    )
+                # Resolved here, not at dispatch: submitting twice in quick
+                # succession queues both workers before the first has a pid, and
+                # reading it too early chained the second job behind nothing at
+                # all -- so both ran at once, which is the one thing chaining is
+                # for.
+                run_after = self._chain_pid(after_job)
                 return submit_job(
                     transport,
                     host,
@@ -272,7 +285,10 @@ class JobService(QObject):
         def work() -> None:
             transport = self.transport_for(host)
             try:
-                cancel_job(transport, host, job)
+                if host.uses_remote_runner:
+                    cancel_in_runner(transport, host, job)
+                else:
+                    cancel_job(transport, host, job)
             finally:
                 transport.close()
 

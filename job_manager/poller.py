@@ -25,7 +25,7 @@ from typing import Callable, Dict, List, Optional
 from PyQt6.QtCore import QObject, QRunnable, QThreadPool, QTimer, pyqtSignal
 
 from .models import ACTIVE_STATES, HostProfile, Job
-from .runner import poll_host
+from .runner import poll_host, poll_runner
 from .store import JobStore
 from .transport.base import TransportError
 
@@ -58,7 +58,10 @@ class _PollTask(QRunnable):
         transport = None
         try:
             transport = self.transport_factory(self.host)
-            updates = poll_host(transport, self.host, self.jobs)
+            if self.host.uses_remote_runner:
+                updates = poll_runner(transport, self.host, self.jobs)
+            else:
+                updates = poll_host(transport, self.host, self.jobs)
         except (TransportError, ValueError, OSError) as exc:
             self.signals.failed.emit(self.host.id, str(exc))
             return

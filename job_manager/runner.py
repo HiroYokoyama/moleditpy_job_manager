@@ -15,8 +15,9 @@ import tempfile
 import time
 from typing import Dict, Iterable, List, Optional, Sequence
 
-from . import remote_paths
+from . import remote_paths, remote_runner
 from .models import (
+    SCHEDULER_SHELL,
     SENTINEL_NAME,
     STATE_CANCELLED,
     STATE_DONE,
@@ -137,6 +138,170 @@ def _lookup_state(queue_states: Dict[str, str], job_id: str) -> Optional[str]:
     if job_id in queue_states:
         return queue_states[job_id]
     return queue_states.get(short_id(job_id))
+
+
+def submit_to_runner(
+    transport: Transport,
+    host: HostProfile,
+    preset: SubmitPreset,
+    job: Job,
+    local_files: Sequence[str],
+    after_job: Optional[Job] = None,
+) -> Job:
+    """Upload a job and put it in the remote runner's queue.
+
+    The wrapper script is exactly the one the no-queue scheduler builds -- same
+    sentinel, same signal traps -- so completion is detected the same way it is
+    everywhere else. What changes is who starts it: the queue on the host,
+    rather than this submission.
+
+    Chaining is handed to the runner as a header on the queued script, not as a
+    ``kill -0`` wait in the wrapper. The runner knows whether the predecessor
+    *succeeded*, which a wrapper watching a pid cannot.
+    """
+    scheduler = get_scheduler(SCHEDULER_SHELL)
+    if not local_files:
+        raise ValueError("No input file selected")
+
+    job.remote_dir = job.remote_dir or make_remote_dir(host, job.name)
+    job.log_file = job.log_file or DEFAULT_LOG_NAME
+    transport.mkdirs(job.remote_dir)
+    for path in local_files:
+        transport.upload(path, remote_paths.join(job.remote_dir, os.path.basename(path)))
+
+    script = scheduler.build_script(
+        sanitize_name(job.name),
+        preset,
+        os.path.basename(local_files[0]),
+        job.log_file,
+        start_after=job.start_after,
+        remote_dir=job.remote_dir,
+    )
+    job.command = script
+    _upload_text(transport, script, remote_paths.join(job.remote_dir, scheduler.script_name))
+
+    directory = remote_runner.runner_dir(host.remote_root)
+    transport.run(remote_runner.prepare_command(directory))
+    _upload_text(
+        transport,
+        remote_runner.build_runner_script(directory),
+        remote_paths.join(directory, remote_runner.RUNNER_SCRIPT_NAME),
+    )
+    transport.run(remote_runner.set_slots_command(directory, host.max_concurrent or 1))
+    transport.run(remote_runner.set_cores_command(directory, host.runner_cores))
+
+    listing = transport.run(remote_runner.list_command(directory))
+    entry = remote_runner.entry_name(
+        remote_runner.next_sequence(_entry_names(listing.stdout)), job.id
+    )
+    job_script = remote_runner.build_job_script(
+        job.remote_dir,
+        scheduler.script_name,
+        job.log_file,
+        entry=entry,
+        directory=directory,
+        job_name=job.name,
+        after_job_id=after_job.id if after_job is not None else "",
+        require_success=not job.chain_any,
+        cores=max(1, int(preset.cpus_per_task or 1)),
+    )
+    # Into tmp/, then moved: the runner must never see a half-uploaded script.
+    _upload_text(transport, job_script, remote_paths.join(directory, "tmp", entry))
+    result = transport.run(remote_runner.enqueue_command(directory, entry))
+    if not result.ok:
+        raise TransportError(
+            f"Could not queue the job (rc={result.rc}): "
+            f"{(result.stderr or result.stdout).strip()[:300]}"
+        )
+
+    # Only now: a runner started before the job was queued could empty the
+    # queue and exit before it arrived.
+    transport.run(remote_runner.ensure_runner_command(directory))
+
+    job.remote_job_id = entry
+    job.submitted_at = time.time()
+    job.touch(STATE_SUBMITTED)
+    return job
+
+
+def _entry_names(stdout: str) -> List[str]:
+    """Every queue entry name in a ``list_command`` result."""
+    names = []
+    for line in (stdout or "").splitlines():
+        parts = line.split()
+        if len(parts) == 2:
+            names.append(parts[1])
+    return names
+
+
+def poll_runner(transport: Transport, host: HostProfile, jobs: Sequence[Job]) -> Dict[str, str]:
+    """Where each job is in the remote queue, in one call.
+
+    A job's directory *is* its state: queue, running, or finished. Anything the
+    runner no longer lists has ended, and is resolved by the same sentinel
+    sweep every other backend uses -- so the exit code is the wrapper's own,
+    not the runner's opinion of it.
+    """
+    tracked = [job for job in jobs if job.remote_job_id]
+    if not tracked:
+        return {}
+
+    directory = remote_runner.runner_dir(host.remote_root)
+    result = transport.run(remote_runner.list_command(directory))
+    where = remote_runner.parse_listing(result.stdout)
+
+    updates: Dict[str, str] = {}
+    finished: List[Job] = []
+    for job in tracked:
+        place = where.get(job.id)
+        if place == "queue":
+            if job.state != STATE_PENDING:
+                updates[job.id] = STATE_PENDING
+        elif place == "running":
+            if job.state != STATE_RUNNING:
+                updates[job.id] = STATE_RUNNING
+        else:
+            finished.append(job)
+
+    if finished:
+        outcomes = _read_sentinels(transport, finished)
+        blocked = _blocked_entries(transport, directory, finished)
+        for job, outcome in zip(finished, outcomes):
+            if job.id in blocked:
+                # It never ran at all: the runner set it aside because what it
+                # was waiting for failed, or was never queued.
+                job.last_error = "Queued behind a job that did not succeed; it never started."
+                outcome = STATE_FAILED
+            if outcome != job.state:
+                updates[job.id] = outcome
+    return updates
+
+
+def _blocked_entries(transport: Transport, directory: str, jobs: Sequence[Job]) -> set:
+    """Job ids the runner set aside rather than ran."""
+    parts = []
+    for job in jobs:
+        path = remote_paths.quote(remote_paths.join(directory, "status", job.remote_job_id))
+        parts.append(f'echo "{_SENTINEL_MARK}"; cat {path} 2>/dev/null || echo MISSING')
+    result = transport.run("; ".join(parts))
+    chunks = (result.stdout or "").split(_SENTINEL_MARK)[1:]
+    blocked = set()
+    for index, job in enumerate(jobs):
+        raw = chunks[index].strip() if index < len(chunks) else ""
+        if raw.splitlines() and raw.splitlines()[0].strip() == remote_runner.STATUS_BLOCKED:
+            blocked.add(job.id)
+    return blocked
+
+
+def cancel_in_runner(transport: Transport, host: HostProfile, job: Job) -> None:
+    """Cancel a job whether it is waiting in the queue or already running.
+
+    Taking a waiting job out of the queue frees its slot at once -- the thing
+    chained lanes cannot do, since there the successor is bound to a specific
+    predecessor.
+    """
+    directory = remote_runner.runner_dir(host.remote_root)
+    transport.run(remote_runner.cancel_command(directory, job.remote_job_id))
 
 
 def poll_host(transport: Transport, host: HostProfile, jobs: Sequence[Job]) -> Dict[str, str]:
