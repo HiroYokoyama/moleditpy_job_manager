@@ -99,11 +99,16 @@ class TestWhichHostsUseIt(unittest.TestCase):
             "cancel_command",
             "enqueue_command",
             "ensure_runner_command",
+            "is_paused_command",
             "list_command",
             "pause_command",
             "prepare_command",
+            "probe_command",
             "set_cores_command",
+            "set_memory_command",
             "set_slots_command",
+            "setup_command",
+            "store_digest_command",
         }
         for module in (remote_runner, remote_runner_ps):
             with self.subTest(flavour=module.__name__):

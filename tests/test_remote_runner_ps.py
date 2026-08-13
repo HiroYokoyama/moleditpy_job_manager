@@ -501,3 +501,50 @@ class TestEntryNames(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(ON_WINDOWS, "the PowerShell probe needs Windows")
+class TestTheProbeAgreesWithBash(unittest.TestCase):
+    """Two languages asking one machine must not give two answers."""
+
+    def run_ps(self, command: str) -> str:
+        return subprocess.run(
+            [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        ).stdout
+
+    def test_it_reports_physical_cores_not_threads(self):
+        from job_manager.remote_runner import parse_probe
+        from job_manager.remote_runner_ps import probe_command
+
+        cores, memory, threads = parse_probe(self.run_ps(probe_command()))
+
+        self.assertGreaterEqual(cores, 1)
+        self.assertGreater(memory, 0)
+        self.assertLessEqual(cores, threads)
+
+    def test_both_flavours_report_the_same_machine(self):
+        # The bash and PowerShell backends can both drive a Windows box (Git
+        # Bash, WSL), and a host that reports 8 cores to one and 12 to the
+        # other would schedule differently depending on which was chosen.
+        import shutil as _shutil
+
+        from job_manager import remote_runner, remote_runner_ps
+
+        bash = _shutil.which("bash")
+        if not bash:
+            self.skipTest("no bash to compare against")
+        from_bash = subprocess.run(
+            [bash, "-c", remote_runner.probe_command()],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        ).stdout
+        from_ps = self.run_ps(remote_runner_ps.probe_command())
+
+        self.assertEqual(
+            remote_runner.parse_probe(from_bash)[:1],
+            remote_runner.parse_probe(from_ps)[:1],
+        )
