@@ -20,6 +20,7 @@ from .models import (
     STATE_DOWNLOADING,
     STATE_FAILED,
     STATE_UPLOADING,
+    TERMINAL_STATES,
     HostProfile,
     Job,
     SubmitPreset,
@@ -233,14 +234,23 @@ class JobService(QObject):
         job = self.store.jobs.get(job_id)
         if job is None:
             return
-        if state in (STATE_DONE, STATE_FAILED) and job.auto_download and not job.downloaded:
-            self.download(job)
-        if job.is_terminal:
+        # Everything that depends on the outcome happens *before* the download
+        # is started, because starting one moves this job to DOWNLOADING there
+        # and then. With auto-download on -- the default, and what every real
+        # job has -- job.is_terminal was already False by the time it was
+        # asked, so nothing was announced; and _warn_stranded went on to ask
+        # chain_blocker, which reads the predecessor's current state and saw a
+        # job that was no longer FAILED. The one warning that says a chain is
+        # dead is emitted once, in this window, so it was lost for good.
+        finished = state in TERMINAL_STATES
+        if finished:
             # Only from a poll: this is the transition the user is not watching.
             # A submission that fails does so while they are still in the wizard.
             self.job_finished.emit(job.id, state)
-        if job.is_terminal and state != STATE_DONE:
+        if finished and state != STATE_DONE:
             self._warn_stranded(job)
+        if state in (STATE_DONE, STATE_FAILED) and job.auto_download and not job.downloaded:
+            self.download(job)
 
     def _warn_stranded(self, job: Job) -> None:
         """Say so when a failure has left the jobs behind it unable to start.

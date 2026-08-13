@@ -249,6 +249,50 @@ class TestTheLimits(RunnerHarness):
 
 
 @needs_bash
+class TestTheDefaultHostProfileRunsInParallel(RunnerHarness):
+    """What an untouched host profile actually does on a real runner.
+
+    "Run at most" defaults to *no limit* and "Cores available" to *detect*.
+    Sending the helper 1 for "no limit" made that combination strictly serial,
+    which is the opposite of what runner mode is for -- and the peak below was
+    1 before the fix.
+    """
+
+    def peak_concurrency(self, count: int, cores_each: int = 1, budget: int = 8) -> int:
+        from job_manager.models import MODE_RUNNER, SCHEDULER_SHELL, HostProfile
+        from job_manager.remote_runner import slots_for
+
+        host = HostProfile(
+            id="h",
+            scheduler=SCHEDULER_SHELL,
+            concurrency_mode=MODE_RUNNER,
+            max_concurrent=0,
+            runner_cores=0,
+        )
+        self.set_limit(SLOTS_NAME, slots_for(host))
+        self.set_limit(CORES_NAME, budget)
+        for index in range(count):
+            self.enqueue(f"p{index}", f"sleep {BUSY}", cores=cores_each)
+
+        self.start_runner()
+        peak = 0
+        deadline = time.time() + 40
+        while time.time() < deadline:
+            where = self.listing()
+            peak = max(peak, sum(1 for state in where.values() if state == "running"))
+            if where and all(state == "done" for state in where.values()):
+                break
+            time.sleep(0.05)
+        return peak
+
+    def test_single_core_jobs_run_together_up_to_the_core_budget(self):
+        self.assertEqual(self.peak_concurrency(4, cores_each=1, budget=8), 4)
+
+    def test_the_core_budget_is_what_stops_them(self):
+        # Four jobs of four cores on an eight-core budget: two at a time.
+        self.assertEqual(self.peak_concurrency(4, cores_each=4, budget=8), 2)
+
+
 class TestDependencies(RunnerHarness):
     def test_a_dependent_job_waits_for_its_predecessor(self):
         self.enqueue("aaa", f"sleep {BUSY / 2}; echo aaa >> {self.marker('order')}")

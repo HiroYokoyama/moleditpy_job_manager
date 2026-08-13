@@ -28,7 +28,7 @@ from job_manager.models import (  # noqa: E402
 from job_manager.service import JobService  # noqa: E402
 from job_manager.store import JobStore  # noqa: E402
 
-from .fakes import make_job  # noqa: E402
+from .fakes import FakeTransport, make_host, make_job  # noqa: E402
 from .test_poller import SyncPool  # noqa: E402
 
 
@@ -45,8 +45,13 @@ class ServiceTestCase(unittest.TestCase):
 
 class TestTheServiceAnnouncesTheEnd(ServiceTestCase):
     def announced(self, state: str, job=None):
-        job = job or make_job(id="j1", auto_download=False)
+        # auto_download on, because that is the default and what every real
+        # submitted job has. With it off, this suite passed while the common
+        # path announced nothing at all: download() moves the job to
+        # DOWNLOADING before the terminal check could see the state.
+        job = job or make_job(id="j1", auto_download=True)
         self.store.add_job(job)
+        self.store.hosts.setdefault(job.host_id, make_host(id=job.host_id))
         seen = []
         self.service.job_finished.connect(lambda job_id, s: seen.append((job_id, s)))
         job.touch(state)
@@ -71,6 +76,83 @@ class TestTheServiceAnnouncesTheEnd(ServiceTestCase):
         self.service.job_finished.connect(lambda job_id, s: seen.append(job_id))
         self.service._on_job_state_changed("gone", STATE_DONE)
         self.assertEqual(seen, [])
+
+
+class DeferredPool:
+    """A pool that queues tasks instead of running them.
+
+    ``SyncPool`` runs every task inline, so an auto-download starts *and
+    finishes* inside the call that triggered it and the job is back at DONE by
+    the time anything looks. A real QThreadPool does not: the job sits at
+    DOWNLOADING. That difference hid a bug where nothing was announced at all,
+    so these tests need a pool that behaves like the real one.
+    """
+
+    def __init__(self):
+        self.pending = []
+
+    def setMaxThreadCount(self, count):
+        pass
+
+    def start(self, task):
+        self.pending.append(task)
+
+    def drain(self):
+        while self.pending:
+            self.pending.pop(0).run_sync()
+
+    def clear(self):
+        self.pending = []
+
+    def waitForDone(self, msecs=0):
+        return True
+
+
+class TestAnAutoDownloadDoesNotSwallowTheAnnouncement(ServiceTestCase):
+    """The default configuration, with a pool that really defers."""
+
+    def setUp(self):
+        super().setUp()
+        self.service.pool = DeferredPool()
+        self.host = make_host()
+        self.store.hosts[self.host.id] = self.host
+        self.service.transport_for = lambda host: FakeTransport(self.host)
+
+    def announce(self, state, **kwargs):
+        job = make_job(id="j1", auto_download=True, **kwargs)
+        self.store.add_job(job)
+        seen = []
+        self.service.job_finished.connect(lambda job_id, s: seen.append((job_id, s)))
+        job.touch(state)
+        self.service._on_job_state_changed(job.id, state)
+        return job, seen
+
+    def test_the_download_really_is_still_in_flight(self):
+        # Guards the guard: if this stops being true the tests below go back to
+        # passing for the wrong reason.
+        job, _seen = self.announce(STATE_DONE)
+        self.assertEqual(job.state, "DOWNLOADING")
+
+    def test_a_finished_job_is_still_announced(self):
+        _job, seen = self.announce(STATE_DONE)
+        self.assertEqual(seen, [("j1", STATE_DONE)])
+
+    def test_a_failed_job_is_still_announced(self):
+        _job, seen = self.announce(STATE_FAILED)
+        self.assertEqual(seen, [("j1", STATE_FAILED)])
+
+    def test_the_stranding_warning_still_reaches_the_user(self):
+        # The case it exists for: a FAILED job with jobs chained behind it.
+        # Auto-download moved the job to DOWNLOADING first, so the check for a
+        # terminal state saw one that was not, and nobody was told.
+        blocked = make_job(id="j2", name="second", after_job_id="j1", state="PENDING")
+        self.store.add_job(blocked)
+        errors = []
+        self.service.error.connect(errors.append)
+
+        self.announce(STATE_FAILED)
+
+        self.assertTrue(any("second" in message for message in errors), errors)
 
 
 class TestTheHandlerRespectsThePreference(ServiceTestCase):

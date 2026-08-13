@@ -186,7 +186,7 @@ def submit_to_runner(
 
     directory = remote_runner.runner_dir(host.remote_root)
     setup = transport.run(
-        flavour.setup_command(directory, host.max_concurrent or 1, host.runner_cores)
+        flavour.setup_command(directory, remote_runner.slots_for(host), host.runner_cores)
     )
     runner_script = flavour.build_runner_script(directory)
     digest = _digest(runner_script)
@@ -348,7 +348,9 @@ def apply_queue_limits(transport: Transport, host: HostProfile) -> None:
     """
     flavour = remote_runner.flavour_for(host)
     directory = remote_runner.runner_dir(host.remote_root)
-    transport.run(flavour.setup_command(directory, host.max_concurrent or 1, host.runner_cores))
+    transport.run(
+        flavour.setup_command(directory, remote_runner.slots_for(host), host.runner_cores)
+    )
 
 
 def cancel_in_runner(transport: Transport, host: HostProfile, job: Job) -> None:

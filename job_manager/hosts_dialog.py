@@ -155,7 +155,9 @@ class HostsDialog(QDialog):
             "have a reason not to.\n\n"
             "Jobs over the limit are chained behind the shortest lane, so the "
             "waiting happens on the host and holds with MoleditPy closed. The "
-            "limit applies whether or not you asked for chaining."
+            "limit applies whether or not you asked for chaining.\n\n"
+            "With the helper queue, 'no limit' means the cores below decide: "
+            "jobs run together for as long as there are cores for them."
         )
 
         form.addRow("Display name", self.txt_name)

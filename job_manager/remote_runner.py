@@ -70,6 +70,9 @@ RUNNER_LOG_NAME = "runner.log"
 DIGEST_NAME = "runner.sha"
 
 SLOTS_NAME = "slots"
+#: What "no limit" means to the helper, which needs a number. High enough never
+#: to be the binding constraint, so the core budget is what actually schedules.
+UNLIMITED_SLOTS = 9999
 #: Holds the number of cores the runner may hand out. Written by the plugin;
 #: defaults to the machine's own core count when absent.
 CORES_NAME = "cores"
@@ -119,6 +122,24 @@ def flavour_for(host):
 
         return remote_runner_ps
     return sys.modules[__name__]
+
+
+def slots_for(host) -> int:
+    """How many jobs the helper on ``host`` may run at once.
+
+    ``max_concurrent`` of 0 means "no limit" everywhere else in the plugin, and
+    the helper needs a number. Passing 1 -- which is what ``or 1`` did -- turned
+    the default host profile into a strictly serial queue: a user who had never
+    set a limit got one job at a time, from a control that said *no limit*, with
+    nothing on screen to explain it.
+
+    With no job limit the core budget is the constraint instead, which is the
+    whole point of runner mode: two jobs asking for four cores each run together
+    on an eight-core machine, and a third waits for cores rather than for a
+    slot it was never told about.
+    """
+    limit = max(0, int(getattr(host, "max_concurrent", 0) or 0))
+    return limit or UNLIMITED_SLOTS
 
 
 def runner_dir(remote_root: str) -> str:
@@ -486,6 +507,8 @@ __all__: List[str] = [
     "CORES_TAG",
     "DIGEST_NAME",
     "PAUSED_NAME",
+    "UNLIMITED_SLOTS",
+    "slots_for",
     "setup_command",
     "store_digest_command",
     "REQUIRE_SUCCESS_TAG",

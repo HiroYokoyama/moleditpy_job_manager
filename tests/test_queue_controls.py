@@ -110,11 +110,50 @@ class TestApplyingLimits(unittest.TestCase):
         apply_queue_limits(self.transport, self.host)
         self.assertEqual(len(self.transport.commands), 1)
 
-    def test_no_limit_still_means_at_least_one(self):
+    def test_no_limit_does_not_quietly_mean_one_at_a_time(self):
+        # The control says "no limit" and the helper needs a number. Sending 1
+        # made an untouched host profile a strictly serial queue, with nothing
+        # on screen to explain why nothing ran in parallel.
         host = runner_host(max_concurrent=0)
         transport = FakeTransport(host)
+
         apply_queue_limits(transport, host)
-        self.assertIn(f"echo 1 > {remote_runner.SLOTS_NAME}", transport.commands[0])
+
+        self.assertNotIn(f"echo 1 > {remote_runner.SLOTS_NAME}", transport.commands[0])
+        self.assertIn(
+            f"echo {remote_runner.UNLIMITED_SLOTS} > {remote_runner.SLOTS_NAME}",
+            transport.commands[0],
+        )
+
+    def test_a_real_limit_is_still_honoured(self):
+        host = runner_host(max_concurrent=2)
+        transport = FakeTransport(host)
+        apply_queue_limits(transport, host)
+        self.assertIn(f"echo 2 > {remote_runner.SLOTS_NAME}", transport.commands[0])
+
+
+class TestSlotsFor(unittest.TestCase):
+    """0 means "no limit" everywhere else in the plugin; it must here too."""
+
+    def test_no_limit_becomes_an_unbinding_number(self):
+        self.assertEqual(
+            remote_runner.slots_for(runner_host(max_concurrent=0)),
+            remote_runner.UNLIMITED_SLOTS,
+        )
+
+    def test_a_limit_is_passed_through(self):
+        self.assertEqual(remote_runner.slots_for(runner_host(max_concurrent=3)), 3)
+
+    def test_a_negative_limit_is_treated_as_none(self):
+        self.assertEqual(
+            remote_runner.slots_for(runner_host(max_concurrent=-1)),
+            remote_runner.UNLIMITED_SLOTS,
+        )
+
+    def test_the_unlimited_value_cannot_bind_before_the_cores_do(self):
+        # A machine with more cores than this would schedule on slots instead,
+        # which is the bug this constant exists to avoid.
+        self.assertGreater(remote_runner.UNLIMITED_SLOTS, 4096)
 
 
 class TestTheSetupCommand(unittest.TestCase):

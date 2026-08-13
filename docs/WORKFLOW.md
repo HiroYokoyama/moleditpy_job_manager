@@ -248,6 +248,25 @@ nothing, since it is never going to run.
 Leave it at **no limit** on SLURM, PBS or SGE unless you have a reason not to:
 the queue is already doing this, and better.
 
+### What the helper runs at once
+
+Two dials, and they are not the same one:
+
+- **Run at most** caps the *number* of jobs. Left at **no limit** — the default
+  — the helper puts no ceiling on the count, and the cores below are what
+  actually schedule. (Before v0.7.1 "no limit" was sent to the helper as *one*,
+  so an untouched host profile ran strictly one job at a time and nothing on
+  screen said why.)
+- **Cores available** is the budget. Each job asks for its preset's *CPUs per
+  task*, and starts when that many are free. Left at **detect**, the helper
+  asks the machine (`nproc`).
+
+So an eight-core workstation with the defaults runs eight single-core jobs
+together, or two four-core jobs, and queues the rest. A job asking for more
+cores than the machine has is given the whole machine rather than waiting for
+ever. The queue is strict FIFO: a small job does not jump ahead of a large one
+that is waiting for room, which would otherwise starve it.
+
 ### Holding the helper's queue
 
 Where the *Queueing* setting is **Queue them with a helper on the host**, the
