@@ -77,8 +77,13 @@ class TestThePowerShellCommandsReallyWork(unittest.TestCase):
     speak = dialect.POWERSHELL
 
     def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix="dialect_ps_")
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        raw = tempfile.mkdtemp(prefix="dialect_ps_")
+        self.addCleanup(shutil.rmtree, raw, ignore_errors=True)
+        # Through realpath: TEMP can be an 8.3 short path -- GitHub's Windows
+        # runners hand out c:\users\runner~1\... -- while PowerShell reports
+        # the long form back, so comparing the two spellings of one directory
+        # failed on a difference that is not one.
+        self.tmp = os.path.realpath(raw)
 
     def run_ps(self, command: str) -> str:
         result = subprocess.run(
