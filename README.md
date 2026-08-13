@@ -31,9 +31,14 @@ fetch, open.
   **BLOCKED** — rather than a permanent, misleading PENDING — for every job
   stranded by a failure under a dependency the queue can never satisfy, not
   just the one directly behind it.
-- **Limit** how many jobs a host runs at once — the piece `nohup` has no
-  scheduler for. Submissions over the limit join the shortest lane, so the
-  waiting happens on the host and holds with MoleditPy closed.
+- **Schedule what a workstation can actually run** — the piece `nohup` has no
+  scheduler for. A small helper queue on the host dispatches by **physical
+  cores and memory**, not by a job count: eight single-core jobs run together
+  on an eight-core box, two 90 GB jobs never share 120 GB, and the rest wait.
+  It needs nothing installed, holds the queue in plain numbered shell scripts
+  you can read over `ssh`, keeps moving with MoleditPy closed, and exits by
+  itself the moment the queue is empty. (A dependency-chained mode is there
+  too, for hosts where nothing at all may be left behind.)
 - **Schedule** a start time (`--begin`, `-a`, or a sleep). The job is handed
   over now; MoleditPy need not be running when it starts.
 - **Track** every job in one table: queue id, state, elapsed time, and what it
@@ -50,15 +55,13 @@ fetch, open.
 - **Be told** when a job ends: a desktop notification names the job and the
   host when it finishes, fails or vanishes from the queue. On by default, and
   one checkbox away from off.
-- **Schedule by cores *and* memory** on a machine with no queue: the helper
-  queue runs what fits and holds back what does not, so two 90 GB jobs never
-  share a 120 GB machine just because the cores were free. Both budgets
-  default to the machine's own capacity.
-- **Read the request from the input**: ORCA, Gaussian, Psi4, NWChem, Q-Chem
-  and GAMESS all state their memory and cores, so the wizard fills those in
-  for you (ORCA's `%maxcore` is per core, and is multiplied out).
-- **Hold** the helper queue on a host without cancelling anything, and send it
-  new limits while jobs are already waiting.
+- **Read the request from the input** rather than asking for it twice: ORCA,
+  Gaussian, Psi4, NWChem, Q-Chem and GAMESS all state their own memory and
+  cores, so the wizard fills those fields in — ORCA's `%maxcore` is *per core*
+  and is multiplied out, which is the difference between a 3 GB job and a
+  24 GB one. Anything you have already typed is left alone.
+- **Hold** the queue on a host without cancelling anything, change its limits
+  while jobs are already waiting, and **Detect** what the machine really has.
 - **Drop** an input file on the Job Monitor to start: the wizard opens
   prefilled, named after the file, with its command template chosen.
 - **Fetch** the outputs automatically when a job ends — next to the input file

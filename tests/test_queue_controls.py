@@ -164,7 +164,9 @@ class TestTheSetupCommand(unittest.TestCase):
         self.assertIn("mkdir -p", command)
         self.assertIn(remote_runner.SLOTS_NAME, command)
         self.assertIn(remote_runner.CORES_NAME, command)
-        self.assertTrue(command.rstrip().endswith("|| true"))
+        # Ends by reporting the runner already there, if its file still is.
+        self.assertIn(remote_runner.DIGEST_NAME, command)
+        self.assertTrue(command.rstrip().endswith("fi"))
 
     def test_the_powershell_flavour_covers_the_same_ground(self):
         command = remote_runner_ps.setup_command(r"C:\r", 2, 4)
@@ -206,6 +208,9 @@ class TestTheSetupCommand(unittest.TestCase):
         subprocess.run(
             [BASH, "-c", remote_runner.store_digest_command(directory, "abc123")], timeout=60
         )
+        # The digest names a script that has to be there: reporting a version
+        # whose file was deleted would skip the upload and then start nothing.
+        open(os.path.join(directory, remote_runner.runner_script_name("abc123")), "w").close()
         again = subprocess.run(
             [BASH, "-c", remote_runner.setup_command(directory, 1, 0)],
             capture_output=True,
@@ -237,7 +242,10 @@ class TestSubmissionSkipsWhatTheHostHas(unittest.TestCase):
         )
 
     def uploaded_runner(self, transport) -> bool:
-        return any(remote_runner.RUNNER_SCRIPT_NAME in remote for _, remote in transport.uploads)
+        # Content-addressed: moleditpy_runner_<digest>.sh, never a fixed name,
+        # so a new version cannot be written over the file a running runner is
+        # part way through reading.
+        return any("moleditpy_runner_" in remote for _, remote in transport.uploads)
 
     def test_a_host_that_has_never_seen_it_gets_it(self):
         transport = FakeTransport(self.host)
@@ -271,3 +279,79 @@ class TestSubmissionSkipsWhatTheHostHas(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestNothingIsOverwrittenOrRemoved(unittest.TestCase):
+    """Generated scripts are a record, and one of them is being executed."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="keep_")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.input = os.path.join(self.tmp, "mol.inp")
+        with open(self.input, "w") as handle:
+            handle.write("! opt\n")
+        self.host = runner_host()
+
+    def submit(self, transport, job_id, name="opt"):
+        return submit_to_runner(
+            transport,
+            self.host,
+            make_preset(),
+            make_job(id=job_id, name=name, remote_dir="", remote_job_id=""),
+            [self.input],
+        )
+
+    def test_the_runner_script_is_named_after_its_own_contents(self):
+        # Overwriting the file a runner is executing is the hazard: bash reads
+        # a script by byte offset as it goes, so replacing the contents makes a
+        # running runner resume in the middle of different text.
+        digest = remote_runner.runner_script_name("abc123")
+        self.assertIn("abc123", digest)
+        self.assertNotEqual(digest, remote_runner.RUNNER_SCRIPT_NAME)
+
+    def test_two_versions_are_two_files(self):
+        first = remote_runner.runner_script_name("1111111111111111")
+        second = remote_runner.runner_script_name("2222222222222222")
+        self.assertNotEqual(first, second)
+
+    def test_the_powershell_flavour_versions_its_own_too(self):
+        name = remote_runner_ps.runner_script_name("abc123")
+        self.assertIn("abc123", name)
+        self.assertTrue(name.endswith(".ps1"))
+
+    def test_a_reported_digest_whose_file_is_gone_is_not_believed(self):
+        # Otherwise the upload is skipped and a runner is started that is not
+        # there. The setup command checks the file, not just the record.
+        command = remote_runner.setup_command("/r", 1, 0)
+        self.assertIn("-f", command)
+        self.assertIn("moleditpy_runner_", command)
+
+    def test_two_jobs_submitted_in_the_same_second_do_not_share_a_directory(self):
+        # They would have overwritten each other's wrapper and inputs -- and
+        # shared one .moleditpy_rc, so whichever finished first decided what
+        # both jobs were reported to have done.
+        first = self.submit(FakeTransport(self.host), "aaaaaaaaaaaa")
+        second = self.submit(FakeTransport(self.host), "bbbbbbbbbbbb")
+
+        self.assertNotEqual(first.remote_dir, second.remote_dir)
+
+    def test_the_directory_still_sorts_by_submission_time(self):
+        # The timestamp stays in front, which is what makes the listing
+        # readable by hand.
+        job = self.submit(FakeTransport(self.host), "aaaaaaaaaaaa")
+        leaf = job.remote_dir.rsplit("/", 1)[-1]
+        self.assertRegex(leaf, r"^\d{8}_\d{6}_opt_aaaaaaaaaaaa$")
+
+    def test_each_job_keeps_its_own_queue_entry(self):
+        # The entry carries the job id, so one job never claims another's.
+        first = self.submit(FakeTransport(self.host), "aaaaaaaaaaaa")
+        second = self.submit(FakeTransport(self.host), "bbbbbbbbbbbb")
+        self.assertNotEqual(first.remote_job_id, second.remote_job_id)
+
+    def test_nothing_in_the_queue_directories_is_ever_deleted(self):
+        # Entries move queue -> running -> done and stay there. Only the pid
+        # file of a finished job is removed, which is not a record of anything.
+        script = remote_runner.build_runner_script("/r")
+        for directory in ("queue", "running", "done", "status"):
+            self.assertNotIn(f'rm -rf "{directory}', script)
+            self.assertNotIn(f"rm -f {directory}/", script)

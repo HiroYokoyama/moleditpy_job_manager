@@ -42,11 +42,25 @@ PARTIAL_SUFFIX = ".moleditpy-part"
 _SENTINEL_MARK = "@@MOLEDITPY@@"
 
 
-def make_remote_dir(host: HostProfile, job_name: str, when: Optional[float] = None) -> str:
+def make_remote_dir(
+    host: HostProfile, job_name: str, when: Optional[float] = None, job_id: str = ""
+) -> str:
+    """Where one job's files live on the host: ``<root>/<stamp>_<name>_<id>``.
+
+    The job id is in the name because the stamp is only accurate to the second,
+    and two jobs of the same name submitted within one second -- a batch, a
+    loop, two clicks -- landed in *one* directory. They then overwrote each
+    other's wrapper and inputs and, worse, shared a single ``.moleditpy_rc``:
+    whichever finished first decided what both jobs were reported to have done.
+
+    The timestamp stays in front so the directory listing is still in the order
+    the jobs were submitted, which is what makes it readable by hand.
+    """
     stamp = time.strftime("%Y%m%d_%H%M%S", time.localtime(when or time.time()))
-    return remote_paths.join(
-        host.remote_root or "~/moleditpy_jobs", f"{stamp}_{sanitize_name(job_name)}"
-    )
+    name = f"{stamp}_{sanitize_name(job_name)}"
+    if job_id:
+        name = f"{name}_{sanitize_name(job_id, fallback='')}"
+    return remote_paths.join(host.remote_root or "~/moleditpy_jobs", name)
 
 
 def submit_job(
@@ -71,7 +85,7 @@ def submit_job(
     if not local_files:
         raise ValueError("No input file selected")
 
-    job.remote_dir = job.remote_dir or make_remote_dir(host, job.name)
+    job.remote_dir = job.remote_dir or make_remote_dir(host, job.name, job_id=job.id)
     job.log_file = job.log_file or DEFAULT_LOG_NAME
     transport.mkdirs(job.remote_dir)
 
@@ -167,7 +181,7 @@ def submit_to_runner(
     if not local_files:
         raise ValueError("No input file selected")
 
-    job.remote_dir = job.remote_dir or make_remote_dir(host, job.name)
+    job.remote_dir = job.remote_dir or make_remote_dir(host, job.name, job_id=job.id)
     job.log_file = job.log_file or DEFAULT_LOG_NAME
     transport.mkdirs(job.remote_dir)
     for path in local_files:
@@ -195,14 +209,16 @@ def submit_to_runner(
     )
     runner_script = flavour.build_runner_script(directory)
     digest = _digest(runner_script)
+    # Named after its own contents, so a new version never writes over the file
+    # a running runner is part way through -- bash reads a script by byte
+    # offset as it goes, and replacing it underneath resumes in the middle of
+    # different text. Old versions stay on the host, next to the queue entries
+    # they ran.
+    script_name = flavour.runner_script_name(digest)
     if (setup.stdout or "").strip().splitlines()[-1:] != [digest]:
         # Only when it would differ. The script is the same bytes on every
         # submission to the same host, and re-uploading it was an scp per job.
-        _upload_text(
-            transport,
-            runner_script,
-            remote_paths.join(directory, flavour.RUNNER_SCRIPT_NAME),
-        )
+        _upload_text(transport, runner_script, remote_paths.join(directory, script_name))
         transport.run(flavour.store_digest_command(directory, digest))
 
     listing = transport.run(flavour.list_command(directory))

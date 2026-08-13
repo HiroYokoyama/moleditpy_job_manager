@@ -37,6 +37,7 @@ from job_manager.remote_runner_ps import (
     is_paused_command,
     pause_command,
     prepare_command,
+    runner_script_name,
     setup_command,
     store_digest_command,
 )
@@ -454,10 +455,38 @@ class TestTheSetupCommand(RunnerHarness):
         fresh = os.path.join(self.tmp, "fresh")
         self.run_command(setup_command(fresh, 1, 0))
         self.run_command(store_digest_command(fresh, "abc123"))
+        # The digest names a script that has to exist; reporting a version
+        # whose file is gone would skip the upload and start nothing.
+        open(os.path.join(fresh, runner_script_name("abc123")), "w").close()
 
         again = self.run_command(setup_command(fresh, 1, 0))
 
         self.assertEqual(again.stdout.strip().splitlines()[-1], "abc123")
+
+    def test_a_digest_whose_script_is_gone_is_not_reported(self):
+        fresh = os.path.join(self.tmp, "fresh")
+        self.run_command(setup_command(fresh, 1, 0))
+        self.run_command(store_digest_command(fresh, "abc123"))
+
+        self.assertEqual(self.run_command(setup_command(fresh, 1, 0)).stdout.strip(), "")
+
+    def test_an_upgrade_leaves_the_old_script_alone(self):
+        # A runner already up holds that file open and is reading it as it
+        # goes; replacing it underneath is how a queue starts misbehaving.
+        fresh = os.path.join(self.tmp, "fresh")
+        self.run_command(setup_command(fresh, 1, 0))
+        old = os.path.join(fresh, runner_script_name("1111"))
+        with open(old, "w") as handle:
+            handle.write("# v1\n")
+        self.run_command(store_digest_command(fresh, "1111"))
+
+        with open(os.path.join(fresh, runner_script_name("2222")), "w") as handle:
+            handle.write("# v2\n")
+        self.run_command(store_digest_command(fresh, "2222"))
+
+        self.assertTrue(os.path.exists(old))
+        with open(old) as handle:
+            self.assertEqual(handle.read().strip(), "# v1")
 
     def test_the_digest_file_has_no_byte_order_mark(self):
         # Set-Content writes one with most encodings in Windows PowerShell 5.1,

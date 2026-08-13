@@ -328,8 +328,10 @@ class TestSubmittingToAWindowsRunner(RunnerModeTestCase):
     def test_the_runner_uploaded_is_the_powershell_one(self):
         self.submit()
 
-        path = f"{self.directory}/moleditpy_runner.ps1"
-        self.assertIn(path, self.transport.uploaded_text)
+        uploaded = [p for p in self.transport.uploaded_text if "moleditpy_runner_" in p]
+        self.assertTrue(uploaded, list(self.transport.uploaded_text))
+        path = uploaded[0]
+        self.assertTrue(path.endswith(".ps1"), path)
         self.assertIn("Get-ChildItem", self.transport.uploaded_text[path])
 
     def test_no_posix_command_is_ever_sent_to_a_windows_host(self):

@@ -219,75 +219,102 @@ no program ran before it, there is nothing left for the wrapper to read and the
 job is recorded as failed. Ending a template with a program's own exit code
 (the normal case) is read correctly.
 
-### Running at most N at a time
+## Running several jobs on a machine with no queue
 
-`nohup` is not a scheduler. On a host with no queue nothing stops five
-submissions starting at once and fighting over the same cores, and chaining
-alone is all-or-nothing: strictly one at a time, or a free-for-all.
+`nohup` is not a scheduler. On a host with no queue, nothing stops five
+submissions starting at once and fighting over the same cores and the same
+memory. Job Manager offers two ways to fix that, chosen by **Queueing** on the
+host profile.
 
-Set **Run at most** on the host profile (Hosts…) and the host will run no more
-than that many jobs at once. Submissions over the limit are chained behind the
-**shortest** lane, so seven jobs at a limit of two become two balanced queues
-of three and four — not one long chain behind a single job.
+| | Helper queue (default) | Chained lanes |
+|---|---|---|
+| Where the waiting happens | a small script on the host | the queue's own dependency, or the wrapper |
+| Schedules on | cores, memory, and a job count | a job count only |
+| A slot frees | the moment a job ends | when the whole lane reaches it |
+| Cancel a job that has not started | yes, and its resources come back | it is bound to its predecessor |
+| Leaves anything on the host | a directory, and a process while jobs run | nothing at all |
+| Needs | a POSIX shell or PowerShell | nothing |
 
-The limit applies whether or not you asked for chaining: a limit you can switch
-off by unticking a box is not a limit, so where one is set the *Run after…*
-checkbox steps aside and the wizard tells you which slot you are getting.
-Because it is enforced with the same dependency the scheduler (or the wrapper)
-already honours, there is no daemon and no remote state, and the queue keeps
-moving with MoleditPy closed.
+The helper is the default because it is the only one of the two that can
+schedule on resources at all: chained lanes fix the order when you submit and
+know nothing about cores or memory. A host profile saved before the helper
+existed keeps chaining, so an upgrade does not move your jobs onto a different
+scheduler unasked.
 
-Jobs queued this way always use `afterany`: they are independent jobs being
-serialised to share a machine, so one failure must not strand the rest of its
-lane.
-
-Finishing the job at the head of a lane does not open a slot — whatever was
-queued behind it takes that lane over. A job that is `BLOCKED` occupies
-nothing, since it is never going to run.
-
-Leave it at **no limit** on SLURM, PBS or SGE unless you have a reason not to:
-the queue is already doing this, and better.
+Both are offered only where there is no scheduler already. On SLURM, PBS or SGE
+leave **Run at most** at *no limit*: the queue is doing this, and better.
 
 ### What the helper runs at once
-
-The helper queue is the **default** for a host with no scheduler of its own,
-because it is the only one of the two modes that can schedule on resources at
-all — chained lanes fix the order when you submit and know nothing about cores
-or memory. (A host profile saved before the helper existed keeps chaining, so
-an upgrade does not move your jobs onto a different scheduler unasked.)
 
 Three dials, and they are not the same one:
 
 - **Run at most** caps the *number* of jobs. Left at **no limit** — the default
-  — the helper puts no ceiling on the count, and the cores below are what
-  actually schedule. (Before v0.7.1 "no limit" was sent to the helper as *one*,
-  so an untouched host profile ran strictly one job at a time and nothing on
+  — the helper puts no ceiling on the count, and the two budgets below are what
+  actually schedule. (Before v0.8.0 "no limit" reached the helper as *one*, so
+  an untouched host profile ran strictly one job at a time and nothing on
   screen said why.)
 - **Cores available** is the CPU budget. Each job asks for its preset's *CPUs
-  per task*, and starts when that many are free. Left at **detect**, the helper
-  asks the machine (`nproc`).
+  per task*, and starts when that many are free.
 - **Memory available** is the second budget, and usually the one that matters.
   Each job asks for its preset's *Memory*, and starts when that much is free.
-  Left at **detect**, the helper asks the machine.
 
-**Detect** fills both in from the host itself, so you can see the numbers and
-then lower them to leave room for other users. It counts **physical cores,
-not hardware threads**: `nproc` reports twelve on a six-core machine, and a
-budget of twelve would let two six-core jobs thrash the same six cores. The
-helper uses the same count when a budget is left at *detect*, so the dialog
-and the queue never disagree about the machine.
+Both budgets left at **detect** mean the machine's own capacity.
 
 So an eight-core workstation with the defaults runs eight single-core jobs
-together, or two four-core jobs, and queues the rest. A job asking for more
-than the machine has is given the whole machine rather than waiting for ever.
-The queue is strict FIFO: a small job does not jump ahead of a large one that
-is waiting for room, which would otherwise starve it.
+together, or two four-core jobs, and queues the rest. The queue is strict FIFO:
+a small job does not jump ahead of a large one that is waiting for room, which
+would otherwise starve it. A job asking for more than the machine has is given
+the whole machine rather than waiting for ever.
 
 **Cores alone are not enough.** Two jobs asking for 90 GB each must not both
 start on a 120 GB machine merely because the cores were free — overcommitting
 CPU makes a calculation slow, overcommitting memory gets it killed hours in.
 With a memory budget the second waits. A job that asks for no memory waits for
 no memory, so nothing is held back by a field you left blank.
+
+**Detect** fills both in from the host itself, so you can see the numbers and
+then lower them to leave room for other users. It counts **physical cores, not
+hardware threads**: `nproc` reports twelve on a six-core machine, and a budget
+of twelve would let two six-core jobs thrash the same six cores. The helper
+uses the same count when a budget is left at *detect*, so the dialog and the
+queue never disagree about the machine.
+
+### The helper's life
+
+Nothing is installed and nothing runs when there is no work. The first
+submission creates `~/moleditpy_jobs/.moleditpy_runner/`, uploads the script
+and starts it; it dispatches what fits, and **exits as soon as the queue is
+empty**. The next submission starts it again. On a shared login node that
+matters: there is no daemon of yours sitting there between batches.
+
+The queue is plain numbered shell scripts — `job_0001_<id>.sh` — one per job,
+each self-contained. You can read, reorder or empty it over plain `ssh` with
+`ls` and `mv`, and a job that has run is still exactly the script that ran it.
+Nothing needs this plugin to make sense of it.
+
+**Nothing is cleaned up behind you.** Entries move into `done/` and stay there,
+each job keeps its own directory (`<date>_<name>_<id>`, so two jobs of the same
+name never land in one), and the helper script itself is named after a digest of
+its contents — an upgrade adds a file rather than replacing the one a running
+helper is executing. Delete what you no longer want, when you want.
+
+### Chained lanes instead
+
+Set **Queueing** to *Chain the jobs together* and the limit is kept with the
+same dependency the scheduler (or the wrapper) already honours: submissions
+over the limit are chained behind the **shortest** lane, so seven jobs at a
+limit of two become two balanced queues of three and four rather than one long
+chain behind a single job.
+
+The limit applies whether or not you asked for chaining: a limit you can switch
+off by unticking a box is not a limit, so where one is set the *Run after…*
+checkbox steps aside and the wizard tells you which slot you are getting.
+
+Jobs queued this way always use `afterany`: they are independent jobs being
+serialised to share a machine, so one failure must not strand the rest of its
+lane. Finishing the job at the head of a lane does not open a slot — whatever
+was queued behind it takes that lane over. A job that is `BLOCKED` occupies
+nothing, since it is never going to run.
 
 ### Memory and cores are read from your input
 
@@ -320,10 +347,11 @@ host profile grows a **Queue on the host** row:
   the dialog, the session, and the helper's own comings and goings: a helper
   that exits and is started again by the next submission finds the queue still
   held. Untick it to let things move again.
-- **Apply limits now** sends *Run at most* and *Cores available* to a helper
-  that is already running. Submitting sends them too, so this is for changing
-  your mind while jobs are queued — which is exactly when waiting until the
-  next submission is no use.
+- **Apply limits now** sends all three limits to a helper that is already
+  running. Submitting sends them too, so this is for changing your mind while
+  jobs are queued — which is exactly when waiting until the next submission is
+  no use. The helper re-reads them between jobs, so nothing restarts.
+- **Detect** asks the host what it has and fills the two budgets in.
 
 The box shows the queue's real state, read from the host when you select it.
 A host set to ask for a password is left alone until you press **Test
@@ -374,9 +402,14 @@ is tracked either way.
 ## 5. Results
 
 When a job reaches DONE or FAILED, matching files come back automatically (the
-fetch patterns, plus the log always). They land in
-`~/.moleditpy/job_manager/downloads/<timestamp>_<name>/` unless you set another
-download root.
+fetch patterns, plus the log always) — **next to the input file** by default,
+which is where you are already working. Untick *...next to the input file* on
+the wizard and they go to `~/.moleditpy/job_manager/downloads/<timestamp>_<name>/`
+instead, which is also where a job with no local input to sit beside puts them.
+
+Each file arrives under a `.moleditpy-part` name and is renamed once the
+transfer finishes, so a download cut off half way never leaves a truncated
+`.out` sitting in your working directory under its real name.
 
 The most interesting file — `.out`, then `.log`, `.fchk`, `.hess`, `.xyz` — is
 handed to the application's file openers, which is how ORCA Result Analyzer and
@@ -472,6 +505,11 @@ retry on failure. For anything branching, write the dependency by hand in
 Job Manager passes through, ahead of the first command, and then tracks
 normally.
 
+**The helper queue is not a batch system.** It is FIFO with two resource
+budgets and one-predecessor dependencies -- no priorities, no backfill, no
+fair share, no reservations, and no accounting. It exists so a workstation
+does not thrash, not to replace SLURM.
+
 **No file browser.** Fetch patterns decide what comes back.
 
 **No allocation or accounting queries** — no `sacct`, no `sinfo`, no quota.
@@ -486,3 +524,8 @@ normally.
 | Everything `LOST` right after submitting | The scheduler on the host profile does not match reality (e.g. SLURM selected on a PBS site) |
 | Nothing downloads | The fetch patterns match nothing. `*.out` is not `*.log` |
 | Poll errors, then silence | Per-host backoff, up to 15 minutes. **Refresh Now** clears it |
+| Jobs sit at `PENDING` on the helper and nothing starts | The queue is held (**Hold the queue** in Hosts…), or the job in front needs more cores or memory than are free. The helper is strict FIFO, so a small job behind a large one waits with it |
+| Only one job runs at a time on the helper | **Run at most** is set to 1, or the budgets are smaller than two jobs need. **Detect** shows what the machine actually has |
+| A job asks for more memory than the machine has | It is given the whole machine and runs alone, rather than waiting for ever |
+| The helper is not running between batches | By design: it exits as soon as its queue is empty and the next submission starts it again |
+| The wizard filled in a memory figure you did not expect | It was read from the input. ORCA's `%maxcore` is **per core**, so it is multiplied by `%pal nprocs`. Overwrite the field and it is left alone |

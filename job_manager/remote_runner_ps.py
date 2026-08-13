@@ -343,15 +343,30 @@ def prepare_command(directory: str) -> str:
     )
 
 
+def runner_script_name(digest: str) -> str:
+    """The runner script's file name for one version of its contents.
+
+    Content-addressed for the same reasons as the bash flavour: a runner that
+    is up holds its script open, and a script that ran a job is worth keeping.
+    """
+    return f"moleditpy_runner_{digest}.ps1"
+
+
 def setup_command(directory: str, slots: int, cores: int, memory_mb: int = 0) -> str:
     """Prepare, set the limits, and report the runner script already there."""
     digest_path = ps_quote(_join(directory, DIGEST_NAME))
+    prefix = ps_quote(_join(directory, "moleditpy_runner_"))
     parts = [
         prepare_command(directory),
         set_slots_command(directory, slots),
         set_cores_command(directory, cores),
         set_memory_command(directory, memory_mb),
-        f"if (Test-Path -LiteralPath {digest_path}) {{ Get-Content -LiteralPath {digest_path} }}",
+        # Reported only when the script that digest names is really still
+        # there: a version whose file has been deleted would have the caller
+        # skip the upload and then start a runner that does not exist.
+        f"$d = if (Test-Path -LiteralPath {digest_path}) "
+        f"{{ Get-Content -LiteralPath {digest_path} | Select-Object -First 1 }} else {{ '' }}",
+        f"if ($d -and (Test-Path -LiteralPath ({prefix} + $d + '.ps1'))) {{ $d }}",
     ]
     return "; ".join(parts)
 

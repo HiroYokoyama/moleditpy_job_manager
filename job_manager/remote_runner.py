@@ -409,6 +409,25 @@ def prepare_command(directory: str) -> str:
     return f"mkdir -p {quote(directory)} && cd {quote(directory)} && mkdir -p {subdirs}"
 
 
+def runner_script_name(digest: str) -> str:
+    """The runner script's file name for one version of its contents.
+
+    Content-addressed, so a new version is a *new file* and the old one stays
+    where it is. Two reasons, and the second is not optional:
+
+    A runner already up is executing that file, and **bash reads a script as it
+    goes** -- it seeks by byte offset rather than loading the whole thing. Write
+    different contents over a script bash is part way through and it resumes at
+    an offset into text that has moved, running whatever fragment now lives
+    there. Nothing warns; the queue simply misbehaves.
+
+    And a script that ran a job is worth keeping. The queue is readable over
+    plain ssh precisely so that a user can see what ran, and quietly replacing
+    the runner underneath a finished batch takes that away.
+    """
+    return f"moleditpy_runner_{digest}.sh"
+
+
 def setup_command(directory: str, slots: int, cores: int, memory_mb: int = 0) -> str:
     """Everything a submission has to settle before queueing, in one call.
 
@@ -424,12 +443,21 @@ def setup_command(directory: str, slots: int, cores: int, memory_mb: int = 0) ->
     # an f-string expression is Python 3.12 syntax, and this package supports
     # 3.9. The same shape has already shipped a module that would not import.
     digest_path = quote(f"{directory.rstrip('/')}/{DIGEST_NAME}")
+    # Printed only when the script that digest names is really still there:
+    # reporting a version whose file has been deleted would have the caller
+    # skip the upload and then start a runner that does not exist.
+    # Absolute, not relying on the cd that prepare_command left behind.
+    prefix = quote(f"{directory.rstrip('/')}/moleditpy_runner_")
+    report = (
+        f"d=$(cat {digest_path} 2>/dev/null); "
+        f'if [ -n "$d" ] && [ -f {prefix}"$d".sh ]; then echo "$d"; fi'
+    )
     parts = [
         prepare_command(directory),
         set_slots_command(directory, slots),
         set_cores_command(directory, cores),
         set_memory_command(directory, memory_mb),
-        f"cat {digest_path} 2>/dev/null || true",
+        report,
     ]
     return "; ".join(parts)
 

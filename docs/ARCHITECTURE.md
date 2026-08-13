@@ -138,6 +138,116 @@ not incidental either: `Set-Content` writes a BOM with most encodings on
 Windows PowerShell 5.1, and a BOM in front of the exit code makes it
 unparseable.
 
+## The helper queue on the host
+
+A host with no scheduler has nothing deciding what runs when. Chained lanes
+(`store.chain_lane_tail`) answer that without leaving anything behind, but the
+order is fixed at submit time and they know nothing about cores or memory. The
+helper is the other answer: a small script on the host holding a real FIFO
+queue, in bash (`remote_runner.py`) or PowerShell (`remote_runner_ps.py`).
+
+```
+<remote_root>/.moleditpy_runner/
+    lock/        single-instance lock (an atomic mkdir), holding pid
+    queue/       job_0001_<id>.sh …  dispatched in name order
+    running/     the script while its job runs
+    pids/        the wrapper pid for each running job
+    done/        the script once the job has ended
+    status/      the exit code the runner observed
+    tmp/         scripts being uploaded, before they are moved into queue/
+    moleditpy_runner_<digest>.sh     the runner itself, one file per version
+    slots cores memory paused runner.sha
+```
+
+**The queue is just numbered shell scripts.** Each is self-contained — it cds
+into its job directory and runs the same wrapper every other backend uses, with
+the same sentinel and the same signal traps — so completion is detected
+identically everywhere, and the queue can be read, reordered or emptied over
+plain `ssh` with `ls` and `mv`. Nothing needs this plugin to make sense of it.
+
+Four rules make it safe, and each exists because the obvious version is wrong:
+
+* **Uploaded to `tmp/`, then moved into `queue/`.** `mv` within a filesystem is
+  atomic, so the runner can never start a half-uploaded script.
+* **Sequence numbers are zero padded.** `ls | sort` puts `job_10` before
+  `job_2`, so unpadded names dispatch in the wrong order past nine jobs. The
+  job id in the name keeps two clients from colliding on one number.
+* **A job is claimed by moving it out of `queue/`.** Two runners racing for one
+  entry cannot both win a `mv` (or a `Move-Item`, which fails when the
+  destination exists), so nothing is dispatched twice.
+* **The runner re-checks the queue after releasing its lock.** A job enqueued
+  between "the queue is empty" and "the lock is gone" would otherwise sit there
+  with nobody to run it — whoever enqueued it saw a live runner and so did not
+  start one. This is the whole reason exiting on an empty queue is safe.
+
+**Nothing generated is ever overwritten or removed.** The runner script is named
+after a digest of its own contents, so a new plugin version is a *new file*: a
+runner already up is executing the old one, and **bash reads a script by byte
+offset as it goes** — replace the contents underneath it and it resumes in the
+middle of different text, with no warning. Queue entries move `queue/` →
+`running/` → `done/` and stay; only the pid file of a finished job is removed,
+which records nothing. Each job has its own directory named
+`<stamp>_<name>_<job id>`; the id is there because the stamp is accurate only to
+the second, and two jobs of the same name submitted within one second used to
+share a directory — overwriting each other's wrapper and inputs, and sharing a
+single `.moleditpy_rc`, so whichever finished first decided what *both* were
+reported to have done.
+
+### Scheduling on resources
+
+Each queued script carries its request as comment headers the runner reads with
+one `sed`: `# moleditpy-cores:`, `# moleditpy-memory:`, and the dependency tags.
+They are comments, so the script still runs by hand.
+
+A job is dispatched when its cores *and* its memory both fit within the budgets
+in `cores` and `memory` — absent means "ask the machine", an explicit `0` means
+"do not schedule on this at all". Cores alone are not enough: two 90 GB jobs on
+a 120 GB machine must not both start because the CPU happened to be free.
+Overcommitting CPU makes a calculation slow; overcommitting memory gets it
+killed hours in.
+
+**Physical cores, not hardware threads.** `nproc` and `ProcessorCount` count
+logical processors, so a six-core machine claims twelve and two six-core jobs
+land on six real cores. Both flavours count sockets × cores (`lscpu`, then
+`sysctl`, then `/proc/cpuinfo` pairs; `Win32_Processor.NumberOfCores` on
+Windows) and fall back to the logical count only if none of those answer. The
+`Detect` button in the host editor runs the same detection, so the dialog and
+the queue never disagree about the machine.
+
+Dispatch is strict FIFO: a job that does not fit stops the pass rather than
+letting smaller ones past, which would starve anything asking for most of the
+machine. A job asking for more than the machine has is clamped to the whole
+machine, so it runs alone instead of waiting for ever.
+
+### Lifecycle and cost
+
+The runner exits the moment its queue is empty; the next submission starts it
+again. Nothing of yours sits on a shared login node between batches.
+
+A submission to a host that already has the runner costs **five commands and
+three transfers**: `mkdir` for the job directory, one setup call (prepare, the
+three limits, and the digest of the runner script already there), one listing,
+the enqueue `mv`, and `ensure_runner` — plus the input, the wrapper and the
+queue entry. The runner script is a fourth transfer only when its digest
+differs: `build_runner_script` is deterministic, so it is the same bytes for
+every job on a host and changes only with the plugin version — one extra file
+per upgrade, not per submission. Re-sending it was an `scp` per job. The digest
+is believed only when the file it names is still there, or a deleted script
+would be skipped and then started. That matters most on Windows, where OpenSSH cannot
+multiplex and every round trip is a full handshake.
+
+### Two flavours, one vocabulary
+
+`remote_runner_ps.py` imports the constants, the entry format and the listing
+parser from `remote_runner.py` rather than restating them, so bash and
+PowerShell cannot drift apart on what an entry is called or what a header
+means. `flavour_for(host)` picks between them by **scheduler**, never by
+transport — the scheduler is what decides the language of every script.
+
+A test asserts both modules expose the same set of builders; a Windows host
+losing one of them would otherwise leave its queue half-working with the suite
+still green.
+
 ## State machine
 
 ```
@@ -225,8 +335,8 @@ working in, so a transfer cut off half way would otherwise leave a truncated
 | `command_templates.py` | built-in command lines per program |
 | `remote_paths.py` | POSIX path building and shell quoting |
 | `dialect.py` | the non-job commands (mkdir, sentinel read, list, tail), per shell |
-| `remote_runner.py` | the optional queue on the host: naming, script, commands |
-| `remote_runner_ps.py` | the same queue for a host with no POSIX shell |
+| `remote_runner.py` | the queue on the host: layout, generated script, commands |
+| `remote_runner_ps.py` | the same queue, for a host with no POSIX shell |
 | `tasks.py` | `BackgroundTask` / `run_async` on the shared pool |
 | `status_widget.py` | the job counter in the host's status bar |
 | `taskbar.py` | the same count on the application icon (Dock / task bar / launcher) |
