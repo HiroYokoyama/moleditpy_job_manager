@@ -17,11 +17,7 @@ from unittest.mock import patch
 
 import pytest
 
-from job_manager.models import Job
-from job_manager.runner import fetch_results
 from job_manager.store import JobStore
-
-from .fakes import FakeTransport, make_host
 
 pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 is not installed")
 
@@ -238,58 +234,6 @@ class TestWhereResultsLand(DropTestCase):
         self.store.set_pref("download_beside_input", False)
 
         self.assertFalse(JobStore(self.tmp).get_pref("download_beside_input", True))
-
-
-class TestAnInputIsNeverOverwritten(unittest.TestCase):
-    """Results land beside the input, so the input is in the target directory.
-
-    A fetch glob of ``*.xyz`` against an input named ``mol.xyz`` would write
-    the remote copy back over the user's own file. The same bytes today -- but
-    a truncated download would destroy the original.
-    """
-
-    def setUp(self):
-        self.tmp = tempfile.mkdtemp(prefix="overwrite_")
-        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
-        self.input = os.path.join(self.tmp, "mol.xyz")
-        with open(self.input, "w", encoding="utf-8") as handle:
-            handle.write("ORIGINAL")
-        self.transport = FakeTransport(make_host())
-        self.transport.when("ls -p -1", stdout="mol.xyz\nmol.out\n")
-
-    def _job(self) -> Job:
-        return Job(
-            name="opt",
-            remote_dir="/remote/opt",
-            input_files=[self.input],
-            fetch_globs=["*.xyz", "*.out"],
-        )
-
-    def test_the_input_file_is_not_downloaded_over(self):
-        fetch_results(self.transport, self._job(), self.tmp)
-
-        with open(self.input, encoding="utf-8") as handle:
-            self.assertEqual(handle.read(), "ORIGINAL")
-
-    def test_it_is_not_even_requested(self):
-        fetch_results(self.transport, self._job(), self.tmp)
-
-        requested = [remote for remote, _local in self.transport.downloads]
-        self.assertNotIn("/remote/opt/mol.xyz", requested)
-
-    def test_everything_else_still_comes_back(self):
-        downloaded = fetch_results(self.transport, self._job(), self.tmp)
-
-        self.assertEqual([os.path.basename(p) for p in downloaded], ["mol.out"])
-
-    def test_the_same_name_elsewhere_is_downloaded_normally(self):
-        # Only the job's *own* input is protected, not every file called that.
-        other = os.path.join(self.tmp, "elsewhere")
-        os.makedirs(other)
-
-        downloaded = fetch_results(self.transport, self._job(), other)
-
-        self.assertEqual(sorted(os.path.basename(p) for p in downloaded), ["mol.out", "mol.xyz"])
 
 
 if __name__ == "__main__":

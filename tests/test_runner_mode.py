@@ -356,3 +356,78 @@ class TestCancelling(RunnerModeTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestThePowerShellControlCommands(unittest.TestCase):
+    """The queue controls, which have no bash-flavour test to lean on.
+
+    Small builders, but the ones a user reaches for when a queue is misbehaving
+    -- pausing it, changing a limit, cancelling something that has not started.
+    """
+
+    directory = "C:/jobs/.moleditpy_runner"
+
+    def test_cancelling_takes_a_waiting_job_out_of_the_queue_first(self):
+        from job_manager import remote_runner_ps as ps
+
+        command = ps.cancel_command(self.directory, "job_0003_abc.ps1")
+
+        # Dequeuing frees the slot at once; killing is only for a job that has
+        # already started.
+        self.assertLess(command.index("Move-Item"), command.index("taskkill"))
+        self.assertIn(r"queue\job_0003_abc.ps1", command)
+
+    def test_cancelling_kills_the_whole_tree(self):
+        from job_manager import remote_runner_ps as ps
+
+        # The queued script is a PowerShell host that started the wrapper,
+        # which started the payload: killing only the top leaves the work.
+        self.assertIn("/T /F", ps.cancel_command(self.directory, "job_0001_a.ps1"))
+
+    def test_a_non_numeric_pid_is_never_passed_to_taskkill(self):
+        from job_manager import remote_runner_ps as ps
+
+        self.assertIn(r"-match '^\d+$'", ps.cancel_command(self.directory, "job_0001_a.ps1"))
+
+    def test_the_slot_limit_is_written_without_a_bom(self):
+        from job_manager import remote_runner_ps as ps
+
+        # The runner parses it as an integer; a BOM makes that fail.
+        command = ps.set_slots_command(self.directory, 4)
+        self.assertIn("-Encoding ascii", command)
+        self.assertIn("-Value 4", command)
+
+    def test_a_slot_limit_below_one_is_clamped(self):
+        from job_manager import remote_runner_ps as ps
+
+        self.assertIn("-Value 1", ps.set_slots_command(self.directory, 0))
+
+    def test_setting_cores_writes_the_count(self):
+        from job_manager import remote_runner_ps as ps
+
+        self.assertIn("-Value 8", ps.set_cores_command(self.directory, 8))
+
+    def test_zero_cores_removes_the_file_so_the_machine_decides(self):
+        from job_manager import remote_runner_ps as ps
+
+        command = ps.set_cores_command(self.directory, 0)
+
+        self.assertIn("Remove-Item", command)
+        self.assertNotIn("Set-Content", command)
+
+    def test_pausing_and_resuming_are_one_file(self):
+        from job_manager import remote_runner_ps as ps
+
+        self.assertIn("New-Item", ps.pause_command(self.directory, True))
+        self.assertIn("Remove-Item", ps.pause_command(self.directory, False))
+
+    def test_every_control_path_is_absolute(self):
+        from job_manager import remote_runner_ps as ps
+
+        for command in (
+            ps.set_slots_command(self.directory, 2),
+            ps.set_cores_command(self.directory, 2),
+            ps.pause_command(self.directory, True),
+        ):
+            with self.subTest(command=command[:30]):
+                self.assertIn(r"C:\jobs\.moleditpy_runner" "\\", command)
