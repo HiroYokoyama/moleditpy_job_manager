@@ -256,12 +256,31 @@ class TestTaskBarBadge(TrackingTestCase):
     all is ours.
     """
 
-    def _service(self, *jobs) -> JobService:
+    def _service(self, *jobs, badge: bool = True) -> JobService:
         store = JobStore(self.tmp)
         store.jobs = {job.id: job for job in jobs}
+        store.prefs["taskbar_badge"] = badge
         service = JobService(store=store)
         self.addCleanup(service.shutdown)
         return service
+
+    def test_the_badge_is_off_until_it_is_asked_for(self):
+        # The application icon belongs to MoleditPy, not to this plugin, so
+        # changing it is opt-in.
+        service = self._service(make_job(state=STATE_RUNNING), badge=False)
+
+        with patch("job_manager.taskbar.set_badge") as set_badge:
+            widget = JobStatusWidget(service)
+            self.addCleanup(widget.detach)
+
+        set_badge.assert_not_called()
+
+    def test_the_status_bar_counter_is_shown_either_way(self):
+        service = self._service(make_job(state=STATE_RUNNING), badge=False)
+        widget = JobStatusWidget(service)
+        self.addCleanup(widget.detach)
+
+        self.assertEqual(widget.summary(), "1 running")
 
     def test_the_badge_counts_every_active_job(self):
         service = self._service(

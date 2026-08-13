@@ -36,10 +36,11 @@ fetch, open.
   from a previous session are still running.
 - **Watch** without the window open: a counter appears in MoleditPy's own
   status bar while anything is running, queued or blocked, and opens the
-  monitor when clicked. The same count goes on the application icon in the
-  **OS task bar** — the Dock on macOS, the task bar button on Windows, the
-  launcher entry on Linux. Nothing is shown, and nothing is polled, when there
-  are no jobs.
+  monitor when clicked. Nothing is shown, and nothing is polled, when there are
+  no jobs. Optionally the same count goes on the application icon in the **OS
+  task bar** — the Dock on macOS, the task bar button on Windows, the launcher
+  entry on Linux — which is off by default, since the icon is MoleditPy's
+  rather than this plugin's.
 - **Fetch** the outputs automatically when a job ends, then hand the result to
   whichever plugin already claims that file type — a finished ORCA run opens in
   the ORCA Result Analyzer with no extra configuration.

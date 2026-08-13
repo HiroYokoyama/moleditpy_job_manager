@@ -76,9 +76,11 @@ class JobStatusWidget(QLabel):
 
     def refresh(self) -> None:
         text = self.summary()
-        # The OS task bar / Dock badge carries the same count, so that a
-        # minimised MoleditPy still says the cluster is busy.
-        taskbar.set_badge(sum(self.counts().values()))
+        # The OS task bar / Dock badge carries the same count, so a minimised
+        # MoleditPy still says the cluster is busy -- but only if asked. The
+        # application icon belongs to the host, not to a plugin.
+        if self.service.store.get_pref("taskbar_badge", False):
+            taskbar.set_badge(sum(self.counts().values()))
         # Hidden rather than empty: an always-present blank label steals status
         # bar width from the host for a plugin the user may never use.
         self.setVisible(bool(text))

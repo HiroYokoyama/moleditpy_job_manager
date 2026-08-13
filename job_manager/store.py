@@ -88,6 +88,11 @@ DEFAULT_PREFS: Dict[str, Any] = {
     "prune_days": DEFAULT_PRUNE_DAYS,
     "download_root": "",
     "open_result_after_download": True,
+    #: Off by default: the application icon belongs to the host, not to a
+    #: plugin, and a badge is a change to how MoleditPy looks in the user's
+    #: task bar. The status bar counter is always there and costs nobody
+    #: anything, so this is opt-in.
+    "taskbar_badge": False,
     "last_input_dir": "",
     #: The user's own command templates: [{"label": ..., "command": ...}].
     "command_templates": [],

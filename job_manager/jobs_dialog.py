@@ -381,6 +381,17 @@ class JobsDialog(QDialog):
             lambda checked: self.service.store.set_pref("open_result_after_download", checked)
         )
         actions.addWidget(self.chk_auto_open)
+
+        self.chk_taskbar_badge = QCheckBox("Show the count on the app icon")
+        self.chk_taskbar_badge.setToolTip(
+            "Put the number of active jobs on MoleditPy's icon in the task bar "
+            "(the Dock on macOS, the launcher entry on Linux).\n\n"
+            "Off by default: the application icon belongs to MoleditPy, not to "
+            "this plugin. The status bar counter is shown either way."
+        )
+        self.chk_taskbar_badge.setChecked(bool(self.service.store.get_pref("taskbar_badge", False)))
+        self.chk_taskbar_badge.toggled.connect(self._on_taskbar_badge_toggled)
+        actions.addWidget(self.chk_taskbar_badge)
         layout.addLayout(actions)
 
         self.lbl_status = QLabel("")
@@ -414,6 +425,16 @@ class JobsDialog(QDialog):
 
     def _on_job_updated(self, _job_id: str = "") -> None:
         self._update_buttons()
+
+    def _on_taskbar_badge_toggled(self, enabled: bool) -> None:
+        self.service.store.set_pref("taskbar_badge", bool(enabled))
+        # Applied now rather than at the next poll: switching it off has to
+        # take the badge off the icon, not leave the last count sitting there.
+        from .taskbar import clear_badge
+
+        if not enabled:
+            clear_badge()
+        self.service.jobs_changed.emit()
 
     # --- helpers ------------------------------------------------------------
 
