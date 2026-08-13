@@ -112,15 +112,19 @@ the feature. The safeguards are:
 * **The Script preview tab shows the exact script** that will be uploaded —
   directives, module loads, pre-commands, the payload, and the sentinel traps.
   Nothing is added afterwards.
-* **Every path is quoted** for a POSIX shell before interpolation
-  (`remote_paths.quote`), with a `~` left expandable. Job names are reduced to
-  `[A-Za-z0-9._-]`, so a name like `../../etc/passwd` becomes `etc_passwd` and
-  `a;rm -rf /` becomes `a_rm_-rf`.
+* **Every path is quoted** before interpolation, in the shell that will
+  actually read it — `remote_paths.quote` for a POSIX host (with a `~` left
+  expandable) and `dialect.POWERSHELL.quote` for a Windows one, where a single
+  quote is doubled and `$` never reaches an expression parser. Job names are
+  reduced to `[A-Za-z0-9._-]`, so a name like `../../etc/passwd` becomes
+  `etc_passwd` and `a;rm -rf /` becomes `a_rm_-rf`.
 * **Command templates are yours.** The built-in ones are conventional
   invocations of well-known programs; a template you save is stored verbatim and
   is no more privileged than typing the command.
-* **Cancel kills a process group** (`shell` scheduler) or calls the queue's own
-  `scancel`/`qdel`. It never runs a broad `pkill`.
+* **Cancel kills one process tree**, never a broad `pkill`: a process group on
+  a POSIX host (`shell`), `taskkill /PID <id> /T` on Windows, or the queue's own
+  `scancel`/`qdel`. A job id that is not a plain number is refused rather than
+  interpolated, in both shells.
 
 ## Opening a job list from somewhere else
 

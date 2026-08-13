@@ -86,9 +86,19 @@ def build_job_script(
         lines.append(f"{REQUIRE_SUCCESS_TAG} {1 if require_success else 0}")
     lines += [
         f"Set-Location -LiteralPath {ps_quote(job_dir)}",
-        f"& powershell -NoProfile -ExecutionPolicy Bypass -File "
-        f"{ps_quote(script_name)} > {ps_quote(log_name)} 2>&1",
-        "$__moleditpy_rc = $LASTEXITCODE",
+        # Start-Process rather than `&` with a `>` redirect, for two reasons.
+        # Every path is absolute because this script is started by the runner,
+        # so the working directory it inherits is the *runner's*. And `>` in
+        # Windows PowerShell 5.1 is Out-File, which writes UTF-16 with a BOM --
+        # the job's log would come back in an encoding nothing downstream can
+        # read. Start-Process copies the child's bytes through untouched.
+        "$__moleditpy_p = Start-Process -FilePath powershell -ArgumentList "
+        f"{_PS_ARGS},{ps_quote(_join(job_dir, script_name))} "
+        f"-WorkingDirectory {ps_quote(job_dir)} "
+        f"-RedirectStandardOutput {ps_quote(_join(job_dir, log_name))} "
+        f"-RedirectStandardError {ps_quote(_join(job_dir, log_name + '.err'))} "
+        "-WindowStyle Hidden -Wait -PassThru",
+        "$__moleditpy_rc = $__moleditpy_p.ExitCode",
         "if ($null -eq $__moleditpy_rc) { $__moleditpy_rc = 0 }",
         f"Set-Content -Path {ps_quote(status_path)} -Value $__moleditpy_rc -Encoding ascii",
         "exit $__moleditpy_rc",
@@ -106,6 +116,12 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
             "# MoleditPy remote job runner. Runs the scripts in queue\\ in name order,",
             "# at most `slots` at a time, and exits as soon as nothing is left to run.",
             f"Set-Location -LiteralPath {quoted}",
+            # Set-Location moves PowerShell's *location*; whether Start-Process
+            # resolves a relative path against that or against the process's
+            # working directory differs between Windows PowerShell 5.1 and
+            # pwsh 7. Everything handed to Start-Process is therefore absolute,
+            # so neither reading is wrong.
+            f"$__moleditpy_dir = {quoted}",
             "",
             "function Get-DirCount($name) {",
             "    return @(Get-ChildItem -LiteralPath $name -File "
@@ -233,7 +249,8 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
             "-Destination ('running\\' + $entry) -ErrorAction Stop",
             "        } catch { continue }",
             "        $proc = Start-Process -FilePath powershell -ArgumentList "
-            f"{_PS_ARGS},('running\\' + $entry) -WindowStyle Hidden -PassThru",
+            f"{_PS_ARGS},(Join-Path $__moleditpy_dir ('running\\' + $entry)) "
+            "-WorkingDirectory $__moleditpy_dir -WindowStyle Hidden -PassThru",
             "        Set-Content -Path ('pids\\' + $entry) -Value $proc.Id -Encoding ascii",
             "    }",
             "}",
@@ -313,10 +330,14 @@ def ensure_runner_command(directory: str, script_name: str = RUNNER_SCRIPT_NAME)
         "Remove-Item -LiteralPath 'lock' -Recurse -Force -ErrorAction SilentlyContinue } }; "
         "try { New-Item -ItemType Directory -Path 'lock' -ErrorAction Stop | Out-Null } "
         "catch { 'running'; exit 0 }; "
+        # Absolute, and with an explicit working directory: Start-Process
+        # resolves relative paths against PowerShell's location in pwsh 7 and
+        # against the process's working directory in 5.1.
         f"$proc = Start-Process -FilePath powershell -ArgumentList {_PS_ARGS},"
-        f"{ps_quote(script_name)} -WindowStyle Hidden -PassThru "
-        f"-RedirectStandardOutput {ps_quote(RUNNER_LOG_NAME)} "
-        f"-RedirectStandardError {ps_quote(RUNNER_LOG_NAME + '.err')}; "
+        f"{ps_quote(_join(directory, script_name))} "
+        f"-WorkingDirectory {quoted} -WindowStyle Hidden -PassThru "
+        f"-RedirectStandardOutput {ps_quote(_join(directory, RUNNER_LOG_NAME))} "
+        f"-RedirectStandardError {ps_quote(_join(directory, RUNNER_LOG_NAME + '.err'))}; "
         "Set-Content -Path 'lock\\pid' -Value $proc.Id -Encoding ascii; "
         "'started'"
     )

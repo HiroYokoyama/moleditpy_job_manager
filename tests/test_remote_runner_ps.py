@@ -162,6 +162,26 @@ class TestItRunsWhatIsQueued(RunnerHarness):
 
         self.wait_for(lambda: self.status(entry) == "3", what="rc=3")
 
+    def test_the_jobs_output_lands_in_its_own_log(self):
+        # The queued script runs with the *runner's* working directory, so a
+        # relative wrapper or log path would be resolved in the wrong place.
+        entry = self.enqueue("ccc", "Write-Output 'hello from the job'")
+        log = os.path.join(self.jobs, "ccc", "job.log")
+
+        self.start_runner()
+
+        self.wait_for(lambda: self.status(entry) == "0", what="the job to finish")
+        self.wait_for(lambda: os.path.exists(log), what="the log to be written")
+        with open(log, "rb") as handle:
+            raw = handle.read()
+
+        # Bytes, because the bug this guards was an encoding one: `>` in
+        # Windows PowerShell 5.1 is Out-File, which writes UTF-16 with a BOM,
+        # and the log came back in an encoding nothing downstream can read.
+        self.assertFalse(raw.startswith(b"\xff\xfe"), "the log is UTF-16")
+        self.assertFalse(raw.startswith(b"\xef\xbb\xbf"), "the log has a UTF-8 BOM")
+        self.assertIn(b"hello from the job", raw)
+
     def test_jobs_run_in_queue_order(self):
         for name in ("aaa", "bbb", "ccc"):
             self.enqueue(name, f"Add-Content -Path '{self.marker('order')}' -Value '{name}'")

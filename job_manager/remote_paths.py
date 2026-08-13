@@ -1,15 +1,20 @@
 """POSIX-side path and quoting helpers.
 
-The client may be Windows, but the remote end is always a POSIX shell, so every
-path we build uses ``posixpath`` and every interpolation goes through
-:func:`quote`.
+Used for every backend whose remote end is a POSIX shell, which is all of them
+bar the native Windows one -- that has its own quoting in :mod:`dialect`, and
+picking between the two is what :func:`dialect.for_host` is for. Paths are
+built with ``posixpath`` and every interpolation goes through :func:`quote`.
+
+``join`` is shared even on Windows: PowerShell accepts forward slashes in every
+path it is given, so one path builder covers both rather than two that can
+disagree about where a job directory is.
 """
 
 from __future__ import annotations
 
 import posixpath
 import shlex
-from typing import Iterable, List
+from typing import Iterable
 
 
 def quote(path: str) -> str:
@@ -39,12 +44,6 @@ def basename(path: str) -> str:
 
 def dirname(path: str) -> str:
     return posixpath.dirname(path)
-
-
-def build_command(commands: Iterable[str]) -> str:
-    """Chain shell commands so the first failure aborts the rest."""
-    parts: List[str] = [c.strip() for c in commands if c and c.strip()]
-    return " && ".join(parts)
 
 
 def wrap_login(cmd: str, login_commands: Iterable[str]) -> str:

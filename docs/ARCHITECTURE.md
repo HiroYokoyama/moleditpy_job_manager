@@ -19,7 +19,7 @@ plugin already claims that file type.
                         │ worker threads         │ worker threads
                  ┌──────▼────────────────────────▼──────────────┐
    blocking      │ runner: submit / poll / fetch / cancel / tail │  no Qt, no network
-   operations    │ schedulers: slurm · pbs · sge · shell         │  knowledge here
+   operations    │ schedulers: slurm·pbs·sge·shell·windows       │  knowledge here
                  └───────────────────────┬──────────────────────┘
                                          │
                  ┌───────────────────────▼──────────────────────┐
@@ -109,6 +109,29 @@ what stop a job the scheduler *kills* (walltime, preemption, `scancel`, node
 drain) from reaching the `EXIT` trap with `$?` still 0 and being recorded as a
 clean success.
 
+The Windows scheduler writes the same file from the same three states, in
+PowerShell:
+
+```powershell
+try   { <payload>; $__moleditpy_rc = $LASTEXITCODE; $__moleditpy_done = $true }
+catch { $__moleditpy_rc = 1 }
+finally {
+    if (-not $__moleditpy_done -and $null -ne $LASTEXITCODE) { $__moleditpy_rc = $LASTEXITCODE }
+    Set-Content -Path .moleditpy_rc -Value $__moleditpy_rc -Encoding ascii
+}
+```
+
+`try/finally` is what `trap ... EXIT` is for, and the completion flag is what
+`exit` inside the payload would otherwise defeat — without it the sentinel kept
+its placeholder and a job that exited 0 was recorded as `FAILED`.
+
+There is **no Windows equivalent of the signal traps**. `TerminateProcess`
+stops the process dead and no `finally` runs, so a killed job writes nothing
+and is classified `LOST` rather than `FAILED (rc=143)`. `-Encoding ascii` is
+not incidental either: `Set-Content` writes a BOM with most encodings on
+Windows PowerShell 5.1, and a BOM in front of the exit code makes it
+unparseable.
+
 ## State machine
 
 ```
@@ -172,6 +195,9 @@ so a file written by a newer version does not break an older one.
 | `credentials.py` | the password prompt, GUI thread only |
 | `command_templates.py` | built-in command lines per program |
 | `remote_paths.py` | POSIX path building and shell quoting |
+| `dialect.py` | the non-job commands (mkdir, sentinel read, list, tail), per shell |
+| `remote_runner.py` | the optional queue on the host: naming, script, commands |
+| `remote_runner_ps.py` | the same queue for a host with no POSIX shell |
 | `tasks.py` | `BackgroundTask` / `run_async` on the shared pool |
 | `status_widget.py` | the job counter in the host's status bar |
 | `taskbar.py` | the same count on the application icon (Dock / task bar / launcher) |
@@ -198,7 +224,7 @@ without a major version.
 | Tier | What it needs | What it proves |
 |---|---|---|
 | unit | pytest only | models, store, schedulers, runner, transports (fakes) |
-| script execution | a real `bash` | the generated script's actual semantics |
+| script execution | a real `bash`, a real PowerShell | the generated scripts' actual semantics, including the runners as live processes |
 | GUI | real PyQt6, offscreen | dialogs, poller timing, window lifetime |
 | integration | the main app checked out as a sibling | the real `PluginContext` contract |
 

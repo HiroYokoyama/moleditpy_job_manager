@@ -50,17 +50,6 @@ class TestJoin(unittest.TestCase):
         self.assertEqual(remote_paths.dirname("/a/b/c.out"), "/a/b")
 
 
-class TestBuildCommand(unittest.TestCase):
-    def test_chains_with_and(self):
-        self.assertEqual(remote_paths.build_command(["cd /a", "ls"]), "cd /a && ls")
-
-    def test_blank_entries_are_dropped(self):
-        self.assertEqual(remote_paths.build_command(["cd /a", "  ", ""]), "cd /a")
-
-    def test_empty_input(self):
-        self.assertEqual(remote_paths.build_command([]), "")
-
-
 class TestWrapLogin(unittest.TestCase):
     def test_no_login_commands_returns_the_command(self):
         self.assertEqual(remote_paths.wrap_login("squeue", []), "squeue")

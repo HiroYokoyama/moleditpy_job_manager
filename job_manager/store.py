@@ -361,8 +361,16 @@ class JobStore:
                 continue
             chain = [tail]
             cursor = tail
-            while cursor.after_job_id in by_id:
+            # Stop at a job already in this chain. Nothing the plugin writes
+            # can point backwards -- a predecessor always exists before the job
+            # that names it -- but a job list is a file, and this one is opened
+            # by drag and drop from anywhere. A chain running into a cycle
+            # walked it for ever, on the GUI thread, which is a frozen
+            # application rather than a bad reading of a corrupt file.
+            seen = {tail.id}
+            while cursor.after_job_id in by_id and cursor.after_job_id not in seen:
                 cursor = by_id[cursor.after_job_id]
+                seen.add(cursor.id)
                 chain.append(cursor)
             lanes.append(list(reversed(chain)))
         return lanes

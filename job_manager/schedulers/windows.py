@@ -92,6 +92,14 @@ class WindowsScheduler(Scheduler):
         lines = [
             f"# MoleditPy job: {job_name}",
             "$ErrorActionPreference = 'Continue'",
+            # `>` in Windows PowerShell 5.1 is Out-File, whose default encoding
+            # is UTF-16 with a BOM. A command template of the usual shape --
+            # `orca in.inp > out.out` -- would therefore write an output file
+            # that no quantum-chemistry parser can read, this plugin's own
+            # analyzers included. This makes every redirect in the template
+            # write plain text instead. Use `cmd /c "prog > out"` for a
+            # byte-exact copy of a program that emits non-ASCII.
+            "$PSDefaultParameterValues['Out-File:Encoding'] = 'ascii'",
         ]
         if remote_dir:
             # Baked in, never derived from $PSScriptRoot: the script may be
@@ -185,12 +193,19 @@ class WindowsScheduler(Scheduler):
         refuses to redirect both to one.
         """
         err_file = (log_file or "job.log") + ".err"
+        # Every path is made absolute against the current location first.
+        # Start-Process resolves a relative path against PowerShell's location
+        # in pwsh 7 but against the process's working directory in Windows
+        # PowerShell 5.1, and the two are not the same place here -- the caller
+        # got to this directory with Set-Location.
         return (
+            "$d = (Get-Location).Path; "
             "$p = Start-Process -FilePath powershell "
-            f"-ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',{ps_quote(script_name)} "
-            f"-RedirectStandardOutput {ps_quote(log_file)} "
-            f"-RedirectStandardError {ps_quote(err_file)} "
-            "-WindowStyle Hidden -PassThru; $p.Id"
+            "-ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',"
+            f"(Join-Path $d {ps_quote(script_name)}) "
+            f"-RedirectStandardOutput (Join-Path $d {ps_quote(log_file)}) "
+            f"-RedirectStandardError (Join-Path $d {ps_quote(err_file)}) "
+            "-WorkingDirectory $d -WindowStyle Hidden -PassThru; $p.Id"
         )
 
     def parse_submit_output(self, stdout: str, stderr: str) -> str:

@@ -62,9 +62,9 @@ class JobStatusWidget(QLabel):
                 waiting += 1
         return {"running": running, "waiting": waiting, "blocked": blocked}
 
-    def summary(self) -> str:
+    def summary(self, counts: Optional[dict] = None) -> str:
         """The text shown, or "" when there is nothing to report."""
-        counts = self.counts()
+        counts = self.counts() if counts is None else counts
         parts = []
         if counts["running"]:
             parts.append(f"{counts['running']} running")
@@ -75,19 +75,21 @@ class JobStatusWidget(QLabel):
         return "  ".join(parts)
 
     def refresh(self) -> None:
-        text = self.summary()
+        # Counted once: this runs on every job update, and each pass walks the
+        # whole job list asking the store about every chain.
+        counts = self.counts()
+        text = self.summary(counts)
         # The OS task bar / Dock badge carries the same count, so a minimised
         # MoleditPy still says the cluster is busy -- but only if asked. The
         # application icon belongs to the host, not to a plugin.
         if self.service.store.get_pref("taskbar_badge", False):
-            taskbar.set_badge(sum(self.counts().values()))
+            taskbar.set_badge(sum(counts.values()))
         # Hidden rather than empty: an always-present blank label steals status
         # bar width from the host for a plugin the user may never use.
         self.setVisible(bool(text))
         if not text:
             self.setText("")
             return
-        counts = self.counts()
         color = _BLOCKED_COLOR if counts["blocked"] else _BUSY_COLOR
         self.setText(f"⚙ {text}")
         self.setStyleSheet(f"color: {color};")

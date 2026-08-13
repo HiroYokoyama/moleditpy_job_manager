@@ -100,8 +100,18 @@ class TestCommands(unittest.TestCase):
     def test_submit_redirects_the_streams_to_different_files(self):
         # PowerShell refuses to send stdout and stderr to one file.
         command = self.scheduler.submit_command("moleditpy_run.ps1", "job.log")
-        self.assertIn("-RedirectStandardOutput 'job.log'", command)
-        self.assertIn("-RedirectStandardError 'job.log.err'", command)
+        self.assertIn("-RedirectStandardOutput (Join-Path $d 'job.log')", command)
+        self.assertIn("-RedirectStandardError (Join-Path $d 'job.log.err')", command)
+
+    def test_submit_makes_every_path_absolute(self):
+        # Start-Process resolves a relative path against PowerShell's location
+        # in pwsh 7 and against the process working directory in 5.1, and the
+        # caller reached this directory with Set-Location -- so neither reading
+        # may be relied on.
+        command = self.scheduler.submit_command("moleditpy_run.ps1", "job.log")
+        self.assertIn("$d = (Get-Location).Path", command)
+        self.assertIn("(Join-Path $d 'moleditpy_run.ps1')", command)
+        self.assertIn("-WorkingDirectory $d", command)
 
     def test_submit_prints_the_process_id(self):
         self.assertTrue(self.scheduler.submit_command("run.ps1", "job.log").endswith("$p.Id"))
@@ -178,6 +188,19 @@ class TestItReallyRuns(unittest.TestCase):
     def test_a_cmdlet_payload_does_not_inherit_an_earlier_status(self):
         # $LASTEXITCODE would otherwise still hold the previous program's code.
         self.assertEqual(self.run_wrapper("Write-Output 'hello'"), "0")
+
+    def test_a_redirect_in_the_command_template_writes_plain_text(self):
+        # `>` is Out-File in Windows PowerShell 5.1, whose default encoding is
+        # UTF-16 with a BOM -- so `orca in.inp > out.out`, the shape every
+        # built-in template has, wrote an output file no parser can read.
+        target = os.path.join(self.tmp, "out.out").replace("\\", "/")
+        self.run_wrapper(f"cmd /c echo SCF_DONE > '{target}'")
+
+        with open(os.path.join(self.tmp, "out.out"), "rb") as handle:
+            raw = handle.read()
+
+        self.assertFalse(raw.startswith(b"\xff\xfe"), "the output file is UTF-16")
+        self.assertIn(b"SCF_DONE", raw)
 
     def test_the_sentinel_parses_as_an_integer(self):
         # What the poller actually does with it.

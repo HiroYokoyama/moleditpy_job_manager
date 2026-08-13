@@ -166,6 +166,41 @@ class TestTheLimitIsRespected(SlotTestCase):
         self.assertIsNone(self.store.chain_lane_tail("h1", 0))
 
 
+class TestACorruptJobListCannotHangTheApplication(SlotTestCase):
+    """A job list is a file, and this one is opened by drag and drop.
+
+    Nothing the plugin writes can point backwards -- a predecessor always
+    exists before the job naming it -- but a hand-edited or truncated
+    ``.pmejbs`` can, and this walk runs on the GUI thread.
+    """
+
+    def test_a_chain_running_into_a_cycle_terminates(self):
+        first = make_job(id="a", name="a", after_job_id="b")
+        second = make_job(id="b", name="b", after_job_id="a")
+        third = make_job(id="c", name="c", after_job_id="a")
+        self.store.jobs = {j.id: j for j in (first, second, third)}
+
+        lanes = self.store.chain_lanes("h1")
+
+        # What it reports matters far less than that it reports at all.
+        self.assertEqual(len(lanes), 1)
+        self.assertLessEqual(len(lanes[0]), 3)
+
+    def test_a_job_chained_to_itself_terminates(self):
+        job = make_job(id="a", name="a", after_job_id="a")
+        self.store.jobs = {job.id: job}
+
+        self.assertEqual(self.store.chain_lanes("h1"), [])
+
+    def test_the_slot_limit_still_answers_for_a_cyclic_list(self):
+        first = make_job(id="a", name="a", after_job_id="b")
+        second = make_job(id="b", name="b", after_job_id="a")
+        self.store.jobs = {first.id: first, second.id: second}
+
+        self.store.free_slot("h1", 2)
+        self.store.chain_lane_tail("h1", 2)
+
+
 class TestTheHostCarriesTheLimit(SlotTestCase):
     def test_it_defaults_to_no_limit(self):
         self.assertEqual(HostProfile().max_concurrent, 0)
