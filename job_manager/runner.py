@@ -9,6 +9,7 @@ event loop and no network.
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import logging
 import os
 import tempfile
@@ -34,6 +35,9 @@ from .schedulers import STATE_UNKNOWN, get_scheduler
 from .transport.base import Transport, TransportError
 
 DEFAULT_LOG_NAME = "job.log"
+#: Downloads are written under this and renamed on success, so a half-finished
+#: transfer never wears the name of a finished result.
+PARTIAL_SUFFIX = ".moleditpy-part"
 #: Marks the boundaries of a sentinel sweep so one command covers many jobs.
 _SENTINEL_MARK = "@@MOLEDITPY@@"
 
@@ -181,14 +185,20 @@ def submit_to_runner(
     _upload_text(transport, script, remote_paths.join(job.remote_dir, scheduler.script_name))
 
     directory = remote_runner.runner_dir(host.remote_root)
-    transport.run(flavour.prepare_command(directory))
-    _upload_text(
-        transport,
-        flavour.build_runner_script(directory),
-        remote_paths.join(directory, flavour.RUNNER_SCRIPT_NAME),
+    setup = transport.run(
+        flavour.setup_command(directory, host.max_concurrent or 1, host.runner_cores)
     )
-    transport.run(flavour.set_slots_command(directory, host.max_concurrent or 1))
-    transport.run(flavour.set_cores_command(directory, host.runner_cores))
+    runner_script = flavour.build_runner_script(directory)
+    digest = _digest(runner_script)
+    if (setup.stdout or "").strip().splitlines()[-1:] != [digest]:
+        # Only when it would differ. The script is the same bytes on every
+        # submission to the same host, and re-uploading it was an scp per job.
+        _upload_text(
+            transport,
+            runner_script,
+            remote_paths.join(directory, flavour.RUNNER_SCRIPT_NAME),
+        )
+        transport.run(flavour.store_digest_command(directory, digest))
 
     listing = transport.run(flavour.list_command(directory))
     entry = remote_runner.entry_name(
@@ -224,6 +234,11 @@ def submit_to_runner(
     job.submitted_at = time.time()
     job.touch(STATE_SUBMITTED)
     return job
+
+
+def _digest(text: str) -> str:
+    """Identifies one runner script. Short: it is compared, never trusted."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
 def _entry_names(stdout: str) -> List[str]:
@@ -291,6 +306,49 @@ def _blocked_entries(transport: Transport, directory: str, jobs: Sequence[Job]) 
         if raw.splitlines() and raw.splitlines()[0].strip() == remote_runner.STATUS_BLOCKED:
             blocked.add(job.id)
     return blocked
+
+
+def queue_paused(transport: Transport, host: HostProfile) -> bool:
+    """Whether the host's runner is currently holding its queue."""
+    directory = remote_runner.runner_dir(host.remote_root)
+    result = transport.run(remote_runner.flavour_for(host).is_paused_command(directory))
+    # A runner that has never been set up prints nothing at all, and "no queue
+    # yet" is not "the queue is held".
+    return (result.stdout or "").strip().splitlines()[-1:] == [remote_runner.PAUSED_NAME]
+
+
+def set_queue_paused(transport: Transport, host: HostProfile, paused: bool) -> bool:
+    """Hold the host's queue, or let it move again. Returns the new state.
+
+    The runner re-reads the flag between jobs, so this reaches a runner that is
+    already up without restarting it -- and a runner that has since exited
+    leaves the flag behind for the next one to find.
+    """
+    flavour = remote_runner.flavour_for(host)
+    directory = remote_runner.runner_dir(host.remote_root)
+    # The flag lives in the runner directory, which need not exist yet: pausing
+    # a host before its first submission has to be allowed, or the only way to
+    # hold a queue would be to start it first.
+    transport.run(flavour.prepare_command(directory))
+    result = transport.run(flavour.pause_command(directory, paused))
+    if not result.ok:
+        raise TransportError(
+            f"Could not change the queue (rc={result.rc}): "
+            f"{(result.stderr or result.stdout).strip()[:300]}"
+        )
+    return bool(paused)
+
+
+def apply_queue_limits(transport: Transport, host: HostProfile) -> None:
+    """Push this host's job and core limits to a runner that is already up.
+
+    Submitting sends them too, but a limit changed between submissions would
+    otherwise not take effect until the next one -- which is exactly when the
+    user no longer needs it.
+    """
+    flavour = remote_runner.flavour_for(host)
+    directory = remote_runner.runner_dir(host.remote_root)
+    transport.run(flavour.setup_command(directory, host.max_concurrent or 1, host.runner_cores))
 
 
 def cancel_in_runner(transport: Transport, host: HostProfile, job: Job) -> None:
@@ -448,13 +506,29 @@ def fetch_results(
         if os.path.abspath(target) in protected:
             logging.debug("Job Manager: not overwriting the input file %s", name)
             continue
+        # Into a part file, then renamed. Results land in the directory the
+        # user is working in, so a transfer cut off half way would otherwise
+        # leave a truncated .out sitting there under its real name, looking
+        # exactly like a complete one -- and over the top of the previous
+        # attempt's good copy.
+        staging = target + PARTIAL_SUFFIX
         try:
-            transport.download(remote_paths.join(job.remote_dir, name), target)
-        except TransportError:
+            transport.download(remote_paths.join(job.remote_dir, name), staging)
+            os.replace(staging, target)
+        except (TransportError, OSError):
             logging.warning("Job Manager: could not download %s", name)
+            _discard(staging)
             continue
         downloaded.append(target)
     return downloaded
+
+
+def _discard(path: str) -> None:
+    """Remove a part file, if it got as far as existing."""
+    try:
+        os.unlink(path)
+    except OSError:
+        logging.debug("Job Manager: part file not removed: %s", path)
 
 
 def cancel_job(transport: Transport, host: HostProfile, job: Job) -> None:
@@ -481,14 +555,18 @@ def tail_log(transport: Transport, job: Job, lines: int = 200) -> str:
 #: Re-exported so callers do not need the models module for the common states.
 __all__ = [
     "DEFAULT_LOG_NAME",
+    "PARTIAL_SUFFIX",
     "STATE_PENDING",
     "STATE_RUNNING",
+    "apply_queue_limits",
     "cancel_job",
     "fetch_results",
     "list_remote_files",
     "make_remote_dir",
     "poll_host",
+    "queue_paused",
     "select_files",
+    "set_queue_paused",
     "short_id",
     "submit_job",
     "tail_log",

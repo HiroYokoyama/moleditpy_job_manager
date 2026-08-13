@@ -46,6 +46,11 @@ fetch, open.
   task bar** — the Dock on macOS, the task bar button on Windows, the launcher
   entry on Linux — which is off by default, since the icon is MoleditPy's
   rather than this plugin's.
+- **Be told** when a job ends: a desktop notification names the job and the
+  host when it finishes, fails or vanishes from the queue. On by default, and
+  one checkbox away from off.
+- **Hold** the helper queue on a host without cancelling anything, and send it
+  new limits while jobs are already waiting.
 - **Drop** an input file on the Job Monitor to start: the wizard opens
   prefilled, named after the file, with its command template chosen.
 - **Fetch** the outputs automatically when a job ends — next to the input file
@@ -132,7 +137,7 @@ A login node is not a status API, so:
 Every generated script installs these traps before running your command:
 
 ```bash
-trap '__moleditpy_rc=$?; echo "$__moleditpy_rc" > .moleditpy_rc' EXIT
+trap '__moleditpy_rc=$?; echo "$__moleditpy_rc" > .moleditpy_rc.tmp && mv -f .moleditpy_rc.tmp .moleditpy_rc' EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
 trap 'exit 129' HUP

@@ -1,0 +1,234 @@
+"""Holding the host's queue, and sending it new limits.
+
+Both were implemented, tested and then unreachable: nothing outside the two
+runner modules ever called ``pause_command``, while the docs advertised pause
+as a feature of the helper. These tests cover the path that now connects them,
+and the round trips that submitting no longer spends.
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+import tempfile
+import unittest
+
+from job_manager import remote_runner, remote_runner_ps
+from job_manager.models import MODE_RUNNER, SCHEDULER_SHELL, SCHEDULER_WINDOWS
+from job_manager.runner import apply_queue_limits, queue_paused, set_queue_paused, submit_to_runner
+from job_manager.transport.base import TransportError
+
+from .fakes import FakeTransport, make_host, make_job, make_preset
+
+BASH = shutil.which("bash")
+
+
+def runner_host(**overrides):
+    defaults = dict(
+        scheduler=SCHEDULER_SHELL,
+        concurrency_mode=MODE_RUNNER,
+        max_concurrent=2,
+        runner_cores=8,
+    )
+    defaults.update(overrides)
+    return make_host(**defaults)
+
+
+class TestReadingTheFlag(unittest.TestCase):
+    def setUp(self):
+        self.host = runner_host()
+        self.transport = FakeTransport(self.host)
+
+    def test_a_held_queue_reads_as_held(self):
+        self.transport.when("paused", stdout="paused\n")
+        self.assertTrue(queue_paused(self.transport, self.host))
+
+    def test_a_moving_queue_reads_as_moving(self):
+        self.transport.when("paused", stdout="running\n")
+        self.assertFalse(queue_paused(self.transport, self.host))
+
+    def test_a_host_with_no_runner_yet_is_not_held(self):
+        # The command prints nothing at all where the directory does not exist.
+        # "There is no queue yet" is not "the queue is held", and reporting it
+        # as held would leave the box ticked for a host that has never run.
+        self.assertFalse(queue_paused(self.transport, self.host))
+
+    def test_the_windows_flavour_is_asked_in_powershell(self):
+        host = runner_host(scheduler=SCHEDULER_WINDOWS)
+        transport = FakeTransport(host)
+        queue_paused(transport, host)
+        self.assertTrue(transport.ran("Test-Path"))
+        self.assertFalse(transport.ran("[ -f"))
+
+
+class TestSettingTheFlag(unittest.TestCase):
+    def setUp(self):
+        self.host = runner_host()
+        self.transport = FakeTransport(self.host)
+
+    def test_pausing_creates_the_flag(self):
+        self.assertTrue(set_queue_paused(self.transport, self.host, True))
+        self.assertTrue(self.transport.ran("touch"))
+        self.assertTrue(self.transport.ran(remote_runner.PAUSED_NAME))
+
+    def test_resuming_removes_it(self):
+        self.assertFalse(set_queue_paused(self.transport, self.host, False))
+        self.assertTrue(self.transport.ran("rm -f"))
+
+    def test_the_directory_is_prepared_first(self):
+        # Holding a queue before the host has ever run one has to work, or the
+        # only way to pause would be to submit something first.
+        set_queue_paused(self.transport, self.host, True)
+        self.assertTrue(self.transport.ran("mkdir -p"))
+        self.assertLess(
+            next(i for i, c in enumerate(self.transport.commands) if "mkdir -p" in c),
+            next(i for i, c in enumerate(self.transport.commands) if "touch" in c),
+        )
+
+    def test_a_refusal_is_reported_rather_than_swallowed(self):
+        # The checkbox goes back to what the host still says, which it can only
+        # do if the failure reaches it.
+        self.transport.when(remote_runner.PAUSED_NAME, rc=1, stderr="read-only file system")
+        with self.assertRaises(TransportError):
+            set_queue_paused(self.transport, self.host, True)
+
+
+class TestApplyingLimits(unittest.TestCase):
+    def setUp(self):
+        self.host = runner_host(max_concurrent=3, runner_cores=12)
+        self.transport = FakeTransport(self.host)
+
+    def test_both_limits_are_sent(self):
+        apply_queue_limits(self.transport, self.host)
+        self.assertTrue(self.transport.ran("3"))
+        self.assertTrue(self.transport.ran("12"))
+
+    def test_it_costs_one_round_trip(self):
+        # Three separate ssh processes before; each is a full handshake on
+        # Windows, where OpenSSH cannot multiplex.
+        apply_queue_limits(self.transport, self.host)
+        self.assertEqual(len(self.transport.commands), 1)
+
+    def test_no_limit_still_means_at_least_one(self):
+        host = runner_host(max_concurrent=0)
+        transport = FakeTransport(host)
+        apply_queue_limits(transport, host)
+        self.assertIn(f"echo 1 > {remote_runner.SLOTS_NAME}", transport.commands[0])
+
+
+class TestTheSetupCommand(unittest.TestCase):
+    """One call in place of prepare + slots + cores + a digest read."""
+
+    def test_the_bash_flavour_prints_the_stored_digest_last(self):
+        command = remote_runner.setup_command("/tmp/r", 2, 4)
+        self.assertIn("mkdir -p", command)
+        self.assertIn(remote_runner.SLOTS_NAME, command)
+        self.assertIn(remote_runner.CORES_NAME, command)
+        self.assertTrue(command.rstrip().endswith("|| true"))
+
+    def test_the_powershell_flavour_covers_the_same_ground(self):
+        command = remote_runner_ps.setup_command(r"C:\r", 2, 4)
+        self.assertIn("New-Item", command)
+        self.assertIn(remote_runner.DIGEST_NAME, command)
+        # 5.1 has no pipeline chain operators at all.
+        self.assertNotIn("&&", command)
+
+    @unittest.skipUnless(BASH, "needs a bash")
+    def test_the_bash_setup_really_prepares_a_directory(self):
+        tmp = tempfile.mkdtemp(prefix="setup_")
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        directory = os.path.join(tmp, "runner").replace("\\", "/")
+
+        result = subprocess.run(
+            [BASH, "-c", remote_runner.setup_command(directory, 3, 9)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for name in remote_runner.SUBDIRS:
+            self.assertTrue(os.path.isdir(os.path.join(directory, name)), name)
+        with open(os.path.join(directory, remote_runner.SLOTS_NAME)) as handle:
+            self.assertEqual(handle.read().strip(), "3")
+        with open(os.path.join(directory, remote_runner.CORES_NAME)) as handle:
+            self.assertEqual(handle.read().strip(), "9")
+        # Nothing stored yet, so nothing to skip an upload on.
+        self.assertEqual(result.stdout.strip(), "")
+
+    @unittest.skipUnless(BASH, "needs a bash")
+    def test_a_stored_digest_comes_back_out(self):
+        tmp = tempfile.mkdtemp(prefix="setup_")
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        directory = os.path.join(tmp, "runner").replace("\\", "/")
+
+        subprocess.run([BASH, "-c", remote_runner.setup_command(directory, 1, 0)], timeout=60)
+        subprocess.run(
+            [BASH, "-c", remote_runner.store_digest_command(directory, "abc123")], timeout=60
+        )
+        again = subprocess.run(
+            [BASH, "-c", remote_runner.setup_command(directory, 1, 0)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        self.assertEqual(again.stdout.strip().splitlines()[-1], "abc123")
+
+
+class TestSubmissionSkipsWhatTheHostHas(unittest.TestCase):
+    """The runner script is the same bytes every time; it was an scp per job."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="submit_")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.input = os.path.join(self.tmp, "mol.inp")
+        with open(self.input, "w") as handle:
+            handle.write("! opt\n")
+        self.host = runner_host()
+
+    def submit(self, transport):
+        return submit_to_runner(
+            transport,
+            self.host,
+            make_preset(),
+            make_job(id="j1", remote_dir="", remote_job_id=""),
+            [self.input],
+        )
+
+    def uploaded_runner(self, transport) -> bool:
+        return any(remote_runner.RUNNER_SCRIPT_NAME in remote for _, remote in transport.uploads)
+
+    def test_a_host_that_has_never_seen_it_gets_it(self):
+        transport = FakeTransport(self.host)
+        self.submit(transport)
+        self.assertTrue(self.uploaded_runner(transport))
+        self.assertTrue(transport.ran(remote_runner.DIGEST_NAME))
+
+    def test_a_host_that_already_has_it_is_not_sent_it_again(self):
+        transport = FakeTransport(self.host)
+        script = remote_runner.build_runner_script(remote_runner.runner_dir(self.host.remote_root))
+        import hashlib
+
+        digest = hashlib.sha256(script.encode("utf-8")).hexdigest()[:16]
+        # What the setup call reports back from the host.
+        transport.when("mkdir -p", stdout=f"{digest}\n")
+
+        self.submit(transport)
+
+        self.assertFalse(self.uploaded_runner(transport))
+
+    def test_a_changed_runner_is_sent_even_though_one_is_there(self):
+        # An updated plugin writes a different script; reusing the old one
+        # because "a runner exists" is how a queue ends up on stale code.
+        transport = FakeTransport(self.host)
+        transport.when("mkdir -p", stdout="0000000000000000\n")
+
+        self.submit(transport)
+
+        self.assertTrue(self.uploaded_runner(transport))
+
+
+if __name__ == "__main__":
+    unittest.main()

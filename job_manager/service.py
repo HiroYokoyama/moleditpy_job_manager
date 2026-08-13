@@ -48,6 +48,8 @@ class JobService(QObject):
     error = pyqtSignal(str)
     #: A finished job's files are on disk and ready to open.
     results_ready = pyqtSignal(str, list)  # job_id, local paths
+    #: A tracked job reached a terminal state while the user was elsewhere.
+    job_finished = pyqtSignal(str, str)  # job_id, state
     log_ready = pyqtSignal(str)  # tail of a remote log
 
     def __init__(self, store: Optional[JobStore] = None, parent: Optional[QObject] = None) -> None:
@@ -233,6 +235,10 @@ class JobService(QObject):
             return
         if state in (STATE_DONE, STATE_FAILED) and job.auto_download and not job.downloaded:
             self.download(job)
+        if job.is_terminal:
+            # Only from a poll: this is the transition the user is not watching.
+            # A submission that fails does so while they are still in the wizard.
+            self.job_finished.emit(job.id, state)
         if job.is_terminal and state != STATE_DONE:
             self._warn_stranded(job)
 

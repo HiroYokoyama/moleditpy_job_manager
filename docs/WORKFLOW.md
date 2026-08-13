@@ -244,6 +244,26 @@ nothing, since it is never going to run.
 Leave it at **no limit** on SLURM, PBS or SGE unless you have a reason not to:
 the queue is already doing this, and better.
 
+### Holding the helper's queue
+
+Where the *Queueing* setting is **Queue them with a helper on the host**, the
+host profile grows a **Queue on the host** row:
+
+- **Hold the queue** stops the helper starting anything new. Jobs already
+  running are left alone — a pause that killed them would mean throwing away
+  however long they have been going. The flag lives on the host, so it outlasts
+  the dialog, the session, and the helper's own comings and goings: a helper
+  that exits and is started again by the next submission finds the queue still
+  held. Untick it to let things move again.
+- **Apply limits now** sends *Run at most* and *Cores available* to a helper
+  that is already running. Submitting sends them too, so this is for changing
+  your mind while jobs are queued — which is exactly when waiting until the
+  next submission is no use.
+
+The box shows the queue's real state, read from the host when you select it.
+A host set to ask for a password is left alone until you press **Test
+Connection**, so that clicking a name in a list never raises a prompt.
+
 ### Starting later
 
 Tick **Do not start before** and pick a moment. The job is handed over
@@ -272,6 +292,19 @@ On a shared login node that is the kind of thing admins complain about; against
 your own workstation it is fine.
 
 **Refresh Now** forces a cycle immediately (rate limited to once every 10 s).
+
+### Being told when a job ends
+
+The status bar counter and the icon badge both answer "how many are running",
+which is a number you have to go and look at. For a calculation that runs for
+hours the useful moment is the *transition*, so a desktop notification is
+raised when a job finishes, fails, or disappears from the queue — naming the
+job and the host.
+
+On by default, unlike the badge: it is transient rather than a lasting change
+to how MoleditPy looks. Untick **Notify me when a job ends** in the monitor to
+stop it. A desktop with no notification service simply shows nothing; the job
+is tracked either way.
 
 ## 5. Results
 

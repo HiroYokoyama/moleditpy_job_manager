@@ -62,8 +62,47 @@ def get_service(create: bool = True, store: Optional[Any] = None) -> Optional[An
         from .service import JobService
 
         _service = JobService(store=store)
+        # Before the status widget: a host with no status bar still gets told
+        # when its jobs end.
+        _service.job_finished.connect(_notify_finished)
         _install_status_widget(_service)
     return _service
+
+
+def _finished_words() -> dict:
+    """What each terminal state is called in a notification.
+
+    Read at a glance with no monitor open to give it context, so "failed"
+    rather than "FAILED". Keyed by the canonical constants, not by literals: a
+    state that was renamed would otherwise silently fall back to its own name.
+    """
+    from .models import STATE_CANCELLED, STATE_DONE, STATE_FAILED, STATE_LOST
+
+    return {
+        STATE_DONE: "finished",
+        STATE_FAILED: "failed",
+        STATE_CANCELLED: "was cancelled",
+        STATE_LOST: "disappeared from the queue",
+    }
+
+
+def _notify_finished(job_id: str, state: str) -> None:
+    """Raise a desktop notification for a job that ended out of sight."""
+    if _service is None or not _service.store.get_pref("notify_on_finish", True):
+        return
+    job = _service.store.jobs.get(job_id)
+    if job is None:
+        return
+    try:
+        from . import notify
+
+        wording = _finished_words().get(state, state.lower())
+        notify.notify(
+            "MoleditPy job manager",
+            f"{job.name} {wording} on {job.host_name}.",
+        )
+    except Exception:
+        logging.debug("Job Manager: could not raise a notification", exc_info=True)
 
 
 def _install_status_widget(service) -> None:
@@ -243,3 +282,11 @@ def shutdown() -> None:
             clear_badge()
         except Exception:
             logging.debug("Job Manager: the badge was not cleared", exc_info=True)
+        # Same reasoning for the tray icon: one left behind outlives the plugin
+        # that put it there, and clicking it would reach nothing.
+        try:
+            from . import notify
+
+            notify.shutdown()
+        except Exception:
+            logging.debug("Job Manager: the tray icon was not removed", exc_info=True)

@@ -32,6 +32,7 @@ from .remote_runner import (
     AFTER_TAG,
     CORES_NAME,
     CORES_TAG,
+    DIGEST_NAME,
     PAUSED_NAME,
     REQUIRE_SUCCESS_TAG,
     RUNNER_LOG_NAME,
@@ -292,6 +293,24 @@ def prepare_command(directory: str) -> str:
     )
 
 
+def setup_command(directory: str, slots: int, cores: int) -> str:
+    """Prepare, set the limits, and report the runner script already there."""
+    digest_path = ps_quote(_join(directory, DIGEST_NAME))
+    parts = [
+        prepare_command(directory),
+        set_slots_command(directory, slots),
+        set_cores_command(directory, cores),
+        f"if (Test-Path -LiteralPath {digest_path}) {{ Get-Content -LiteralPath {digest_path} }}",
+    ]
+    return "; ".join(parts)
+
+
+def store_digest_command(directory: str, digest: str) -> str:
+    """Record which runner script is on the host, after uploading it."""
+    path = ps_quote(_join(directory, DIGEST_NAME))
+    return f"Set-Content -Path {path} -Value {ps_quote(digest)} -Encoding ascii"
+
+
 def list_command(directory: str) -> str:
     """Every entry the runner knows about, as ``<state> <entry>`` lines."""
     quoted = ps_quote(directory)
@@ -393,6 +412,12 @@ def pause_command(directory: str, paused: bool) -> str:
     return f"Remove-Item -LiteralPath {path} -Force -ErrorAction SilentlyContinue"
 
 
+def is_paused_command(directory: str) -> str:
+    """Prints ``paused`` or ``running``. Same two words as the bash flavour."""
+    path = ps_quote(_join(directory, PAUSED_NAME))
+    return f"if (Test-Path -LiteralPath {path}) {{ 'paused' }} else {{ 'running' }}"
+
+
 __all__: List[str] = [
     "ENTRY_SUFFIX",
     "RUNNER_SCRIPT_NAME",
@@ -401,9 +426,12 @@ __all__: List[str] = [
     "cancel_command",
     "enqueue_command",
     "ensure_runner_command",
+    "is_paused_command",
     "list_command",
     "pause_command",
     "prepare_command",
     "set_cores_command",
     "set_slots_command",
+    "setup_command",
+    "store_digest_command",
 ]

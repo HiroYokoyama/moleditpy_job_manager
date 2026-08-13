@@ -392,6 +392,20 @@ class JobsDialog(QDialog):
         self.chk_taskbar_badge.setChecked(bool(self.service.store.get_pref("taskbar_badge", False)))
         self.chk_taskbar_badge.toggled.connect(self._on_taskbar_badge_toggled)
         actions.addWidget(self.chk_taskbar_badge)
+
+        self.chk_notify = QCheckBox("Notify me when a job ends")
+        self.chk_notify.setToolTip(
+            "Raise a desktop notification when a tracked job finishes, fails "
+            "or disappears from the queue.\n\n"
+            "The point of tracking a six-hour calculation is not having to "
+            "watch it, so this is on by default. It needs a desktop that shows "
+            "notifications; where there is none, nothing happens."
+        )
+        self.chk_notify.setChecked(bool(self.service.store.get_pref("notify_on_finish", True)))
+        self.chk_notify.toggled.connect(
+            lambda checked: self.service.store.set_pref("notify_on_finish", bool(checked))
+        )
+        actions.addWidget(self.chk_notify)
         layout.addLayout(actions)
 
         self.lbl_status = QLabel("")

@@ -98,6 +98,10 @@ DEFAULT_PREFS: Dict[str, Any] = {
     #: task bar. The status bar counter is always there and costs nobody
     #: anything, so this is opt-in.
     "taskbar_badge": False,
+    #: On, unlike the badge: a notification is transient and describes an event
+    #: the user asked to be told about by submitting a job that runs for hours.
+    #: The badge is a persistent change to how MoleditPy looks; this is not.
+    "notify_on_finish": True,
     "last_input_dir": "",
     #: The user's own command templates: [{"label": ..., "command": ...}].
     "command_templates": [],
@@ -205,6 +209,10 @@ class JobStore:
         self.presets: Dict[str, SubmitPreset] = {}
         self.jobs: Dict[str, Job] = {}
         self.prefs: Dict[str, Any] = dict(DEFAULT_PREFS)
+        #: Ids removed on purpose in this session. Saving keeps jobs another
+        #: instance wrote, and without this a removal would be undone by the
+        #: very next save that read them back off disk.
+        self._forgotten: set = set()
         self.load()
 
     # --- loading / saving ---------------------------------------------------
@@ -255,7 +263,31 @@ class JobStore:
         )
 
     def save_jobs(self) -> None:
-        atomic_write_json(self.jobs_path, self._document(archived=False))
+        document = self._document(archived=False)
+        document["jobs"] = self._merged_jobs(document["jobs"])
+        atomic_write_json(self.jobs_path, document)
+
+    def _merged_jobs(self, mine: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Ours, plus any job on disk that this session has never heard of.
+
+        Each write is atomic, but a read-modify-write across two processes is
+        not: two MoleditPy windows each hold the whole list in memory, so the
+        second to save wrote its own view straight over the first's, and the
+        first's jobs were simply gone -- along with the remote directory that
+        is often the only way back to results still sitting on the cluster.
+
+        Ours win wherever both know a job, so nothing here can overwrite a
+        state this session just observed. Jobs deliberately removed stay
+        removed; that is what ``_forgotten`` is for.
+        """
+        disk = read_json(self.jobs_path, {}) or {}
+        known = {raw.get("id") for raw in mine}
+        extra = [
+            raw
+            for raw in (disk.get("jobs") or [])
+            if raw.get("id") and raw["id"] not in known and raw["id"] not in self._forgotten
+        ]
+        return mine + extra if extra else mine
 
     def _document(self, archived: bool, when: Optional[float] = None) -> Dict[str, Any]:
         """One job-list file.
@@ -315,6 +347,7 @@ class JobStore:
 
     def remove_job(self, job_id: str) -> None:
         self.jobs.pop(job_id, None)
+        self._forgotten.add(job_id)
         self.save_jobs()
 
     def job_list(self) -> List[Job]:
@@ -462,6 +495,7 @@ class JobStore:
         """Archive the list, then empty it. Returns (archive path, count)."""
         count = len(self.jobs)
         archived = self.archive_jobs(when)
+        self._forgotten.update(self.jobs)
         self.jobs = {}
         self.save_jobs()
         return archived, count
@@ -570,6 +604,7 @@ class JobStore:
         ]
         for job_id in stale:
             self.jobs.pop(job_id, None)
+            self._forgotten.add(job_id)
         if stale:
             self.save_jobs()
         return len(stale)

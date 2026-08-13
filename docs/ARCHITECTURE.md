@@ -88,7 +88,7 @@ poller.
 The generated run script writes the payload's exit code to `.moleditpy_rc`:
 
 ```bash
-trap '__moleditpy_rc=$?; echo "$__moleditpy_rc" > .moleditpy_rc' EXIT
+trap '__moleditpy_rc=$?; echo "$__moleditpy_rc" > .moleditpy_rc.tmp && mv -f .moleditpy_rc.tmp .moleditpy_rc' EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
 trap 'exit 129' HUP
@@ -102,6 +102,11 @@ site-specific `qstat -f` output.
 * **File present, non-zero** → `FAILED`, with the code shown in the table.
 * **File absent** → `LOST`: the job left the queue without the wrapper
   finishing.
+
+Written beside itself and renamed, in both languages, because the reading side
+cannot tell an empty file from a missing one. `>` and `Set-Content` both
+truncate before they write, and a poll landing in that window would read
+nothing and report a finished job as `LOST`. A rename is one step.
 
 Both traps matter. The `EXIT` trap alone is not enough for a payload that calls
 `exit` itself — it would never reach a trailing `echo`. The signal traps are
@@ -117,7 +122,8 @@ try   { <payload>; $__moleditpy_rc = $LASTEXITCODE; $__moleditpy_done = $true }
 catch { $__moleditpy_rc = 1 }
 finally {
     if (-not $__moleditpy_done -and $null -ne $LASTEXITCODE) { $__moleditpy_rc = $LASTEXITCODE }
-    Set-Content -Path .moleditpy_rc -Value $__moleditpy_rc -Encoding ascii
+    Set-Content -Path .moleditpy_rc.tmp -Value $__moleditpy_rc -Encoding ascii
+    Move-Item -LiteralPath .moleditpy_rc.tmp -Destination .moleditpy_rc -Force
 }
 ```
 
@@ -180,6 +186,21 @@ Both are written atomically (temp file in the same directory + `os.replace`), so
 a crash mid-write cannot leave truncated JSON. Unknown keys are ignored on load,
 so a file written by a newer version does not break an older one.
 
+An atomic *write* is not an atomic read-modify-write, and two MoleditPy windows
+share these files. Each holds the whole job list in memory, so the second to
+save would write its own view straight over the first's and the first window's
+jobs would simply be gone — along with the remote directory that is often the
+only way back to results still on the cluster. `save_jobs()` therefore re-reads
+the file and keeps any job this session has never heard of. Ours win wherever
+both know a job, so a save can never overwrite a state just observed, and ids
+removed on purpose are remembered so that keeping unknown jobs cannot undo a
+deletion.
+
+Downloads are staged: each file arrives as `<name>.moleditpy-part` and is
+renamed once the transfer completes. Results land in the directory the user is
+working in, so a transfer cut off half way would otherwise leave a truncated
+`.out` there under its real name, on top of the previous good copy.
+
 ## Module map
 
 | Module | Responsibility |
@@ -201,6 +222,7 @@ so a file written by a newer version does not break an older one.
 | `tasks.py` | `BackgroundTask` / `run_async` on the shared pool |
 | `status_widget.py` | the job counter in the host's status bar |
 | `taskbar.py` | the same count on the application icon (Dock / task bar / launcher) |
+| `notify.py` | the desktop notification raised when a job ends |
 | `*_dialog.py` | the three windows |
 
 ## The `submit_file()` handoff

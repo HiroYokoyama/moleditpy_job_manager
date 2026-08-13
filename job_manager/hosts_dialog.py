@@ -27,7 +27,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .credentials import ensure_password
+from .credentials import ensure_password, needs_password
 from .models import (
     BACKEND_LOCAL,
     BACKEND_OPENSSH,
@@ -38,6 +38,7 @@ from .models import (
     SCHEDULER_WINDOWS,
     HostProfile,
 )
+from .runner import apply_queue_limits, queue_paused, set_queue_paused
 from .schedulers import available_schedulers
 from .service import JobService
 from .tasks import run_async
@@ -71,6 +72,12 @@ class HostsDialog(QDialog):
         self.setWindowTitle("Job Manager - Hosts")
         self.resize(720, 560)
         self._current: Optional[HostProfile] = None
+        #: True while the pause box is being set to match the host, so that
+        #: showing a state does not ask the host to change to it.
+        self._syncing_pause = False
+        #: The host whose queue state has already been read, so that a save --
+        #: which reloads and re-selects -- does not ask the host again.
+        self._queue_state_for = ""
         self._build_ui()
         self._reload_list()
 
@@ -190,7 +197,6 @@ class HostsDialog(QDialog):
         form.addRow("Run at most", self.spin_max_concurrent)
         form.addRow("Queueing", self.cmb_concurrency)
         form.addRow("Cores available", self.spin_runner_cores)
-        self._update_concurrency_row()
         right.addWidget(form_box)
 
         adv_box = QGroupBox("Advanced")
@@ -230,6 +236,33 @@ class HostsDialog(QDialog):
         self.lbl_key_tip.setToolTip(KEY_TIP)
         right.addWidget(self.lbl_key_tip)
 
+        self.queue_box = QGroupBox("Queue on the host")
+        queue_layout = QHBoxLayout(self.queue_box)
+        self.chk_pause = QCheckBox("Hold the queue")
+        self.chk_pause.setToolTip(
+            "Stop the helper starting anything new. Jobs already running are "
+            "left alone -- a pause that killed them would mean throwing away "
+            "however long they have been going.\n\n"
+            "The flag lives on the host, so it outlasts this dialog, this "
+            "session, and the helper's own comings and goings."
+        )
+        self.chk_pause.toggled.connect(self._on_pause_toggled)
+        self.btn_apply_limits = QPushButton("Apply limits now")
+        self.btn_apply_limits.setToolTip(
+            "Send 'Run at most' and 'Cores available' to a helper that is "
+            "already running.\n\n"
+            "Submitting a job sends them too, so this is for changing your "
+            "mind while jobs are queued -- which is exactly when waiting for "
+            "the next submission is no use."
+        )
+        self.btn_apply_limits.clicked.connect(self._apply_queue_limits)
+        self.lbl_queue = QLabel("")
+        self.lbl_queue.setWordWrap(True)
+        queue_layout.addWidget(self.chk_pause)
+        queue_layout.addWidget(self.btn_apply_limits)
+        queue_layout.addWidget(self.lbl_queue, 1)
+        right.addWidget(self.queue_box)
+
         action_row = QHBoxLayout()
         self.btn_test = QPushButton("Test Connection")
         self.btn_test.clicked.connect(self._test_connection)
@@ -248,6 +281,9 @@ class HostsDialog(QDialog):
         right.addWidget(box)
 
         outer.addLayout(right, 2)
+        # After every widget exists: this one now also shows or hides the queue
+        # controls, which are built further down than the rows that drive it.
+        self._update_concurrency_row()
         self._update_backend_hint()
 
     # --- list handling ------------------------------------------------------
@@ -294,6 +330,8 @@ class HostsDialog(QDialog):
         self.spin_connect_timeout.setValue(10)
         self.spin_command_timeout.setValue(60)
         self.chk_ask_password.setChecked(False)
+        self._set_pause_checkbox(False)
+        self.lbl_queue.setText("")
 
     def _load_selected(self) -> None:
         host = self._selected_host()
@@ -323,6 +361,7 @@ class HostsDialog(QDialog):
         self.spin_command_timeout.setValue(int(host.command_timeout or 60))
         self.chk_ask_password.setChecked(bool(host.ask_password))
         self.lbl_test.setText("")
+        self._refresh_queue_state()
 
     def _add_host(self) -> None:
         host = HostProfile(name="new host", remote_root="~/moleditpy_jobs")
@@ -361,9 +400,10 @@ class HostsDialog(QDialog):
         self.cmb_concurrency.setEnabled(shell)
         if not shell and self.cmb_concurrency.currentData() == MODE_RUNNER:
             self.cmb_concurrency.setCurrentIndex(self.cmb_concurrency.findData(MODE_LANES))
-        self.spin_runner_cores.setEnabled(
-            shell and self.cmb_concurrency.currentData() == MODE_RUNNER
-        )
+        runner = shell and self.cmb_concurrency.currentData() == MODE_RUNNER
+        self.spin_runner_cores.setEnabled(runner)
+        # Nothing to hold or to send limits to unless there is a helper.
+        self.queue_box.setVisible(runner)
 
     def _update_backend_hint(self) -> None:
         backend = self.cmb_backend.currentData()
@@ -458,6 +498,154 @@ class HostsDialog(QDialog):
         self.store.add_host(host)
         self._reload_list(select_id=host.id)
         return host
+
+    def _persist_current(self) -> Optional[HostProfile]:
+        """Apply the form to the selected profile without rebuilding the list.
+
+        ``_save_current`` reloads the list, and reloading re-selects, which
+        reloads the form: harmless for a one-shot connection test, but it would
+        fight a control whose state is being read back from the host.
+        """
+        host = self._current or self._selected_host()
+        if host is None:
+            return None
+        self._collect(host)
+        self.store.save_settings()
+        return host
+
+    # --- the queue on the host ----------------------------------------------
+
+    def _set_pause_checkbox(self, paused: bool) -> None:
+        """Show a state without asking the host to change to it."""
+        self._syncing_pause = True
+        try:
+            self.chk_pause.setChecked(bool(paused))
+        finally:
+            self._syncing_pause = False
+
+    def _refresh_queue_state(self) -> None:
+        """Read whether the selected host's queue is held.
+
+        One small command, and only when a host that has a queue is selected in
+        a dialog the user opened deliberately. A host that would pop a password
+        prompt is left alone: a dialog appearing because you clicked a name in
+        a list is not something anyone asked for.
+        """
+        host = self._current
+        if host is not None and host.id == self._queue_state_for:
+            # Already asked for this host. Saving the profile reloads the list,
+            # which re-selects, which lands here -- so without this, pressing
+            # Save or Test Connection put another command on the wire.
+            return
+        self._set_pause_checkbox(False)
+        self._queue_state_for = ""
+        if host is None or not host.uses_remote_runner:
+            self.lbl_queue.setText("")
+            return
+        self._queue_state_for = host.id
+        if needs_password(self.service, host):
+            self.chk_pause.setEnabled(False)
+            self.lbl_queue.setText("Test the connection first to read the queue.")
+            return
+        self.chk_pause.setEnabled(False)
+        self.lbl_queue.setText("Reading the queue...")
+        host_id = host.id
+
+        def work() -> bool:
+            transport = self.service.transport_for(host)
+            try:
+                return queue_paused(transport, host)
+            finally:
+                transport.close()
+
+        def ok(paused: bool) -> None:
+            # The selection may have moved on while the answer was in flight,
+            # and it would be describing a different host by the time it lands.
+            if self._current is None or self._current.id != host_id:
+                return
+            self.chk_pause.setEnabled(True)
+            self._set_pause_checkbox(paused)
+            self.lbl_queue.setText("The queue is held." if paused else "The queue is running.")
+
+        def failed(message: str) -> None:
+            if self._current is None or self._current.id != host_id:
+                return
+            self.chk_pause.setEnabled(True)
+            self.lbl_queue.setText(
+                message.splitlines()[0] if message else "Could not read the queue."
+            )
+
+        run_async(self.service.pool, work, on_success=ok, on_error=failed)
+
+    def _on_pause_toggled(self, checked: bool) -> None:
+        if self._syncing_pause:
+            return
+        host = self._persist_current()
+        if host is None or not host.uses_remote_runner:
+            return
+        if not ensure_password(self.service, host, self):
+            self._set_pause_checkbox(not checked)
+            return
+        self.chk_pause.setEnabled(False)
+        self.lbl_queue.setText("Holding the queue..." if checked else "Letting the queue run...")
+
+        def work() -> bool:
+            transport = self.service.transport_for(host)
+            try:
+                return set_queue_paused(transport, host, checked)
+            finally:
+                transport.close()
+
+        def ok(paused: bool) -> None:
+            self.chk_pause.setEnabled(True)
+            self.lbl_queue.setText(
+                "The queue is held. Jobs already running continue."
+                if paused
+                else "The queue is running."
+            )
+
+        def failed(message: str) -> None:
+            self.chk_pause.setEnabled(True)
+            # Back to what the host still says, rather than leaving the box
+            # claiming a state the host never took.
+            self._set_pause_checkbox(not checked)
+            self.lbl_queue.setText(
+                message.splitlines()[0] if message else "Could not change the queue."
+            )
+
+        run_async(self.service.pool, work, on_success=ok, on_error=failed)
+
+    def _apply_queue_limits(self) -> None:
+        host = self._persist_current()
+        if host is None or not host.uses_remote_runner:
+            return
+        if not ensure_password(self.service, host, self):
+            return
+        self.btn_apply_limits.setEnabled(False)
+        self.lbl_queue.setText("Sending the limits...")
+
+        def work() -> None:
+            transport = self.service.transport_for(host)
+            try:
+                apply_queue_limits(transport, host)
+            finally:
+                transport.close()
+
+        def ok(_result) -> None:
+            self.btn_apply_limits.setEnabled(True)
+            cores = host.runner_cores or 0
+            self.lbl_queue.setText(
+                f"The helper will run at most {max(1, host.max_concurrent or 1)} job(s), "
+                + (f"using up to {cores} core(s)." if cores else "using every core it finds.")
+            )
+
+        def failed(message: str) -> None:
+            self.btn_apply_limits.setEnabled(True)
+            self.lbl_queue.setText(
+                message.splitlines()[0] if message else "Could not send the limits."
+            )
+
+        run_async(self.service.pool, work, on_success=ok, on_error=failed)
 
     # --- connection test ----------------------------------------------------
 

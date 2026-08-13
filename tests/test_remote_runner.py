@@ -29,9 +29,12 @@ from job_manager.remote_runner import (
     build_job_script,
     build_runner_script,
     entry_name,
+    is_paused_command,
     next_sequence,
     parse_entry,
     parse_listing,
+    pause_command,
+    prepare_command,
 )
 
 BASH = shutil.which("bash")
@@ -309,6 +312,58 @@ class TestPause(RunnerHarness):
         os.remove(paused)
 
         self.wait_for(lambda: os.path.exists(self.marker("ran")), what="the job to run")
+
+    def run_command(self, command: str) -> int:
+        """Run one of the plugin's own commands, as the transport would."""
+        return subprocess.run([BASH, "-c", command], timeout=60).returncode
+
+    def test_the_plugins_own_pause_command_holds_the_queue(self):
+        # The tests above make the flag by hand, which proves the runner reads
+        # it and nothing about whether pause_command writes it. That command is
+        # what the checkbox now sends, and it is a shell string, not a file op.
+        self.enqueue("aaa", f"touch {self.marker('ran')}")
+
+        self.assertEqual(self.run_command(pause_command(self.dir, True)), 0)
+        self.start_runner()
+
+        time.sleep(1.5)
+        self.assertFalse(os.path.exists(self.marker("ran")))
+        self.assertEqual(self.listing().get("aaa"), "queue")
+
+    def test_the_plugins_own_resume_command_releases_it(self):
+        self.enqueue("aaa", f"touch {self.marker('ran')}")
+        self.run_command(pause_command(self.dir, True))
+        self.start_runner()
+        time.sleep(1.0)
+
+        self.assertEqual(self.run_command(pause_command(self.dir, False)), 0)
+
+        self.wait_for(lambda: os.path.exists(self.marker("ran")), what="the job to run")
+
+    def test_the_state_the_plugin_reads_back_matches_reality(self):
+        # queue_paused() parses this command's output; if the two disagree the
+        # checkbox shows the opposite of what the host is doing.
+        self.run_command(pause_command(self.dir, True))
+        held = subprocess.run(
+            [BASH, "-c", is_paused_command(self.dir)], capture_output=True, text=True, timeout=60
+        )
+        self.run_command(pause_command(self.dir, False))
+        moving = subprocess.run(
+            [BASH, "-c", is_paused_command(self.dir)], capture_output=True, text=True, timeout=60
+        )
+
+        self.assertEqual(held.stdout.strip(), PAUSED_NAME)
+        self.assertEqual(moving.stdout.strip(), "running")
+
+    def test_pausing_a_host_that_has_never_run_a_queue_works(self):
+        # The controls are reachable before the first submission, so the flag
+        # has to be settable on a directory that does not exist yet.
+        fresh = os.path.join(self.tmp, "never_used").replace("\\", "/")
+
+        self.run_command(prepare_command(fresh))
+        self.assertEqual(self.run_command(pause_command(fresh, True)), 0)
+
+        self.assertTrue(os.path.exists(os.path.join(fresh, PAUSED_NAME)))
 
     def test_pausing_does_not_kill_a_running_job(self):
         self.enqueue("aaa", f"sleep {BUSY}; touch {self.marker('finished')}")

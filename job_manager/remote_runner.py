@@ -65,6 +65,10 @@ ENTRY_SUFFIX = ".sh"
 RUNNER_LOG_NAME = "runner.log"
 #: Holds the slot count, re-read every pass so the limit can be changed
 #: without restarting the runner.
+#: Records which runner script the host already has, so a submission does not
+#: upload an identical one every time.
+DIGEST_NAME = "runner.sha"
+
 SLOTS_NAME = "slots"
 #: Holds the number of cores the runner may hand out. Written by the plugin;
 #: defaults to the machine's own core count when absent.
@@ -337,6 +341,35 @@ def prepare_command(directory: str) -> str:
     return f"mkdir -p {quote(directory)} && cd {quote(directory)} && mkdir -p {subdirs}"
 
 
+def setup_command(directory: str, slots: int, cores: int) -> str:
+    """Everything a submission has to settle before queueing, in one call.
+
+    Four round trips became one. Each of them was a separate ``ssh`` process,
+    and the OpenSSH backend cannot multiplex on Windows -- so on that platform
+    they were four full handshakes on the way to every single submission.
+
+    Prints the digest of the runner script already on the host, or nothing:
+    that is what lets the caller skip re-uploading a script the host already
+    has, which is the last of the fixed costs and the only one that is an scp.
+    """
+    # Built before the f-string, not inside it: nesting the same quote inside
+    # an f-string expression is Python 3.12 syntax, and this package supports
+    # 3.9. The same shape has already shipped a module that would not import.
+    digest_path = quote(f"{directory.rstrip('/')}/{DIGEST_NAME}")
+    parts = [
+        prepare_command(directory),
+        set_slots_command(directory, slots),
+        set_cores_command(directory, cores),
+        f"cat {digest_path} 2>/dev/null || true",
+    ]
+    return "; ".join(parts)
+
+
+def store_digest_command(directory: str, digest: str) -> str:
+    """Record which runner script is on the host, after uploading it."""
+    return f"cd {quote(directory)} && echo {quote(digest)} > {DIGEST_NAME}"
+
+
 def list_command(directory: str) -> str:
     """Every entry the runner knows about, as ``<state> <entry>`` lines.
 
@@ -451,7 +484,10 @@ __all__: List[str] = [
     "AFTER_TAG",
     "CORES_NAME",
     "CORES_TAG",
+    "DIGEST_NAME",
     "PAUSED_NAME",
+    "setup_command",
+    "store_digest_command",
     "REQUIRE_SUCCESS_TAG",
     "STATUS_BLOCKED",
     "is_paused_command",

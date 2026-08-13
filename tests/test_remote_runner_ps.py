@@ -19,6 +19,7 @@ import unittest
 
 from job_manager.remote_runner import (
     CORES_NAME,
+    DIGEST_NAME,
     PAUSED_NAME,
     SLOTS_NAME,
     STATUS_BLOCKED,
@@ -33,6 +34,11 @@ from job_manager.remote_runner_ps import (
     RUNNER_SCRIPT_NAME,
     build_job_script,
     build_runner_script,
+    is_paused_command,
+    pause_command,
+    prepare_command,
+    setup_command,
+    store_digest_command,
 )
 
 POWERSHELL = shutil.which("pwsh") or shutil.which("powershell")
@@ -351,6 +357,57 @@ class TestPause(RunnerHarness):
 
         self.wait_for(lambda: os.path.exists(self.marker("ran")), what="the job to run")
 
+    def run_command(self, command: str):
+        """Run one of the plugin's own commands, as the transport would."""
+        return subprocess.run(
+            [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+    def test_the_plugins_own_pause_command_holds_the_queue(self):
+        # The tests above make the flag by hand, which says nothing about
+        # whether pause_command writes it. That command is what the checkbox
+        # sends, and it is a PowerShell string, not a file operation.
+        self.enqueue("aaa", f"New-Item -ItemType File -Path '{self.marker('ran')}'")
+
+        self.assertEqual(self.run_command(pause_command(self.dir, True)).returncode, 0)
+        self.start_runner()
+
+        time.sleep(BUSY / 2)
+        self.assertFalse(os.path.exists(self.marker("ran")))
+        self.assertEqual(self.listing().get("aaa"), "queue")
+
+    def test_the_plugins_own_resume_command_releases_it(self):
+        self.enqueue("aaa", f"New-Item -ItemType File -Path '{self.marker('ran')}'")
+        self.run_command(pause_command(self.dir, True))
+        self.start_runner()
+        time.sleep(BUSY / 2)
+
+        self.run_command(pause_command(self.dir, False))
+
+        self.wait_for(lambda: os.path.exists(self.marker("ran")), what="the job to run")
+
+    def test_the_state_the_plugin_reads_back_matches_reality(self):
+        # queue_paused() parses this, and the two flavours must answer with the
+        # same two words or the checkbox means different things per platform.
+        self.run_command(pause_command(self.dir, True))
+        held = self.run_command(is_paused_command(self.dir))
+        self.run_command(pause_command(self.dir, False))
+        moving = self.run_command(is_paused_command(self.dir))
+
+        self.assertEqual(held.stdout.strip(), PAUSED_NAME)
+        self.assertEqual(moving.stdout.strip(), "running")
+
+    def test_pausing_a_host_that_has_never_run_a_queue_works(self):
+        fresh = os.path.join(self.tmp, "never_used")
+
+        self.run_command(prepare_command(fresh))
+        self.assertEqual(self.run_command(pause_command(fresh, True)).returncode, 0)
+
+        self.assertTrue(os.path.exists(os.path.join(fresh, PAUSED_NAME)))
+
     def test_pausing_does_not_kill_a_running_job(self):
         self.enqueue(
             "aaa",
@@ -362,6 +419,63 @@ class TestPause(RunnerHarness):
         open(os.path.join(self.dir, PAUSED_NAME), "w").close()
 
         self.wait_for(lambda: os.path.exists(self.marker("done")), what="aaa to finish anyway")
+
+
+class TestTheSetupCommand(RunnerHarness):
+    """One call in place of four, and it must really do all four things."""
+
+    def run_command(self, command: str):
+        return subprocess.run(
+            [POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+    def test_it_prepares_the_directories_and_writes_both_limits(self):
+        fresh = os.path.join(self.tmp, "fresh")
+
+        result = self.run_command(setup_command(fresh, 3, 9))
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for name in SUBDIRS:
+            self.assertTrue(os.path.isdir(os.path.join(fresh, name)), name)
+        with open(os.path.join(fresh, SLOTS_NAME)) as handle:
+            self.assertEqual(handle.read().strip(), "3")
+        with open(os.path.join(fresh, CORES_NAME)) as handle:
+            self.assertEqual(handle.read().strip(), "9")
+
+    def test_a_fresh_host_reports_no_runner_script(self):
+        # An empty answer is what makes the first submission upload one.
+        fresh = os.path.join(self.tmp, "fresh")
+        self.assertEqual(self.run_command(setup_command(fresh, 1, 0)).stdout.strip(), "")
+
+    def test_a_stored_digest_comes_back_out(self):
+        fresh = os.path.join(self.tmp, "fresh")
+        self.run_command(setup_command(fresh, 1, 0))
+        self.run_command(store_digest_command(fresh, "abc123"))
+
+        again = self.run_command(setup_command(fresh, 1, 0))
+
+        self.assertEqual(again.stdout.strip().splitlines()[-1], "abc123")
+
+    def test_the_digest_file_has_no_byte_order_mark(self):
+        # Set-Content writes one with most encodings in Windows PowerShell 5.1,
+        # and a BOM in front of the digest never matches what is compared.
+        fresh = os.path.join(self.tmp, "fresh")
+        self.run_command(setup_command(fresh, 1, 0))
+        self.run_command(store_digest_command(fresh, "abc123"))
+
+        with open(os.path.join(fresh, DIGEST_NAME), "rb") as handle:
+            self.assertFalse(handle.read().startswith(b"\xef\xbb\xbf"))
+
+    def test_rerunning_it_is_safe(self):
+        fresh = os.path.join(self.tmp, "fresh")
+        self.run_command(setup_command(fresh, 2, 4))
+
+        result = self.run_command(setup_command(fresh, 2, 4))
+
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 class TestEntryNames(unittest.TestCase):
