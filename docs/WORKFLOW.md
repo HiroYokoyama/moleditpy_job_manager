@@ -151,6 +151,39 @@ You can still write a dependency by hand in *Extra directives* — anything you
 put there lands in the directive block, ahead of the first command, which is
 where a scheduler stops reading.
 
+### Running on Windows, with nothing to install
+
+Choose the scheduler **None (Windows, PowerShell)** and the whole workflow runs
+through PowerShell: the wrapper, the status checks, the cancel, and the
+plugin's own housekeeping. Windows PowerShell 5.1 ships with the operating
+system, so nothing needs installing; PowerShell 7 (`pwsh`) is used where both
+are present.
+
+The other schedulers all generate bash. On Windows that means Git Bash or WSL —
+still supported, and still the right choice if you are submitting to a Linux
+cluster from a Windows desktop, since the *cluster* is what runs the script.
+The Windows scheduler is for the case where the Windows machine itself is doing
+the computing.
+
+Two differences worth knowing:
+
+| | bash | Windows |
+|---|---|---|
+| A job you cancel | `FAILED (rc=143)` | `LOST` |
+| A job killed by Task Manager | `FAILED (rc=137)` | `LOST` |
+
+bash turns a kill signal into an exit code before the wrapper finishes, so the
+outcome is recorded. Windows has no such signal: `TerminateProcess` stops the
+process dead and nothing runs afterwards, so no exit code is written and the
+job reads as `LOST` — which is what "the wrapper never finished" means
+everywhere else in this plugin. The remote directory, the log and **Download**
+all still work.
+
+One limitation: if a command template ends with a bare PowerShell `exit N` and
+no program ran before it, there is nothing left for the wrapper to read and the
+job is recorded as failed. Ending a template with a program's own exit code
+(the normal case) is read correctly.
+
 ### Running at most N at a time
 
 `nohup` is not a scheduler. On a host with no queue nothing stops five
