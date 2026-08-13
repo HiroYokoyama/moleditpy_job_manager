@@ -21,8 +21,9 @@ fetch, open.
   machine**, with no SSH involved.
 - **Run natively on Windows**, with nothing to install: choose the Windows
   scheduler and the wrapper, the status checks and the plugin's own commands
-  are all PowerShell, which ships with the OS. The bash backends still work
-  there under Git Bash or WSL.
+  are all PowerShell, which ships with the OS — including the helper queue,
+  which has a PowerShell runner of its own. The bash backends still work there
+  under Git Bash or WSL.
 - **Chain** jobs — "run this after that one" — using each scheduler's own
   mechanism (`--dependency=afterok`, `-W depend`, `-hold_jid`), or a wrapper
   that waits for the previous process where there is no queue at all. Ask for

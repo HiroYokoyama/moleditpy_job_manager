@@ -329,7 +329,9 @@ class HostsDialog(QDialog):
 
     def _update_concurrency_row(self) -> None:
         """The helper is only offered where nothing else is scheduling."""
-        shell = self.cmb_scheduler.currentData() == SCHEDULER_SHELL
+        # Both no-queue schedulers have a runner; a real cluster does not need
+        # one and should not be offered it.
+        shell = self.cmb_scheduler.currentData() in (SCHEDULER_SHELL, SCHEDULER_WINDOWS)
         self.cmb_concurrency.setEnabled(shell)
         if not shell and self.cmb_concurrency.currentData() == MODE_RUNNER:
             self.cmb_concurrency.setCurrentIndex(self.cmb_concurrency.findData(MODE_LANES))

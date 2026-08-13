@@ -50,6 +50,7 @@ work.
 from __future__ import annotations
 
 import re
+import sys
 from typing import List, Sequence
 
 from .remote_paths import quote
@@ -58,6 +59,8 @@ from .remote_paths import quote
 RUNNER_DIRNAME = ".moleditpy_runner"
 #: Name of the generated runner script.
 RUNNER_SCRIPT_NAME = "moleditpy_runner.sh"
+#: Queue entries are bash scripts in this flavour.
+ENTRY_SUFFIX = ".sh"
 #: The runner's own log, for when a user asks why nothing started.
 RUNNER_LOG_NAME = "runner.log"
 #: Holds the slot count, re-read every pass so the limit can be changed
@@ -93,7 +96,25 @@ STATUS_BLOCKED = "blocked"
 #: jobs, which is well past the point where a login node is the wrong tool.
 SEQUENCE_WIDTH = 4
 
-_ENTRY_RE = re.compile(r"^job_(\d+)_([A-Za-z0-9]+)\.sh$")
+#: Both flavours' queue entries. The suffix says which shell runs it; the
+#: number and the job id mean the same thing in each.
+_ENTRY_RE = re.compile(r"^job_(\d+)_([A-Za-z0-9]+)\.(?:sh|ps1)$")
+
+
+def flavour_for(host):
+    """The runner implementation this host's shell can actually execute.
+
+    Two modules, one set of names: the constants, the entry format and the
+    listing parser are shared, so bash and PowerShell cannot drift apart on
+    what a queue entry is called or what a header means.
+    """
+    from .models import SCHEDULER_WINDOWS
+
+    if getattr(host, "scheduler", "") == SCHEDULER_WINDOWS:
+        from . import remote_runner_ps
+
+        return remote_runner_ps
+    return sys.modules[__name__]
 
 
 def runner_dir(remote_root: str) -> str:
@@ -102,9 +123,9 @@ def runner_dir(remote_root: str) -> str:
     return f"{root}/{RUNNER_DIRNAME}"
 
 
-def entry_name(sequence: int, job_id: str) -> str:
+def entry_name(sequence: int, job_id: str, suffix: str = ".sh") -> str:
     """``job_0007_a1b2c3d4.sh`` -- sortable, and unique per job."""
-    return f"job_{int(sequence):0{SEQUENCE_WIDTH}d}_{job_id}.sh"
+    return f"job_{int(sequence):0{SEQUENCE_WIDTH}d}_{job_id}{suffix}"
 
 
 def parse_entry(name: str) -> tuple:

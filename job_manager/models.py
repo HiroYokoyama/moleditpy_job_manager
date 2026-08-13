@@ -152,8 +152,16 @@ class HostProfile:
 
     @property
     def uses_remote_runner(self) -> bool:
-        """A queue on the host only makes sense where there is not one already."""
-        return self.concurrency_mode == MODE_RUNNER and self.scheduler == SCHEDULER_SHELL
+        """A queue on the host only makes sense where there is not one already.
+
+        Both no-queue schedulers qualify -- bash and Windows each have their
+        own runner. A real cluster does not: it already has a scheduler, and a
+        second one on the login node is what sysadmins object to.
+        """
+        return self.concurrency_mode == MODE_RUNNER and self.scheduler in (
+            SCHEDULER_SHELL,
+            SCHEDULER_WINDOWS,
+        )
 
     @property
     def target(self) -> str:

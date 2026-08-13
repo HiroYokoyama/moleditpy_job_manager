@@ -18,6 +18,7 @@ from job_manager.models import (
     MODE_RUNNER,
     SCHEDULER_SHELL,
     SCHEDULER_SLURM,
+    SCHEDULER_WINDOWS,
     STATE_PENDING,
     STATE_RUNNING,
     STATE_SUBMITTED,
@@ -71,6 +72,42 @@ class TestWhichHostsUseIt(unittest.TestCase):
 
     def test_lane_mode_does_not(self):
         self.assertFalse(make_host(concurrency_mode=MODE_LANES).uses_remote_runner)
+
+    def test_a_windows_host_uses_it_too(self):
+        self.assertTrue(make_host(scheduler=SCHEDULER_WINDOWS).uses_remote_runner)
+
+    def test_each_no_queue_scheduler_gets_its_own_flavour(self):
+        from job_manager import remote_runner, remote_runner_ps
+
+        bash = remote_runner.flavour_for(make_host())
+        powershell = remote_runner.flavour_for(make_host(scheduler=SCHEDULER_WINDOWS))
+
+        self.assertIs(powershell, remote_runner_ps)
+        self.assertEqual(bash.ENTRY_SUFFIX, ".sh")
+        self.assertEqual(powershell.ENTRY_SUFFIX, ".ps1")
+
+    def test_the_two_flavours_offer_the_same_things(self):
+        # One set of names, two languages: a builder present in only one of
+        # them is a host whose runner half-works.
+        from job_manager import remote_runner, remote_runner_ps
+
+        required = {
+            "ENTRY_SUFFIX",
+            "RUNNER_SCRIPT_NAME",
+            "build_job_script",
+            "build_runner_script",
+            "cancel_command",
+            "enqueue_command",
+            "ensure_runner_command",
+            "list_command",
+            "pause_command",
+            "prepare_command",
+            "set_cores_command",
+            "set_slots_command",
+        }
+        for module in (remote_runner, remote_runner_ps):
+            with self.subTest(flavour=module.__name__):
+                self.assertEqual(required - set(dir(module)), set())
 
     def test_a_real_queue_never_does(self):
         # A cluster already has a scheduler; a second one on the login node is
@@ -251,6 +288,56 @@ class TestPolling(RunnerModeTestCase):
 
         listings = [c for c in self.transport.commands if "for d in queue running done" in c]
         self.assertEqual(len(listings), 1)
+
+
+class TestSubmittingToAWindowsRunner(RunnerModeTestCase):
+    """The same submission, driven through the PowerShell flavour."""
+
+    def setUp(self):
+        super().setUp()
+        self.host = make_host(scheduler=SCHEDULER_WINDOWS, remote_root="C:/jobs")
+        self.transport = FakeTransport(self.host)
+        self.directory = remote_runner.runner_dir(self.host.remote_root)
+
+    def submit(self, name="opt", **kwargs) -> Job:
+        job = Job(name=name, host_id=self.host.id, scheduler=SCHEDULER_WINDOWS, **kwargs)
+        return submit_to_runner(self.transport, self.host, make_preset(), job, [self.input])
+
+    def test_the_queue_entry_is_a_powershell_script(self):
+        job = self.submit()
+
+        self.assertTrue(job.remote_job_id.endswith(".ps1"))
+
+    def test_the_wrapper_is_the_powershell_one(self):
+        job = self.submit()
+
+        wrapper = f"{job.remote_dir}/moleditpy_run.ps1"
+        self.assertIn(wrapper, self.transport.uploaded_text)
+        self.assertIn("Set-Content", self.transport.uploaded_text[wrapper])
+
+    def test_the_runner_uploaded_is_the_powershell_one(self):
+        self.submit()
+
+        path = f"{self.directory}/moleditpy_runner.ps1"
+        self.assertIn(path, self.transport.uploaded_text)
+        self.assertIn("Get-ChildItem", self.transport.uploaded_text[path])
+
+    def test_no_posix_command_is_ever_sent_to_a_windows_host(self):
+        # The whole point: a PowerShell wrapper is no use if the plugin then
+        # asks the host for mkdir -p.
+        self.submit()
+
+        for command in self.transport.commands:
+            for posix in ("mkdir -p", "ls -1", "kill -0", "nohup", "chmod +x"):
+                self.assertNotIn(posix, command, command)
+
+    def test_the_runner_still_starts_only_after_the_job_is_queued(self):
+        job = self.submit()
+
+        self.assertLess(
+            self.index_of(f"queue\\{job.remote_job_id}"),
+            self.index_of("New-Item -ItemType Directory -Path 'lock'"),
+        )
 
 
 class TestCancelling(RunnerModeTestCase):

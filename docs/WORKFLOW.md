@@ -179,6 +179,11 @@ job reads as `LOST` — which is what "the wrapper never finished" means
 everywhere else in this plugin. The remote directory, the log and **Download**
 all still work.
 
+The helper queue works here too — a PowerShell runner rather than a bash one,
+with the same queue, the same numbered scripts (`job_0001_<id>.ps1`), the same
+core accounting, dependencies and pause. Choosing it is the same *Queueing*
+setting on the host profile.
+
 One limitation: if a command template ends with a bare PowerShell `exit N` and
 no program ran before it, there is nothing left for the wrapper to read and the
 job is recorded as failed. Ending a template with a program's own exit code

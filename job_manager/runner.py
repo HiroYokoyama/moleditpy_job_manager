@@ -17,7 +17,6 @@ from typing import Dict, Iterable, List, Optional, Sequence
 
 from . import dialect, remote_paths, remote_runner
 from .models import (
-    SCHEDULER_SHELL,
     SENTINEL_NAME,
     STATE_CANCELLED,
     STATE_DONE,
@@ -159,7 +158,8 @@ def submit_to_runner(
     ``kill -0`` wait in the wrapper. The runner knows whether the predecessor
     *succeeded*, which a wrapper watching a pid cannot.
     """
-    scheduler = get_scheduler(SCHEDULER_SHELL)
+    scheduler = get_scheduler(host.scheduler)
+    flavour = remote_runner.flavour_for(host)
     if not local_files:
         raise ValueError("No input file selected")
 
@@ -181,20 +181,22 @@ def submit_to_runner(
     _upload_text(transport, script, remote_paths.join(job.remote_dir, scheduler.script_name))
 
     directory = remote_runner.runner_dir(host.remote_root)
-    transport.run(remote_runner.prepare_command(directory))
+    transport.run(flavour.prepare_command(directory))
     _upload_text(
         transport,
-        remote_runner.build_runner_script(directory),
-        remote_paths.join(directory, remote_runner.RUNNER_SCRIPT_NAME),
+        flavour.build_runner_script(directory),
+        remote_paths.join(directory, flavour.RUNNER_SCRIPT_NAME),
     )
-    transport.run(remote_runner.set_slots_command(directory, host.max_concurrent or 1))
-    transport.run(remote_runner.set_cores_command(directory, host.runner_cores))
+    transport.run(flavour.set_slots_command(directory, host.max_concurrent or 1))
+    transport.run(flavour.set_cores_command(directory, host.runner_cores))
 
-    listing = transport.run(remote_runner.list_command(directory))
+    listing = transport.run(flavour.list_command(directory))
     entry = remote_runner.entry_name(
-        remote_runner.next_sequence(_entry_names(listing.stdout)), job.id
+        remote_runner.next_sequence(_entry_names(listing.stdout)),
+        job.id,
+        flavour.ENTRY_SUFFIX,
     )
-    job_script = remote_runner.build_job_script(
+    job_script = flavour.build_job_script(
         job.remote_dir,
         scheduler.script_name,
         job.log_file,
@@ -207,7 +209,7 @@ def submit_to_runner(
     )
     # Into tmp/, then moved: the runner must never see a half-uploaded script.
     _upload_text(transport, job_script, remote_paths.join(directory, "tmp", entry))
-    result = transport.run(remote_runner.enqueue_command(directory, entry))
+    result = transport.run(flavour.enqueue_command(directory, entry))
     if not result.ok:
         raise TransportError(
             f"Could not queue the job (rc={result.rc}): "
@@ -216,7 +218,7 @@ def submit_to_runner(
 
     # Only now: a runner started before the job was queued could empty the
     # queue and exit before it arrived.
-    transport.run(remote_runner.ensure_runner_command(directory))
+    transport.run(flavour.ensure_runner_command(directory))
 
     job.remote_job_id = entry
     job.submitted_at = time.time()
@@ -247,7 +249,7 @@ def poll_runner(transport: Transport, host: HostProfile, jobs: Sequence[Job]) ->
         return {}
 
     directory = remote_runner.runner_dir(host.remote_root)
-    result = transport.run(remote_runner.list_command(directory))
+    result = transport.run(remote_runner.flavour_for(host).list_command(directory))
     where = remote_runner.parse_listing(result.stdout)
 
     updates: Dict[str, str] = {}
@@ -299,7 +301,7 @@ def cancel_in_runner(transport: Transport, host: HostProfile, job: Job) -> None:
     predecessor.
     """
     directory = remote_runner.runner_dir(host.remote_root)
-    transport.run(remote_runner.cancel_command(directory, job.remote_job_id))
+    transport.run(remote_runner.flavour_for(host).cancel_command(directory, job.remote_job_id))
 
 
 def poll_host(transport: Transport, host: HostProfile, jobs: Sequence[Job]) -> Dict[str, str]:
