@@ -795,10 +795,35 @@ class JobsDialog(QDialog):
         if len(urls) != 1:
             return ""
         path = urls[0].toLocalFile()
-        return path if path.lower().endswith(JOB_LIST_EXTENSIONS) else ""
+        if not path.lower().endswith(JOB_LIST_EXTENSIONS):
+            return ""
+        # Normalised like the input-file path beside it: toLocalFile() hands
+        # back forward slashes on Windows, and two drop handlers on one window
+        # returning different spellings of the same path is a trap.
+        return os.path.normpath(path)
+
+    @staticmethod
+    def _dropped_input_files(event) -> List[str]:
+        """Local files that are not a job list, i.e. things to submit.
+
+        Dropping onto this window is unambiguous -- it is the job window --
+        which is why input extensions are not registered with the host
+        instead. Claiming ``.inp`` or ``.xyz`` application-wide would take
+        those files away from being *opened*, which is what a user dropping one
+        on the main window usually means.
+        """
+        mime = event.mimeData()
+        if not mime.hasUrls():
+            return []
+        paths = [url.toLocalFile() for url in mime.urls() if url.isLocalFile()]
+        return [
+            os.path.normpath(path)
+            for path in paths
+            if path and os.path.isfile(path) and not path.lower().endswith(JOB_LIST_EXTENSIONS)
+        ]
 
     def dragEnterEvent(self, event) -> None:
-        if self._dropped_job_list(event):
+        if self._dropped_job_list(event) or self._dropped_input_files(event):
             event.acceptProposedAction()
         else:
             event.ignore()
@@ -807,11 +832,19 @@ class JobsDialog(QDialog):
 
     def dropEvent(self, event) -> None:
         path = self._dropped_job_list(event)
-        if not path:
+        if path:
+            event.acceptProposedAction()
+            self.open_job_list(path)
+            return
+        # Anything else that is a real file is treated as something to run:
+        # the wizard opens prefilled, so a drop is the whole way from "here is
+        # my input" to "which cluster, which command".
+        files = self._dropped_input_files(event)
+        if not files:
             event.ignore()
             return
         event.acceptProposedAction()
-        self.open_job_list(path)
+        self.open_submit_dialog(files=files)
 
     # --- lifecycle ----------------------------------------------------------
 

@@ -33,7 +33,14 @@ Any MoleditPy input generator. ORCA Input Generator Pro and Gaussian Input
 Generator Pro have a **Submit to Cluster...** button next to Save that hands the
 file straight to the wizard, prefilled — no file picker, no retyping the name.
 
-Everything else: save the file, then **New Job...** and add it by hand.
+Everything else: **drop the input file onto the Job Monitor** and the wizard
+opens with it already added, named after it, and with the right command
+template chosen where the extension says so unambiguously. You can also drop
+files straight onto the wizard, or add them with **Add files...**.
+
+Dropping onto the *main* MoleditPy window is not the same thing — input
+extensions are deliberately not claimed application-wide, since that would take
+`.inp` and `.xyz` away from simply being opened.
 
 ## 3. Submit
 
@@ -69,6 +76,17 @@ Everything else: save the file, then **New Job...** and add it by hand.
 
 Check the **Script preview** tab: that is the exact script that gets uploaded.
 Then **Submit**.
+
+### Where the results go
+
+Beside the input file, by default — the directory you are already working in.
+Untick **...next to the input file** and they go to one shared download folder
+instead; a job with no local input to sit beside uses that folder either way,
+as does one whose input directory has since gone.
+
+An input file is never overwritten by a downloaded result of the same name, so
+a fetch pattern of `*.xyz` against an input called `mol.xyz` leaves your file
+alone.
 
 ### Placeholders
 

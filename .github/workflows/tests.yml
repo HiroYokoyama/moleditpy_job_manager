@@ -29,10 +29,14 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: pip install pytest pytest-cov
+        run: pip install pytest pytest-cov pytest-xdist
 
       - name: Run tests with coverage
-        run: python -m pytest tests/ -v --tb=short --cov=job_manager --cov-report=term-missing
+        # -n auto: the script-execution tests spend their time waiting on real
+        # bash and PowerShell processes, so the suite parallelises almost
+        # perfectly -- 88s to 28s locally. Each test owns its own temp
+        # directory and its own processes, so there is nothing shared to race.
+        run: python -m pytest tests/ -v --tb=short -n auto --cov=job_manager --cov-report=term-missing
 
   # -------------------------------------------------------------------------
   # GUI tests — real PyQt6, headless. Roughly half of this plugin is dialogs
@@ -61,12 +65,16 @@ jobs:
       # real SSHConfig parser -- a stub would test nothing, so those tests skip
       # themselves unless the package is actually here.
       - name: Install dependencies
-        run: pip install pytest pytest-cov PyQt6 paramiko
+        run: pip install pytest pytest-cov PyQt6 paramiko pytest-xdist
 
       - name: Run the full suite with real Qt
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest tests/ -v --tb=short --cov=job_manager --cov-report=term-missing
+        # -n auto: the script-execution tests spend their time waiting on real
+        # bash and PowerShell processes, so the suite parallelises almost
+        # perfectly -- 88s to 28s locally. Each test owns its own temp
+        # directory and its own processes, so there is nothing shared to race.
+        run: python -m pytest tests/ -v --tb=short -n auto --cov=job_manager --cov-report=term-missing
 
   # -------------------------------------------------------------------------
   # Integration tests — clones the main MoleditPy app to enable real

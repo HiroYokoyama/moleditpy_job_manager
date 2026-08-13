@@ -3,6 +3,7 @@
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import pytest
 
@@ -10,6 +11,7 @@ pytest.importorskip("PyQt6.QtCore", reason="PyQt6 is not installed")
 
 from job_manager.models import (  # noqa: E402
     SENTINEL_NAME,
+    Job,
     STATE_CANCELLED,
     STATE_DONE,
     STATE_FAILED,
@@ -61,13 +63,42 @@ class TestSubmit(ServiceTestCase):
         job = self.submit()
         self.assertEqual(JobStore(self.tmp).jobs[job.id].remote_job_id, "4242")
 
-    def test_local_dir_is_under_the_download_root(self):
+    def test_results_land_beside_the_input_by_default(self):
+        # Where the user is already working, rather than a central store they
+        # then have to go hunting through.
+        job = self.submit()
+        self.assertEqual(job.local_dir, os.path.dirname(os.path.abspath(job.input_files[0])))
+
+    def test_local_dir_is_under_the_download_root_when_that_is_asked_for(self):
+        self.store.set_pref("download_beside_input", False)
         job = self.submit()
         self.assertTrue(job.local_dir.startswith(self.store.download_root()))
 
     def test_transport_is_closed_after_submitting(self):
         self.submit()
         self.assertGreaterEqual(self.transport.closed, 1)
+
+    def test_no_connection_is_opened_while_waiting_for_a_predecessor(self):
+        # Resolving a chained job's predecessor polls an in-memory object for
+        # up to two minutes and needs no connection. Opening the transport
+        # first held an idle ssh -- and a ControlMaster process with it -- for
+        # the whole wait.
+        order = []
+        predecessor = Job(name="first", host_id=self.host.id, state=STATE_RUNNING)
+        predecessor.remote_job_id = "1111"
+        self.store.jobs[predecessor.id] = predecessor
+
+        with patch.object(
+            self.service, "_chain_pid", side_effect=lambda *a, **k: order.append("waited") or ""
+        ):
+            with patch.object(
+                self.service,
+                "transport_for",
+                side_effect=lambda *a, **k: order.append("connected") or self.transport,
+            ):
+                self.submit(after_job=predecessor)
+
+        self.assertEqual(order[:2], ["waited", "connected"])
 
     def test_polling_starts_after_a_submit(self):
         self.submit()

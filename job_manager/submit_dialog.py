@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 from PyQt6.QtCore import QDateTime, Qt
 from PyQt6.QtWidgets import (
@@ -52,6 +52,8 @@ class SubmitDialog(QDialog):
         self.store = service.store
         self.setWindowTitle("Job Manager - Submit Job")
         self.resize(760, 640)
+        # Input files can be dropped straight onto the wizard.
+        self.setAcceptDrops(True)
         self._build_ui()
         self._reload_hosts()
 
@@ -177,6 +179,19 @@ class SubmitDialog(QDialog):
         self.txt_globs = QLineEdit("*.out, *.log, *.xyz, *.hess, *.fchk")
         self.chk_auto_download = QCheckBox("Download results automatically when the job ends")
         self.chk_auto_download.setChecked(True)
+        self.chk_beside_input = QCheckBox("...next to the input file")
+        self.chk_beside_input.setToolTip(
+            "Put the results in the directory the input came from, which is "
+            "where you are already working.\n\n"
+            "Unticked, they go to a single download folder shared by every job "
+            "(shown under Settings). A job with no local input to sit beside "
+            "uses that folder either way.\n\n"
+            "An input file is never overwritten by a result of the same name."
+        )
+        self.chk_beside_input.setChecked(bool(self.store.get_pref("download_beside_input", True)))
+        self.chk_beside_input.toggled.connect(
+            lambda checked: self.store.set_pref("download_beside_input", bool(checked))
+        )
         self.chk_chain = QCheckBox("Run after the job already queued on this host")
         self.chk_chain.setToolTip(
             "Hold this job until the one already queued on this host has finished.\n\n"
@@ -260,6 +275,7 @@ class SubmitDialog(QDialog):
         form.addRow("Command", command_row)
         form.addRow("Fetch patterns", self.txt_globs)
         form.addRow("", self.chk_auto_download)
+        form.addRow("", self.chk_beside_input)
         form.addRow("", self.chk_chain)
         form.addRow("", self.chk_chain_any)
         form.addRow("", self.lbl_chain)
@@ -553,16 +569,57 @@ class SubmitDialog(QDialog):
     def _add_files(self) -> None:
         start = self.store.get_pref("last_input_dir", "") or ""
         paths, _ = QFileDialog.getOpenFileNames(self, "Select input files", start, INPUT_FILTER)
-        for path in paths or []:
-            if path and path not in self.selected_files():
-                self.list_files.addItem(path)
-        if paths:
-            self.store.set_pref("last_input_dir", os.path.dirname(paths[0]))
+        self.add_files(paths or [])
+
+    def add_files(self, paths: Sequence[str]) -> None:
+        """Add input files from the picker or from a drop, and follow up.
+
+        The follow-up is the point: naming the job, offering the right command
+        template for the extension, and refreshing the preview are what make an
+        added file useful rather than just listed.
+        """
+        added = [p for p in paths or [] if p and p not in self.selected_files()]
+        for path in added:
+            self.list_files.addItem(path)
+        if added:
+            self.store.set_pref("last_input_dir", os.path.dirname(added[0]))
             if not self.txt_job_name.text().strip():
-                self.txt_job_name.setText(os.path.splitext(os.path.basename(paths[0]))[0])
+                self.txt_job_name.setText(os.path.splitext(os.path.basename(added[0]))[0])
         self._reload_templates()
         self._apply_suggested_template()
         self._refresh_preview()
+
+    # --- drops ---------------------------------------------------------------
+
+    @staticmethod
+    def dropped_files(event) -> List[str]:
+        """Local file paths in a drag event; empty for anything else."""
+        mime = event.mimeData()
+        if not mime.hasUrls():
+            return []
+        # toLocalFile() returns forward slashes on Windows, which every path
+        # here is compared against, so normalise once.
+        return [
+            os.path.normpath(url.toLocalFile())
+            for url in mime.urls()
+            if url.isLocalFile() and os.path.isfile(url.toLocalFile())
+        ]
+
+    def dragEnterEvent(self, event) -> None:
+        if self.dropped_files(event):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    dragMoveEvent = dragEnterEvent
+
+    def dropEvent(self, event) -> None:
+        paths = self.dropped_files(event)
+        if not paths:
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        self.add_files(paths)
 
     def _remove_file(self) -> None:
         for item in self.list_files.selectedItems():

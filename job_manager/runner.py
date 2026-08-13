@@ -432,6 +432,12 @@ def fetch_results(
 
     names = select_files(list_remote_files(transport, job.remote_dir), patterns)
     os.makedirs(local_dir, exist_ok=True)
+    # Results are downloaded next to the input by default, so the job's own
+    # inputs are sitting in the target directory -- and a fetch glob of *.xyz
+    # against an input named mol.xyz would otherwise write the remote copy back
+    # over the user's file. It is the same bytes today, but a truncated
+    # download would destroy the original.
+    protected = {os.path.abspath(path) for path in (job.input_files or []) if path}
     downloaded: List[str] = []
     for name in names:
         # Belt and braces: the listing is already filtered, but this is the
@@ -439,6 +445,9 @@ def fetch_results(
         if not safe_download_name(name):
             continue
         target = os.path.join(local_dir, name)
+        if os.path.abspath(target) in protected:
+            logging.debug("Job Manager: not overwriting the input file %s", name)
+            continue
         try:
             transport.download(remote_paths.join(job.remote_dir, name), target)
         except TransportError:

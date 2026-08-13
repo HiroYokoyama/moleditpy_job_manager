@@ -87,6 +87,11 @@ DEFAULT_PREFS: Dict[str, Any] = {
     "poll_interval": DEFAULT_POLL_INTERVAL,
     "prune_days": DEFAULT_PRUNE_DAYS,
     "download_root": "",
+    #: Put a job's results in the directory its input came from, which is
+    #: where the user is already working. The central download root is the
+    #: fallback -- for a job with no local input to sit beside, and for
+    #: anyone who would rather keep results out of their project folders.
+    "download_beside_input": True,
     "open_result_after_download": True,
     #: Off by default: the application icon belongs to the host, not to a
     #: plugin, and a badge is a change to how MoleditPy looks in the user's

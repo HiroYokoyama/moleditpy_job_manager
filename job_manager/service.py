@@ -108,7 +108,7 @@ class JobService(QObject):
             input_files=list(local_files),
             fetch_globs=list(preset.fetch_globs),
             auto_download=preset.auto_download if auto_download is None else auto_download,
-            local_dir=self._local_dir_for(name or "job"),
+            local_dir=self._local_dir_for(name or "job", local_files),
             preset=preset.to_dict(),
             after_job_id=after_job.id if after_job is not None else "",
             chain_any=bool(chain_any),
@@ -179,7 +179,22 @@ class JobService(QObject):
             time.sleep(0.2)
         return after_job.remote_job_id
 
-    def _local_dir_for(self, name: str) -> str:
+    def _local_dir_for(self, name: str, local_files: Optional[List[str]] = None) -> str:
+        """Where this job's results will land.
+
+        Beside the input by default: that is the directory the user is already
+        working in, and hunting through a central store for the outputs of the
+        file you just submitted is a small indignity repeated every time.
+
+        Falls back to the download root whenever there is nothing to sit beside
+        -- a job resubmitted after its input moved, or an input directory that
+        is not writable.
+        """
+        if self.store.get_pref("download_beside_input", True):
+            for path in local_files or []:
+                directory = os.path.dirname(os.path.abspath(path))
+                if directory and os.path.isdir(directory) and os.access(directory, os.W_OK):
+                    return directory
         stamp = time.strftime("%Y%m%d_%H%M%S")
         return os.path.join(self.store.download_root(), f"{stamp}_{sanitize_name(name)}")
 
@@ -251,7 +266,7 @@ class JobService(QObject):
             self.error.emit(f"Host profile for {job.name} no longer exists")
             return
         previous_state = job.state
-        local_dir = job.local_dir or self._local_dir_for(job.name)
+        local_dir = job.local_dir or self._local_dir_for(job.name, job.input_files)
         job.local_dir = local_dir
         job.touch(STATE_DOWNLOADING)
         self.job_updated.emit(job.id)

@@ -46,7 +46,10 @@ fetch, open.
   task bar** — the Dock on macOS, the task bar button on Windows, the launcher
   entry on Linux — which is off by default, since the icon is MoleditPy's
   rather than this plugin's.
-- **Fetch** the outputs automatically when a job ends, then hand the result to
+- **Drop** an input file on the Job Monitor to start: the wizard opens
+  prefilled, named after the file, with its command template chosen.
+- **Fetch** the outputs automatically when a job ends — next to the input file
+  by default, so results sit where you are already working — then hand them to
   whichever plugin already claims that file type — a finished ORCA run opens in
   the ORCA Result Analyzer with no extra configuration.
 - **Tail** the remote log, or cancel a job, from the same window.
