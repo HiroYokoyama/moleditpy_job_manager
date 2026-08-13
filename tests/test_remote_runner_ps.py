@@ -37,6 +37,12 @@ from job_manager.remote_runner_ps import (
 
 POWERSHELL = shutil.which("pwsh") or shutil.which("powershell")
 
+#: The runner is Windows-only by construction -- it builds `running\entry`
+#: paths and cancels with taskkill, because it exists for the machine that has
+#: no POSIX shell. GitHub's Ubuntu images ship pwsh, so "is there a PowerShell"
+#: ran it on Linux, where a backslash is not a separator.
+ON_WINDOWS = os.name == "nt" and POWERSHELL is not None
+
 #: PowerShell starts processes far more slowly than bash, so "busy" has to
 #: outlast a couple of launches for the intermediate states to be seen.
 POLL = 0.2
@@ -47,8 +53,8 @@ class RunnerHarness(unittest.TestCase):
     """A runner directory on disk, driven exactly as the plugin drives it."""
 
     def setUp(self):
-        if POWERSHELL is None:
-            self.skipTest("no PowerShell on this machine")
+        if not ON_WINDOWS:
+            self.skipTest("the PowerShell runner needs Windows, not just a PowerShell")
         self.tmp = tempfile.mkdtemp(prefix="ps_runner_")
         self.addCleanup(self._cleanup)
         self.dir = os.path.join(self.tmp, "runner")
