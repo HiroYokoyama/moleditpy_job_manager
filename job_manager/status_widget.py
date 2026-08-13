@@ -18,6 +18,7 @@ from typing import Optional
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QLabel
 
+from . import taskbar
 from .models import STATE_RUNNING
 from .service import JobService
 
@@ -75,6 +76,9 @@ class JobStatusWidget(QLabel):
 
     def refresh(self) -> None:
         text = self.summary()
+        # The OS task bar / Dock badge carries the same count, so that a
+        # minimised MoleditPy still says the cluster is busy.
+        taskbar.set_badge(sum(self.counts().values()))
         # Hidden rather than empty: an always-present blank label steals status
         # bar width from the host for a plugin the user may never use.
         self.setVisible(bool(text))
@@ -101,7 +105,8 @@ class JobStatusWidget(QLabel):
         super().mouseReleaseEvent(event)
 
     def detach(self) -> None:
-        """Undo every connection and leave the status bar."""
+        """Undo every connection, clear the badge, and leave the status bar."""
+        taskbar.clear_badge()
         for signal, slot in self._connections:
             try:
                 signal.disconnect(slot)

@@ -247,6 +247,105 @@ class TestStatusBarIndicator(TrackingTestCase):
         self.assertIsNone(install(object(), service))
 
 
+class TestTaskBarBadge(TrackingTestCase):
+    """The number on the icon in the OS task bar / Dock.
+
+    One Qt call covers macOS's Dock, the Windows task bar button and a Linux
+    launcher entry, so the tests assert the call rather than the pixels: what
+    the badge looks like is the platform's business, whether it is asked for at
+    all is ours.
+    """
+
+    def _service(self, *jobs) -> JobService:
+        store = JobStore(self.tmp)
+        store.jobs = {job.id: job for job in jobs}
+        service = JobService(store=store)
+        self.addCleanup(service.shutdown)
+        return service
+
+    def test_the_badge_counts_every_active_job(self):
+        service = self._service(
+            make_job(name="a", state=STATE_RUNNING),
+            make_job(name="b", state=STATE_PENDING),
+        )
+        with patch("job_manager.taskbar.set_badge") as set_badge:
+            widget = JobStatusWidget(service)
+            self.addCleanup(widget.detach)
+
+        set_badge.assert_called_with(2)
+
+    def test_nothing_active_asks_for_no_badge(self):
+        # 0 is how the platform is told to take the badge off, so it has to be
+        # sent rather than skipped.
+        service = self._service(make_job(name="old", state=STATE_FAILED))
+        with patch("job_manager.taskbar.set_badge") as set_badge:
+            widget = JobStatusWidget(service)
+            self.addCleanup(widget.detach)
+
+        set_badge.assert_called_with(0)
+
+    def test_the_badge_follows_the_jobs(self):
+        service = self._service()
+        widget = JobStatusWidget(service)
+        self.addCleanup(widget.detach)
+        job = make_job(name="new", state=STATE_RUNNING)
+        service.store.jobs[job.id] = job
+
+        with patch("job_manager.taskbar.set_badge") as set_badge:
+            service.jobs_changed.emit()
+
+        set_badge.assert_called_with(1)
+
+    def test_detaching_clears_the_badge(self):
+        service = self._service(make_job(state=STATE_RUNNING))
+        widget = JobStatusWidget(service)
+
+        with patch("job_manager.taskbar.set_badge") as set_badge:
+            widget.detach()
+
+        set_badge.assert_called_with(0)
+
+    def test_an_old_qt_without_the_api_is_not_an_error(self):
+        from job_manager import taskbar
+
+        with patch.object(taskbar, "SUPPORTED", False):
+            self.assertFalse(taskbar.set_badge(3))
+            self.assertFalse(taskbar.clear_badge())
+
+    def test_a_platform_that_refuses_the_badge_is_not_an_error(self):
+        from job_manager import taskbar
+
+        with patch.object(
+            taskbar.QGuiApplication, "setBadgeNumber", side_effect=RuntimeError("no badge")
+        ):
+            self.assertFalse(taskbar.set_badge(3))
+
+    def test_a_negative_count_is_never_sent(self):
+        from job_manager import taskbar
+
+        with patch.object(taskbar.QGuiApplication, "setBadgeNumber") as native:
+            taskbar.set_badge(-5)
+
+        native.assert_called_once_with(0)
+
+    def test_the_support_flag_matches_the_installed_qt(self):
+        # Guards the guard: SUPPORTED going stale in either direction would
+        # silently disable every badge while the mocked tests above still pass.
+        from job_manager import taskbar
+
+        self.assertEqual(taskbar.SUPPORTED, hasattr(taskbar.QGuiApplication, "setBadgeNumber"))
+
+    def test_the_count_reaches_qt_unchanged(self):
+        from job_manager import taskbar
+
+        if not taskbar.SUPPORTED:
+            self.skipTest("Qt older than 6.5 has no badge API")
+        with patch.object(taskbar.QGuiApplication, "setBadgeNumber") as native:
+            self.assertTrue(taskbar.set_badge(4))
+
+        native.assert_called_once_with(4)
+
+
 class TestStrandedChainIsAnnounced(TrackingTestCase):
     def test_a_failure_says_which_jobs_will_never_start(self):
         dead = make_job(name="opt", state=STATE_RUNNING)

@@ -231,3 +231,12 @@ def shutdown() -> None:
         except Exception:
             logging.debug("Job Manager: shutdown failed", exc_info=True)
         _service = None
+        # Unconditionally, not only via the widget: a host with no status bar
+        # never gets one, and a badge that outlives the plugin would leave
+        # MoleditPy's icon claiming jobs are running for the rest of the run.
+        try:
+            from .taskbar import clear_badge
+
+            clear_badge()
+        except Exception:
+            logging.debug("Job Manager: the badge was not cleared", exc_info=True)

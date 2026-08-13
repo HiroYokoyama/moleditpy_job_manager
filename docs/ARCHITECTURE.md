@@ -174,6 +174,7 @@ so a file written by a newer version does not break an older one.
 | `remote_paths.py` | POSIX path building and shell quoting |
 | `tasks.py` | `BackgroundTask` / `run_async` on the shared pool |
 | `status_widget.py` | the job counter in the host's status bar |
+| `taskbar.py` | the same count on the application icon (Dock / task bar / launcher) |
 | `*_dialog.py` | the three windows |
 
 ## The `submit_file()` handoff
