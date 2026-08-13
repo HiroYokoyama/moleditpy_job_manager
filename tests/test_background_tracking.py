@@ -365,6 +365,60 @@ class TestTaskBarBadge(TrackingTestCase):
         native.assert_called_once_with(4)
 
 
+class TestTheMonitorLetsGoOfTheService(TrackingTestCase):
+    """The service outlives the window, so a dismissed window must let go.
+
+    A connection left behind is a closed dialog that still reloads its model on
+    every poll, and still opens each finished job's results -- once per window
+    the user ever dismissed.
+    """
+
+    def _dialog(self):
+        from job_manager.jobs_dialog import JobsDialog
+
+        store = JobStore(self.tmp)
+        service = JobService(store=store)
+        self.addCleanup(service.shutdown)
+        return JobsDialog(service)
+
+    def test_closing_disconnects_everything(self):
+        dialog = self._dialog()
+        self.assertTrue(dialog._connections)
+
+        dialog.close()
+
+        self.assertEqual(dialog._connections, [])
+
+    def test_escape_disconnects_everything_too(self):
+        # Esc closes a QDialog through reject(), which never reaches
+        # closeEvent -- so this leaked every connection.
+        dialog = self._dialog()
+        self.assertTrue(dialog._connections)
+
+        dialog.reject()
+
+        self.assertEqual(dialog._connections, [])
+
+    def test_tearing_down_twice_is_harmless(self):
+        # Esc followed by the window manager closing it, for instance.
+        dialog = self._dialog()
+
+        dialog.reject()
+        dialog.close()
+
+        self.assertEqual(dialog._connections, [])
+
+    def test_a_dismissed_window_stops_reacting_to_the_service(self):
+        dialog = self._dialog()
+        dialog.reject()
+        opened = []
+        dialog._on_results_ready = lambda *args: opened.append(args)
+
+        dialog.service.results_ready.emit("job", ["/tmp/x.out"])
+
+        self.assertEqual(opened, [])
+
+
 class TestStrandedChainIsAnnounced(TrackingTestCase):
     def test_a_failure_says_which_jobs_will_never_start(self):
         dead = make_job(name="opt", state=STATE_RUNNING)

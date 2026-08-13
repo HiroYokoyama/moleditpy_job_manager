@@ -360,6 +360,16 @@ class HostsDialog(QDialog):
             else:
                 self.lbl_backend_hint.setText(LOCAL_INSTALL_HINT)
             return
+        if self.cmb_scheduler.currentData() == SCHEDULER_WINDOWS:
+            # Every command sent to this host is PowerShell, which only works
+            # over SSH if the remote sshd's default shell is PowerShell too --
+            # not the default on Windows, and not something this end can check.
+            self.lbl_backend_hint.setText(
+                "The Windows scheduler sends PowerShell. Over SSH that needs the "
+                "remote machine's default SSH shell to be PowerShell; the tested "
+                "combination is 'This machine (no SSH)'."
+            )
+            return
         if backend == BACKEND_PARAMIKO and not paramiko_available():
             self.lbl_backend_hint.setText(
                 "paramiko is not installed - run 'pip install paramiko' to use this backend."

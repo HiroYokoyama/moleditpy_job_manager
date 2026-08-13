@@ -815,9 +815,12 @@ class JobsDialog(QDialog):
 
     # --- lifecycle ----------------------------------------------------------
 
-    def closeEvent(self, event) -> None:
-        # Deregister so a reopened window is a fresh, live instance; polling
-        # continues in the service, which outlives this dialog.
+    def _teardown(self) -> None:
+        """Let go of the service. Safe to call twice.
+
+        Deregisters too, so a reopened window is a fresh, live instance;
+        polling continues in the service, which outlives this dialog.
+        """
         self._disconnect_service()
         try:
             from . import forget_window
@@ -825,6 +828,20 @@ class JobsDialog(QDialog):
             forget_window()
         except Exception:
             logging.debug("Job Manager: window deregistration failed", exc_info=True)
+
+    def reject(self) -> None:
+        # Esc closes a QDialog through reject(), which never reaches
+        # closeEvent. Without this the window stayed connected to a service
+        # that outlives it: every poll reloaded a dead dialog's model, and each
+        # finished job opened its results once per window ever dismissed.
+        self._teardown()
+        super().reject()
+
+    def closeEvent(self, event) -> None:
+        self._teardown()
+        # Accepted rather than delegated: QDialog's own closeEvent calls
+        # reject(), and reject() now tears down as well -- doing both would
+        # recurse.
         event.accept()
 
 
