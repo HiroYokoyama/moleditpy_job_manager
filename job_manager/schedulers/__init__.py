@@ -18,12 +18,14 @@ from .pbs import PBS
 from .sge import SGE
 from .shell import SHELL
 from .slurm import SLURM
+from .windows import WINDOWS
 
 __all__ = [
     "PBS",
     "SGE",
     "SHELL",
     "SLURM",
+    "WINDOWS",
     "STATE_UNKNOWN",
     "Scheduler",
     "available_schedulers",

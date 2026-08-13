@@ -35,6 +35,7 @@ from .models import (
     MODE_LANES,
     MODE_RUNNER,
     SCHEDULER_SHELL,
+    SCHEDULER_WINDOWS,
     HostProfile,
 )
 from .schedulers import available_schedulers
@@ -42,6 +43,7 @@ from .service import JobService
 from .tasks import run_async
 from .transport import local_shell_available, paramiko_available
 from .transport.local import INSTALL_HINT as LOCAL_INSTALL_HINT
+from .transport.local import POWERSHELL_HINT, SHELL_POSIX, SHELL_POWERSHELL
 from .transport.base import HostKeyRejected
 
 
@@ -102,6 +104,9 @@ class HostsDialog(QDialog):
         for scheduler in available_schedulers():
             self.cmb_scheduler.addItem(scheduler.label, scheduler.name)
         self.cmb_scheduler.currentIndexChanged.connect(self._update_concurrency_row)
+        # Which shell the local backend needs depends on the scheduler, so the
+        # hint has to follow it as well as the backend.
+        self.cmb_scheduler.currentIndexChanged.connect(self._update_backend_hint)
 
         key_row = QWidget()
         key_layout = QHBoxLayout(key_row)
@@ -336,11 +341,20 @@ class HostsDialog(QDialog):
         backend = self.cmb_backend.currentData()
         self._set_ssh_fields_enabled(backend != BACKEND_LOCAL)
         if backend == BACKEND_LOCAL:
-            if local_shell_available():
+            # Which shell has to be there follows the scheduler: a Windows host
+            # is driven entirely through PowerShell and needs no bash at all.
+            kind = (
+                SHELL_POWERSHELL
+                if self.cmb_scheduler.currentData() == SCHEDULER_WINDOWS
+                else SHELL_POSIX
+            )
+            if local_shell_available(kind):
                 self.lbl_backend_hint.setText(
                     "Runs the job here, with no network at all. Remote root is a "
                     "directory on this machine; hostname and keys are not used."
                 )
+            elif kind == SHELL_POWERSHELL:
+                self.lbl_backend_hint.setText(POWERSHELL_HINT)
             else:
                 self.lbl_backend_hint.setText(LOCAL_INSTALL_HINT)
             return

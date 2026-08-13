@@ -26,10 +26,10 @@ def paramiko_available() -> bool:
     return PARAMIKO_AVAILABLE
 
 
-def local_shell_available() -> bool:
+def local_shell_available(kind: str = "posix") -> bool:
     from .local import shell_available
 
-    return shell_available()
+    return shell_available(kind)
 
 
 def create_transport(host: HostProfile, password: Optional[str] = None) -> Transport:

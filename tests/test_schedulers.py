@@ -16,9 +16,9 @@ from job_manager.schedulers import (
 
 
 class TestRegistry(unittest.TestCase):
-    def test_all_four_are_registered(self):
+    def test_every_backend_is_registered(self):
         names = {s.name for s in available_schedulers()}
-        self.assertEqual(names, {"slurm", "pbs", "sge", "shell"})
+        self.assertEqual(names, {"slurm", "pbs", "sge", "shell", "windows"})
 
     def test_unknown_scheduler_raises(self):
         with self.assertRaises(ValueError):

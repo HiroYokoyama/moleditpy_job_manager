@@ -73,6 +73,8 @@ SCHEDULER_SLURM = "slurm"
 SCHEDULER_PBS = "pbs"
 SCHEDULER_SGE = "sge"
 SCHEDULER_SHELL = "shell"
+#: Native Windows: PowerShell wrapper, no POSIX shell needed.
+SCHEDULER_WINDOWS = "windows"
 
 #: How a host keeps its concurrency limit. See ``HostProfile.concurrency_mode``.
 MODE_LANES = "lanes"
