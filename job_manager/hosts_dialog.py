@@ -109,6 +109,20 @@ class HostsDialog(QDialog):
         self.txt_jump.setPlaceholderText("user@bastion (ProxyJump), optional")
         self.txt_remote_root = QLineEdit()
 
+        self.spin_max_concurrent = QSpinBox()
+        self.spin_max_concurrent.setRange(0, 64)
+        self.spin_max_concurrent.setSpecialValueText("no limit")
+        self.spin_max_concurrent.setToolTip(
+            "Run at most this many jobs at a time on this host.\n\n"
+            "Meant for the no-queue mode, where nothing else stops several "
+            "submissions piling onto the same cores. A queue already schedules "
+            "for you, so leave it at 'no limit' on SLURM, PBS or SGE unless you "
+            "have a reason not to.\n\n"
+            "Jobs over the limit are chained behind the shortest lane, so the "
+            "waiting happens on the host and holds with MoleditPy closed. The "
+            "limit applies whether or not you asked for chaining."
+        )
+
         form.addRow("Display name", self.txt_name)
         form.addRow("Hostname", self.txt_hostname)
         form.addRow("Username", self.txt_username)
@@ -119,6 +133,7 @@ class HostsDialog(QDialog):
         form.addRow("Private key", key_row)
         form.addRow("Jump host", self.txt_jump)
         form.addRow("Remote root", self.txt_remote_root)
+        form.addRow("Run at most", self.spin_max_concurrent)
         right.addWidget(form_box)
 
         adv_box = QGroupBox("Advanced")
@@ -202,6 +217,7 @@ class HostsDialog(QDialog):
         self.txt_key.setText("")
         self.txt_jump.setText("")
         self.txt_remote_root.setText("~/moleditpy_jobs")
+        self.spin_max_concurrent.setValue(0)
         self.txt_login.setPlainText("")
         self.txt_options.setPlainText("")
         self.spin_connect_timeout.setValue(10)
@@ -225,6 +241,7 @@ class HostsDialog(QDialog):
         self.txt_key.setText(host.key_path)
         self.txt_jump.setText(host.jump_host)
         self.txt_remote_root.setText(host.remote_root)
+        self.spin_max_concurrent.setValue(max(0, int(host.max_concurrent or 0)))
         self.txt_login.setPlainText("\n".join(host.login_commands or []))
         self.txt_options.setPlainText("\n".join(host.ssh_options or []))
         self.spin_connect_timeout.setValue(int(host.connect_timeout or 10))
@@ -310,6 +327,7 @@ class HostsDialog(QDialog):
         host.key_path = self.txt_key.text().strip()
         host.jump_host = self.txt_jump.text().strip()
         host.remote_root = self.txt_remote_root.text().strip() or "~/moleditpy_jobs"
+        host.max_concurrent = int(self.spin_max_concurrent.value())
         host.login_commands = [
             line.strip() for line in self.txt_login.toPlainText().splitlines() if line.strip()
         ]

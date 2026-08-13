@@ -315,6 +315,13 @@ class SubmitDialog(QDialog):
         "shell": "the wrapper waits for its process",
     }
 
+    def slot_limit(self) -> int:
+        """How many jobs this host may run at once; 0 for no limit."""
+        host = self.current_host()
+        if host is None:
+            return 0
+        return max(0, int(getattr(host, "max_concurrent", 0) or 0))
+
     def _update_chain_row(self) -> None:
         """Every scheduler can chain; only the mechanism differs."""
         host = self.current_host()
@@ -324,17 +331,35 @@ class SubmitDialog(QDialog):
         except ValueError:
             scheduler = None
         chainable = scheduler is not None and scheduler.supports_chaining
+        limit = self.slot_limit()
+
+        # A limit the user can untick is not a limit, so where one is set the
+        # host decides and the manual controls step aside.
+        self.chk_chain.setVisible(chainable and not limit)
+        self.chk_chain.setEnabled(chainable and not limit and predecessor is not None)
         # Only worth offering where the two forms differ: SGE and the no-queue
         # mode release on the predecessor ending whatever happened to it.
-        conditional = chainable and not scheduler.chain_releases_on_failure
-
-        self.chk_chain.setVisible(chainable)
-        self.lbl_chain.setVisible(chainable)
-        self.chk_chain.setEnabled(chainable and predecessor is not None)
+        conditional = chainable and not limit and not scheduler.chain_releases_on_failure
         self.chk_chain_any.setVisible(conditional)
         self.chk_chain_any.setEnabled(conditional and self.chk_chain.isEnabled())
+        self.lbl_chain.setVisible(chainable)
         if not chainable:
             return
+
+        if limit:
+            running = len(self.store.chain_lanes(host.id))
+            if predecessor is None:
+                self.lbl_chain.setText(
+                    f"{host.name} runs at most {limit} at a time "
+                    f"({running} of {limit} in use): this job starts straight away."
+                )
+            else:
+                self.lbl_chain.setText(
+                    f"{host.name} runs at most {limit} at a time (all {limit} in use): "
+                    f"this job waits for “{predecessor.name}” and starts when that slot frees."
+                )
+            return
+
         if predecessor is None:
             self.lbl_chain.setText("Nothing queued on this host: this job starts straight away.")
             return
@@ -351,6 +376,8 @@ class SubmitDialog(QDialog):
         They asked slightly different questions before, so the Script preview
         could show a dependency that submitting would not actually apply.
         """
+        if self.slot_limit():
+            return self.chain_predecessor() is not None
         # isHidden(), not isVisible(): a widget on a tab the user has switched
         # away from is not "visible", so reading isVisible() here dropped the
         # dependency for anyone who checked the Script preview tab before
@@ -364,6 +391,11 @@ class SubmitDialog(QDialog):
 
     def chain_any_requested(self) -> bool:
         """True for an ``afterany`` dependency rather than ``afterok``."""
+        if self.slot_limit():
+            # A slot limit serialises jobs that have nothing to do with each
+            # other. Holding them on afterok would let one failure strand a
+            # whole lane, which is the opposite of what a limit is for.
+            return self.chain_requested()
         return (
             self.chain_requested()
             and not self.chk_chain_any.isHidden()
@@ -378,10 +410,15 @@ class SubmitDialog(QDialog):
         return float(self.dt_start_at.dateTime().toSecsSinceEpoch())
 
     def chain_predecessor(self) -> Optional["Job"]:
-        """The job this one would queue behind, or None."""
+        """The job this one would queue behind, or None to start now."""
         host = self.current_host()
         if host is None:
             return None
+        limit = self.slot_limit()
+        if limit:
+            # Join the shortest lane, so a limit of two and seven submissions
+            # becomes two balanced queues rather than one long chain.
+            return self.store.chain_lane_tail(host.id, limit)
         return self.store.chain_tail(host.id)
 
     def _on_preset_changed(self) -> None:

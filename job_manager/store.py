@@ -331,6 +331,60 @@ class JobStore:
             return None
         return max(runnable, key=lambda job: (job.submitted_at or job.updated_at))
 
+    def runnable_jobs(self, host_id: str) -> List[Job]:
+        """Active jobs on this host that are still going to run."""
+        return [
+            job
+            for job in self.jobs.values()
+            if job.host_id == host_id and job.is_active and self.chain_blocker(job) is None
+        ]
+
+    def chain_lanes(self, host_id: str) -> List[List[Job]]:
+        """The chains currently in flight on this host, oldest job first.
+
+        A "lane" is one dependency chain. With no queue to serialise anything,
+        the number of lanes *is* the number of calculations running at once, so
+        this is what a slot limit counts.
+        """
+        active = self.runnable_jobs(host_id)
+        by_id = {job.id: job for job in active}
+        # A job with an active successor is not the end of its chain.
+        followed = {job.after_job_id for job in active if job.after_job_id in by_id}
+        lanes: List[List[Job]] = []
+        for tail in active:
+            if tail.id in followed:
+                continue
+            chain = [tail]
+            cursor = tail
+            while cursor.after_job_id in by_id:
+                cursor = by_id[cursor.after_job_id]
+                chain.append(cursor)
+            lanes.append(list(reversed(chain)))
+        return lanes
+
+    def free_slot(self, host_id: str, limit: int) -> bool:
+        """True when a job submitted now would start straight away."""
+        return limit <= 0 or len(self.chain_lanes(host_id)) < limit
+
+    def chain_lane_tail(self, host_id: str, limit: int) -> Optional[Job]:
+        """What a new job should queue behind to respect a slot limit.
+
+        None means "start now": either there is no limit, or a lane is free.
+        Otherwise the new job joins the *shortest* lane, which is what turns a
+        limit of two and seven submissions into two balanced queues rather than
+        one long chain and one job.
+
+        Nothing here needs a daemon or a running MoleditPy: the waiting is the
+        same dependency the scheduler (or the wrapper) already honours.
+        """
+        if limit <= 0:
+            return None
+        lanes = self.chain_lanes(host_id)
+        if len(lanes) < limit:
+            return None
+        shortest = min(lanes, key=len)
+        return shortest[-1]
+
     def chain_blocker(self, job: Job) -> Optional[Job]:
         """The dead predecessor that will stop ``job`` ever starting, if any.
 

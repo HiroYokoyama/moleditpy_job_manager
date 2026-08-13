@@ -151,6 +151,35 @@ You can still write a dependency by hand in *Extra directives* — anything you
 put there lands in the directive block, ahead of the first command, which is
 where a scheduler stops reading.
 
+### Running at most N at a time
+
+`nohup` is not a scheduler. On a host with no queue nothing stops five
+submissions starting at once and fighting over the same cores, and chaining
+alone is all-or-nothing: strictly one at a time, or a free-for-all.
+
+Set **Run at most** on the host profile (Hosts…) and the host will run no more
+than that many jobs at once. Submissions over the limit are chained behind the
+**shortest** lane, so seven jobs at a limit of two become two balanced queues
+of three and four — not one long chain behind a single job.
+
+The limit applies whether or not you asked for chaining: a limit you can switch
+off by unticking a box is not a limit, so where one is set the *Run after…*
+checkbox steps aside and the wizard tells you which slot you are getting.
+Because it is enforced with the same dependency the scheduler (or the wrapper)
+already honours, there is no daemon and no remote state, and the queue keeps
+moving with MoleditPy closed.
+
+Jobs queued this way always use `afterany`: they are independent jobs being
+serialised to share a machine, so one failure must not strand the rest of its
+lane.
+
+Finishing the job at the head of a lane does not open a slot — whatever was
+queued behind it takes that lane over. A job that is `BLOCKED` occupies
+nothing, since it is never going to run.
+
+Leave it at **no limit** on SLURM, PBS or SGE unless you have a reason not to:
+the queue is already doing this, and better.
+
 ### Starting later
 
 Tick **Do not start before** and pick a moment. The job is handed over

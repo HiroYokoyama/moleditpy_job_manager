@@ -122,6 +122,10 @@ class HostProfile:
     key_path: str = ""
     jump_host: str = ""
     remote_root: str = "~/moleditpy_jobs"
+    #: Run at most this many jobs at a time here; 0 means no limit. Matters
+    #: most with no queue, where nothing else stops submissions piling onto the
+    #: same cores. Enforced by chaining, so it holds with MoleditPy closed.
+    max_concurrent: int = 0
     ssh_options: List[str] = field(default_factory=list)
     #: paramiko backend only: prompt for a password (never stored on disk).
     ask_password: bool = False

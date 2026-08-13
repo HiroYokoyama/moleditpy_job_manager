@@ -25,6 +25,9 @@ fetch, open.
   `afterany` instead when the jobs are independent, and see a job marked
   **BLOCKED** — rather than a permanent, misleading PENDING — when the job in
   front of it failed under a dependency the queue can never satisfy.
+- **Limit** how many jobs a host runs at once — the piece `nohup` has no
+  scheduler for. Submissions over the limit join the shortest lane, so the
+  waiting happens on the host and holds with MoleditPy closed.
 - **Schedule** a start time (`--begin`, `-a`, or a sleep). The job is handed
   over now; MoleditPy need not be running when it starts.
 - **Track** every job in one table: queue id, state, elapsed time, and what it
