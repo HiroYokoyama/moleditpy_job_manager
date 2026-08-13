@@ -24,6 +24,14 @@ import shlex
 from typing import List, Sequence
 
 
+#: What :meth:`Dialect.read_files` prints for a file that is not there. The
+#: poller turns exactly this word into LOST -- it is how a job killed before
+#: its wrapper finished is told apart from one that ended -- so both dialects
+#: and the classifier have to agree on it, and none of them may spell it
+#: independently.
+MISSING = "MISSING"
+
+
 class Dialect:
     """One shell's spelling of the plugin's own housekeeping commands."""
 
@@ -45,7 +53,7 @@ class Dialect:
     def read_files(self, paths: Sequence[str], mark: str) -> str:
         """One command that prints every file, separated by ``mark``."""
         parts = [
-            f'echo "{mark}"; cat {self.quote(path)} 2>/dev/null || echo MISSING' for path in paths
+            f'echo "{mark}"; cat {self.quote(path)} 2>/dev/null || echo {MISSING}' for path in paths
         ]
         return "; ".join(parts)
 
@@ -89,7 +97,8 @@ class PowerShellDialect(Dialect):
             parts.append(
                 f"Write-Output '{mark}'; "
                 f"if (Test-Path -LiteralPath {quoted}) "
-                f"{{ Get-Content -LiteralPath {quoted} }} else {{ Write-Output 'MISSING' }}"
+                f"{{ Get-Content -LiteralPath {quoted} }} "
+                f"else {{ Write-Output '{MISSING}' }}"
             )
         return "; ".join(parts)
 
@@ -128,4 +137,4 @@ def for_host(host) -> Dialect:
     return POWERSHELL if getattr(host, "scheduler", "") == SCHEDULER_WINDOWS else POSIX
 
 
-__all__ = ["POSIX", "POWERSHELL", "Dialect", "PowerShellDialect", "for_host"]
+__all__ = ["MISSING", "POSIX", "POWERSHELL", "Dialect", "PowerShellDialect", "for_host"]

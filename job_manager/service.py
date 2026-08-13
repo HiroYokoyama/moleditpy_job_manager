@@ -119,6 +119,17 @@ class JobService(QObject):
         self.jobs_changed.emit()
 
         def work() -> Job:
+            # Resolved here, not at dispatch: submitting twice in quick
+            # succession queues both workers before the first has a pid, and
+            # reading it too early chained the second job behind nothing at
+            # all -- so both ran at once, which is the one thing chaining is
+            # for.
+            #
+            # And *before* the transport is opened, not after: this waits for
+            # another job's submission, for up to two minutes, and needs no
+            # connection to do it. Opening first held an idle ssh -- and, with
+            # the OpenSSH backend, a ControlMaster process -- for the whole wait.
+            run_after = "" if host.uses_remote_runner else self._chain_pid(after_job)
             transport = self.transport_for(host)
             try:
                 if host.uses_remote_runner:
@@ -127,12 +138,6 @@ class JobService(QObject):
                     return submit_to_runner(
                         transport, host, preset, job, local_files, after_job=after_job
                     )
-                # Resolved here, not at dispatch: submitting twice in quick
-                # succession queues both workers before the first has a pid, and
-                # reading it too early chained the second job behind nothing at
-                # all -- so both ran at once, which is the one thing chaining is
-                # for.
-                run_after = self._chain_pid(after_job)
                 return submit_job(
                     transport,
                     host,

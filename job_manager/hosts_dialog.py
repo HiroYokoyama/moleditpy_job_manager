@@ -46,6 +46,20 @@ from .transport.local import INSTALL_HINT as LOCAL_INSTALL_HINT
 from .transport.local import POWERSHELL_HINT, SHELL_POSIX, SHELL_POWERSHELL
 from .transport.base import HostKeyRejected
 
+#: Shown wherever a password is on offer. Keys are the easier option as well as
+#: the safer one, which is the part users tend not to be told: no prompt on
+#: every session, and the default OpenSSH backend then works with no extra
+#: package at all.
+KEY_TIP = (
+    "An SSH key is usually less work than a password, not more.\n\n"
+    "Once, on this machine:\n"
+    "    ssh-keygen -t ed25519\n"
+    "    ssh-copy-id user@cluster\n\n"
+    "After that the OpenSSH backend connects with no prompt, no paramiko, and "
+    "nothing kept in memory. Most clusters expect keys anyway, and many refuse "
+    "password logins outright."
+)
+
 
 class HostsDialog(QDialog):
     """Create, edit and remove host profiles."""
@@ -202,7 +216,19 @@ class HostsDialog(QDialog):
         self.chk_ask_password = QCheckBox(
             "Ask for a password when connecting (kept in memory for this session only)"
         )
+        self.chk_ask_password.setToolTip(KEY_TIP)
         right.addWidget(self.chk_ask_password)
+
+        self.lbl_key_tip = QLabel(
+            "Tip: a key is less work than a password — set one up once with "
+            "<code>ssh-keygen -t ed25519</code> then "
+            "<code>ssh-copy-id user@host</code>, and this host connects without "
+            "asking again."
+        )
+        self.lbl_key_tip.setWordWrap(True)
+        self.lbl_key_tip.setStyleSheet("color: palette(mid);")
+        self.lbl_key_tip.setToolTip(KEY_TIP)
+        right.addWidget(self.lbl_key_tip)
 
         action_row = QHBoxLayout()
         self.btn_test = QPushButton("Test Connection")
@@ -342,6 +368,9 @@ class HostsDialog(QDialog):
     def _update_backend_hint(self) -> None:
         backend = self.cmb_backend.currentData()
         self._set_ssh_fields_enabled(backend != BACKEND_LOCAL)
+        # Only where a password is actually on offer; the other backends never
+        # ask for one, so the advice would be noise.
+        self.lbl_key_tip.setVisible(backend == BACKEND_PARAMIKO)
         if backend == BACKEND_LOCAL:
             # Which shell has to be there follows the scheduler: a Windows host
             # is driven entirely through PowerShell and needs no bash at all.

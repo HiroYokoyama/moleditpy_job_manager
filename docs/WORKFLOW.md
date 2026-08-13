@@ -10,11 +10,18 @@ The normal path, end to end, plus what to do when a job goes wrong.
 |---|---|
 | Hostname / Username / Port | Or just the alias from your `~/.ssh/config` |
 | Backend | **OpenSSH** unless the host needs a password, or **This machine** for no SSH at all |
-| Scheduler | SLURM, PBS/Torque, SGE/UGE, or None (background process) |
+| Scheduler | SLURM, PBS/Torque, SGE/UGE, None (background process), or None (Windows, PowerShell) |
 | Private key | Optional. Leave empty to use your agent and `ssh_config` |
 | Jump host | `user@bastion` — OpenSSH backend only |
 | Remote root | Where job directories are created, default `~/moleditpy_jobs` |
 | Login commands | Run before every remote command, e.g. `module purge` |
+
+> **Set up a key rather than a password.** It is less work, not more:
+> `ssh-keygen -t ed25519` then `ssh-copy-id user@cluster`, once, on this
+> machine. After that the default OpenSSH backend connects with no prompt and
+> no extra package — and most clusters expect keys anyway, with many refusing
+> password logins outright. The paramiko backend exists for the hosts where
+> that is not an option.
 
 Press **Test Connection**. It round-trips `echo` + `hostname` and reports the
 remote name. An unknown host key stops here and offers to show you the
@@ -93,9 +100,10 @@ Pick **This machine (no SSH)** as the backend and the same workflow runs
 locally: no hostname, no keys, no network. *Remote root* becomes an ordinary
 directory here, and "upload" and "download" are file copies.
 
-It still needs a POSIX shell, because the run script is bash — free on macOS and
-Linux, and on Windows it means Git Bash or WSL. The Hosts dialog says so if it
-cannot find one.
+The bash schedulers need a POSIX shell — free on macOS and Linux, and on
+Windows meaning Git Bash or WSL. The Hosts dialog says so if it cannot find
+one. On Windows you can instead pick the **None (Windows, PowerShell)**
+scheduler and need nothing at all; see below.
 
 ### Running jobs one after another
 

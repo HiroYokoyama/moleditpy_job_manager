@@ -35,6 +35,12 @@ from job_manager.remote_runner import (
 )
 
 BASH = shutil.which("bash")
+
+#: How briskly the runner under test dispatches, and how long a "busy" job
+#: stays busy. Fast enough to keep the suite short, slow enough that a
+#: loaded machine still observes the intermediate states.
+POLL = 0.2
+BUSY = 1.5
 needs_bash = pytest.mark.skipif(BASH is None, reason="no bash on this machine")
 
 
@@ -52,9 +58,10 @@ class RunnerHarness(unittest.TestCase):
             os.makedirs(os.path.join(self.dir, name), exist_ok=True)
         os.makedirs(self.jobs, exist_ok=True)
         self.script_path = os.path.join(self.dir, RUNNER_SCRIPT_NAME)
-        # One second, so a test does not spend its life waiting for a poll.
+        # Sub-second, so a test does not spend its life waiting for a poll;
+        # production passes RUNNER_POLL_SECONDS (5).
         with open(self.script_path, "w", encoding="utf-8", newline="\n") as handle:
-            handle.write(build_runner_script(self.dir, poll_seconds=1))
+            handle.write(build_runner_script(self.dir, poll_seconds=POLL))
         self.processes = []
 
     def _cleanup(self):
@@ -188,7 +195,7 @@ class TestItRunsWhatIsQueued(RunnerHarness):
 class TestTheLimits(RunnerHarness):
     def test_the_slot_limit_is_respected(self):
         for name in ("aaa", "bbb", "ccc"):
-            self.enqueue(name, f"echo x >> {self.marker('live')}; sleep 2")
+            self.enqueue(name, f"echo x >> {self.marker('live')}; sleep {BUSY}")
         self.set_limit(SLOTS_NAME, 2)
 
         self.start_runner()
@@ -198,26 +205,26 @@ class TestTheLimits(RunnerHarness):
             what="two jobs to be running",
         )
         # And never a third while those two are still going.
-        time.sleep(1.0)
+        time.sleep(BUSY / 3)
         self.assertLessEqual(sum(1 for v in self.listing().values() if v == "running"), 2)
 
     def test_cores_are_counted_not_just_jobs(self):
         # Four cores, two jobs wanting three each: they cannot overlap even
         # though the slot limit would allow it.
-        self.enqueue("aaa", "sleep 2", cores=3)
-        self.enqueue("bbb", "sleep 2", cores=3)
+        self.enqueue("aaa", f"sleep {BUSY}", cores=3)
+        self.enqueue("bbb", f"sleep {BUSY}", cores=3)
         self.set_limit(SLOTS_NAME, 8)
         self.set_limit(CORES_NAME, 4)
 
         self.start_runner()
 
         self.wait_for(lambda: self.listing().get("aaa") == "running", what="the first job")
-        time.sleep(1.0)
+        time.sleep(BUSY / 3)
         self.assertNotEqual(self.listing().get("bbb"), "running")
 
     def test_small_jobs_fit_alongside_each_other(self):
-        self.enqueue("aaa", "sleep 2", cores=2)
-        self.enqueue("bbb", "sleep 2", cores=2)
+        self.enqueue("aaa", f"sleep {BUSY}", cores=2)
+        self.enqueue("bbb", f"sleep {BUSY}", cores=2)
         self.set_limit(SLOTS_NAME, 8)
         self.set_limit(CORES_NAME, 4)
 
@@ -241,7 +248,7 @@ class TestTheLimits(RunnerHarness):
 @needs_bash
 class TestDependencies(RunnerHarness):
     def test_a_dependent_job_waits_for_its_predecessor(self):
-        self.enqueue("aaa", f"sleep 1; echo aaa >> {self.marker('order')}")
+        self.enqueue("aaa", f"sleep {BUSY / 2}; echo aaa >> {self.marker('order')}")
         self.enqueue("bbb", f"echo bbb >> {self.marker('order')}", after="aaa")
         self.set_limit(SLOTS_NAME, 4)
 
@@ -304,7 +311,7 @@ class TestPause(RunnerHarness):
         self.wait_for(lambda: os.path.exists(self.marker("ran")), what="the job to run")
 
     def test_pausing_does_not_kill_a_running_job(self):
-        self.enqueue("aaa", f"sleep 2; touch {self.marker('finished')}")
+        self.enqueue("aaa", f"sleep {BUSY}; touch {self.marker('finished')}")
         self.start_runner()
         self.wait_for(lambda: self.listing().get("aaa") == "running", what="aaa running")
 

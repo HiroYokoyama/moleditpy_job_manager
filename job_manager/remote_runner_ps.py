@@ -110,7 +110,9 @@ def build_job_script(
 def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS) -> str:
     """The runner itself, with its own directory baked in."""
     quoted = ps_quote(directory)
-    poll = max(1, int(poll_seconds))
+    # Fractional allowed: production passes 5, and the tests that drive a real
+    # runner would otherwise pay a whole second per dispatch.
+    poll = max(0.1, float(poll_seconds))
     return "\r\n".join(
         [
             "# MoleditPy remote job runner. Runs the scripts in queue\\ in name order,",
@@ -271,7 +273,7 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
             "        Set-Content -Path 'lock\\pid' -Value $PID -Encoding ascii",
             "        continue",
             "    }",
-            f"    Start-Sleep -Seconds {poll}",
+            f"    Start-Sleep -Seconds {poll:g}",
             "}",
             "",
         ]

@@ -358,14 +358,14 @@ def _read_sentinels(transport: Transport, jobs: Sequence[Job]) -> List[str]:
     chunks = (result.stdout or "").split(_SENTINEL_MARK)[1:]
     outcomes: List[str] = []
     for index, job in enumerate(jobs):
-        raw = chunks[index].strip() if index < len(chunks) else "MISSING"
+        raw = chunks[index].strip() if index < len(chunks) else dialect.MISSING
         outcomes.append(_classify_sentinel(raw, job))
     return outcomes
 
 
 def _classify_sentinel(raw: str, job: Job) -> str:
-    token = (raw or "").strip().splitlines()[0].strip() if raw.strip() else "MISSING"
-    if token == "MISSING":
+    token = (raw or "").strip().splitlines()[0].strip() if raw.strip() else dialect.MISSING
+    if token == dialect.MISSING:
         # Gone from the queue without the wrapper finishing: killed, evicted, or
         # the directory vanished. Distinguish a user cancel from the rest.
         return STATE_CANCELLED if job.state == STATE_CANCELLED else STATE_LOST

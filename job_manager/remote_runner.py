@@ -200,7 +200,9 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
     spool directory that had already been deleted.
     """
     quoted = quote(directory)
-    poll = max(1, int(poll_seconds))
+    # Fractional allowed: production passes 5, and the tests that drive a real
+    # runner would otherwise pay a whole second per dispatch.
+    poll = max(0.1, float(poll_seconds))
     return f"""#!/bin/bash
 # MoleditPy remote job runner. Runs the scripts in queue/ in name order, at
 # most `slots` at a time, and exits as soon as there is nothing left to run.
@@ -324,7 +326,7 @@ while :; do
     echo $$ > lock/pid
     continue
   fi
-  sleep {poll}
+  sleep {poll:g}
 done
 """
 

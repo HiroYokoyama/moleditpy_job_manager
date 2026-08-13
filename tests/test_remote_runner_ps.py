@@ -37,6 +37,11 @@ from job_manager.remote_runner_ps import (
 
 POWERSHELL = shutil.which("pwsh") or shutil.which("powershell")
 
+#: PowerShell starts processes far more slowly than bash, so "busy" has to
+#: outlast a couple of launches for the intermediate states to be seen.
+POLL = 0.2
+BUSY = 2
+
 
 class RunnerHarness(unittest.TestCase):
     """A runner directory on disk, driven exactly as the plugin drives it."""
@@ -52,7 +57,7 @@ class RunnerHarness(unittest.TestCase):
             os.makedirs(os.path.join(self.dir, name), exist_ok=True)
         os.makedirs(self.jobs, exist_ok=True)
         self.script_path = os.path.join(self.dir, RUNNER_SCRIPT_NAME)
-        self._write(self.script_path, build_runner_script(self.dir, poll_seconds=1))
+        self._write(self.script_path, build_runner_script(self.dir, poll_seconds=POLL))
         self.processes = []
 
     def _cleanup(self):
@@ -207,7 +212,7 @@ class TestItRunsWhatIsQueued(RunnerHarness):
     def test_the_lock_holds_this_runners_own_pid_not_a_jobs(self):
         # $pid is an automatic variable in PowerShell; a runner that stored a
         # job's id in it would reap whichever process happened to match.
-        self.enqueue("aaa", "Start-Sleep -Seconds 5")
+        self.enqueue("aaa", f"Start-Sleep -Seconds {BUSY}")
         process = self.start_runner()
         entry = entry_name(1, "aaa", ENTRY_SUFFIX)
         pid_file = os.path.join(self.dir, "pids", entry)
@@ -224,7 +229,7 @@ class TestItRunsWhatIsQueued(RunnerHarness):
 class TestTheLimits(RunnerHarness):
     def test_the_slot_limit_is_respected(self):
         for name in ("aaa", "bbb", "ccc"):
-            self.enqueue(name, "Start-Sleep -Seconds 4")
+            self.enqueue(name, f"Start-Sleep -Seconds {BUSY}")
         self.set_limit(SLOTS_NAME, 2)
 
         self.start_runner()
@@ -233,24 +238,24 @@ class TestTheLimits(RunnerHarness):
             lambda: sum(1 for v in self.listing().values() if v == "running") == 2,
             what="two jobs to be running",
         )
-        time.sleep(1.5)
+        time.sleep(BUSY / 4)
         self.assertLessEqual(sum(1 for v in self.listing().values() if v == "running"), 2)
 
     def test_cores_are_counted_not_just_jobs(self):
-        self.enqueue("aaa", "Start-Sleep -Seconds 4", cores=3)
-        self.enqueue("bbb", "Start-Sleep -Seconds 4", cores=3)
+        self.enqueue("aaa", f"Start-Sleep -Seconds {BUSY}", cores=3)
+        self.enqueue("bbb", f"Start-Sleep -Seconds {BUSY}", cores=3)
         self.set_limit(SLOTS_NAME, 8)
         self.set_limit(CORES_NAME, 4)
 
         self.start_runner()
 
         self.wait_for(lambda: self.listing().get("aaa") == "running", what="the first job")
-        time.sleep(1.5)
+        time.sleep(BUSY / 4)
         self.assertNotEqual(self.listing().get("bbb"), "running")
 
     def test_small_jobs_fit_alongside_each_other(self):
-        self.enqueue("aaa", "Start-Sleep -Seconds 4", cores=2)
-        self.enqueue("bbb", "Start-Sleep -Seconds 4", cores=2)
+        self.enqueue("aaa", f"Start-Sleep -Seconds {BUSY}", cores=2)
+        self.enqueue("bbb", f"Start-Sleep -Seconds {BUSY}", cores=2)
         self.set_limit(SLOTS_NAME, 8)
         self.set_limit(CORES_NAME, 4)
 
@@ -274,7 +279,7 @@ class TestDependencies(RunnerHarness):
     def test_a_dependent_job_waits_for_its_predecessor(self):
         self.enqueue(
             "aaa",
-            f"Start-Sleep -Seconds 2; Add-Content -Path '{self.marker('order')}' -Value 'aaa'",
+            f"Start-Sleep -Seconds {BUSY / 2}; Add-Content -Path '{self.marker('order')}' -Value 'aaa'",
         )
         self.enqueue("bbb", f"Add-Content -Path '{self.marker('order')}' -Value 'bbb'", after="aaa")
         self.set_limit(SLOTS_NAME, 4)
@@ -325,7 +330,7 @@ class TestPause(RunnerHarness):
 
         self.start_runner()
 
-        time.sleep(2.5)
+        time.sleep(BUSY / 2)
         self.assertFalse(os.path.exists(self.marker("ran")))
         self.assertEqual(self.listing().get("aaa"), "queue")
 
@@ -334,7 +339,7 @@ class TestPause(RunnerHarness):
         open(paused, "w").close()
         self.enqueue("aaa", f"New-Item -ItemType File -Path '{self.marker('ran')}'")
         self.start_runner()
-        time.sleep(2.0)
+        time.sleep(BUSY / 2)
 
         os.remove(paused)
 
@@ -343,7 +348,7 @@ class TestPause(RunnerHarness):
     def test_pausing_does_not_kill_a_running_job(self):
         self.enqueue(
             "aaa",
-            f"Start-Sleep -Seconds 4; New-Item -ItemType File -Path '{self.marker('done')}'",
+            f"Start-Sleep -Seconds {BUSY}; New-Item -ItemType File -Path '{self.marker('done')}'",
         )
         self.start_runner()
         self.wait_for(lambda: self.listing().get("aaa") == "running", what="aaa running")

@@ -76,7 +76,13 @@ table**. There is no `sshpass`, and no password is ever passed as an argument.
 
 ### paramiko backend (optional)
 
-For hosts that need a password. Notable behaviour:
+For hosts that need a password — which, given the choice, you should avoid
+needing. `ssh-keygen -t ed25519` followed by `ssh-copy-id user@cluster` is a
+one-off that removes the prompt, removes this backend, and removes any secret
+from the plugin's memory entirely. The plugin says so wherever it offers to
+take a password.
+
+Notable behaviour:
 
 * `~/.ssh/config` is consulted for `HostName`, `User`, `Port` and
   `IdentityFile`. Your host profile always wins; the config only fills in what

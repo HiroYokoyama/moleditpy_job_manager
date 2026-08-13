@@ -13,6 +13,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 import pytest
 
@@ -24,6 +25,7 @@ from job_manager.models import (
     SubmitPreset,
 )
 from job_manager.schedulers import get_scheduler
+from job_manager.schedulers import base as scheduler_base
 from job_manager.schedulers.base import WAIT_POLL_SECONDS
 from job_manager.store import JobStore
 
@@ -308,7 +310,20 @@ class TestSubmittingDoesNotBlock(unittest.TestCase):
 class TestAChainRunsInOrder(unittest.TestCase):
     """Executed for real: the second script must not start until the first ends."""
 
-    def run_chained(self):
+    #: Patched into the generated script: the production value is 5 s, and a
+    #: test that proves ordering does not need to prove it slowly.
+    WAIT = 1
+
+    @classmethod
+    def setUpClass(cls):
+        # Run the chain once for the whole class. Three tests each launching a
+        # real predecessor, sleeping, and waiting on it cost three times over
+        # for one set of facts.
+        cls.workdir = cls.run_chained()
+        cls.addClassCleanup(shutil.rmtree, cls.workdir, ignore_errors=True)
+
+    @classmethod
+    def run_chained(cls):
         """Launch the predecessor exactly as the plugin does, then chain behind it.
 
         The pid has to come from `$!` in the same shell that later runs
@@ -329,15 +344,17 @@ class TestAChainRunsInOrder(unittest.TestCase):
             timeout=60,
         )
         pid = started.stdout.strip().splitlines()[-1]
-        self.assertTrue(pid.isdigit(), started.stdout + started.stderr)
+        if not pid.isdigit():
+            raise AssertionError(f"no pid from the launch: {started.stdout}{started.stderr}")
 
-        script = get_scheduler("shell").build_script(
-            "second",
-            SubmitPreset(command_template="date +%s > second_started"),
-            "mol.inp",
-            "job.log",
-            run_after=pid,
-        )
+        with patch.object(scheduler_base, "WAIT_POLL_SECONDS", cls.WAIT):
+            script = get_scheduler("shell").build_script(
+                "second",
+                SubmitPreset(command_template="date +%s > second_started"),
+                "mol.inp",
+                "job.log",
+                run_after=pid,
+            )
         second = os.path.join(workdir, "second.sh")
         with open(second, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(script)
@@ -350,7 +367,7 @@ class TestAChainRunsInOrder(unittest.TestCase):
             return int(handle.read().strip())
 
     def test_the_second_job_starts_after_the_first_finishes(self):
-        workdir = self.run_chained()
+        workdir = self.workdir
         self.assertGreaterEqual(
             self.read(workdir, "second_started"),
             self.read(workdir, "first_done"),
@@ -358,12 +375,12 @@ class TestAChainRunsInOrder(unittest.TestCase):
         )
 
     def test_the_chained_job_still_records_its_exit_code(self):
-        workdir = self.run_chained()
+        workdir = self.workdir
         with open(os.path.join(workdir, SENTINEL_NAME), encoding="utf-8") as handle:
             self.assertEqual(handle.read().strip(), "0")
 
     def test_the_started_marker_appears(self):
-        workdir = self.run_chained()
+        workdir = self.workdir
         self.assertTrue(os.path.exists(os.path.join(workdir, STARTED_NAME)))
 
     def test_a_predecessor_that_is_already_gone_does_not_hold_it_up(self):

@@ -34,7 +34,10 @@ def ensure_password(service, host: HostProfile, parent: Optional[QWidget] = None
     password, accepted = QInputDialog.getText(
         parent,
         "Job Manager",
-        f"Password for {host.target}:\n(kept in memory for this session only)",
+        f"Password for {host.target}:\n"
+        "(kept in memory for this session only)\n\n"
+        "Tip: 'ssh-keygen -t ed25519' then 'ssh-copy-id' once, and this\n"
+        "host connects without asking again.",
         QLineEdit.EchoMode.Password,
     )
     if not accepted:
