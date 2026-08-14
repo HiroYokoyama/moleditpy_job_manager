@@ -468,3 +468,78 @@ class TestClaimingRunForReal(unittest.TestCase):
         self.finish(8)
 
         self.assertEqual(self.claim(), 9)
+
+
+class TestResubmittingKeepsTheOldRun(unittest.TestCase):
+    """A resubmit is a new job, and must not reuse anything of the old one."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="resub_")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.input = os.path.join(self.tmp, "mol.inp")
+        with open(self.input, "w") as handle:
+            handle.write("! opt\n")
+        self.host = runner_host()
+
+    def submit(self, transport, job_id):
+        # Same name and same input every time: exactly what Resubmit sends.
+        return submit_to_runner(
+            transport,
+            self.host,
+            make_preset(),
+            make_job(id=job_id, name="opt", remote_dir="", remote_job_id=""),
+            [self.input],
+        )
+
+    def test_it_gets_a_directory_of_its_own(self):
+        first = self.submit(FakeTransport(self.host), "aaaaaaaaaaaa")
+        second = self.submit(FakeTransport(self.host), "bbbbbbbbbbbb")
+
+        self.assertNotEqual(first.remote_dir, second.remote_dir)
+
+    def test_nothing_is_uploaded_over_the_previous_run(self):
+        transport = FakeTransport(self.host)
+        first = self.submit(transport, "aaaaaaaaaaaa")
+        written_first = set(transport.uploaded_text)
+
+        second = self.submit(transport, "bbbbbbbbbbbb")
+        written_second = set(transport.uploaded_text) - written_first
+
+        # Nothing of the second run lands anywhere under the first job's dir.
+        self.assertTrue(written_second)
+        self.assertFalse([p for p in written_second if p.startswith(first.remote_dir)])
+        self.assertTrue([p for p in written_second if p.startswith(second.remote_dir)])
+
+    def test_the_old_queue_entry_is_not_reused(self):
+        transport = FakeTransport(self.host)
+        first = self.submit(transport, "aaaaaaaaaaaa")
+        second = self.submit(transport, "bbbbbbbbbbbb")
+
+        self.assertNotEqual(first.remote_job_id, second.remote_job_id)
+
+    def test_the_helper_having_stopped_does_not_restart_the_numbering(self):
+        # The counter lives on the host, not in the helper, so a batch that
+        # ended and let the helper exit still hands out the next number.
+        transport = FakeTransport(self.host)
+        first = self.submit(transport, "aaaaaaaaaaaa")
+        second = self.submit(transport, "bbbbbbbbbbbb")
+
+        self.assertLess(
+            remote_runner.parse_entry(first.remote_job_id)[0],
+            remote_runner.parse_entry(second.remote_job_id)[0],
+        )
+
+    def test_the_plugin_never_removes_a_job_directory(self):
+        # Cancelling, removing a row or clearing the list touch the plugin's
+        # own records; the remote directory is the only way back to results
+        # still on the cluster.
+        transport = FakeTransport(self.host)
+        job = self.submit(transport, "aaaaaaaaaaaa")
+        from job_manager.runner import cancel_in_runner
+
+        transport.commands.clear()
+        cancel_in_runner(transport, self.host, job)
+
+        for command in transport.commands:
+            self.assertNotIn(job.remote_dir, command)
+            self.assertNotIn("rm -rf", command)

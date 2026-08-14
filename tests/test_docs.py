@@ -343,3 +343,10 @@ class TestTheRunnerDocument(unittest.TestCase):
         self.assertEqual(self.runner.parse_entry(entry), (7, "a1b2c3d4e5f6"))
         self.assertIn("dispatch number", self.text)
         self.assertIn("job id", self.text)
+
+    def test_it_says_the_job_directory_is_never_deleted(self):
+        # The practical consequence -- remote disk is never reclaimed -- is
+        # something a user with a quota needs told, not left to infer.
+        self.assertIn("never deleted", self.text)
+        for path in ("docs/WORKFLOW.md",):
+            self.assertIn("never deletes anything on a host", read(ROOT / path))

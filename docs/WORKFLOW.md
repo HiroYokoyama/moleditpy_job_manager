@@ -425,6 +425,18 @@ downloading anything.
 preset *as it was when that job ran* — the snapshot survives editing or deleting
 the named preset. Adjust anything and submit again.
 
+**It is a new job, and the old one is left alone.** Resubmitting gets its own
+job id, so it gets its own remote directory: the previous run's inputs, log,
+outputs and exit code all stay exactly where they were, and its queue entry
+stays in `done/`. Nothing is reused and nothing is written over — including
+when you resubmit within the same second as the original, which used to land
+both runs in one directory.
+
+This holds when the helper has stopped in between, which is the normal state
+between batches: the queue directory and the dispatch counter live on the host,
+not in the helper, so the next submission starts a fresh helper and takes the
+*next* number rather than beginning again at one.
+
 ## 7. Keeping, exporting and clearing the list
 
 The row of buttons on the right of the table deals with the list as a whole.
@@ -513,6 +525,19 @@ does not thrash, not to replace SLURM.
 **No file browser.** Fetch patterns decide what comes back.
 
 **No allocation or accounting queries** — no `sacct`, no `sinfo`, no quota.
+
+### Remote disk is yours to reclaim
+
+Job Manager never deletes anything on a host. Cancelling a job, removing it
+from the list, pruning old rows or clearing the whole table all touch the
+plugin's own records only — the remote directory, its inputs, its log and its
+outputs stay exactly where they are.
+
+That is deliberate: a job directory is often the only way back to results still
+on the cluster, and losing it because a row left a table would be the wrong
+trade. It does mean the space is never reclaimed for you. `~/moleditpy_jobs/`
+is an ordinary directory; delete from it whenever you like, including while the
+helper is running — it only ever reads what is under `.moleditpy_runner/`.
 
 ## Troubleshooting
 

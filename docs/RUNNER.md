@@ -184,6 +184,15 @@ Exactly four things are removed, and none of them is a record:
 | `paused` | you, by unticking | that is what unpausing is |
 | `.moleditpy_rc` | the wrapper, at the start of a run | see below |
 
+**A job's directory is never deleted, by anything.** Not when the job is
+cancelled, not when you remove it from the list, not when the list is pruned or
+cleared — those touch the plugin's own records and never the host. The one
+directory the plugin ever removes anywhere is `lock/`, which holds a pid and no
+data. So the remote disk only ever grows, and reclaiming it is yours to do: the
+job directory is often the only way back to results still on the cluster, and
+deleting it on your behalf because a row left a table would be the wrong
+trade every time.
+
 **The sentinel is cleared before the run, not after it.** A stale exit code left
 in the job directory would otherwise be read as *this* run's outcome if this run
 were killed before writing its own — reporting a fresh job as having finished
