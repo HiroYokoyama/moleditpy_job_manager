@@ -355,3 +355,116 @@ class TestNothingIsOverwrittenOrRemoved(unittest.TestCase):
         for directory in ("queue", "running", "done", "status"):
             self.assertNotIn(f'rm -rf "{directory}', script)
             self.assertNotIn(f"rm -f {directory}/", script)
+
+
+class TestTheDispatchNumberOnlyClimbs(unittest.TestCase):
+    """The number *is* the dispatch order, so it must never go backwards."""
+
+    def setUp(self):
+        self.host = runner_host()
+
+    def test_the_number_is_claimed_on_the_host(self):
+        # Not worked out from a listing: a listing forgets everything the user
+        # has deleted, and the count then restarts.
+        command = remote_runner.claim_sequence_command("/r")
+        self.assertIn(remote_runner.SEQUENCE_NAME, command)
+
+    def test_both_flavours_claim_it(self):
+        for flavour in (remote_runner, remote_runner_ps):
+            with self.subTest(flavour=flavour.__name__):
+                self.assertIn(remote_runner.SEQUENCE_NAME, flavour.claim_sequence_command("/r"))
+
+    def test_the_windows_claim_avoids_the_5_1_parser_errors(self):
+        self.assertNotIn("&&", remote_runner_ps.claim_sequence_command(r"C:\r"))
+
+    def test_the_answer_is_parsed(self):
+        self.assertEqual(remote_runner.parse_sequence("7\n"), 7)
+
+    def test_noise_before_the_number_is_ignored(self):
+        self.assertEqual(remote_runner.parse_sequence("bash: warning\n42\n"), 42)
+
+    def test_no_answer_is_zero_rather_than_a_guess(self):
+        self.assertEqual(remote_runner.parse_sequence("cd: no such directory"), 0)
+
+    def test_a_host_that_will_not_give_a_number_fails_the_submission(self):
+        # Rather than queueing at a number that means nothing.
+        tmp = tempfile.mkdtemp(prefix="seqfail_")
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        path = os.path.join(tmp, "mol.inp")
+        with open(path, "w") as handle:
+            handle.write("! opt\n")
+        transport = FakeTransport(self.host)
+        transport.when(remote_runner.SEQUENCE_NAME, rc=1, stderr="read-only file system")
+
+        with self.assertRaises(TransportError):
+            submit_to_runner(
+                transport,
+                self.host,
+                make_preset(),
+                make_job(id="j1", remote_dir="", remote_job_id=""),
+                [path],
+            )
+
+    def test_the_runner_dispatches_in_numeric_order_not_alphabetical(self):
+        # Past 9999 the padding runs out, and `sort` puts job_10000 before
+        # job_9999 -- the dispatch order inverted exactly when a queue has been
+        # busy for a long time.
+        self.assertIn("sort -t_ -k2,2n", remote_runner.build_runner_script("/r"))
+
+    def test_the_windows_runner_sorts_numerically_too(self):
+        script = remote_runner_ps.build_runner_script(r"C:\r")
+        self.assertIn("[int](($_.Name -split '_')[1])", script)
+
+
+@unittest.skipUnless(BASH, "needs a bash")
+class TestClaimingRunForReal(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="claim_")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.dir = os.path.join(self.tmp, "runner").replace("\\", "/")
+        self.sh(remote_runner.setup_command(self.dir, 1, 0))
+
+    def sh(self, command):
+        return subprocess.run([BASH, "-c", command], capture_output=True, text=True, timeout=60)
+
+    def claim(self) -> int:
+        return remote_runner.parse_sequence(
+            self.sh(remote_runner.claim_sequence_command(self.dir)).stdout
+        )
+
+    def forget_the_counter(self) -> None:
+        """As if the counter file had never been written, or was lost."""
+        path = os.path.join(self.dir, remote_runner.SEQUENCE_NAME)
+        if os.path.exists(path):
+            os.remove(path)
+
+    def finish(self, number: int) -> None:
+        name = remote_runner.entry_name(number, "abcabcabcabc")
+        open(os.path.join(self.dir, "done", name), "w").close()
+
+    def test_successive_claims_climb(self):
+        self.assertEqual([self.claim(), self.claim(), self.claim()], [1, 2, 3])
+
+    def test_clearing_the_history_does_not_restart_the_count(self):
+        # The user's disk, so clearing done/ is their right -- but a number
+        # reissued puts a new job ahead of everything still waiting.
+        for number in (self.claim(), self.claim()):
+            self.finish(number)
+        for name in os.listdir(os.path.join(self.dir, "done")):
+            os.remove(os.path.join(self.dir, "done", name))
+
+        self.assertEqual(self.claim(), 3)
+
+    def test_a_number_already_in_the_queue_is_never_reissued(self):
+        # The counter file could be lost too; the queue is the other source.
+        self.forget_the_counter()
+        self.finish(12)
+
+        self.assertEqual(self.claim(), 13)
+
+    def test_a_zero_padded_number_is_not_read_as_octal(self):
+        # $((0008)) is an error in bash, not eight.
+        self.forget_the_counter()
+        self.finish(8)
+
+        self.assertEqual(self.claim(), 9)

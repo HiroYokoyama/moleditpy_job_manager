@@ -222,13 +222,28 @@ class TestSubmitting(RunnerModeTestCase):
         script = self.transport.uploaded_text[f"{self.directory}/tmp/{second.remote_job_id}"]
         self.assertIn(f"{remote_runner.REQUIRE_SUCCESS_TAG} 0", script)
 
-    def test_queue_numbers_do_not_repeat(self):
-        self.transport.when("for d in queue running done", stdout="done job_0004_old.sh\n")
+    def test_the_queue_number_comes_from_the_host(self):
+        # Claimed on the host rather than worked out from a listing: a listing
+        # forgets everything the user has deleted, and the count then restarts
+        # -- putting a new job ahead of everything still waiting.
+        self.transport.when(remote_runner.SEQUENCE_NAME, stdout="5\n")
         job = Job(name="next", host_id=self.host.id, scheduler=SCHEDULER_SHELL)
 
         submit_to_runner(self.transport, self.host, make_preset(), job, [self.input])
 
         self.assertEqual(remote_runner.parse_entry(job.remote_job_id)[0], 5)
+
+    def test_two_submissions_take_two_numbers(self):
+        first = Job(name="a", host_id=self.host.id, scheduler=SCHEDULER_SHELL)
+        second = Job(name="b", host_id=self.host.id, scheduler=SCHEDULER_SHELL)
+
+        submit_to_runner(self.transport, self.host, make_preset(), first, [self.input])
+        submit_to_runner(self.transport, self.host, make_preset(), second, [self.input])
+
+        self.assertLess(
+            remote_runner.parse_entry(first.remote_job_id)[0],
+            remote_runner.parse_entry(second.remote_job_id)[0],
+        )
 
     def test_no_input_file_is_refused(self):
         job = Job(name="empty", host_id=self.host.id, scheduler=SCHEDULER_SHELL)

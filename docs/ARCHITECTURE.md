@@ -156,7 +156,7 @@ queue, in bash (`remote_runner.py`) or PowerShell (`remote_runner_ps.py`).
     status/      the exit code the runner observed
     tmp/         scripts being uploaded, before they are moved into queue/
     moleditpy_runner_<digest>.sh     the runner itself, one file per version
-    slots cores memory paused runner.sha
+    slots cores memory paused runner.sha sequence
 ```
 
 **The queue is just numbered shell scripts.** Each is self-contained — it cds
@@ -169,9 +169,13 @@ Four rules make it safe, and each exists because the obvious version is wrong:
 
 * **Uploaded to `tmp/`, then moved into `queue/`.** `mv` within a filesystem is
   atomic, so the runner can never start a half-uploaded script.
-* **Sequence numbers are zero padded.** `ls | sort` puts `job_10` before
-  `job_2`, so unpadded names dispatch in the wrong order past nine jobs. The
-  job id in the name keeps two clients from colliding on one number.
+* **The dispatch number only climbs, and is claimed on the host.** Derived
+  from the queue it restarted whenever a user cleared `done/`, and the next job
+  then sorted ahead of everything still waiting. `sequence` holds the highest
+  ever issued; a claim takes one past that or the queue, whichever is greater.
+  Names are zero padded so a plain `ls` reads in order, and both runners sort
+  *numerically*, so passing 9999 — where the padding runs out and `job_10000`
+  sorts before `job_9999` — does not invert the queue.
 * **A job is claimed by moving it out of `queue/`.** Two runners racing for one
   entry cannot both win a `mv` (or a `Move-Item`, which fails when the
   destination exists), so nothing is dispatched twice.

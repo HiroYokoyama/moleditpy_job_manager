@@ -221,12 +221,17 @@ def submit_to_runner(
         _upload_text(transport, runner_script, remote_paths.join(directory, script_name))
         transport.run(flavour.store_digest_command(directory, digest))
 
-    listing = transport.run(flavour.list_command(directory))
-    entry = remote_runner.entry_name(
-        remote_runner.next_sequence(_entry_names(listing.stdout)),
-        job.id,
-        flavour.ENTRY_SUFFIX,
-    )
+    # Claimed on the host, not worked out from a listing: the number is the
+    # dispatch order, and one derived from the queue restarts the moment a user
+    # clears done/ -- putting the next job ahead of everything still waiting.
+    claimed = transport.run(flavour.claim_sequence_command(directory))
+    sequence = remote_runner.parse_sequence(claimed.stdout)
+    if not sequence:
+        raise TransportError(
+            "Could not take a queue number on the host: "
+            f"{(claimed.stderr or claimed.stdout).strip()[:300]}"
+        )
+    entry = remote_runner.entry_name(sequence, job.id, flavour.ENTRY_SUFFIX)
     job_script = flavour.build_job_script(
         job.remote_dir,
         scheduler.script_name,

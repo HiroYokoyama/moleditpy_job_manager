@@ -26,6 +26,9 @@ class FakeTransport(Transport):
         self.uploaded_text: Dict[str, str] = {}
         self.closed = 0
         self.fail_downloads: Sequence[str] = ()
+        #: Climbs like the counter a real host keeps, so two submissions to one
+        #: fake never come away with the same dispatch number.
+        self._sequence = 0
 
     # --- rule helpers -------------------------------------------------------
 
@@ -45,6 +48,12 @@ class FakeTransport(Transport):
         for substring, result in self.rules:
             if substring in cmd:
                 return result
+        # A real host always hands back a queue number, and a submission that
+        # cannot get one fails on purpose. Answered after the rules, so a test
+        # that wants to see that failure can still say so.
+        if "sequence" in cmd:
+            self._sequence += 1
+            return CommandResult(0, f"{self._sequence}\n", "")
         return self.default
 
     def upload(self, local_path: str, remote_path: str) -> None:

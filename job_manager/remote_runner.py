@@ -13,11 +13,13 @@ login node between batches.
 Layout under ``<remote_root>/.moleditpy_runner/``::
 
     lock/       the single-instance lock (an atomic mkdir), holding pid
-    queue/      job_0001_<id>.sh, job_0002_<id>.sh, ... run in name order
+    queue/      job_0001_<id>.sh, job_0002_<id>.sh, ... run in number order
     running/    the script while its job runs
     pids/       the wrapper pid for each running job
-    done/       the script once the job has ended
+    done/       the script once the job has ended, kept
+    status/     the exit code the runner observed, kept
     tmp/        scripts being uploaded, before they are moved into queue/
+    sequence    the highest dispatch number ever issued here
 
 **The queue is just numbered shell scripts.** Each one is self-contained -- it
 cds into its job directory and runs the wrapper -- so the queue can be read,
@@ -25,15 +27,25 @@ reordered or emptied over plain ssh with ``ls`` and ``mv``, and a job that has
 run is still exactly the script that ran it. Nothing needs this plugin to make
 sense of it.
 
-Four rules make it safe, and each exists because the obvious version is wrong:
+Five rules make it safe, and each exists because the obvious version is wrong:
 
 **Scripts are uploaded to ``tmp/`` and moved into ``queue/``.** ``mv`` within
 one filesystem is atomic, so the runner can never start a half-uploaded script
 -- which uploading straight into ``queue/`` would allow.
 
-**Numbers are zero padded.** ``ls | sort`` puts ``job_10`` before ``job_2``, so
-unpadded names would dispatch in the wrong order as soon as there were ten
-jobs. The job id in the name keeps two clients from colliding on one number.
+**The number only ever climbs, and is claimed on the host.** It *is* the
+dispatch order. Deriving it from the queue restarted the count as soon as a
+user cleared ``done/`` -- which is their disk and their right -- and the next
+job then sorted ahead of everything still waiting. The highest ever issued is
+kept in ``sequence``, and the new number is one past that or the queue,
+whichever is greater. Names are zero padded so a plain ``ls`` reads in order,
+and the runner sorts numerically so passing 9999 does not invert it.
+
+**Nothing generated is overwritten or deleted.** Entries move ``queue/`` ->
+``running/`` -> ``done/`` and stay; only a finished job's pid file goes, which
+records nothing. The runner script is named after a digest of its own contents,
+so an upgrade is a new file rather than a rewrite of the one a running runner
+is reading by byte offset.
 
 **A job is claimed by moving it out of ``queue/``.** Two runners racing for the
 same entry cannot both win a ``mv``, so nothing is ever dispatched twice.
@@ -105,9 +117,16 @@ REQUIRE_SUCCESS_TAG = "# moleditpy-require-success:"
 #: failed, or was never queued at all.
 STATUS_BLOCKED = "blocked"
 
-#: Width of the sequence number. Four digits keeps ``sort`` honest to 9999
-#: jobs, which is well past the point where a login node is the wrong tool.
+#: Width of the sequence number. Four digits so a plain ``ls`` reads in order;
+#: the runner sorts numerically, so passing 9999 costs nothing but the tidiness
+#: of the listing.
 SEQUENCE_WIDTH = 4
+
+#: The highest number ever issued on this host. The queue is the other source
+#: -- a number in use is obviously taken -- but only this one survives a user
+#: clearing ``done/``, and a sequence that restarts puts a new job *ahead* of
+#: everything still waiting.
+SEQUENCE_NAME = "sequence"
 
 #: Both flavours' queue entries. The suffix says which shell runs it; the
 #: number and the job id mean the same thing in each.
@@ -348,7 +367,10 @@ dispatch() {{
   [ -f {PAUSED_NAME} ] && return 0
   cap=$(total_cores)
   memcap=$(total_memory)
-  for entry in $(ls -1 queue 2>/dev/null | sort); do
+  # Sorted on the number itself, not as text: past 9999 the padding runs out
+  # and `sort` puts job_10000 before job_9999, which is the dispatch order
+  # inverted at exactly the point a queue has been busy for a long time.
+  for entry in $(ls -1 queue 2>/dev/null | sort -t_ -k2,2n); do
     [ "$(count running)" -lt "$(slots)" ] || break
     ready "$entry" || continue
     want=$(job_cores "queue/$entry")
@@ -407,6 +429,52 @@ def prepare_command(directory: str) -> str:
     """Create the runner's directories. Safe to repeat."""
     subdirs = " ".join(f'"{name}"' for name in SUBDIRS)
     return f"mkdir -p {quote(directory)} && cd {quote(directory)} && mkdir -p {subdirs}"
+
+
+def claim_sequence_command(directory: str) -> str:
+    """Take the next dispatch number, and print it. Never goes backwards.
+
+    The number *is* the dispatch order, so it must only ever climb. Deriving it
+    from the queue alone did not: clearing ``done/`` -- which a user is entitled
+    to do, it is their disk -- restarted the count, and the next job then sorted
+    ahead of everything still waiting and jumped the queue.
+
+    So the highest number ever issued is kept on the host as well, and the new
+    number is one past whichever is greater. Two clients racing here can come
+    away with the same number; that is a tie in the ordering, broken by the job
+    id in the name, and not a job running out of turn.
+    """
+    quoted = quote(directory)
+    return (
+        "cd " + quoted + " 2>/dev/null || exit 1; "
+        "n=$(cat " + SEQUENCE_NAME + " 2>/dev/null); "
+        "case \"$n\" in ''|*[!0-9]*) n=0 ;; esac; "
+        "for d in queue running done; do "
+        'for e in $(ls -1 "$d" 2>/dev/null); do '
+        # ${e#job_} then %%_* leaves just the number, with no call to sed.
+        "m=${e#job_}; m=${m%%_*}; "
+        "case \"$m\" in ''|*[!0-9]*) continue ;; esac; "
+        # 10# or a zero-padded number is read as octal, and 0008 is an error.
+        'm=$((10#$m)); if [ "$m" -gt "$n" ]; then n=$m; fi; '
+        "done; done; "
+        "n=$((n+1)); "
+        "echo $n > "
+        + SEQUENCE_NAME
+        + ".tmp && mv -f "
+        + SEQUENCE_NAME
+        + ".tmp "
+        + SEQUENCE_NAME
+        + "; echo $n"
+    )
+
+
+def parse_sequence(stdout: str) -> int:
+    """The number :func:`claim_sequence_command` printed, or 0 if it said none."""
+    for line in reversed((stdout or "").splitlines()):
+        token = line.strip()
+        if token.isdigit():
+            return int(token)
+    return 0
 
 
 def runner_script_name(digest: str) -> str:

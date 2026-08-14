@@ -39,6 +39,7 @@ from .remote_runner import (
     REQUIRE_SUCCESS_TAG,
     RUNNER_LOG_NAME,
     RUNNER_POLL_SECONDS,
+    SEQUENCE_NAME,
     SLOTS_NAME,
     STATUS_BLOCKED,
     SUBDIRS,
@@ -273,8 +274,12 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
             f"    if (Test-Path -LiteralPath {ps_quote(PAUSED_NAME)}) {{ return }}",
             "    $cap = Get-TotalCores",
             "    $memcap = Get-TotalMemory",
+            # Sorted on the number itself, not as text: past 9999 the padding
+            # runs out and job_10000 sorts before job_9999, inverting the
+            # dispatch order exactly when a queue has been busy a long time.
             "    foreach ($f in @(Get-ChildItem -LiteralPath 'queue' -File "
-            "-ErrorAction SilentlyContinue | Sort-Object Name)) {",
+            "-ErrorAction SilentlyContinue | "
+            "Sort-Object @{Expression={[int](($_.Name -split '_')[1])}}, Name)) {",
             "        if ((Get-DirCount 'running') -ge (Get-Slots)) { break }",
             "        $entry = $f.Name",
             "        if (-not (Test-Ready $entry)) { continue }",
@@ -340,6 +345,33 @@ def prepare_command(directory: str) -> str:
         f"Set-Location -LiteralPath {quoted}; "
         f"foreach ($d in @({names})) {{ "
         "New-Item -ItemType Directory -Force -Path $d | Out-Null }"
+    )
+
+
+def claim_sequence_command(directory: str) -> str:
+    """Take the next dispatch number, and print it. Never goes backwards.
+
+    Same rule as the bash flavour: the highest ever issued is kept on the host,
+    because deriving the number from the queue alone restarts it when a user
+    clears ``done/`` -- and a new job then sorts ahead of everything waiting.
+    """
+    quoted = ps_quote(directory)
+    counter = ps_quote(_join(directory, SEQUENCE_NAME))
+    temp = ps_quote(_join(directory, SEQUENCE_NAME + ".tmp"))
+    return (
+        f"Set-Location -LiteralPath {quoted}; "
+        f"$v = Get-Content -LiteralPath {counter} -ErrorAction SilentlyContinue | "
+        "Select-Object -First 1; "
+        r"$n = 0; if ($v -match '^\d+$') { $n = [int]$v }; "
+        "foreach ($d in @('queue','running','done')) { "
+        "foreach ($f in @(Get-ChildItem -LiteralPath $d -File "
+        "-ErrorAction SilentlyContinue)) { "
+        "$m = ($f.Name -split '_')[1]; "
+        r"if ($m -match '^\d+$' -and [int]$m -gt $n) { $n = [int]$m } } }; "
+        "$n = $n + 1; "
+        f"Set-Content -Path {temp} -Value $n -Encoding ascii; "
+        f"Move-Item -LiteralPath {temp} -Destination {counter} -Force; "
+        "$n"
     )
 
 
