@@ -129,9 +129,18 @@ class TestSubmit(unittest.TestCase):
         job = self.submit(files=[self.input_path, second])
         self.assertIn("orca mol.inp", job.command)
 
-    def test_no_files_is_rejected(self):
+    def test_no_files_is_allowed_but_no_command_is_not(self):
+        # A command-only job is a real job; a job with nothing to run is not.
+        # See tests/test_command_only.py for what the former does.
+        self.submit(files=[])
         with self.assertRaises(ValueError):
-            self.submit(files=[])
+            runner.submit_job(
+                self.transport,
+                self.host,
+                make_preset(command_template="  "),
+                Job(name="mol"),
+                [],
+            )
 
     def test_submit_failure_raises(self):
         self.transport.clear_rules()

@@ -31,6 +31,8 @@ from .runner import (
     cancel_in_runner,
     cancel_job,
     fetch_results,
+    list_remote_files,
+    require_remote_path,
     submit_job,
     submit_to_runner,
     tail_log,
@@ -83,6 +85,27 @@ class JobService(QObject):
     def transport_for(self, host: HostProfile):
         return create_transport(host, password=self._passwords.get(host.id))
 
+    # --- inspection ---------------------------------------------------------
+
+    def list_remote_dir(self, host: HostProfile, path: str, on_done, on_error=None) -> None:
+        """Names in a remote directory, or an error if it is not one.
+
+        For the wizard, where a job is about to be pointed at a directory the
+        user typed from memory. Being told now that it holds four files, or
+        that it is not there at all, is the difference between fixing a typo
+        and reading a failed job's log tomorrow.
+        """
+
+        def work() -> List[str]:
+            transport = self.transport_for(host)
+            try:
+                require_remote_path(transport, host, path, directory=True)
+                return list_remote_files(transport, path)
+            finally:
+                transport.close()
+
+        run_async(self.pool, work, on_success=on_done, on_error=on_error or self.error.emit)
+
     # --- submission ---------------------------------------------------------
 
     def submit(
@@ -95,6 +118,8 @@ class JobService(QObject):
         after_job: Optional[Job] = None,
         start_after: float = 0.0,
         chain_any: bool = False,
+        remote_dir: str = "",
+        remote_input: str = "",
     ) -> Job:
         """Create the job record and start the upload/submit on a worker.
 
@@ -102,9 +127,14 @@ class JobService(QObject):
         queue is told to hold it, the no-queue mode has the wrapper wait for
         that job's process. ``chain_any`` makes the predecessor merely having
         ended enough, instead of it having succeeded.
+
+        ``remote_dir`` runs the job in a directory already on the host, rather
+        than in a new one -- work the user staged there themselves, which
+        ``local_files`` need not (and usually does not) duplicate.
+        ``remote_input`` names a file in it for ``{input}``.
         """
         job = Job(
-            name=name or (os.path.basename(local_files[0]) if local_files else "job"),
+            name=name or self._default_name(local_files, remote_input, remote_dir),
             host_id=host.id,
             host_name=host.name,
             scheduler=host.scheduler,
@@ -116,6 +146,9 @@ class JobService(QObject):
             after_job_id=after_job.id if after_job is not None else "",
             chain_any=bool(chain_any),
             start_after=float(start_after or 0.0),
+            remote_dir=(remote_dir or "").strip(),
+            remote_dir_provided=bool((remote_dir or "").strip()),
+            remote_input=(remote_input or "").strip(),
         )
         job.touch(STATE_UPLOADING)
         self.store.add_job(job)
@@ -161,6 +194,17 @@ class JobService(QObject):
             on_error=lambda msg, job_id=job.id: self._on_submit_failed(job_id, msg),
         )
         return job
+
+    @staticmethod
+    def _default_name(local_files: List[str], remote_input: str, remote_dir: str) -> str:
+        """A name for a job the user did not name, from whatever it is about."""
+        if local_files:
+            return os.path.basename(local_files[0])
+        if remote_input:
+            return os.path.basename(remote_input)
+        if remote_dir:
+            return os.path.basename(remote_dir.rstrip("/\\")) or "job"
+        return "job"
 
     def _chain_pid(self, after_job: Optional[Job], timeout: float = 120.0) -> str:
         """The predecessor's remote pid, waiting for its submission if needed.
@@ -208,6 +252,10 @@ class JobService(QObject):
             stored.remote_dir = job.remote_dir
             stored.remote_job_id = job.remote_job_id
             stored.log_file = job.log_file
+            # Not cosmetic: the poller reads the sentinel by this name, and a
+            # stored job left on the shared default would look LOST for ever.
+            stored.script_name = job.script_name
+            stored.sentinel_name = job.sentinel_name
             stored.command = job.command
             stored.submitted_at = job.submitted_at
             stored.touch(job.state)

@@ -245,11 +245,19 @@ class TestSubmitting(RunnerModeTestCase):
             remote_runner.parse_entry(second.remote_job_id)[0],
         )
 
-    def test_no_input_file_is_refused(self):
+    def test_a_job_with_no_input_file_is_queued_but_one_with_no_command_is_not(self):
         job = Job(name="empty", host_id=self.host.id, scheduler=SCHEDULER_SHELL)
+        submit_to_runner(self.transport, self.host, make_preset(), job, [])
+        self.assertTrue(job.remote_job_id)
 
         with self.assertRaises(ValueError):
-            submit_to_runner(self.transport, self.host, make_preset(), job, [])
+            submit_to_runner(
+                self.transport,
+                self.host,
+                make_preset(command_template=""),
+                Job(name="nothing", host_id=self.host.id, scheduler=SCHEDULER_SHELL),
+                [],
+            )
 
 
 class TestPolling(RunnerModeTestCase):

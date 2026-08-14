@@ -455,10 +455,15 @@ class TestSubmitDialog(DialogTestCase):
         self.assertEqual(self.dialog.txt_queue.text(), "gpu")
         self.assertEqual(self.dialog.txt_memory.text(), "64G")
 
-    def test_submit_requires_an_input_file(self):
-        with patch("job_manager.submit_dialog.QMessageBox.warning") as warn:
+    def test_submit_with_no_input_at_all_asks_first(self):
+        # Legal -- a command need not have an input file -- but nearly always
+        # a forgotten one, so it is confirmed rather than warned about.
+        with patch(
+            "job_manager.submit_dialog.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.No,
+        ) as ask:
             self.dialog._submit()
-        warn.assert_called_once()
+        ask.assert_called_once()
         self.assertEqual(self.store.jobs, {})
 
     def test_submit_rejects_a_missing_file(self):
@@ -503,6 +508,81 @@ class TestSubmitDialog(DialogTestCase):
         warn.assert_called_once()
 
 
+class TestTheWorkAlreadyOnTheHostBox(DialogTestCase):
+    def setUp(self):
+        super().setUp()
+        self.dialog = SubmitDialog(self.service)
+        self.addCleanup(self.dialog.deleteLater)
+        self.transport.when("PRESENT", stdout="PRESENT\n")
+
+    def use_remote(self, path="~/runs/mol42", input_name=""):
+        self.dialog.box_remote.setChecked(True)
+        self.dialog.txt_remote_dir.setText(path)
+        self.dialog.txt_remote_input.setText(input_name)
+
+    def test_it_is_off_until_asked_for(self):
+        self.assertFalse(self.dialog.box_remote.isChecked())
+        self.assertEqual(self.dialog.remote_dir(), "")
+
+    def test_unticking_the_box_puts_the_job_back_in_its_own_directory(self):
+        self.use_remote()
+        self.dialog.box_remote.setChecked(False)
+        self.assertEqual(self.dialog.remote_dir(), "")
+        self.assertIn("moleditpy_jobs", self.dialog.txt_preview.toPlainText())
+
+    def test_the_preview_cds_into_that_directory(self):
+        self.use_remote()
+        self.assertIn("cd ~/runs/mol42", self.dialog.txt_preview.toPlainText())
+
+    def test_the_preview_uses_the_input_that_is_already_there(self):
+        self.dialog.txt_command.setText("orca {input} > {stem}.out")
+        self.use_remote(input_name="staged.inp")
+        self.assertIn("orca staged.inp > staged.out", self.dialog.txt_preview.toPlainText())
+
+    def test_submitting_with_no_local_files_at_all(self):
+        self.use_remote(input_name="staged.inp")
+        self.dialog.txt_job_name.setText("staged")
+        self.dialog._submit()
+        job = list(self.store.jobs.values())[0]
+        self.assertEqual(job.remote_dir, "~/runs/mol42")
+        self.assertEqual(job.remote_input, "staged.inp")
+        self.assertEqual(job.input_files, [])
+
+    def test_a_ticked_box_with_no_directory_is_refused(self):
+        self.dialog.box_remote.setChecked(True)
+        with patch("job_manager.submit_dialog.QMessageBox.warning") as warn:
+            self.dialog._submit()
+        warn.assert_called_once()
+        self.assertEqual(self.store.jobs, {})
+
+    def test_confirming_a_job_with_no_input_at_all_submits_it(self):
+        with patch(
+            "job_manager.submit_dialog.QMessageBox.question",
+            return_value=QMessageBox.StandardButton.Yes,
+        ):
+            self.dialog._submit()
+        self.assertEqual(len(self.store.jobs), 1)
+
+    def test_check_reports_what_is_in_the_directory(self):
+        self.transport.when("ls -p", stdout="a.out\nb.out\n")
+        self.use_remote()
+        self.dialog._check_remote_dir()
+        self.assertIn("2 file(s)", self.dialog.lbl_remote.text())
+
+    def test_check_says_so_when_the_named_input_is_not_there(self):
+        self.transport.when("ls -p", stdout="a.out\n")
+        self.use_remote(input_name="staged.inp")
+        self.dialog._check_remote_dir()
+        self.assertIn("staged.inp", self.dialog.lbl_remote.text())
+
+    def test_check_reports_a_directory_that_is_not_there(self):
+        self.transport.clear_rules()
+        self.use_remote()
+        self.dialog._check_remote_dir()
+        self.assertIn("~/runs/mol42", self.dialog.lbl_remote.text())
+        self.assertTrue(self.dialog.btn_check_remote.isEnabled())
+
+
 class TestPrefillAndResubmit(DialogTestCase):
     def setUp(self):
         super().setUp()
@@ -541,6 +621,41 @@ class TestPrefillAndResubmit(DialogTestCase):
         self.assertEqual(kwargs["host_id"], self.host.id)
         self.assertEqual(kwargs["preset"]["queue"], "gpu")
         self.assertEqual(kwargs["name"], job.name)
+
+    def test_resubmit_keeps_a_job_pointed_at_the_directory_it_ran_in(self):
+        self.transport.when("PRESENT", stdout="PRESENT\n")
+        job = self.service.submit(
+            self.host,
+            make_preset(),
+            "staged",
+            [],
+            remote_dir="~/runs/mol42",
+            remote_input="staged.inp",
+        )
+        self.dialog.model.reload()
+        self.dialog.table.selectRow(0)
+        with patch.object(JobsDialog, "open_submit_dialog") as opener:
+            self.dialog._resubmit_selected()
+        kwargs = opener.call_args.kwargs
+        self.assertEqual(kwargs["remote_dir"], job.remote_dir)
+        self.assertEqual(kwargs["remote_input"], "staged.inp")
+
+    def test_a_command_only_job_can_be_resubmitted_at_all(self):
+        self.transport.when("PRESENT", stdout="PRESENT\n")
+        self.service.submit(self.host, make_preset(), "staged", [], remote_dir="~/runs/mol42")
+        self.dialog.model.reload()
+        self.dialog.table.selectRow(0)
+        self.dialog._update_buttons()
+        self.assertTrue(self.dialog.btn_resubmit.isEnabled())
+
+    def test_the_wizard_opens_with_the_box_already_ticked(self):
+        dialog = SubmitDialog(self.service)
+        self.addCleanup(dialog.deleteLater)
+        dialog.prefill(remote_dir="~/runs/mol42", remote_input="staged.inp")
+        self.assertTrue(dialog.box_remote.isChecked())
+        self.assertEqual(dialog.remote_dir(), "~/runs/mol42")
+        self.assertEqual(dialog.remote_input(), "staged.inp")
+        self.assertEqual(dialog.txt_job_name.text(), "staged")
 
     def test_resubmit_refuses_when_the_input_is_gone(self):
         job = self.submitted_job()

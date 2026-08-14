@@ -247,6 +247,18 @@ class Job:
     finished_at: float = 0.0
     local_dir: str = ""
     input_files: List[str] = field(default_factory=list)
+    #: The job runs in a directory the *user* prepared, rather than in one this
+    #: plugin made for it. Everything the wrapper writes is then named per job
+    #: (see :attr:`script_name`), because that directory is shared: it holds the
+    #: user's own files, and very likely other jobs submitted into it as well.
+    remote_dir_provided: bool = False
+    #: A file already on the host, standing in for the uploaded input in
+    #: ``{input}`` / ``{stem}``. Relative to :attr:`remote_dir`.
+    remote_input: str = ""
+    #: Wrapper script name; empty means the scheduler's shared default.
+    script_name: str = ""
+    #: Completion sentinel name; empty means :data:`SENTINEL_NAME`.
+    sentinel_name: str = ""
     fetch_globs: List[str] = field(default_factory=list)
     auto_download: bool = True
     downloaded: bool = False

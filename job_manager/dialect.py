@@ -31,6 +31,12 @@ from typing import List, Sequence
 #: independently.
 MISSING = "MISSING"
 
+#: What :meth:`Dialect.exists` prints for a path that is there. Checked before
+#: a job is submitted into a directory the user typed, where the alternative is
+#: ``mkdir -p`` quietly making the typo and the job running in an empty
+#: directory that has none of the files it was supposed to find.
+PRESENT = "PRESENT"
+
 
 class Dialect:
     """One shell's spelling of the plugin's own housekeeping commands."""
@@ -49,6 +55,11 @@ class Dialect:
 
     def mkdirs(self, path: str) -> str:
         return f"mkdir -p {self.quote(path)}"
+
+    def exists(self, path: str, directory: bool = False) -> str:
+        """Print :data:`PRESENT` or :data:`MISSING` for one path."""
+        test = "-d" if directory else "-f"
+        return f"if [ {test} {self.quote(path)} ]; then echo {PRESENT}; else echo {MISSING}; fi"
 
     def read_files(self, paths: Sequence[str], mark: str) -> str:
         """One command that prints every file, separated by ``mark``."""
@@ -89,6 +100,14 @@ class PowerShellDialect(Dialect):
         # -Force is the -p: it creates parents and is silent when the directory
         # already exists, which every caller relies on.
         return f"New-Item -ItemType Directory -Force -Path {self.quote(path)} | Out-Null"
+
+    def exists(self, path: str, directory: bool = False) -> str:
+        kind = "Container" if directory else "Leaf"
+        quoted = self.quote(path)
+        return (
+            f"if (Test-Path -LiteralPath {quoted} -PathType {kind}) "
+            f"{{ '{PRESENT}' }} else {{ '{MISSING}' }}"
+        )
 
     def read_files(self, paths: Sequence[str], mark: str) -> str:
         parts: List[str] = []
@@ -137,4 +156,12 @@ def for_host(host) -> Dialect:
     return POWERSHELL if getattr(host, "scheduler", "") == SCHEDULER_WINDOWS else POSIX
 
 
-__all__ = ["MISSING", "POSIX", "POWERSHELL", "Dialect", "PowerShellDialect", "for_host"]
+__all__ = [
+    "MISSING",
+    "PRESENT",
+    "POSIX",
+    "POWERSHELL",
+    "Dialect",
+    "PowerShellDialect",
+    "for_host",
+]

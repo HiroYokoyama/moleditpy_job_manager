@@ -19,6 +19,13 @@ fetch, open.
 - **Submit** an input file to SLURM, PBS/Torque, SGE/UGE — or to a plain
   background process on a machine with no queue at all, including **this
   machine**, with no SSH involved.
+- **Submit work that is already there.** Point a job at a directory on the
+  host instead of uploading anything: `~/runs/mol42` and a command is a whole
+  job. Input files are optional throughout — name one that is already in that
+  directory and `{input}` still works, or run a command that needs none. The
+  directory is *checked*, never created, and everything the wrapper writes
+  there carries the job id, so several jobs can share one prepared directory
+  without overwriting each other's results.
 - **Run natively on Windows**, with nothing to install: choose the Windows
   scheduler and the wrapper, the status checks and the plugin's own commands
   are all PowerShell, which ships with the OS — including the helper queue,
@@ -178,6 +185,10 @@ success. `FAILED (rc=143)` is what a walltime kill looks like now.
    preset to reuse them.
 3. Watch the table. When the job finishes its results are downloaded and the main
    output is opened for you.
+
+Step 2 needs no input file if the work is already on the host: tick **Work
+already on the host**, give the directory, and **Check** it before you submit.
+See [Work that is already on the host](docs/WORKFLOW.md#work-that-is-already-on-the-host).
 
 ### Command templates
 

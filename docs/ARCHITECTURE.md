@@ -108,6 +108,15 @@ cannot tell an empty file from a missing one. `>` and `Set-Content` both
 truncate before they write, and a poll landing in that window would read
 nothing and report a finished job as `LOST`. A rename is one step.
 
+The name is fixed only because the directory usually is the plugin's own, with
+one job in it. A job running where the *user* prepared its files
+(`Job.remote_dir_provided`) writes `.moleditpy_rc_<job id>` instead, along with
+`moleditpy_<id>.sh` and `moleditpy_<id>.log` — `runner.name_job_files` decides,
+`runner.sentinel_for` reads it back, and a job stored before any of this existed
+falls back to the shared name. Without that, two jobs submitted into one
+prepared directory would share a sentinel, and whichever finished first would
+decide what both were reported to have done.
+
 Both traps matter. The `EXIT` trap alone is not enough for a payload that calls
 `exit` itself — it would never reach a trailing `echo`. The signal traps are
 what stop a job the scheduler *kills* (walltime, preemption, `scancel`, node

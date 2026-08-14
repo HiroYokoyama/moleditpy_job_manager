@@ -63,6 +63,77 @@ def make_remote_dir(
     return remote_paths.join(host.remote_root or "~/moleditpy_jobs", name)
 
 
+def input_name_for(job: Job, local_files: Sequence[str]) -> str:
+    """What ``{input}`` means for this job.
+
+    A name the user gave for a file already on the host wins over an uploaded
+    one: it is the explicit answer, and the whole point of naming it. Empty is
+    allowed -- a command-only job has no input file at all, and the templates
+    that do not mention one run perfectly well without.
+    """
+    if job.remote_input:
+        return job.remote_input
+    return os.path.basename(local_files[0]) if local_files else ""
+
+
+def name_job_files(job: Job, scheduler) -> None:
+    """Decide what the wrapper writes, and under what names.
+
+    In a directory this plugin made for the job, the shared defaults are
+    fine: nothing else is in there. In one the *user* prepared they are not.
+    That directory holds their files, and very likely other jobs submitted
+    into it -- and two jobs sharing one ``.moleditpy_rc`` means whichever
+    finishes first decides what both are reported to have done. So everything
+    written there carries the job id.
+    """
+    if not job.remote_dir_provided:
+        job.log_file = job.log_file or DEFAULT_LOG_NAME
+        return
+    tag = sanitize_name(job.id, fallback="job")
+    stem, extension = os.path.splitext(scheduler.script_name)
+    job.script_name = job.script_name or f"{stem}_{tag}{extension}"
+    job.log_file = job.log_file or f"moleditpy_{tag}.log"
+    job.sentinel_name = job.sentinel_name or f"{SENTINEL_NAME}_{tag}"
+
+
+def sentinel_for(job: Job) -> str:
+    """The completion file this job writes; the shared name for older jobs."""
+    return job.sentinel_name or SENTINEL_NAME
+
+
+def script_name_for(job: Job, scheduler) -> str:
+    return job.script_name or scheduler.script_name
+
+
+def require_remote_path(
+    transport: Transport, host: HostProfile, path: str, directory: bool = False
+) -> None:
+    """Fail before submitting if a path the user typed is not on the host.
+
+    Only for paths they typed. ``mkdir -p`` would otherwise make the typo,
+    and the job would run in a new empty directory with none of the files it
+    was prepared with -- reported as a clean failure of the calculation
+    rather than as the mistake it is.
+    """
+    result = transport.run(dialect.for_host(host).exists(path, directory=directory))
+    if dialect.PRESENT not in (result.stdout or ""):
+        what = "directory" if directory else "file"
+        raise TransportError(f"No such {what} on {host.name}: {path}")
+
+
+def prepare_remote_dir(transport: Transport, host: HostProfile, job: Job) -> None:
+    """Make the job's directory, or check the one the user named is there."""
+    if job.remote_dir_provided and job.remote_dir:
+        require_remote_path(transport, host, job.remote_dir, directory=True)
+        if job.remote_input:
+            require_remote_path(
+                transport, host, remote_paths.join(job.remote_dir, job.remote_input)
+            )
+        return
+    job.remote_dir = job.remote_dir or make_remote_dir(host, job.name, job_id=job.id)
+    transport.mkdirs(job.remote_dir)
+
+
 def submit_job(
     transport: Transport,
     host: HostProfile,
@@ -80,19 +151,21 @@ def submit_job(
     no-queue scheduler uses it -- a real queue does its own serialising.
     ``run_after_any`` asks for a dependency the predecessor satisfies by
     ending rather than by succeeding.
+
+    Input files are optional: a job may instead run a command over work the
+    user has already staged on the host (``job.remote_dir_provided``).
     """
     scheduler = get_scheduler(host.scheduler)
-    if not local_files:
-        raise ValueError("No input file selected")
+    if not (preset.command_template or "").strip():
+        raise ValueError("No command to run")
 
-    job.remote_dir = job.remote_dir or make_remote_dir(host, job.name, job_id=job.id)
-    job.log_file = job.log_file or DEFAULT_LOG_NAME
-    transport.mkdirs(job.remote_dir)
+    name_job_files(job, scheduler)
+    prepare_remote_dir(transport, host, job)
 
     for path in local_files:
         transport.upload(path, remote_paths.join(job.remote_dir, os.path.basename(path)))
 
-    input_name = os.path.basename(local_files[0])
+    input_name = input_name_for(job, local_files)
     script = scheduler.build_script(
         sanitize_name(job.name),
         preset,
@@ -102,12 +175,14 @@ def submit_job(
         start_after=start_after or job.start_after,
         remote_dir=job.remote_dir,
         run_after_any=run_after_any or job.chain_any,
+        sentinel=sentinel_for(job),
     )
     job.command = script
-    script_remote = remote_paths.join(job.remote_dir, scheduler.script_name)
+    script_name = script_name_for(job, scheduler)
+    script_remote = remote_paths.join(job.remote_dir, script_name)
     _upload_text(transport, script, script_remote)
 
-    submit_cmd = scheduler.submit_command(scheduler.script_name, job.log_file)
+    submit_cmd = scheduler.submit_command(script_name, job.log_file)
     result = transport.run(
         dialect.for_host(host).run_in(job.remote_dir, submit_cmd),
         timeout=max(60, int(host.command_timeout or 60)),
@@ -178,25 +253,27 @@ def submit_to_runner(
     """
     scheduler = get_scheduler(host.scheduler)
     flavour = remote_runner.flavour_for(host)
-    if not local_files:
-        raise ValueError("No input file selected")
+    if not (preset.command_template or "").strip():
+        raise ValueError("No command to run")
 
-    job.remote_dir = job.remote_dir or make_remote_dir(host, job.name, job_id=job.id)
-    job.log_file = job.log_file or DEFAULT_LOG_NAME
-    transport.mkdirs(job.remote_dir)
+    name_job_files(job, scheduler)
+    prepare_remote_dir(transport, host, job)
     for path in local_files:
         transport.upload(path, remote_paths.join(job.remote_dir, os.path.basename(path)))
 
     script = scheduler.build_script(
         sanitize_name(job.name),
         preset,
-        os.path.basename(local_files[0]),
+        input_name_for(job, local_files),
         job.log_file,
         start_after=job.start_after,
         remote_dir=job.remote_dir,
+        sentinel=sentinel_for(job),
     )
     job.command = script
-    _upload_text(transport, script, remote_paths.join(job.remote_dir, scheduler.script_name))
+    # Not `script_name`: that name belongs to the runner's own script below.
+    job_script_name = script_name_for(job, scheduler)
+    _upload_text(transport, script, remote_paths.join(job.remote_dir, job_script_name))
 
     directory = remote_runner.runner_dir(host.remote_root)
     setup = transport.run(
@@ -234,7 +311,7 @@ def submit_to_runner(
     entry = remote_runner.entry_name(sequence, job.id, flavour.ENTRY_SUFFIX)
     job_script = flavour.build_job_script(
         job.remote_dir,
-        scheduler.script_name,
+        job_script_name,
         job.log_file,
         entry=entry,
         directory=directory,
@@ -454,7 +531,7 @@ def poll_host(transport: Transport, host: HostProfile, jobs: Sequence[Job]) -> D
 def _read_sentinels(transport: Transport, jobs: Sequence[Job]) -> List[str]:
     """One command reads every finished job's exit-code file."""
     speak = dialect.for_host(transport.host)
-    paths = [remote_paths.join(job.remote_dir, SENTINEL_NAME) for job in jobs]
+    paths = [remote_paths.join(job.remote_dir, sentinel_for(job)) for job in jobs]
     result = transport.run(speak.read_files(paths, _SENTINEL_MARK))
 
     chunks = (result.stdout or "").split(_SENTINEL_MARK)[1:]
@@ -605,9 +682,15 @@ __all__ = [
     "apply_queue_limits",
     "cancel_job",
     "fetch_results",
+    "input_name_for",
     "list_remote_files",
     "make_remote_dir",
+    "name_job_files",
     "poll_host",
+    "prepare_remote_dir",
+    "require_remote_path",
+    "script_name_for",
+    "sentinel_for",
     "queue_paused",
     "select_files",
     "set_queue_paused",

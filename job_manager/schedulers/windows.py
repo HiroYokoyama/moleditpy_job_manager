@@ -101,9 +101,13 @@ class WindowsScheduler(Scheduler):
         start_after: float = 0.0,
         remote_dir: str = "",
         run_after_any: bool = False,
+        sentinel: str = "",
     ) -> str:
         """The whole wrapper, in PowerShell rather than bash."""
         from ..models import SENTINEL_NAME
+
+        # Per job wherever the directory is shared; see Scheduler.build_script.
+        sentinel = sentinel or SENTINEL_NAME
 
         # The directive block is built by directives() and used here rather
         # than being written out a second time: this scheduler overrides
@@ -126,7 +130,7 @@ class WindowsScheduler(Scheduler):
             # how a sentinel once ended up somewhere nobody read it.
             lines.append(f"Set-Location -LiteralPath {ps_quote(remote_dir)}")
         lines.append("if (-not $?) { exit 1 }")
-        lines.append(f"Remove-Item -Force -ErrorAction SilentlyContinue {ps_quote(SENTINEL_NAME)}")
+        lines.append(f"Remove-Item -Force -ErrorAction SilentlyContinue {ps_quote(sentinel)}")
         lines += self._start_time_block(start_after)
         lines += self._predecessor_wait_block(run_after)
         lines += [
@@ -147,7 +151,7 @@ class WindowsScheduler(Scheduler):
             if command.strip():
                 lines.append(f"    {command.strip()}")
         lines += [
-            f"    {format_command(preset.command_template, input_name, preset)}",
+            f"    {format_command(preset.command_template, input_name, preset, job_name, remote_dir)}",
             # Read at once and defaulted: $LASTEXITCODE is set by native
             # executables only, and holds the *previous* program's status when
             # the command was a cmdlet.
@@ -171,10 +175,10 @@ class WindowsScheduler(Scheduler):
             # writes, and a poll landing in that window reads an empty file --
             # indistinguishable from a missing one, so a finished job would be
             # reported LOST. Move-Item -Force replaces in one step.
-            f"    Set-Content -Path {ps_quote(SENTINEL_NAME + '.tmp')} "
+            f"    Set-Content -Path {ps_quote(sentinel + '.tmp')} "
             "-Value $__moleditpy_rc -Encoding ascii",
-            f"    Move-Item -LiteralPath {ps_quote(SENTINEL_NAME + '.tmp')} "
-            f"-Destination {ps_quote(SENTINEL_NAME)} -Force",
+            f"    Move-Item -LiteralPath {ps_quote(sentinel + '.tmp')} "
+            f"-Destination {ps_quote(sentinel)} -Force",
             "}",
             "exit $__moleditpy_rc",
             "",

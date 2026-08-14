@@ -97,14 +97,23 @@ _BRACE_RE = re.compile(r"\{(\w+)\}")
 _SQUARE_RE = re.compile(r"\[(\w+)\]")
 
 
-def placeholder_values(input_name: str, preset: SubmitPreset) -> Dict[str, str]:
-    """Every tag a command template may use, resolved for this job."""
+def placeholder_values(
+    input_name: str, preset: SubmitPreset, job_name: str = "", remote_dir: str = ""
+) -> Dict[str, str]:
+    """Every tag a command template may use, resolved for this job.
+
+    ``name`` and ``jobdir`` are what a job with no input file at all has to
+    work with: a command that runs over a directory already prepared on the
+    host names it, rather than a file this plugin uploaded.
+    """
     stem = posixpath.splitext(input_name)[0] if input_name else ""
     return {
         "input": input_name,
         "basename": input_name,
         "stem": stem,
         "output": f"{stem}.out" if stem else "",
+        "name": job_name,
+        "jobdir": remote_dir,
         "nodes": preset.nodes,
         "ntasks": preset.ntasks,
         "cpus": preset.cpus_per_task,
@@ -115,7 +124,13 @@ def placeholder_values(input_name: str, preset: SubmitPreset) -> Dict[str, str]:
     }
 
 
-def format_command(template: str, input_name: str, preset: SubmitPreset) -> str:
+def format_command(
+    template: str,
+    input_name: str,
+    preset: SubmitPreset,
+    job_name: str = "",
+    remote_dir: str = "",
+) -> str:
     """Substitute the placeholders a command template may use.
 
     Only *known* tags are touched, one at a time, rather than handing the whole
@@ -123,7 +138,7 @@ def format_command(template: str, input_name: str, preset: SubmitPreset) -> str:
     ``awk '{print $1}'``, ``if [ -f x ]`` -- made format() raise, and the old
     fallback then ran the template with nothing substituted at all.
     """
-    values = placeholder_values(input_name, preset)
+    values = placeholder_values(input_name, preset, job_name, remote_dir)
 
     def replace(match: "re.Match[str]") -> str:
         key = match.group(1)
@@ -172,8 +187,16 @@ class Scheduler(ABC):
         start_after: float = 0.0,
         remote_dir: str = "",
         run_after_any: bool = False,
+        sentinel: str = SENTINEL_NAME,
     ) -> str:
-        """Assemble the complete run script, sentinel included."""
+        """Assemble the complete run script, sentinel included.
+
+        ``sentinel`` is a parameter because a job running in a directory the
+        user prepared shares it: with one fixed name, two such jobs overwrite
+        each other's exit code and whichever finished first decides what both
+        are reported to have done.
+        """
+        sentinel = sentinel or SENTINEL_NAME
         lines: List[str] = ["#!/bin/bash"]
         lines += self.directives(sanitize_name(job_name), preset, log_file)
         dependency = self.dependency_directives(run_after, any_outcome=run_after_any)
@@ -184,7 +207,7 @@ class Scheduler(ABC):
         lines += [
             "",
             self.cd_to_job_dir(remote_dir),
-            f"rm -f {SENTINEL_NAME}",
+            f"rm -f {quote(sentinel)}",
             # An EXIT trap, not a trailing echo: a payload that calls `exit`
             # itself (or a pre-command that fails under `set -e`) would never
             # reach a trailing line, and the job would look LOST rather than
@@ -193,8 +216,8 @@ class Scheduler(ABC):
             # `>` truncates first, so a poll landing between the truncation and
             # the write reads an empty file -- which the reading side cannot
             # tell from a missing one, and reports a finished job as LOST.
-            f'trap \'__moleditpy_rc=$?; echo "$__moleditpy_rc" > {SENTINEL_NAME}.tmp'
-            f" && mv -f {SENTINEL_NAME}.tmp {SENTINEL_NAME}' EXIT",
+            f'trap \'__moleditpy_rc=$?; echo "$__moleditpy_rc" > {quote(sentinel + ".tmp")}'
+            f" && mv -f {quote(sentinel + '.tmp')} {quote(sentinel)}' EXIT",
             # Without these, a job the scheduler kills -- walltime exceeded,
             # preemption, scancel, node drain -- reaches the EXIT trap with $?
             # still 0 and is recorded as a clean success. Each killing signal
@@ -221,7 +244,7 @@ class Scheduler(ABC):
                 lines.append(command.strip())
         lines += [
             "",
-            format_command(preset.command_template, input_name, preset),
+            format_command(preset.command_template, input_name, preset, job_name, remote_dir),
             "",
         ]
         return "\n".join(lines)

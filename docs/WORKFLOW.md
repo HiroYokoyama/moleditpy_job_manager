@@ -98,12 +98,52 @@ Both spellings work, so you never have to fight the shell:
 | `{basename}` | the same thing, spelled differently |
 | `{stem}` / `[stem]` | that name without its extension |
 | `{output}` / `[output]` | `<stem>.out` |
+| `{name}` / `[name]` | the job name |
+| `{jobdir}` / `[jobdir]` | the directory on the host the job runs in |
 | `{ntasks}` `{nodes}` `{cpus}` | the resource fields |
 | `{cpus_per_task}` | a longer spelling of `{cpus}` |
 | `{memory}` `{walltime}` `{queue}` | likewise |
 
 Unknown tags are left verbatim, and shell syntax that merely looks like a tag —
 `awk '{print $1}'`, `if [ -f x ]` — is passed through untouched.
+
+### Work that is already on the host
+
+Files staged on the cluster days ago — generated there, copied with `rsync`,
+left over from a previous run — do not need uploading again. Tick **Work
+already on the host** and give the directory:
+
+| Field | Meaning |
+|---|---|
+| **Directory** | where the job runs. `~/runs/mol42` or an absolute path. It must already exist |
+| **Input file there** | optional; a file in that directory, which `{input}` and `{stem}` then stand for |
+
+**Check** asks the host what is in the directory before you commit to it, and
+says so if the input file you named is not among them.
+
+Input files stay optional throughout. With none, this is a **command-only job**:
+whatever you type in **Command** is what runs, over what is there. Any files you
+*do* list are uploaded into that same directory alongside it.
+
+Two things differ from an ordinary job, both because the directory is yours
+rather than the plugin's:
+
+- **It is checked, not created.** A directory that is not there is an error at
+  submit time, rather than a `mkdir -p` of the typo and a job that runs in an
+  empty directory.
+- **Everything the wrapper writes carries the job id** — `moleditpy_<id>.sh`,
+  `moleditpy_<id>.log`, `.moleditpy_rc_<id>`. So you can submit several jobs
+  into one prepared directory without them overwriting each other's exit code,
+  which is the one collision that would make a finished job report the wrong
+  outcome.
+
+Results are fetched from that directory by the usual patterns, and downloaded
+to the shared download folder — there is no local input for them to sit beside.
+Nothing there is ever deleted or renamed.
+
+Submitting with no input files *and* no directory is allowed as well, and asks
+first: the command then runs in a new empty directory, which is occasionally
+what you want and much more often a file you forgot to add.
 
 ### Saving your own template
 

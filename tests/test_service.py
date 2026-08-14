@@ -49,6 +49,63 @@ class ServiceTestCase(unittest.TestCase):
         return self.service.submit(self.host, preset, "mol", [self.input_path], **kwargs)
 
 
+class TestSubmittingWorkAlreadyOnTheHost(ServiceTestCase):
+    """The service's half of a command-only job; the rest is in
+    tests/test_command_only.py."""
+
+    def setUp(self):
+        super().setUp()
+        self.transport.when("PRESENT", stdout="PRESENT\n")
+
+    def submit_there(self, **kwargs):
+        defaults = dict(remote_dir="~/runs/mol42", remote_input="mol.inp")
+        defaults.update(kwargs)
+        return self.service.submit(self.host, make_preset(), "", [], **defaults)
+
+    def test_the_directory_is_recorded_as_the_users_own(self):
+        job = self.submit_there()
+        self.assertEqual(job.remote_dir, "~/runs/mol42")
+        self.assertTrue(job.remote_dir_provided)
+
+    def test_an_unnamed_job_is_named_after_what_it_is_about(self):
+        self.assertEqual(self.submit_there().name, "mol.inp")
+        self.assertEqual(self.submit_there(remote_input="").name, "mol42")
+
+    def test_the_stored_job_keeps_the_names_the_wrapper_was_written_with(self):
+        # The poller reads the sentinel by name; a stored job left on the
+        # shared default would look LOST for ever.
+        job = self.submit_there()
+        stored = self.store.jobs[job.id]
+        self.assertTrue(stored.sentinel_name.endswith(stored.id))
+        self.assertIn(stored.id, stored.script_name)
+
+    def test_results_go_to_the_download_folder(self):
+        # There is no local input for them to sit beside.
+        job = self.submit_there()
+        self.assertTrue(job.local_dir.startswith(self.store.download_root()))
+
+    def test_a_missing_directory_fails_the_job_rather_than_creating_it(self):
+        self.transport.clear_rules()
+        self.transport.when("sbatch", stdout="4242\n")
+        job = self.submit_there()
+        self.assertEqual(job.state, STATE_FAILED)
+        self.assertIn("~/runs/mol42", job.last_error)
+        self.assertFalse(self.transport.ran("mkdir -p ~/runs/mol42"))
+
+    def test_listing_a_remote_directory(self):
+        seen = []
+        self.transport.when("ls -p", stdout="a.out\nb.out\nsub/\n")
+        self.service.list_remote_dir(self.host, "~/runs/mol42", seen.append)
+        self.assertEqual(seen, [["a.out", "b.out"]])
+
+    def test_listing_a_directory_that_is_not_there_reports_it(self):
+        self.transport.clear_rules()
+        failures = []
+        self.service.list_remote_dir(self.host, "~/nope", lambda names: None, failures.append)
+        self.assertTrue(failures)
+        self.assertIn("~/nope", failures[0])
+
+
 class TestSubmit(ServiceTestCase):
     def test_job_is_recorded_immediately(self):
         job = self.submit()

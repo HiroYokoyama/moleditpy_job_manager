@@ -66,12 +66,18 @@ class SubmitDialog(QDialog):
         name: str = "",
         host_id: str = "",
         preset: Optional[dict] = None,
+        remote_dir: str = "",
+        remote_input: str = "",
     ) -> None:
         """Populate the form from outside.
 
         Used by the input-generator handoff (a file that was just written) and
         by Resubmit (a previous job's host, preset and inputs).
         """
+        if remote_dir:
+            self.box_remote.setChecked(True)
+            self.txt_remote_dir.setText(remote_dir)
+            self.txt_remote_input.setText(remote_input)
         if host_id:
             index = self.cmb_host.findData(host_id)
             if index >= 0:
@@ -90,6 +96,8 @@ class SubmitDialog(QDialog):
             self.txt_job_name.setText(name)
         elif files:
             self.txt_job_name.setText(os.path.splitext(os.path.basename(files[0]))[0])
+        elif remote_input:
+            self.txt_job_name.setText(os.path.splitext(os.path.basename(remote_input))[0])
         self._reload_templates()
         self._apply_suggested_template()
         self._refresh_preview()
@@ -110,7 +118,7 @@ class SubmitDialog(QDialog):
         top.addRow("Job name", self.txt_job_name)
         layout.addLayout(top)
 
-        files_box = QGroupBox("Input files (the first one is passed to the command)")
+        files_box = QGroupBox("Input files to upload (the first one is passed to the command)")
         files_layout = QVBoxLayout(files_box)
         self.list_files = QListWidget()
         files_layout.addWidget(self.list_files)
@@ -124,6 +132,7 @@ class SubmitDialog(QDialog):
         row.addStretch(1)
         files_layout.addLayout(row)
         layout.addWidget(files_box)
+        layout.addWidget(self._build_remote_box())
 
         tabs = QTabWidget()
         tabs.addTab(self._build_resources_tab(), "Resources")
@@ -144,6 +153,112 @@ class SubmitDialog(QDialog):
         box.accepted.connect(self._submit)
         box.rejected.connect(self.reject)
         layout.addWidget(box)
+
+    def _build_remote_box(self) -> QWidget:
+        """Point the job at work that is already on the host.
+
+        The case this exists for: the files were staged on the cluster days
+        ago -- generated there, copied with rsync, left over from a previous
+        run -- and what is wanted from MoleditPy is only the submitting and
+        the watching. Uploading a local copy of something already there is
+        both pointless and, if the two have drifted, wrong.
+        """
+        box = QGroupBox("Work already on the host")
+        box.setCheckable(True)
+        box.setChecked(False)
+        box.setToolTip(
+            "Run the job in a directory that is already on the host, instead "
+            "of in a new one made for it.\n\n"
+            "Input files stay optional: with none, this submits a command "
+            "over what is there. Any that are listed above are uploaded into "
+            "that directory alongside it."
+        )
+        self.box_remote = box
+        form = QFormLayout(box)
+
+        self.txt_remote_dir = QLineEdit()
+        self.txt_remote_dir.setPlaceholderText("~/runs/mol42")
+        self.txt_remote_dir.setToolTip(
+            "An absolute path, or one relative to your home directory on the "
+            "host. It must exist: submitting checks, rather than creating it, "
+            "so a typo is caught here instead of producing a job that runs in "
+            "an empty directory."
+        )
+        self.txt_remote_input = QLineEdit()
+        self.txt_remote_input.setPlaceholderText("mol.inp (optional)")
+        self.txt_remote_input.setToolTip(
+            "A file already in that directory, which {input} and {stem} then "
+            "stand for -- so the usual command templates work unchanged.\n\n"
+            "Leave it empty for a command that names its own files."
+        )
+        self.lbl_remote = QLabel("")
+        self.lbl_remote.setWordWrap(True)
+        self.lbl_remote.setStyleSheet("color: palette(mid);")
+
+        check_row = QWidget()
+        check_layout = QHBoxLayout(check_row)
+        check_layout.setContentsMargins(0, 0, 0, 0)
+        self.btn_check_remote = QPushButton("Check")
+        self.btn_check_remote.setToolTip("Ask the host what is in that directory.")
+        self.btn_check_remote.clicked.connect(self._check_remote_dir)
+        check_layout.addWidget(self.btn_check_remote)
+        check_layout.addStretch(1)
+
+        form.addRow("Directory", self.txt_remote_dir)
+        form.addRow("Input file there", self.txt_remote_input)
+        form.addRow("", check_row)
+        form.addRow("", self.lbl_remote)
+
+        box.toggled.connect(self._on_remote_toggled)
+        self.txt_remote_dir.textChanged.connect(self._refresh_preview)
+        self.txt_remote_input.textChanged.connect(self._refresh_preview)
+        return box
+
+    def _on_remote_toggled(self, checked: bool) -> None:
+        if not checked:
+            self.lbl_remote.setText("")
+        self._refresh_preview()
+
+    def remote_dir(self) -> str:
+        """The host directory to run in, or "" for a new one per job."""
+        if not self.box_remote.isChecked():
+            return ""
+        return self.txt_remote_dir.text().strip()
+
+    def remote_input(self) -> str:
+        """A file already on the host standing in for the uploaded input."""
+        if not self.box_remote.isChecked():
+            return ""
+        return self.txt_remote_input.text().strip()
+
+    def _check_remote_dir(self) -> None:
+        host = self.current_host()
+        path = self.txt_remote_dir.text().strip()
+        if host is None or not path:
+            self.lbl_remote.setText("Enter the directory first.")
+            return
+        if not ensure_password(self.service, host, self):
+            return
+        self.lbl_remote.setText(f"Looking at {path} on {host.name}...")
+        self.btn_check_remote.setEnabled(False)
+
+        def done(names: List[str]) -> None:
+            self.btn_check_remote.setEnabled(True)
+            wanted = self.txt_remote_input.text().strip()
+            if not names:
+                self.lbl_remote.setText(f"{path} is there, but has no files in it.")
+                return
+            shown = ", ".join(names[:6]) + (", ..." if len(names) > 6 else "")
+            text = f"{len(names)} file(s): {shown}"
+            if wanted and wanted not in names:
+                text += f"\nBut “{wanted}” is not one of them."
+            self.lbl_remote.setText(text)
+
+        def failed(message: str) -> None:
+            self.btn_check_remote.setEnabled(True)
+            self.lbl_remote.setText(message)
+
+        self.service.list_remote_dir(host, path, done, failed)
 
     def _build_resources_tab(self) -> QWidget:
         page = QWidget()
@@ -678,7 +793,11 @@ class SubmitDialog(QDialog):
             self.txt_preview.setPlainText("Add a host profile first (Hosts...).")
             return
         files = self.selected_files()
-        input_name = os.path.basename(files[0]) if files else "input.inp"
+        input_name = self.remote_input() or (os.path.basename(files[0]) if files else "")
+        if not input_name and not self.remote_dir():
+            # Nothing chosen yet: show what a job with an input would look
+            # like, rather than a script with an empty command in it.
+            input_name = "input.inp"
         try:
             scheduler = get_scheduler(host.scheduler)
         except ValueError as exc:
@@ -696,7 +815,7 @@ class SubmitDialog(QDialog):
             start_after=self.selected_start_time(),
             # Built the same way submitting will build it, so the preview shows
             # the directory the script really cds into (bar the timestamp).
-            remote_dir=make_remote_dir(host, name),
+            remote_dir=self.remote_dir() or make_remote_dir(host, name),
         )
         self.txt_preview.setPlainText(script)
 
@@ -726,9 +845,6 @@ class SubmitDialog(QDialog):
             QMessageBox.warning(self, "Submit", "Add a host profile first.")
             return
         files = self.selected_files()
-        if not files:
-            QMessageBox.warning(self, "Submit", "Select at least one input file.")
-            return
         missing = [path for path in files if not os.path.isfile(path)]
         if missing:
             QMessageBox.warning(self, "Submit", f"File not found:\n{missing[0]}")
@@ -737,9 +853,26 @@ class SubmitDialog(QDialog):
         if not preset.command_template.strip():
             QMessageBox.warning(self, "Submit", "Enter the command to run.")
             return
+        remote_dir = self.remote_dir()
+        if self.box_remote.isChecked() and not remote_dir:
+            QMessageBox.warning(
+                self, "Submit", "Enter the directory on the host, or untick the box."
+            )
+            return
+        if not files and not remote_dir:
+            # Not an error -- a command that needs no input of its own is a
+            # real job -- but it is far more often a forgotten file.
+            confirm = QMessageBox.question(
+                self,
+                "Submit",
+                "No input files, and no directory on the host.\n\n"
+                "The command will run in a new, empty directory. Submit anyway?",
+            )
+            if confirm != QMessageBox.StandardButton.Yes:
+                return
         if not ensure_password(self.service, host, self):
             return
-        name = self.txt_job_name.text().strip() or os.path.basename(files[0])
+        name = self.txt_job_name.text().strip() or self._default_job_name(files, remote_dir)
         after = self.chain_predecessor() if self.chain_requested() else None
         self.service.submit(
             host,
@@ -749,5 +882,17 @@ class SubmitDialog(QDialog):
             after_job=after,
             start_after=self.selected_start_time(),
             chain_any=self.chain_any_requested(),
+            remote_dir=remote_dir,
+            remote_input=self.remote_input(),
         )
         self.accept()
+
+    def _default_job_name(self, files: List[str], remote_dir: str) -> str:
+        """What the job is called when the user did not name it."""
+        if files:
+            return os.path.basename(files[0])
+        if self.remote_input():
+            return os.path.basename(self.remote_input())
+        if remote_dir:
+            return os.path.basename(remote_dir.rstrip("/\\")) or "job"
+        return "job"

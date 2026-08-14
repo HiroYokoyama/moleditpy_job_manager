@@ -497,7 +497,9 @@ class JobsDialog(QDialog):
         self.btn_download.setEnabled(bool(job and job.remote_dir))
         self.btn_open.setEnabled(bool(job and job.downloaded_files))
         self.btn_tail.setEnabled(bool(job and job.remote_dir))
-        self.btn_resubmit.setEnabled(bool(job and job.input_files))
+        # A command-only job has no input files to check for; what makes it
+        # resubmittable is the command, which the preset snapshot carries.
+        self.btn_resubmit.setEnabled(bool(job and (job.input_files or job.preset)))
         self.btn_remove.setEnabled(has_job)
 
     # --- actions ------------------------------------------------------------
@@ -508,6 +510,8 @@ class JobsDialog(QDialog):
         name: str = "",
         host_id: str = "",
         preset: Optional[dict] = None,
+        remote_dir: str = "",
+        remote_input: str = "",
     ) -> None:
         from .submit_dialog import SubmitDialog
 
@@ -517,8 +521,15 @@ class JobsDialog(QDialog):
             if not self.service.store.hosts:
                 return
         dialog = SubmitDialog(self.service, self)
-        if files or name or host_id or preset:
-            dialog.prefill(files=files, name=name, host_id=host_id, preset=preset)
+        if files or name or host_id or preset or remote_dir:
+            dialog.prefill(
+                files=files,
+                name=name,
+                host_id=host_id,
+                preset=preset,
+                remote_dir=remote_dir,
+                remote_input=remote_input,
+            )
         dialog.exec()
 
     def _resubmit_selected(self) -> None:
@@ -547,6 +558,10 @@ class JobsDialog(QDialog):
             name=job.name,
             host_id=job.host_id,
             preset=job.preset or None,
+            # A job that ran on work already staged on the host is resubmitted
+            # against that same directory: there is no local input to send.
+            remote_dir=job.remote_dir if job.remote_dir_provided else "",
+            remote_input=job.remote_input,
         )
 
     def open_hosts_dialog(self) -> None:

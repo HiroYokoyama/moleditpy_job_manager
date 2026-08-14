@@ -11,8 +11,8 @@ Gaussian ``.gjf``/``.com``, NWChem ``.nw``, Psi4 ``.dat``/``.in``, PySCF a
 ``.py`` script, and so on.
 
 Placeholders are the ones :func:`job_manager.schedulers.base.format_command`
-substitutes: ``{input}``, ``{stem}``, ``{basename}``, ``{nodes}``, ``{ntasks}``,
-``{cpus}``, ``{memory}``, ``{queue}``, ``{walltime}``.
+substitutes: ``{input}``, ``{stem}``, ``{basename}``, ``{name}``, ``{jobdir}``,
+``{nodes}``, ``{ntasks}``, ``{cpus}``, ``{memory}``, ``{queue}``, ``{walltime}``.
 """
 
 from __future__ import annotations
