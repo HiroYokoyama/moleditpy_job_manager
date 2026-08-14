@@ -41,9 +41,12 @@ kept in ``sequence``, and the new number is one past that or the queue,
 whichever is greater. Names are zero padded so a plain ``ls`` reads in order,
 and the runner sorts numerically so passing 9999 does not invert it.
 
-**Nothing generated is overwritten or deleted.** Entries move ``queue/`` ->
-``running/`` -> ``done/`` and stay; only a finished job's pid file goes, which
-records nothing. The runner script is named after a digest of its own contents,
+**Nothing that is a record is overwritten or deleted.** Entries move
+``queue/`` -> ``running/`` -> ``done/`` and stay, and so does ``status/``. What
+does go is a finished job's pid file, the lock, and -- in the wrapper, before
+its trap is installed -- a stale ``.moleditpy_rc`` from an earlier run in the
+same directory, so that a killed run cannot report the previous attempt's exit
+code as its own. The runner script is named after a digest of its own contents,
 so an upgrade is a new file rather than a rewrite of the one a running runner
 is reading by byte offset.
 

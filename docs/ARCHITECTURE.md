@@ -162,8 +162,10 @@ What matters at this level:
   detected identically: the sentinel above, not the runner's opinion.
 * **Polling costs one command per host per cycle**, the same contract `squeue`
   meets.
-* **Nothing generated is overwritten or deleted** — a running runner is reading
-  its own script by byte offset, and a job's outputs are a record.
+* **Nothing that is a record is overwritten or deleted** — a running runner is
+  reading its own script by byte offset, and a job's outputs are a record. The
+  exceptions are deliberate and small: a finished job's pid file, the lock, and
+  a stale sentinel cleared before a wrapper runs.
 
 ## State machine
 

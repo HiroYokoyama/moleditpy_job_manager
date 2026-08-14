@@ -98,6 +98,26 @@ class ScriptContractMixin:
             script.index("run mol.inp"),
         )
 
+    def test_the_stale_sentinel_goes_before_the_trap_is_installed(self):
+        # Otherwise there is a window in which the trap could fire with the
+        # previous run's exit code still on disk, and a job killed in it would
+        # be reported as having finished with that earlier attempt's status.
+        script = self.build()
+        self.assertLess(
+            script.index(f"rm -f {SENTINEL_NAME}"),
+            script.index("trap '__moleditpy_rc"),
+        )
+
+    def test_the_wrapper_removes_nothing_else(self):
+        # The job directory holds the user's inputs and outputs. The sentinel
+        # is the only thing in it the plugin is entitled to delete.
+        removals = [
+            line.strip()
+            for line in self.build().splitlines()
+            if line.strip().startswith(("rm ", "rm -"))
+        ]
+        self.assertEqual(removals, [f"rm -f {SENTINEL_NAME}"])
+
     def test_job_name_is_sanitized_into_the_directives(self):
         # A raw name with a space would break every directive syntax.
         self.assertNotIn("my job", self.build())

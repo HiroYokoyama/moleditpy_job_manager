@@ -141,10 +141,33 @@ invert the queue.
 Two clients racing for a number can come away with the same one. That is a tie,
 broken by the job id already in the name, not a job running out of turn.
 
-### Nothing generated is overwritten or deleted
+### Nothing that is a record is overwritten or deleted
 
-Entries move `queue/` → `running/` → `done/` and stay. `status/` is kept.
-Only a finished job's pid file is removed, which records nothing.
+Entries move `queue/` → `running/` → `done/` and stay. `status/` is kept. Your
+job directories, inputs, logs and outputs are never touched.
+
+Exactly four things are removed, and none of them is a record:
+
+| Removed | By | Why |
+|---|---|---|
+| `pids/<entry>` | the runner, on reap | the pid of a process that has ended |
+| `lock/` | the runner, on exit | released, or reclaimed when its pid is dead |
+| `paused` | you, by unticking | that is what unpausing is |
+| `.moleditpy_rc` | the wrapper, at the start of a run | see below |
+
+**The sentinel is cleared before the run, not after it.** A stale exit code left
+in the job directory would otherwise be read as *this* run's outcome if this run
+were killed before writing its own — reporting a fresh job as having finished
+with the previous attempt's status. Clearing it first makes "no sentinel" mean
+what it should: the wrapper never finished, so `LOST`.
+
+It is removed before the `EXIT` trap is installed, so there is no window where a
+stale value could be picked up. Nothing is lost by it either: the exit code is
+already in the job list, and in `status/` for a queued job, and `.moleditpy_rc`
+is a dotfile so it is never among the results fetched back.
+
+This only ever matters when a wrapper is re-run by hand in a directory that has
+already been used — every submission gets a directory of its own.
 
 The runner script is named after a digest of its own contents, so an upgrade is
 a **new file**. A runner already up is executing the old one, and bash reads a
