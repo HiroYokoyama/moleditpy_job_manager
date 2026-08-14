@@ -35,6 +35,35 @@ file sits *is* the answer, which is why the whole queue can be read, reordered
 or emptied over plain `ssh` with `ls` and `mv`. Nothing needs this plugin to
 make sense of it.
 
+## The entry name: `job_0007_a1b2c3d4e5f6.sh`
+
+Two halves, deliberately not the same thing.
+
+| Half | Is | Comes from | Answers |
+|---|---|---|---|
+| `0007` | the dispatch number | claimed from the host's `sequence` | *when* — position in the queue |
+| `a1b2c3d4e5f6` | the job id | the job record, a `uuid4` prefix | *who* — which job in your list |
+
+Neither can do the other's work:
+
+- **A uuid has no order.** Sorting on it would dispatch at random, so the queue
+  needs a number that counts.
+- **A number is not an identity.** It is claimed on the host, at submit time,
+  *after* the job record already exists — and two clients racing can be handed
+  the same one. The id is what makes the filename unique regardless, which is
+  why that race is a tie in the ordering rather than a collision.
+- **The plugin maps entries back to jobs by id.** One listing per poll returns
+  `<dir> <entry>` lines, and the id in the name is what turns those into job
+  states without opening a single file.
+- **Dependencies are by id too.** `# moleditpy-after:` names a job, and the
+  runner finds it with `ls | grep -- "_<id>.sh$"` across `queue/`, `running/`
+  and `done/`. A number would be no use here: a job does not know its
+  predecessor's queue position, and that position is meaningless once the
+  predecessor has run.
+
+So the number orders the queue and the id identifies the job, and the name
+carries both because the runner needs to do both things with an `ls`.
+
 ## What a queue entry is
 
 One self-contained script per job:

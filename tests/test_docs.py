@@ -334,3 +334,12 @@ class TestTheRunnerDocument(unittest.TestCase):
         # a user looking for a file that is not there.
         self.assertIn("moleditpy_runner_<digest>.sh", self.text)
         self.assertNotIn("moleditpy_runner.sh`", self.text)
+
+    def test_it_explains_why_the_name_carries_both_halves(self):
+        # The obvious question about job_0007_<id>: the number orders the
+        # queue, the id identifies the job, and neither can do the other's job.
+        entry = self.runner.entry_name(7, "a1b2c3d4e5f6")
+        self.assertIn(entry, self.text)
+        self.assertEqual(self.runner.parse_entry(entry), (7, "a1b2c3d4e5f6"))
+        self.assertIn("dispatch number", self.text)
+        self.assertIn("job id", self.text)
