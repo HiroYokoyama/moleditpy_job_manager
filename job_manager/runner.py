@@ -255,7 +255,16 @@ def submit_to_runner(
 
     # Only now: a runner started before the job was queued could empty the
     # queue and exit before it arrived.
-    transport.run(flavour.ensure_runner_command(directory))
+    # The versioned name, not the default: the script is content-addressed, so
+    # starting "the runner" by a fixed name starts a file that is not there.
+    started = transport.run(flavour.ensure_runner_command(directory, script_name))
+    if "missing" in (started.stdout or ""):
+        # The queue would sit there for ever otherwise, with the job showing
+        # PENDING and nothing on the host to move it.
+        raise TransportError(
+            f"The job was queued, but the helper script {script_name} is not on the host, "
+            "so nothing will start it."
+        )
 
     job.remote_job_id = entry
     job.submitted_at = time.time()
@@ -266,16 +275,6 @@ def submit_to_runner(
 def _digest(text: str) -> str:
     """Identifies one runner script. Short: it is compared, never trusted."""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
-
-
-def _entry_names(stdout: str) -> List[str]:
-    """Every queue entry name in a ``list_command`` result."""
-    names = []
-    for line in (stdout or "").splitlines():
-        parts = line.split()
-        if len(parts) == 2:
-            names.append(parts[1])
-    return names
 
 
 def poll_runner(transport: Transport, host: HostProfile, jobs: Sequence[Job]) -> Dict[str, str]:

@@ -234,6 +234,20 @@ rebooted machine, would otherwise lock the host out of its own queue for ever.
 `mkdir` is the lock rather than `flock` because it is atomic on NFS, which is
 where a cluster home directory usually lives.
 
+`ensure_runner` answers one of three words, and the plugin acts on all three:
+
+| Answer | Means |
+|---|---|
+| `started` | the lock was taken and a runner was launched |
+| `running` | someone else holds the lock; that runner will pick the job up |
+| `missing` | the script named is not on the host — the submission fails |
+
+The last one exists because **`nohup` reports success for a file that is not
+there**. bash fails a moment later, in the background, into `runner.log` — so
+"started" was a lie, the job sat at PENDING for ever, and the only trace was a
+line in a log nobody reads. The script's presence is now checked before the
+lock is taken, and a submission that cannot be started says so.
+
 ## Scheduling on resources
 
 Two budgets, both defaulting to the machine's real capacity:

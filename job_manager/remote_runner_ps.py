@@ -46,7 +46,9 @@ from .remote_runner import (
 )
 from .schedulers.windows import ps_quote
 
-#: The generated runner. ``.ps1`` so PowerShell will run it at all.
+#: The unversioned name, as in the bash flavour: kept for the harnesses and
+#: for a runner left by an older plugin. What is written and started is
+#: :func:`runner_script_name`.
 RUNNER_SCRIPT_NAME = "moleditpy_runner.ps1"
 #: Queue entries are PowerShell scripts here.
 ENTRY_SUFFIX = ".ps1"
@@ -435,7 +437,7 @@ def enqueue_command(directory: str, entry: str) -> str:
     )
 
 
-def ensure_runner_command(directory: str, script_name: str = RUNNER_SCRIPT_NAME) -> str:
+def ensure_runner_command(directory: str, script_name: str) -> str:
     """One command that guarantees a runner is up, and is safe to repeat.
 
     Run *after* the job is in the queue, never before: a runner started first
@@ -444,6 +446,10 @@ def ensure_runner_command(directory: str, script_name: str = RUNNER_SCRIPT_NAME)
     quoted = ps_quote(directory)
     return (
         f"Set-Location -LiteralPath {quoted}; "
+        # The script has to be there, or "started" would be a lie and the queue
+        # would simply never move.
+        f"if (-not (Test-Path -LiteralPath {ps_quote(script_name)})) "
+        "{ 'missing'; exit 1 }; "
         # Reclaim a lock left behind by a runner that is no longer alive.
         "if (Test-Path -LiteralPath 'lock') { "
         "$p = Get-Content -LiteralPath 'lock\\pid' -ErrorAction SilentlyContinue | "

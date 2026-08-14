@@ -72,7 +72,9 @@ from .remote_paths import quote
 
 #: Directory the runner keeps its state in, under the host's remote root.
 RUNNER_DIRNAME = ".moleditpy_runner"
-#: Name of the generated runner script.
+#: The unversioned name, kept for the test harnesses and for reading a runner
+#: written by a version of this plugin that predates content addressing. What
+#: the plugin writes and starts is :func:`runner_script_name`.
 RUNNER_SCRIPT_NAME = "moleditpy_runner.sh"
 #: Queue entries are bash scripts in this flavour.
 ENTRY_SUFFIX = ".sh"
@@ -195,6 +197,10 @@ def next_sequence(existing: Sequence[str]) -> int:
     Counted over queue, running *and* done: reusing the number of a finished
     job would put a new job ahead of everything waiting, since the number is
     the dispatch order.
+
+    The plugin does not use this -- it claims a number from the host, which is
+    the only way to keep counting across a cleared ``done/``. It is kept for
+    reading a queue, and for the harnesses that build one.
     """
     highest = 0
     for name in existing or ():
@@ -571,7 +577,7 @@ def enqueue_command(directory: str, entry: str) -> str:
     return f'cd {quote(directory)} && mv "tmp/{entry}" "queue/{entry}"'
 
 
-def ensure_runner_command(directory: str, script_name: str = RUNNER_SCRIPT_NAME) -> str:
+def ensure_runner_command(directory: str, script_name: str) -> str:
     """One command that guarantees a runner is up, and is safe to repeat.
 
     Run *after* the job is in the queue, never before: a runner started first
@@ -585,6 +591,11 @@ def ensure_runner_command(directory: str, script_name: str = RUNNER_SCRIPT_NAME)
     """
     return (
         f"cd {quote(directory)} 2>/dev/null || exit 1; "
+        # The script has to be there. nohup reports success for a file that
+        # does not exist -- bash fails a moment later, in the background, into
+        # the runner log -- so "started" would be a lie and the queue would
+        # simply never move.
+        f'if [ ! -f "{script_name}" ]; then echo missing; exit 1; fi; '
         # Reclaim a lock left behind by a runner that is no longer alive.
         "if [ -d lock ]; then p=$(cat lock/pid 2>/dev/null); "
         'if [ -z "$p" ] || ! kill -0 "$p" 2>/dev/null; then rm -rf lock; fi; fi; '
@@ -709,11 +720,6 @@ def is_paused_command(directory: str) -> str:
     return f"if [ -f {path} ]; then echo paused; else echo running; fi"
 
 
-def status_of(stdout: str) -> str:
-    """The exit code a finished job recorded, or ``blocked``/``""``."""
-    return (stdout or "").strip()
-
-
 __all__: List[str] = [
     "AFTER_TAG",
     "CORES_NAME",
@@ -733,7 +739,6 @@ __all__: List[str] = [
     "prepare_command",
     "set_cores_command",
     "set_memory_command",
-    "status_of",
     "RUNNER_DIRNAME",
     "RUNNER_LOG_NAME",
     "RUNNER_POLL_SECONDS",
