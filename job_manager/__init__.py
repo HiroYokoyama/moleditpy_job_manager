@@ -16,14 +16,16 @@ import logging
 from typing import Any, Optional
 
 PLUGIN_NAME = "Job Manager"
-PLUGIN_VERSION = "0.8.1"
+PLUGIN_VERSION = "0.9.0"
 PLUGIN_AUTHOR = "HiroYokoyama"
 PLUGIN_DESCRIPTION = (
     "Submit calculations to remote HPC clusters over SSH, track queue status, "
     "and fetch results back into MoleditPy. Drop an input file on the monitor "
     "and the wizard opens prefilled, reading the memory and core request "
     "straight out of the ORCA, Gaussian, Psi4, NWChem, Q-Chem or GAMESS input; "
-    "results come back next to it and a notification says when. Runs on this "
+    "results come back next to it and a notification says when. Work already "
+    "staged on the cluster is submitted where it sits, with no input file to "
+    "upload at all. Runs on this "
     "machine too, with no SSH -- natively on Windows through PowerShell, with "
     "nothing to install. On a machine with no scheduler it keeps a small queue "
     "of its own that schedules on physical cores and memory, so two large jobs "
