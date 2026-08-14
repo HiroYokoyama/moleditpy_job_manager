@@ -16,7 +16,7 @@ import unittest
 from job_manager import dialect, runner
 from job_manager.models import SENTINEL_NAME, Job, SubmitPreset
 from job_manager.schedulers import get_scheduler
-from job_manager.schedulers.base import format_command, placeholder_values
+from job_manager.schedulers.base import format_command, placeholder_values, references_input
 from job_manager.transport.base import TransportError
 
 from .fakes import FakeTransport, make_host, make_preset
@@ -264,6 +264,52 @@ class TestTheNewPlaceholders(unittest.TestCase):
             remote_dir="~/runs/mol42",
         )
         self.assertIn("./go.sh ~/runs/mol42", script)
+
+
+class TestSpottingACommandThatNeedsAnInput(unittest.TestCase):
+    """`orca {input}` with no input substitutes to `orca ` and fails on the
+    host; the wizard refuses it instead."""
+
+    def test_the_input_tags(self):
+        for template in (
+            "orca {input} > {stem}.out",
+            "g16 [input]",
+            "cp {basename} /tmp",
+            "prog > {output}",
+        ):
+            self.assertTrue(references_input(template), template)
+
+    def test_a_command_that_names_its_own_files(self):
+        for template in ("./run_all.sh", "vasp_std > vasp.out", "tar czf {name}.tgz {jobdir}", ""):
+            self.assertFalse(references_input(template), template)
+
+    def test_shell_syntax_that_only_looks_like_a_tag(self):
+        # The same false positives format_command has to avoid.
+        self.assertFalse(references_input("awk '{print $1}' x"))
+        self.assertFalse(references_input("if [ -f input ]; then ./go.sh; fi"))
+
+
+class TestTheJobNameReachingACommand(unittest.TestCase):
+    def script(self, name):
+        return get_scheduler("slurm").build_script(
+            name, SubmitPreset(command_template="echo {name}"), "", "job.log"
+        )
+
+    def test_it_is_sanitised_like_everything_else_that_is_interpolated(self):
+        # Not "echo my job; rm -rf ~": {name} lands in a command line.
+        self.assertIn("echo my_job_rm_-rf", self.script("my job; rm -rf ~"))
+
+    def test_the_directive_and_the_command_agree(self):
+        script = self.script("opt run")
+        self.assertIn("--job-name=opt_run", script)
+        self.assertIn("echo opt_run", script)
+
+    def test_the_windows_wrapper_agrees_too(self):
+        script = get_scheduler("windows").build_script(
+            "opt run", SubmitPreset(command_template="echo {name}"), "", "job.log"
+        )
+        self.assertIn("echo opt_run", script)
+        self.assertIn("# job: opt_run", script)
 
 
 class TestTheWindowsWrapper(unittest.TestCase):

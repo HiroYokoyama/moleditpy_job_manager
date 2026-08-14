@@ -458,6 +458,7 @@ class TestSubmitDialog(DialogTestCase):
     def test_submit_with_no_input_at_all_asks_first(self):
         # Legal -- a command need not have an input file -- but nearly always
         # a forgotten one, so it is confirmed rather than warned about.
+        self.dialog.txt_command.setText("./run_all.sh")
         with patch(
             "job_manager.submit_dialog.QMessageBox.question",
             return_value=QMessageBox.StandardButton.No,
@@ -548,6 +549,27 @@ class TestTheWorkAlreadyOnTheHostBox(DialogTestCase):
         self.assertEqual(job.remote_input, "staged.inp")
         self.assertEqual(job.input_files, [])
 
+    def test_a_command_that_still_names_an_input_is_refused(self):
+        # The default template is `orca {input} > {stem}.out`, which with no
+        # input at all would run as `orca  > .out` and fail on the host.
+        self.use_remote()
+        with patch("job_manager.submit_dialog.QMessageBox.warning") as warn:
+            self.dialog._submit()
+        warn.assert_called_once()
+        self.assertIn("{input}", warn.call_args.args[2])
+        self.assertEqual(self.store.jobs, {})
+
+    def test_naming_the_input_on_the_host_satisfies_it(self):
+        self.use_remote(input_name="staged.inp")
+        self.dialog._submit()
+        self.assertEqual(len(self.store.jobs), 1)
+
+    def test_a_command_of_its_own_needs_no_input(self):
+        self.use_remote()
+        self.dialog.txt_command.setText("./run_all.sh")
+        self.dialog._submit()
+        self.assertEqual(len(self.store.jobs), 1)
+
     def test_a_ticked_box_with_no_directory_is_refused(self):
         self.dialog.box_remote.setChecked(True)
         with patch("job_manager.submit_dialog.QMessageBox.warning") as warn:
@@ -556,6 +578,7 @@ class TestTheWorkAlreadyOnTheHostBox(DialogTestCase):
         self.assertEqual(self.store.jobs, {})
 
     def test_confirming_a_job_with_no_input_at_all_submits_it(self):
+        self.dialog.txt_command.setText("./run_all.sh")
         with patch(
             "job_manager.submit_dialog.QMessageBox.question",
             return_value=QMessageBox.StandardButton.Yes,

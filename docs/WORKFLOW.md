@@ -98,14 +98,20 @@ Both spellings work, so you never have to fight the shell:
 | `{basename}` | the same thing, spelled differently |
 | `{stem}` / `[stem]` | that name without its extension |
 | `{output}` / `[output]` | `<stem>.out` |
-| `{name}` / `[name]` | the job name |
+| `{name}` / `[name]` | the job name, reduced to safe characters (`opt run` → `opt_run`) |
 | `{jobdir}` / `[jobdir]` | the directory on the host the job runs in |
 | `{ntasks}` `{nodes}` `{cpus}` | the resource fields |
 | `{cpus_per_task}` | a longer spelling of `{cpus}` |
 | `{memory}` `{walltime}` `{queue}` | likewise |
 
 Unknown tags are left verbatim, and shell syntax that merely looks like a tag —
-`awk '{print $1}'`, `if [ -f x ]` — is passed through untouched.
+`awk '{print $1}'`, `if [ -f x ]` — is passed through untouched. Nothing is
+quoted for you, so quote the tag yourself where the value may contain spaces:
+`cd "{jobdir}"`.
+
+A command that names an input — `{input}`, `{basename}`, `{stem}`, `{output}` —
+is refused for a job that has none, rather than submitted as `orca  > .out` for
+you to find in tomorrow's log.
 
 ### Work that is already on the host
 
@@ -139,7 +145,9 @@ rather than the plugin's:
 
 Results are fetched from that directory by the usual patterns, and downloaded
 to the shared download folder — there is no local input for them to sit beside.
-Nothing there is ever deleted or renamed.
+Nothing there is ever deleted or renamed — but a file you *upload* does replace
+one of the same name, which is the one way a prepared directory can lose
+something.
 
 Submitting with no input files *and* no directory is allowed as well, and asks
 first: the command then runs in a new empty directory, which is occasionally

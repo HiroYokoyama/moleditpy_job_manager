@@ -35,7 +35,7 @@ from __future__ import annotations
 import time
 from typing import Dict, Iterable, List
 
-from ..models import SubmitPreset
+from ..models import SubmitPreset, sanitize_name
 from .base import (
     CORES_TAG,
     MEMORY_TAG,
@@ -108,6 +108,9 @@ class WindowsScheduler(Scheduler):
 
         # Per job wherever the directory is shared; see Scheduler.build_script.
         sentinel = sentinel or SENTINEL_NAME
+        # And sanitised here for the same reason it is there: {name} reaches a
+        # command line, and the preview must show the name the job will have.
+        job_name = sanitize_name(job_name)
 
         # The directive block is built by directives() and used here rather
         # than being written out a second time: this scheduler overrides

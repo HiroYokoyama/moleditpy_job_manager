@@ -124,6 +124,22 @@ def placeholder_values(
     }
 
 
+#: Tags that stand for the input file, and so mean nothing without one.
+_INPUT_TAGS = frozenset({"input", "basename", "stem", "output"})
+
+
+def references_input(template: str) -> bool:
+    """True if this command cannot run without an input file name.
+
+    ``orca {input} > {stem}.out`` with no input at all substitutes to
+    ``orca  > .out``, which runs, fails, and leaves the user reading a log to
+    find out why. Asked before submitting instead.
+    """
+    text = template or ""
+    tags = set(_BRACE_RE.findall(text)) | set(_SQUARE_RE.findall(text))
+    return bool(tags & _INPUT_TAGS)
+
+
 def format_command(
     template: str,
     input_name: str,
@@ -197,8 +213,13 @@ class Scheduler(ABC):
         are reported to have done.
         """
         sentinel = sentinel or SENTINEL_NAME
+        # Once, here: the directive block was already sanitising while {name}
+        # was not, so the preview and the submitted script could disagree
+        # about what the job is called -- and a caller passing an unsanitised
+        # name put it into a command line unquoted.
+        job_name = sanitize_name(job_name)
         lines: List[str] = ["#!/bin/bash"]
-        lines += self.directives(sanitize_name(job_name), preset, log_file)
+        lines += self.directives(job_name, preset, log_file)
         dependency = self.dependency_directives(run_after, any_outcome=run_after_any)
         start_time = self.start_time_directives(start_after)
         lines += dependency
@@ -402,6 +423,7 @@ __all__ = [
     "canonical_state",
     "format_command",
     "placeholder_values",
+    "references_input",
     "get_scheduler",
     "register",
 ]

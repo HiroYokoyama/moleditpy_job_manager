@@ -34,7 +34,7 @@ from .command_templates import CommandTemplate, suggest, templates_for
 from .credentials import ensure_password
 from .models import HostProfile, Job, SubmitPreset
 from .runner import make_remote_dir
-from .schedulers import get_scheduler
+from .schedulers import get_scheduler, references_input
 from .service import JobService
 
 INPUT_FILTER = "Calculation inputs (*.inp *.com *.gjf *.in *.xyz *.sh *.slurm);;All files (*)"
@@ -857,6 +857,18 @@ class SubmitDialog(QDialog):
         if self.box_remote.isChecked() and not remote_dir:
             QMessageBox.warning(
                 self, "Submit", "Enter the directory on the host, or untick the box."
+            )
+            return
+        if not files and not self.remote_input() and references_input(preset.command_template):
+            # The template still names an input this job does not have, so it
+            # would substitute to `orca  > .out` and fail on the host. Caught
+            # here rather than in tomorrow's log.
+            QMessageBox.warning(
+                self,
+                "Submit",
+                "The command uses {input}, but this job has no input file.\n\n"
+                "Add one above, name one under “Work already on the host”, or "
+                "write a command that does not refer to an input.",
             )
             return
         if not files and not remote_dir:

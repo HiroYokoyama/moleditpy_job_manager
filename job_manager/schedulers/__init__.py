@@ -15,6 +15,7 @@ from .base import (
     format_command,
     get_scheduler,
     parse_memory_mb,
+    references_input,
     register,
     requested_cores,
     requested_memory_mb,
@@ -41,5 +42,6 @@ __all__ = [
     "available_schedulers",
     "format_command",
     "get_scheduler",
+    "references_input",
     "register",
 ]
