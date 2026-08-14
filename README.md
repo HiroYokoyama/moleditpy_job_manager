@@ -98,6 +98,7 @@ directives* — Job Manager passes them through and tracks the jobs normally.
 |---|---|
 | [docs/WORKFLOW.md](docs/WORKFLOW.md) | the standard path end to end, command templates, reading job states, troubleshooting |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | layers, threading, polling, the sentinel, persistence, the `submit_file()` handoff |
+| [docs/RUNNER.md](docs/RUNNER.md) | the queue that runs on a machine with no scheduler: layout, safety rules, core and memory budgets |
 | [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) | what is stored and where, how keys and passwords are handled, host-key policy, trust boundaries |
 
 ## Requirements

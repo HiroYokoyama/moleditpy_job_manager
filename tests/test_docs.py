@@ -268,3 +268,69 @@ def _local_links(text):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheRunnerDocument(unittest.TestCase):
+    """RUNNER.md restates the layout and the loop; both are code."""
+
+    def setUp(self):
+        from job_manager import remote_runner
+
+        self.runner = remote_runner
+        self.text = read(DOCS / "RUNNER.md")
+
+    def layout(self) -> str:
+        """The fenced directory listing, which names real files."""
+        return self.text.split("<remote_root>/.moleditpy_runner/")[1].split("```")[1]
+
+    def test_it_is_linked_from_the_readme_and_the_architecture(self):
+        self.assertIn("docs/RUNNER.md", read(README))
+        self.assertIn("RUNNER.md", read(DOCS / "ARCHITECTURE.md"))
+
+    def test_every_directory_it_names_is_real(self):
+        import re
+
+        named = set(re.findall(r"^(\w+)/", self.layout(), re.M))
+        # lock/ is made by ensure_runner rather than by prepare.
+        self.assertEqual(named, set(self.runner.SUBDIRS) | {"lock"})
+
+    def test_every_control_file_it_names_is_real(self):
+        import re
+
+        named = set(" ".join(re.findall(r"^([a-z][a-z. ]+)$", self.layout(), re.M)).split())
+        self.assertEqual(
+            named,
+            {
+                self.runner.SLOTS_NAME,
+                self.runner.CORES_NAME,
+                self.runner.MEMORY_NAME,
+                self.runner.PAUSED_NAME,
+                self.runner.SEQUENCE_NAME,
+                self.runner.DIGEST_NAME,
+            },
+        )
+
+    def test_the_header_tags_are_quoted_verbatim(self):
+        for tag in (
+            self.runner.CORES_TAG,
+            self.runner.MEMORY_TAG,
+            self.runner.AFTER_TAG,
+            self.runner.REQUIRE_SUCCESS_TAG,
+        ):
+            self.assertIn(tag, self.text, tag)
+
+    def test_the_loop_it_quotes_is_the_loop_that_is_generated(self):
+        script = self.runner.build_runner_script("/x")
+        loop = script[script.index("while :; do") :]
+        for line in ("reap", "dispatch", "rm -rf lock", "mkdir lock 2>/dev/null || exit 0"):
+            self.assertIn(line, loop, f"generated: {line}")
+            self.assertIn(line, self.text, f"documented: {line}")
+
+    def test_the_poll_interval_matches(self):
+        self.assertIn(f"sleep {self.runner.RUNNER_POLL_SECONDS}", self.text)
+
+    def test_it_does_not_still_claim_a_fixed_runner_script_name(self):
+        # The name is content-addressed now; documenting the old one would send
+        # a user looking for a file that is not there.
+        self.assertIn("moleditpy_runner_<digest>.sh", self.text)
+        self.assertNotIn("moleditpy_runner.sh`", self.text)
