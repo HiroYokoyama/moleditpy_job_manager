@@ -609,16 +609,21 @@ class HostCard(QFrame):
         if not stats.ok:
             self.show_error(stats.summary)
             return
-        threads = f"{stats.cores} threads" if stats.cores else ""
-        self.lbl_state.setText(threads)
+        # Thread usability: load_fraction is computed against the thread
+        # (logical CPU) count now, not the physical core count underneath it,
+        # so the label and the number shown here have to be the same one --
+        # falling back to cores only for a host that did not report threads
+        # (macOS's sysctl branch does not).
+        threads = stats.threads or stats.cores
+        self.lbl_state.setText(f"{threads} threads" if threads else "")
 
         load = stats.load[0] if stats.load else 0.0
-        if stats.cores:
+        if threads:
             self.meter_cpu.show_value(
                 stats.load_fraction,
                 f"{stats.load_fraction * 100:.0f}%",
-                f"of {stats.cores} threads",
-                f"{load:.2f} of {stats.cores} threads",
+                f"of {threads} threads",
+                f"{load:.2f} of {threads} threads",
             )
         else:
             self.meter_cpu.show_value(

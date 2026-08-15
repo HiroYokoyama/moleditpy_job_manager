@@ -21,12 +21,16 @@ from .remote_runner import CORE_COUNT_SH
 #: prints a load average on every Unix, and sysctl answers on macOS and BSD.
 #: Each is guarded so a missing source prints nothing rather than an error.
 POSIX_COMMAND = (
-    # Physical cores, not hardware threads, and by the same means the helper
-    # queue counts them with -- `nproc` reports logical processors, so a
-    # six-core machine calls itself twelve and a load of 6 then reads as half
-    # a machine when it is a full one.
+    # Physical cores are still counted -- the runner queue budgets on them,
+    # since `nproc` reporting a six-core machine as twelve would let it
+    # overcommit real cores by two -- but the CPU meter itself is thread
+    # usability: /proc/stat already aggregates every logical CPU into one
+    # 0..1 busy fraction, so it is scaled by $t (threads), not $c, and read
+    # back against $t below. Scaling by the wrong one would cap the meter
+    # below 100% on any host with hyperthreading, since the fraction can
+    # never exceed 1.0 times whatever it was multiplied by.
     f"{CORE_COUNT_SH}; echo cores=$c; "
-    "echo threads=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null); "
+    "t=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 0); echo threads=$t; "
     'inst=""; '
     "if [ -r /proc/stat ]; then "
     "t1=$(awk '/^cpu /{print $2+$3+$4+$7+$8+$9, $2+$3+$4+$5+$6+$7+$8+$9}' /proc/stat 2>/dev/null); "
@@ -35,8 +39,8 @@ POSIX_COMMAND = (
     "u1=${t1%% *}; tt1=${t1##* }; "
     "u2=${t2%% *}; tt2=${t2##* }; "
     "du=$((u2 - u1)); dt=$((tt2 - tt1)); "
-    'if [ "$dt" -gt 0 ] 2>/dev/null && [ "$c" -gt 0 ] 2>/dev/null; then '
-    'inst=$(awk -v du="$du" -v dt="$dt" -v c="$c" \'BEGIN {printf "%.2f", (du/dt)*c}\' 2>/dev/null); '
+    'if [ "$dt" -gt 0 ] 2>/dev/null && [ "$t" -gt 0 ] 2>/dev/null; then '
+    'inst=$(awk -v du="$du" -v dt="$dt" -v t="$t" \'BEGIN {printf "%.2f", (du/dt)*t}\' 2>/dev/null); '
     "fi; "
     "fi; "
     'if [ -n "$inst" ]; then '
@@ -56,17 +60,21 @@ POSIX_COMMAND = (
 
 #: PowerShell, for the native Windows host. TotalVisibleMemorySize and
 #: FreePhysicalMemory are in KB; LoadPercentage is a percentage, which is not a
-#: load average -- it is scaled to the core count so the two read alike.
+#: load average -- it is scaled to the logical processor (thread) count, to
+#: match the POSIX side reading thread usability rather than physical cores.
 POWERSHELL_COMMAND = (
     "$os = Get-CimInstance Win32_OperatingSystem; "
     "$cpu = Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage "
     "-Average; "
     "$cores = (Get-CimInstance Win32_Processor | "
     "Measure-Object -Property NumberOfCores -Sum).Sum; "
+    "$threads = (Get-CimInstance Win32_Processor | "
+    "Measure-Object -Property NumberOfLogicalProcessors -Sum).Sum; "
     'Write-Output "cores=$cores"; '
+    'Write-Output "threads=$threads"; '
     'Write-Output "mem_total=$([int]($os.TotalVisibleMemorySize/1024))"; '
     'Write-Output "mem_free=$([int]($os.FreePhysicalMemory/1024))"; '
-    'Write-Output "load=$([math]::Round($cpu.Average * $cores / 100, 2))"'
+    'Write-Output "load=$([math]::Round($cpu.Average * $threads / 100, 2))"'
 )
 
 
@@ -104,15 +112,23 @@ class HostStats:
 
     @property
     def load_fraction(self) -> float:
-        """One-minute load against the core count, clamped to 0..1.
+        """Load against thread usability (logical CPUs), clamped to 0..1.
 
-        A load equal to the core count is a full machine, which is the point
-        the bar should be full at -- not 100 on some arbitrary scale. Above
-        that it stays full and the number beside it tells the rest.
+        A load equal to the thread count is a full machine, which is the
+        point the bar should read full at -- not 100 on some arbitrary scale.
+        Above that it stays full and the number beside it tells the rest.
+
+        Threads over cores: a host reports both, and a job scheduled on a
+        hyperthread is still work the machine is doing, so "how full does
+        this look to something submitting more work" is answered by thread
+        capacity, not the physical core count underneath it. Falls back to
+        cores for a host that did not report a thread count (macOS's sysctl
+        branch does not).
         """
-        if not self.cores or not self.load:
+        denominator = self.threads or self.cores
+        if not denominator or not self.load:
             return 0.0
-        return min(1.0, max(0.0, self.load[0] / self.cores))
+        return min(1.0, max(0.0, self.load[0] / denominator))
 
     @property
     def summary(self) -> str:

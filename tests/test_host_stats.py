@@ -23,9 +23,10 @@ class TestParsing(unittest.TestCase):
         self.assertEqual(stats.mem_used_mb, 48000)
         self.assertTrue(stats.ok)
 
-    def test_load_against_the_core_count(self):
-        # A load equal to the cores is a full machine, which is where the bar
-        # should be full -- not at some arbitrary 100.
+    def test_load_against_the_thread_count(self):
+        # A load equal to the thread count is a full machine, which is where
+        # the bar should be full -- not at some arbitrary 100. No threads=
+        # line here, so it falls back to the core count.
         stats = host_stats.parse("cores=8\nload=8.0 8.0 8.0\n")
         self.assertEqual(stats.load_fraction, 1.0)
         self.assertEqual(host_stats.parse("cores=8\nload=2.0 2 2").load_fraction, 0.25)
@@ -139,10 +140,15 @@ class TestCoresAreNotThreads(unittest.TestCase):
         self.assertEqual(stats.cores, 8)
         self.assertEqual(stats.threads, 16)
 
-    def test_the_bar_is_scaled_to_cores(self):
-        # A load of 8 on eight cores is a full machine, whatever the thread
-        # count says; scaling to 16 would call it half full.
+    def test_the_bar_is_scaled_to_threads(self):
+        # A load of 8 on a 16-thread machine is half its thread usability --
+        # the meter reads thread usability, not physical core saturation.
         stats = host_stats.parse("cores=8\nthreads=16\nload=8.0 8.0 8.0\n")
+        self.assertEqual(stats.load_fraction, 0.5)
+
+    def test_the_bar_falls_back_to_cores_with_no_thread_count(self):
+        # macOS's sysctl branch does not report threads.
+        stats = host_stats.parse("cores=8\nload=8.0 8.0 8.0\n")
         self.assertEqual(stats.load_fraction, 1.0)
 
     def test_the_summary_names_threads_separately(self):
