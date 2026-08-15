@@ -5,17 +5,15 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 
-from job_manager.models import Job, HostProfile, new_id
+from job_manager.models import Job, new_id
 from job_manager.output_file_dialog import (
     OutputFileSelectorDialog,
     describe_file_type,
     format_file_size,
-    PATH_ROLE,
     IS_REMOTE_ROLE,
 )
 
@@ -110,7 +108,7 @@ class TestOutputFileSelectorDialog(unittest.TestCase):
         dialog.btn_open.click()
         self.assertEqual(opened, [file1])
 
-    def test_remote_files_fetched_and_cached_to_tmp(self):
+    def test_remote_files_disable_open_button(self):
         # No local files exist
         self.job.downloaded_files = []
         self.job.local_dir = ""
@@ -121,10 +119,7 @@ class TestOutputFileSelectorDialog(unittest.TestCase):
 
         self.service.list_remote_results.side_effect = fake_list
 
-        opened = []
-        dialog = OutputFileSelectorDialog(
-            self.service, self.job, on_open_callback=lambda p: opened.append(p)
-        )
+        dialog = OutputFileSelectorDialog(self.service, self.job)
         self.addCleanup(dialog.deleteLater)
 
         # Dialog should list the 2 remote files
@@ -134,16 +129,5 @@ class TestOutputFileSelectorDialog(unittest.TestCase):
         self.assertEqual(current.text(0), "remote_calc.out")
         self.assertTrue(current.data(0, IS_REMOTE_ROLE))
 
-        # Setup mock for fetch_file_to_cache
-        cached_target = os.path.join(tempfile.gettempdir(), "test_cached.out")
-        with open(cached_target, "w") as f:
-            f.write("cached content")
-        self.addCleanup(lambda: os.remove(cached_target) if os.path.exists(cached_target) else None)
-
-        def fake_fetch(job, filename, on_ok, on_error):
-            on_ok(cached_target)
-
-        self.service.fetch_file_to_cache.side_effect = fake_fetch
-
-        dialog.btn_open.click()
-        self.assertEqual(opened, [cached_target])
+        # Open button should be disabled for remote files
+        self.assertFalse(dialog.btn_open.isEnabled())

@@ -1,13 +1,11 @@
 """Output file selector dialog.
 
 Allows users to choose which output file from a job to open in MoleditPy.
-If the chosen file is not yet downloaded locally, it is cached on-demand into
-the system temporary folder and opened seamlessly.
+Files must be downloaded locally before they can be opened.
 """
 
 from __future__ import annotations
 
-import logging
 import os
 import tempfile
 from typing import Callable, List, Optional, Sequence
@@ -127,7 +125,10 @@ class OutputFileSelectorDialog(QDialog):
         self.tree.header().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.tree.header().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.tree.itemDoubleClicked.connect(lambda item, _: self._open_item(item))
+        self.tree.itemSelectionChanged.connect(self._on_selection_changed)
         layout.addWidget(self.tree, 1)
+
+
 
         self.lbl_status = QLabel("")
         self.lbl_status.setStyleSheet("color: palette(mid); font-size: 11px;")
@@ -283,7 +284,7 @@ class OutputFileSelectorDialog(QDialog):
             else:
                 size_str = "-"
                 type_str = describe_file_type(name)
-                location = "On Host (will cache)"
+                location = "On Host (Not Downloaded)"
                 is_remote = True
                 target_data = name
 
@@ -291,7 +292,7 @@ class OutputFileSelectorDialog(QDialog):
             item.setData(0, PATH_ROLE, target_data)
             item.setData(0, IS_REMOTE_ROLE, is_remote)
             if is_remote:
-                item.setToolTip(0, f"Remote file: {name} (cached to temporary folder on open)")
+                item.setToolTip(0, f"Remote file: {name} (download job to open)")
             else:
                 item.setToolTip(0, target_data)
 
@@ -323,7 +324,7 @@ class OutputFileSelectorDialog(QDialog):
             self._open_item(item)
 
     def _open_item(self, item: QTreeWidgetItem) -> None:
-        """Open the clicked/selected item, fetching to temp cache if remote."""
+        """Open the clicked/selected item if it is local."""
         is_remote = item.data(0, IS_REMOTE_ROLE)
         data = item.data(0, PATH_ROLE)
 
@@ -336,32 +337,13 @@ class OutputFileSelectorDialog(QDialog):
                 QMessageBox.warning(self, "Open File", f"File not found on disk:\n{local_path}")
             return
 
-        # Remote file: fetch into temporary cache folder
-        remote_filename = data
-        self.lbl_status.setText(f"Downloading {remote_filename} to cache...")
-        self.btn_open.setEnabled(False)
-
-        def on_ok(cached_path: str) -> None:
-            self.btn_open.setEnabled(True)
-            self.lbl_status.setText(f"Cached {remote_filename}")
-            item.setData(0, PATH_ROLE, cached_path)
-            item.setData(0, IS_REMOTE_ROLE, False)
-            item.setText(3, "Local (Cached)")
-            try:
-                item.setText(1, format_file_size(os.path.getsize(cached_path)))
-            except OSError:
-                pass
-            self._dispatch_open(cached_path)
-            self.accept()
-
-        def on_error(err_msg: str) -> None:
-            self.btn_open.setEnabled(True)
-            self.lbl_status.setText(f"Failed to fetch {remote_filename}: {err_msg}")
-            QMessageBox.warning(
-                self, "Download Error", f"Could not download '{remote_filename}':\n{err_msg}"
-            )
-
-        self.service.fetch_file_to_cache(self.job, remote_filename, on_ok, on_error)
+    def _on_selection_changed(self) -> None:
+        item = self.tree.currentItem()
+        if item is not None:
+            is_remote = item.data(0, IS_REMOTE_ROLE)
+            self.btn_open.setEnabled(not is_remote)
+        else:
+            self.btn_open.setEnabled(False)
 
     def _dispatch_open(self, path: str) -> None:
         """Hand the file path to the host opener callback or default open_in_host."""

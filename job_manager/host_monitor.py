@@ -326,7 +326,7 @@ class Sparkline(QWidget):
         rect = self.rect().adjusted(0, 1, -1, -1)
 
         guide_color = QColor("#8b949e" if self._dark else "#656d76")
-        text_color = QColor("#f0f6fc" if self._dark else "#1f2328")
+        QColor("#f0f6fc" if self._dark else "#1f2328")
 
         guide = QColor(guide_color)
         guide.setAlpha(60)

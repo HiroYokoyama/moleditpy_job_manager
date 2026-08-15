@@ -16,6 +16,7 @@ from PyQt6.QtCore import Qt
 
 def make_independent(dialog) -> None:
     """Own task bar entry, own minimise and maximise, own life on screen."""
+    dialog.setParent(None)
     dialog.setWindowFlags(
         Qt.WindowType.Window
         | Qt.WindowType.WindowMinimizeButtonHint

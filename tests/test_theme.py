@@ -7,7 +7,6 @@ rest of the GUI suite, so this file is safe on a bare pytest-only install.
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch
 
 import pytest
 
@@ -15,10 +14,9 @@ pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 is not installed")
 
 from PyQt6.QtCore import QEvent  # noqa: E402
 from PyQt6.QtGui import QPalette, QColor  # noqa: E402
-from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from job_manager import theme  # noqa: E402
-from job_manager.host_monitor import HostMonitorDialog, _ActiveJobsBar  # noqa: E402
+from job_manager.host_monitor import _ActiveJobsBar  # noqa: E402
 from job_manager.hosts_dialog import HostsDialog  # noqa: E402
 from job_manager.jobs_dialog import JobsDialog  # noqa: E402
 from job_manager.models import STATE_RUNNING, STATE_FAILED, STATE_PENDING, Job  # noqa: E402
@@ -27,7 +25,6 @@ from job_manager.text_dialog import TextDialog  # noqa: E402
 from job_manager.details_dialog import JobDetailsDialog  # noqa: E402
 from job_manager.download_dialog import DownloadDialog  # noqa: E402
 
-from .fakes import make_host  # noqa: E402
 from .test_dialogs import DialogTestCase  # noqa: E402
 from .test_host_monitor_gui import HostMonitorTestCase  # noqa: E402
 

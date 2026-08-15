@@ -479,7 +479,6 @@ class TestChoosingWhatToDownload(DialogTestCase):
     def test_ticking_a_folder_takes_what_is_under_it(self):
         dialog = self.chooser(listing="mol.out\nscratch/tmp.xyz\nscratch/deep/a.out\n")
         self.addCleanup(dialog.deleteLater)
-        from PyQt6.QtCore import Qt
 
         folder = [
             dialog.tree.topLevelItem(i)
@@ -536,7 +535,6 @@ class TestChoosingWhatToDownload(DialogTestCase):
         self.assertEqual(download.call_args.kwargs["into"], self.tmp)
 
     def test_the_tick_buttons_work_on_a_selection(self):
-        from PyQt6.QtCore import Qt
 
         dialog = self.chooser()
         self.addCleanup(dialog.deleteLater)
@@ -827,7 +825,6 @@ class TestHostMonitorIndependentWindow(HostMonitorTestCase):
     """Host monitor behaves as a separate top-level independent window."""
 
     def test_open_host_monitor_creates_parentless_window(self):
-        from PyQt6.QtCore import Qt
         dialog = JobsDialog(self.service)
         self.addCleanup(dialog.deleteLater)
         dialog.open_host_monitor()
