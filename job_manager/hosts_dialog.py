@@ -131,6 +131,16 @@ class HostsDialog(QDialog):
         self.form_box = QGroupBox("Connection")
         form = QFormLayout(self.form_box)
 
+        self.chk_enabled = QCheckBox("Enabled")
+        self.chk_enabled.setChecked(True)
+        self.chk_enabled.setToolTip(
+            "Off skips this host everywhere: the submit wizard, the poller, and "
+            "the Host Monitor's live panel.\n\n"
+            "For a machine down for maintenance, or an account between uses -- "
+            "the profile and its presets stay put, ready for when it is back, "
+            "rather than being deleted and typed in again."
+        )
+
         self.txt_name = QLineEdit()
         self.txt_hostname = QLineEdit()
         self.txt_username = QLineEdit()
@@ -140,7 +150,9 @@ class HostsDialog(QDialog):
 
         self.cmb_backend = QComboBox()
         self.cmb_backend.addItem("OpenSSH (system ssh, keys/agent)", BACKEND_OPENSSH)
-        self.cmb_backend.addItem("paramiko (keeps one session; passwords too)", BACKEND_PARAMIKO)
+        self.cmb_backend.addItem(
+            "paramiko (keeps one session; private key, agent or password)", BACKEND_PARAMIKO
+        )
         self.cmb_backend.addItem("This machine (no SSH)", BACKEND_LOCAL)
         self.cmb_backend.currentIndexChanged.connect(self._update_backend_hint)
 
@@ -170,6 +182,30 @@ class HostsDialog(QDialog):
         self.txt_jump.setPlaceholderText("user@bastion (ProxyJump), optional")
         self.txt_remote_root = QLineEdit()
 
+        equal_path_row = QWidget()
+        equal_path_layout = QHBoxLayout(equal_path_row)
+        equal_path_layout.setContentsMargins(0, 0, 0, 0)
+        self.txt_equal_path = QLineEdit()
+        self.txt_equal_path.setPlaceholderText(
+            "optional - e.g. \\\\server\\share or /mnt/cluster, mirroring Remote root"
+        )
+        EQUAL_PATH_TIP = (
+            "Set this when the host's filesystem is also reachable from this "
+            "machine directly -- a Samba/CIFS share, a mapped drive, an sshfs "
+            "or NFS mount -- rooted at the same place as 'Remote root' above.\n\n"
+            "With it set, Open Result reads a job's files straight from here "
+            "instead of downloading them first: the remote path and this local "
+            "one are treated as the same files, just reached two different "
+            "ways. Leave it empty if there is no such mirror."
+        )
+        self.txt_equal_path.setToolTip(EQUAL_PATH_TIP)
+        equal_path_browse = QPushButton("...")
+        equal_path_browse.setMaximumWidth(32)
+        equal_path_browse.setToolTip(EQUAL_PATH_TIP)
+        equal_path_browse.clicked.connect(self._browse_equal_path)
+        equal_path_layout.addWidget(self.txt_equal_path)
+        equal_path_layout.addWidget(equal_path_browse)
+
         self.spin_max_concurrent = QSpinBox()
         self.spin_max_concurrent.setRange(0, 64)
         self.spin_max_concurrent.setSpecialValueText("no limit")
@@ -186,6 +222,7 @@ class HostsDialog(QDialog):
             "jobs run together for as long as there are cores for them."
         )
 
+        form.addRow("", self.chk_enabled)
         form.addRow("Display name", self.txt_name)
         form.addRow("Hostname", self.txt_hostname)
         form.addRow("Username", self.txt_username)
@@ -248,6 +285,7 @@ class HostsDialog(QDialog):
         )
 
         form.addRow("Remote root", self.txt_remote_root)
+        form.addRow("Equal path (local mirror)", equal_path_row)
         form.addRow("Run at most", self.spin_max_concurrent)
         form.addRow("Queueing", self.cmb_concurrency)
         form.addRow("Cores available", self.spin_runner_cores)
@@ -391,8 +429,18 @@ class HostsDialog(QDialog):
         self.list.blockSignals(True)
         self.list.clear()
         for host in self.store.host_list():
-            item = QListWidgetItem(f"{host.name}  ({host.target})")
+            label = f"{host.name}  ({host.target})"
+            if not getattr(host, "enabled", True):
+                label += "  [disabled]"
+            item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, host.id)
+            if not getattr(host, "enabled", True):
+                # A plain grey foreground, not setEnabled(False): the item
+                # must stay selectable so a disabled host can still be
+                # re-enabled from here.
+                from PyQt6.QtGui import QColor
+
+                item.setForeground(QColor("#8b949e"))
             self.list.addItem(item)
         self.list.blockSignals(False)
         if self.list.count():
@@ -433,6 +481,7 @@ class HostsDialog(QDialog):
             widget.setEnabled(enabled)
 
     def _clear_form(self) -> None:
+        self.chk_enabled.setChecked(True)
         self.txt_name.setText("")
         self.txt_hostname.setText("")
         self.txt_username.setText("")
@@ -440,6 +489,7 @@ class HostsDialog(QDialog):
         self.txt_key.setText("")
         self.txt_jump.setText("")
         self.txt_remote_root.setText("~/moleditpy_jobs")
+        self.txt_equal_path.setText("")
         self.spin_max_concurrent.setValue(0)
         self.cmb_concurrency.setCurrentIndex(max(0, self.cmb_concurrency.findData(MODE_RUNNER)))
         self.spin_runner_cores.setValue(self.spin_runner_cores.minimum())
@@ -468,6 +518,7 @@ class HostsDialog(QDialog):
             self._clear_form()
             return
         self._set_editor_enabled(True)
+        self.chk_enabled.setChecked(bool(getattr(host, "enabled", True)))
         self.txt_name.setText(host.name)
         self.txt_hostname.setText(host.hostname)
         self.txt_username.setText(host.username)
@@ -479,6 +530,7 @@ class HostsDialog(QDialog):
         self.txt_key.setText(host.key_path)
         self.txt_jump.setText(host.jump_host)
         self.txt_remote_root.setText(host.remote_root)
+        self.txt_equal_path.setText(getattr(host, "equal_path", "") or "")
         self.spin_max_concurrent.setValue(max(0, int(host.max_concurrent or 0)))
         index = self.cmb_concurrency.findData(host.concurrency_mode or MODE_LANES)
         self.cmb_concurrency.setCurrentIndex(max(0, index))
@@ -601,6 +653,11 @@ class HostsDialog(QDialog):
         if path:
             self.txt_key.setText(path)
 
+    def _browse_equal_path(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "Select the local mirror of this host")
+        if path:
+            self.txt_equal_path.setText(path)
+
     def _update_concurrency_row(self) -> None:
         """The helper is only offered where nothing else is scheduling."""
         # Both no-queue schedulers have a runner; a real cluster does not need
@@ -628,6 +685,10 @@ class HostsDialog(QDialog):
     def _update_backend_hint(self) -> None:
         backend = self.cmb_backend.currentData()
         self._set_ssh_fields_enabled(backend != BACKEND_LOCAL)
+        # A local host's remote root already is a path on this machine, so a
+        # second local path standing in for it would be the same directory
+        # under two names.
+        self.txt_equal_path.setEnabled(backend != BACKEND_LOCAL)
         # Only where a password is actually on offer; the other backends never
         # ask for one, so the advice would be noise.
         self.lbl_key_tip.setVisible(backend == BACKEND_PARAMIKO)
@@ -669,10 +730,11 @@ class HostsDialog(QDialog):
             )
         elif backend == BACKEND_PARAMIKO:
             self.lbl_backend_hint.setText(
-                "Keys, an agent or a password -- and one SSH session kept open "
-                "for the whole session, which is what the live host panel "
-                "samples through. A password is held in memory for this session "
-                "only and never written to disk."
+                "Authenticates with the private key above (or ~/.ssh's default "
+                "keys if none is set), an ssh-agent, or a password -- and keeps "
+                "one SSH session open for the whole session, which is what the "
+                "live host panel samples through. A password is held in memory "
+                "for this session only and never written to disk."
             )
         else:
             self.lbl_backend_hint.setText(
@@ -693,6 +755,7 @@ class HostsDialog(QDialog):
             widget.setEnabled(enabled)
 
     def _collect(self, host: HostProfile) -> HostProfile:
+        host.enabled = bool(self.chk_enabled.isChecked())
         host.name = self.txt_name.text().strip() or "cluster"
         host.hostname = self.txt_hostname.text().strip()
         host.username = self.txt_username.text().strip()
@@ -702,6 +765,7 @@ class HostsDialog(QDialog):
         host.key_path = self.txt_key.text().strip()
         host.jump_host = self.txt_jump.text().strip()
         host.remote_root = self.txt_remote_root.text().strip() or "~/moleditpy_jobs"
+        host.equal_path = self.txt_equal_path.text().strip()
         host.max_concurrent = int(self.spin_max_concurrent.value())
         host.concurrency_mode = self.cmb_concurrency.currentData() or MODE_LANES
         host.runner_detect = bool(self.chk_detect_resources.isChecked())

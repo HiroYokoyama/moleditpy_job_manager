@@ -31,7 +31,7 @@ class TestInitialize(PluginEntryTestCase):
             paths,
             [
                 "Extensions/Job Manager/Job Monitor",
-                "Extensions/Host Monitor",
+                "Extensions/Job Manager/Host Monitor",
                 "Extensions/Job Manager/Submit Job...",
             ],
         )

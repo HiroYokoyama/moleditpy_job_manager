@@ -35,7 +35,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .theme import CY_GREEN, apply_theme
+from .theme import apply_theme
 
 #: Where a tree item keeps its path relative to the job directory. Only files
 #: carry one; a folder item has None, which is how the two are told apart.

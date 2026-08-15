@@ -80,7 +80,7 @@ class TestWhatItShows(HostMonitorTestCase):
         dialog = self.monitor()
         card = dialog.cards[self.host.id]
         self.assertEqual(card.meter_load.detail, "20%")
-        self.assertIn("1.60 of 8 cores", card.meter_load.toolTip())
+        self.assertIn("1.60 of 8 threads", card.meter_load.toolTip())
         self.assertAlmostEqual(card.meter_load.fraction, 0.2)
 
     def test_the_bars_are_what_is_shown_by_default(self):
@@ -535,7 +535,6 @@ class TestChoosingWhatToDownload(DialogTestCase):
         self.assertEqual(download.call_args.kwargs["into"], self.tmp)
 
     def test_the_tick_buttons_work_on_a_selection(self):
-
         dialog = self.chooser()
         self.addCleanup(dialog.deleteLater)
         item = dialog.tree.topLevelItem(1)
@@ -805,6 +804,7 @@ class TestCPUMeterAndSparklineRenaming(HostMonitorTestCase):
 
     def test_meter_and_sparkline_labeled_cpu(self):
         from job_manager.host_monitor import HostCard
+
         card = HostCard(self.host)
         self.addCleanup(card.deleteLater)
         self.assertEqual(card.meter_cpu.caption, "CPU")
@@ -818,6 +818,7 @@ class TestCPUMeterAndSparklineRenaming(HostMonitorTestCase):
 
     def test_graph_cpu_constant_exported(self):
         from job_manager.host_monitor import GRAPH_CPU, GRAPH_LOAD
+
         self.assertEqual(GRAPH_CPU.name(), GRAPH_LOAD.name())
 
 
@@ -843,5 +844,3 @@ class TestHostMonitorIndependentWindow(HostMonitorTestCase):
         self.addCleanup(first_monitor.deleteLater)
         dialog.open_host_monitor()
         self.assertIs(dialog._host_monitor, first_monitor)
-
-

@@ -33,6 +33,7 @@ from .test_host_monitor_gui import HostMonitorTestCase  # noqa: E402
 # theme.py — constants and stylesheet content
 # ---------------------------------------------------------------------------
 
+
 class TestThemeConstants(unittest.TestCase):
     """The token values that the rest of the plugin is compiled against."""
 
@@ -63,8 +64,15 @@ class TestThemeConstants(unittest.TestCase):
 
     def test_all_expected_names_are_exported(self):
         expected = {
-            "CY_GREEN", "CY_RED", "CY_AMBER", "CY_TEAL", "CY_PURPLE",
-            "CY_GREY", "CY_ACCENT", "CY_ACCENT2", "DIALOG_STYLESHEET",
+            "CY_GREEN",
+            "CY_RED",
+            "CY_AMBER",
+            "CY_TEAL",
+            "CY_PURPLE",
+            "CY_GREY",
+            "CY_ACCENT",
+            "CY_ACCENT2",
+            "DIALOG_STYLESHEET",
         }
         self.assertTrue(expected.issubset(set(theme.__all__)))
 
@@ -72,6 +80,7 @@ class TestThemeConstants(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Dialog stylesheet application
 # ---------------------------------------------------------------------------
+
 
 class TestDialogStylesheets(DialogTestCase):
     """Every dialog must carry the shared stylesheet on its root widget."""
@@ -113,7 +122,12 @@ class TestHostMonitorDialogTheme(HostMonitorTestCase):
         dialog._set_dark(True)
         self.assertIn("#16181a", dialog.styleSheet())
         dialog._set_dark(False)
-        self.assertEqual(dialog.styleSheet(), "")
+        # Not "": an empty stylesheet left buttons and fields on native
+        # platform chrome, a different size than the dark style's own
+        # padding -- toggling the button visibly resized it. Light mode has
+        # its own explicit stylesheet with matching padding instead.
+        self.assertIn("#f6f8fa", dialog.styleSheet())
+        self.assertNotIn("#16181a", dialog.styleSheet())
 
     def test_window_title_says_hosts_monitor(self):
         dialog = self.monitor()
@@ -124,23 +138,28 @@ class TestHostMonitorDialogTheme(HostMonitorTestCase):
 # State colours — jobs dialog
 # ---------------------------------------------------------------------------
 
+
 class TestStateColours(DialogTestCase):
     """_STATE_COLORS in jobs_dialog must use the accent palette."""
 
     def test_running_colour_matches_theme(self):
         from job_manager.jobs_dialog import _STATE_COLORS
+
         self.assertEqual(_STATE_COLORS[STATE_RUNNING], theme.CY_GREEN)
 
     def test_failed_colour_matches_theme(self):
         from job_manager.jobs_dialog import _STATE_COLORS
+
         self.assertEqual(_STATE_COLORS[STATE_FAILED], theme.CY_RED)
 
     def test_pending_colour_matches_theme(self):
         from job_manager.jobs_dialog import _STATE_COLORS
+
         self.assertEqual(_STATE_COLORS[STATE_PENDING], theme.CY_AMBER)
 
     def test_banner_style_has_accent_left_border(self):
         from job_manager.jobs_dialog import BANNER_STYLE
+
         self.assertIn(theme.CY_ACCENT2, BANNER_STYLE)
         self.assertIn("border-left", BANNER_STYLE)
 
@@ -159,6 +178,7 @@ class TestStateColours(DialogTestCase):
 # ---------------------------------------------------------------------------
 # Status widget dark-mode fix
 # ---------------------------------------------------------------------------
+
 
 class TestStatusWidgetDarkModeFix(DialogTestCase):
     """The palette-based colour must survive a theme change."""
@@ -181,8 +201,9 @@ class TestStatusWidgetDarkModeFix(DialogTestCase):
         job = Job(id="j1", name="mol", state=STATE_RUNNING, submitted_at=1000.0)
         self.store.add_job(job)
         widget = self._make_widget()
-        palette_color = widget.palette().color(QPalette.ColorGroup.Active,
-                                               QPalette.ColorRole.WindowText)
+        palette_color = widget.palette().color(
+            QPalette.ColorGroup.Active, QPalette.ColorRole.WindowText
+        )
         # Should be the neon-green accent, not the default text colour.
         self.assertEqual(palette_color.name().lower(), theme.CY_GREEN.lower())
 
@@ -193,8 +214,9 @@ class TestStatusWidgetDarkModeFix(DialogTestCase):
         # Simulate a palette-change event (what Qt sends on theme switch).
         event = QEvent(QEvent.Type.PaletteChange)
         widget.changeEvent(event)
-        palette_color = widget.palette().color(QPalette.ColorGroup.Active,
-                                               QPalette.ColorRole.WindowText)
+        palette_color = widget.palette().color(
+            QPalette.ColorGroup.Active, QPalette.ColorRole.WindowText
+        )
         self.assertEqual(palette_color.name().lower(), theme.CY_GREEN.lower())
 
     def test_hidden_widget_has_no_colour(self):
@@ -204,8 +226,9 @@ class TestStatusWidgetDarkModeFix(DialogTestCase):
 
     def test_blocked_job_uses_red(self):
         # A blocked job should show the red accent.
-        job = Job(id="j1", name="mol", state=STATE_RUNNING, submitted_at=1000.0,
-                  after_job_id="dead")
+        job = Job(
+            id="j1", name="mol", state=STATE_RUNNING, submitted_at=1000.0, after_job_id="dead"
+        )
         dead = Job(id="dead", name="prev", state=STATE_FAILED, submitted_at=900.0)
         self.store.add_job(dead)
         self.store.add_job(job)
@@ -216,6 +239,7 @@ class TestStatusWidgetDarkModeFix(DialogTestCase):
 # ---------------------------------------------------------------------------
 # _ActiveJobsBar
 # ---------------------------------------------------------------------------
+
 
 class TestActiveJobsBar(HostMonitorTestCase):
     """The running-jobs strip at the bottom of the Hosts Monitor."""
@@ -231,37 +255,33 @@ class TestActiveJobsBar(HostMonitorTestCase):
         self.assertIn("no active jobs", bar._lbl_count.text())
 
     def test_visible_when_a_job_is_active(self):
-        self.store.add_job(Job(id="j1", name="mol", state=STATE_RUNNING,
-                               submitted_at=1000.0))
+        self.store.add_job(Job(id="j1", name="mol", state=STATE_RUNNING, submitted_at=1000.0))
         bar = self._bar()
         self.assertIn("running", bar._lbl_count.text())
 
     def test_running_count_is_shown(self):
-        self.store.add_job(Job(id="j1", name="mol", state=STATE_RUNNING,
-                               submitted_at=1000.0))
+        self.store.add_job(Job(id="j1", name="mol", state=STATE_RUNNING, submitted_at=1000.0))
         bar = self._bar()
         # The label uses HTML; check the plain text contains the count.
         self.assertIn("1", bar._lbl_count.text())
         self.assertIn("running", bar._lbl_count.text())
 
     def test_pending_jobs_count_as_remaining(self):
-        self.store.add_job(Job(id="j1", name="mol", state=STATE_PENDING,
-                               submitted_at=1000.0))
+        self.store.add_job(Job(id="j1", name="mol", state=STATE_PENDING, submitted_at=1000.0))
         bar = self._bar()
         self.assertIn("remaining", bar._lbl_count.text())
 
     def test_updates_on_jobs_changed(self):
         bar = self._bar()
         self.assertIn("no active jobs", bar._lbl_count.text())
-        self.store.add_job(Job(id="j1", name="mol", state=STATE_RUNNING,
-                               submitted_at=1000.0))
+        self.store.add_job(Job(id="j1", name="mol", state=STATE_RUNNING, submitted_at=1000.0))
         self.service.jobs_changed.emit()
         self.assertIn("running", bar._lbl_count.text())
 
     def test_updates_on_job_updated(self):
         from job_manager.models import STATE_DONE
-        self.store.add_job(Job(id="j1", name="mol", state=STATE_RUNNING,
-                               submitted_at=1000.0))
+
+        self.store.add_job(Job(id="j1", name="mol", state=STATE_RUNNING, submitted_at=1000.0))
         bar = self._bar()
         self.assertIn("running", bar._lbl_count.text())
         # is_active is a derived property; transition to a terminal state
@@ -272,6 +292,7 @@ class TestActiveJobsBar(HostMonitorTestCase):
 
     def test_task_done_progress_on_summary_bar(self):
         from job_manager.models import STATE_DONE
+
         self.store.add_job(Job(id="j1", name="done1", state=STATE_DONE, submitted_at=900.0))
         self.store.add_job(Job(id="j2", name="run1", state=STATE_RUNNING, submitted_at=1000.0))
         bar = self._bar()
@@ -287,10 +308,8 @@ class TestActiveJobsBar(HostMonitorTestCase):
         self.assertIsInstance(dialog._jobs_bar, _ActiveJobsBar)
 
     def test_running_and_remaining_shown_together(self):
-        self.store.add_job(Job(id="j1", name="run", state=STATE_RUNNING,
-                               submitted_at=1000.0))
-        self.store.add_job(Job(id="j2", name="pend", state=STATE_PENDING,
-                               submitted_at=1001.0))
+        self.store.add_job(Job(id="j1", name="run", state=STATE_RUNNING, submitted_at=1000.0))
+        self.store.add_job(Job(id="j2", name="pend", state=STATE_PENDING, submitted_at=1001.0))
         bar = self._bar()
         text = bar._lbl_count.text()
         # One job is running, one is pending/remaining -- both must appear.
@@ -302,11 +321,13 @@ class TestActiveJobsBar(HostMonitorTestCase):
 # HostCard per-card jobs strip
 # ---------------------------------------------------------------------------
 
+
 class TestHostCardJobsStrip(HostMonitorTestCase):
     """Each card shows its own host's active jobs inline."""
 
     def _card(self):
         from job_manager.host_monitor import HostCard
+
         card = HostCard(self.host)
         self.addCleanup(card.deleteLater)
         return card
@@ -317,8 +338,13 @@ class TestHostCardJobsStrip(HostMonitorTestCase):
         self.assertTrue(card.lbl_jobs.isHidden())
 
     def test_shows_running_job(self):
-        job = Job(id="j1", name="myrun", state=STATE_RUNNING,
-                  host_name=self.host.name, submitted_at=1000.0)
+        job = Job(
+            id="j1",
+            name="myrun",
+            state=STATE_RUNNING,
+            host_name=self.host.name,
+            submitted_at=1000.0,
+        )
         card = self._card()
         card.show_jobs([job])
         self.assertFalse(card.lbl_jobs.isHidden())
@@ -327,8 +353,10 @@ class TestHostCardJobsStrip(HostMonitorTestCase):
 
     def test_hidden_when_no_active_jobs(self):
         from job_manager.models import STATE_DONE
-        job = Job(id="j1", name="done", state=STATE_DONE,
-                  host_name=self.host.name, submitted_at=1000.0)
+
+        job = Job(
+            id="j1", name="done", state=STATE_DONE, host_name=self.host.name, submitted_at=1000.0
+        )
         card = self._card()
         card.show_jobs([job])
         self.assertEqual(card.lbl_jobs.text(), "")
@@ -336,8 +364,13 @@ class TestHostCardJobsStrip(HostMonitorTestCase):
 
     def test_long_name_is_truncated(self):
         long_name = "z" * 40
-        job = Job(id="j1", name=long_name, state=STATE_RUNNING,
-                  host_name=self.host.name, submitted_at=1000.0)
+        job = Job(
+            id="j1",
+            name=long_name,
+            state=STATE_RUNNING,
+            host_name=self.host.name,
+            submitted_at=1000.0,
+        )
         card = self._card()
         card.show_jobs([job])
         self.assertNotIn(long_name, card.lbl_jobs.text())
@@ -345,8 +378,13 @@ class TestHostCardJobsStrip(HostMonitorTestCase):
 
     def test_overflow_label_beyond_five(self):
         jobs = [
-            Job(id=f"j{i}", name=f"job{i}", state=STATE_RUNNING,
-                host_name=self.host.name, submitted_at=float(i))
+            Job(
+                id=f"j{i}",
+                name=f"job{i}",
+                state=STATE_RUNNING,
+                host_name=self.host.name,
+                submitted_at=float(i),
+            )
             for i in range(8)
         ]
         card = self._card()
@@ -354,15 +392,27 @@ class TestHostCardJobsStrip(HostMonitorTestCase):
         self.assertIn("more", card.lbl_jobs.text())
 
     def test_colour_matches_state(self):
-        job = Job(id="j1", name="pendingjob", state=STATE_PENDING,
-                  host_name=self.host.name, submitted_at=1000.0)
+        job = Job(
+            id="j1",
+            name="pendingjob",
+            state=STATE_PENDING,
+            host_name=self.host.name,
+            submitted_at=1000.0,
+        )
         card = self._card()
         card.show_jobs([job])
         self.assertIn(STATE_PENDING.lower(), card.lbl_jobs.text())
 
     def test_dialog_wires_refresh_on_open(self):
-        self.store.add_job(Job(id="j1", name="mol", state=STATE_RUNNING,
-                               host_name=self.host.name, submitted_at=1000.0))
+        self.store.add_job(
+            Job(
+                id="j1",
+                name="mol",
+                state=STATE_RUNNING,
+                host_name=self.host.name,
+                submitted_at=1000.0,
+            )
+        )
         dialog = self.monitor()
         card = dialog.cards[self.host.id]
         self.assertIn("mol", card.lbl_jobs.text())
@@ -370,12 +420,16 @@ class TestHostCardJobsStrip(HostMonitorTestCase):
 
     def test_task_done_progress_counter(self):
         from job_manager.models import STATE_DONE
-        j_done = Job(id="j1", name="job1", state=STATE_DONE,
-                     host_name=self.host.name, submitted_at=1000.0)
-        j_run = Job(id="j2", name="job2", state=STATE_RUNNING,
-                    host_name=self.host.name, submitted_at=1001.0)
-        j_pend = Job(id="j3", name="job3", state=STATE_PENDING,
-                     host_name=self.host.name, submitted_at=1002.0)
+
+        j_done = Job(
+            id="j1", name="job1", state=STATE_DONE, host_name=self.host.name, submitted_at=1000.0
+        )
+        j_run = Job(
+            id="j2", name="job2", state=STATE_RUNNING, host_name=self.host.name, submitted_at=1001.0
+        )
+        j_pend = Job(
+            id="j3", name="job3", state=STATE_PENDING, host_name=self.host.name, submitted_at=1002.0
+        )
         card = self._card()
         card.show_jobs([j_done, j_run, j_pend])
         text = card.lbl_jobs.text()
@@ -388,18 +442,24 @@ class TestHostCardJobsStrip(HostMonitorTestCase):
         card = dialog.cards[self.host.id]
         self.assertEqual(card.lbl_jobs.text(), "")
         self.assertTrue(card.lbl_jobs.isHidden())
-        self.store.add_job(Job(id="j1", name="newjob", state=STATE_RUNNING,
-                               host_name=self.host.name, submitted_at=1000.0))
+        self.store.add_job(
+            Job(
+                id="j1",
+                name="newjob",
+                state=STATE_RUNNING,
+                host_name=self.host.name,
+                submitted_at=1000.0,
+            )
+        )
         self.service.jobs_changed.emit()
         self.assertIn("newjob", card.lbl_jobs.text())
         self.assertFalse(card.lbl_jobs.isHidden())
 
 
-
-
 # ---------------------------------------------------------------------------
 # Spin box up/down arrow controls
 # ---------------------------------------------------------------------------
+
 
 class TestSpinBoxArrowControls(DialogTestCase):
     """QSpinBox up and down buttons click and adjust values correctly."""
@@ -418,11 +478,19 @@ class TestSpinBoxArrowControls(DialogTestCase):
         spin.show()
 
         # Click top right (up arrow)
-        QTest.mouseClick(spin, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
-                         QPoint(spin.width() - 6, 4))
+        QTest.mouseClick(
+            spin,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            QPoint(spin.width() - 6, 4),
+        )
         self.assertEqual(spin.value(), 11)
 
         # Click bottom right (down arrow)
-        QTest.mouseClick(spin, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
-                         QPoint(spin.width() - 6, spin.height() - 4))
+        QTest.mouseClick(
+            spin,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+            QPoint(spin.width() - 6, spin.height() - 4),
+        )
         self.assertEqual(spin.value(), 10)

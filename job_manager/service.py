@@ -418,7 +418,9 @@ class JobService(QObject):
                 local_path = os.path.join(cache_dir, filename)
                 if os.path.isfile(local_path):
                     return local_path
-                raise FileNotFoundError(f"Remote file '{filename}' was not found or could not be downloaded")
+                raise FileNotFoundError(
+                    f"Remote file '{filename}' was not found or could not be downloaded"
+                )
             finally:
                 transport.close()
 

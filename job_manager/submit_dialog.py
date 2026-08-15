@@ -59,6 +59,7 @@ INPUT_FILTER = ";;".join(INPUT_FILTERS)
 _SAVE_TEMPLATE = object()
 _DELETE_TEMPLATE = object()
 _SET_DEFAULT = object()
+_MANAGE_TEMPLATES = object()
 
 
 class SubmitDialog(QDialog):
@@ -377,6 +378,9 @@ class SubmitDialog(QDialog):
         self.txt_extra.setPlaceholderText("#SBATCH --exclusive")
         self.txt_extra.setMaximumHeight(60)
         self.txt_command = QLineEdit("orca {input} > {stem}.out")
+        from .template_editor_dialog import PLACEHOLDER_TIP
+
+        self.txt_command.setToolTip(PLACEHOLDER_TIP)
         self.txt_command.textChanged.connect(self._refresh_preview)
         self.cmb_template = QComboBox()
         self.cmb_template.setToolTip(
@@ -788,6 +792,7 @@ class SubmitDialog(QDialog):
         self.cmb_template.addItem("Save current command as...", _SAVE_TEMPLATE)
         if saved:
             self.cmb_template.addItem("Delete a saved template...", _DELETE_TEMPLATE)
+        self.cmb_template.addItem("Manage templates...", _MANAGE_TEMPLATES)
         self.cmb_template.blockSignals(False)
 
     def _on_template_chosen(self, index: int) -> None:
@@ -799,6 +804,8 @@ class SubmitDialog(QDialog):
             self._set_default_for_extension()
         elif choice is _DELETE_TEMPLATE:
             self._delete_user_template()
+        elif choice is _MANAGE_TEMPLATES:
+            self._manage_templates()
         elif choice is not None:
             self.txt_command.setText(choice.command)
             self._apply_template_globs(choice)
@@ -869,6 +876,12 @@ class SubmitDialog(QDialog):
         if accepted and label:
             self.store.remove_user_template(label)
             self._reload_templates()
+
+    def _manage_templates(self) -> None:
+        from .template_editor_dialog import TemplateEditorDialog
+
+        TemplateEditorDialog(self.store, self).exec()
+        self._reload_templates()
 
     def _apply_suggested_template(self) -> None:
         """Fill an empty command from the input's extension; never overwrite."""

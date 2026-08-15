@@ -14,6 +14,8 @@ at construction time.
 
 from __future__ import annotations
 
+from PyQt6.QtCore import QEvent, QObject
+
 # ---------------------------------------------------------------------------
 # State colours -- imported by jobs_dialog and status_widget
 # ---------------------------------------------------------------------------
@@ -59,6 +61,8 @@ QPushButton {{
     color: palette(button-text);
     border: 1px solid palette(mid);
     border-radius: 5px;
+    padding: 5px 14px;
+    min-height: 20px;
 }}
 
 QPushButton:hover {{
@@ -156,6 +160,7 @@ QLineEdit:focus {{
 
 QLineEdit:disabled {{
     color: palette(mid);
+    background: palette(window);
 }}
 
 /* --- spin box ------------------------------------------------------------- */
@@ -185,6 +190,11 @@ QSpinBox::down-button {{
     width: 18px;
 }}
 
+QSpinBox:disabled {{
+    color: palette(mid);
+    background: palette(window);
+}}
+
 /* --- combo box ------------------------------------------------------------ */
 
 QComboBox {{
@@ -198,6 +208,11 @@ QComboBox {{
 
 QComboBox:focus {{
     border-color: {CY_ACCENT2};
+}}
+
+QComboBox:disabled {{
+    color: palette(mid);
+    background: palette(window);
 }}
 
 QComboBox QAbstractItemView {{
@@ -318,7 +333,6 @@ __all__ = [
     "apply_theme",
 ]
 
-from PyQt6.QtCore import QObject, QEvent
 
 class ThemeWatcher(QObject):
     def eventFilter(self, obj, event):
@@ -326,7 +340,9 @@ class ThemeWatcher(QObject):
             obj.setStyleSheet(DIALOG_STYLESHEET)
         return False
 
+
 _theme_watcher = None
+
 
 def apply_theme(widget) -> None:
     """Apply DIALOG_STYLESHEET and re-apply it on system theme changes."""

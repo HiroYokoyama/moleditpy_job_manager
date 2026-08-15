@@ -185,4 +185,3 @@ class TestInstantaneousCPUStatParsing(unittest.TestCase):
         stats = host_stats.parse("cores=4\nload=3.60 1.20 0.80\n")
         self.assertEqual(stats.load[0], 3.60)
         self.assertAlmostEqual(stats.load_fraction, 0.90)
-

@@ -27,7 +27,7 @@ POSIX_COMMAND = (
     # a machine when it is a full one.
     f"{CORE_COUNT_SH}; echo cores=$c; "
     "echo threads=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null); "
-    "inst=\"\"; "
+    'inst=""; '
     "if [ -r /proc/stat ]; then "
     "t1=$(awk '/^cpu /{print $2+$3+$4+$7+$8+$9, $2+$3+$4+$5+$6+$7+$8+$9}' /proc/stat 2>/dev/null); "
     "sleep 0.05 2>/dev/null || true; "
@@ -35,11 +35,11 @@ POSIX_COMMAND = (
     "u1=${t1%% *}; tt1=${t1##* }; "
     "u2=${t2%% *}; tt2=${t2##* }; "
     "du=$((u2 - u1)); dt=$((tt2 - tt1)); "
-    "if [ \"$dt\" -gt 0 ] 2>/dev/null && [ \"$c\" -gt 0 ] 2>/dev/null; then "
-    "inst=$(awk -v du=\"$du\" -v dt=\"$dt\" -v c=\"$c\" 'BEGIN {printf \"%.2f\", (du/dt)*c}' 2>/dev/null); "
+    'if [ "$dt" -gt 0 ] 2>/dev/null && [ "$c" -gt 0 ] 2>/dev/null; then '
+    'inst=$(awk -v du="$du" -v dt="$dt" -v c="$c" \'BEGIN {printf "%.2f", (du/dt)*c}\' 2>/dev/null); '
     "fi; "
     "fi; "
-    "if [ -n \"$inst\" ]; then "
+    'if [ -n "$inst" ]; then '
     "echo load=$inst $(cut -d' ' -f2-3 /proc/loadavg 2>/dev/null); "
     "elif [ -r /proc/loadavg ]; then "
     "echo load=$(cut -d' ' -f1-3 /proc/loadavg); "

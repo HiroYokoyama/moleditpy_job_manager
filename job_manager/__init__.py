@@ -16,7 +16,7 @@ import logging
 from typing import Any, Optional
 
 PLUGIN_NAME = "Job Manager"
-PLUGIN_VERSION = "0.15.0"
+PLUGIN_VERSION = "0.16.0"
 PLUGIN_AUTHOR = "HiroYokoyama"
 PLUGIN_DESCRIPTION = (
     "Submit calculations to remote HPC clusters over SSH, track queue status, "
@@ -53,6 +53,9 @@ PLUGIN_SUPPORTED_MOLEDITPY_VERSION = ">=4.0.0, <5.0.0"
 PLUGIN_SUPPORTED_OS = ["Windows", "macOS", "Linux", "WSL"]
 
 WINDOW_KEY = "job_monitor"
+#: Registered separately from WINDOW_KEY so opening it standalone (Extensions >
+#: Job Manager > Host Monitor) never has to build the job monitor first.
+HOST_MONITOR_WINDOW_KEY = "job_manager_host_monitor"
 
 _context: Optional[Any] = None
 _service: Optional[Any] = None
@@ -217,7 +220,13 @@ def initialize(context) -> None:
     # add_menu_action, not add_plugin_menu: the latter is hard-wired to
     # "Plugin/<path>". Both have existed since v3, so no fallback is needed.
     context.add_menu_action("Extensions/Job Manager/Job Monitor", lambda: show_monitor(context))
-    context.add_menu_action("Extensions/Host Monitor", lambda: show_host_monitor(context))
+    # Standalone: opens only the host panel, not the job monitor behind it --
+    # for the case this window is built for, watching machines with nothing
+    # queued yet, where building the job monitor first was wasted work (and a
+    # second window to close).
+    context.add_menu_action(
+        "Extensions/Job Manager/Host Monitor", lambda: show_host_monitor_standalone(context)
+    )
     context.add_menu_action("Extensions/Job Manager/Submit Job...", lambda: show_submit(context))
 
     from .store import JOB_EXTENSION
@@ -287,6 +296,38 @@ def show_host_monitor(context=None) -> None:
     window = context.get_window(WINDOW_KEY)
     if window is not None:
         window.open_host_monitor()
+
+
+def show_host_monitor_standalone(context=None) -> None:
+    """Open (or raise) the host monitor on its own -- no job monitor window.
+
+    The job monitor is a QDialog that stays fully independent (see
+    window_utils.make_independent); the host monitor already was one too, but
+    every route to it went through show_monitor() first, so the Extensions
+    menu could not open one without also raising the other. This registers
+    the host monitor under its own window key so it is a standalone window
+    like the job monitor is, not a side effect of opening it.
+    """
+    context = context or _context
+    if context is None:
+        return
+    window = context.get_window(HOST_MONITOR_WINDOW_KEY)
+    if window is not None:
+        window.show()
+        window.raise_()
+        window.activateWindow()
+        return
+    try:
+        from .host_monitor import HostMonitorDialog
+
+        service = get_service()
+        window = HostMonitorDialog(service, parent=None)
+        context.register_window(HOST_MONITOR_WINDOW_KEY, window)
+        window.finished.connect(lambda *_: context.register_window(HOST_MONITOR_WINDOW_KEY, None))
+        window.show()
+    except Exception as exc:
+        logging.exception("Job Manager: could not open the host monitor")
+        context.show_status_message(f"Job Manager: {exc}", 5000)
 
 
 def submit_file(paths, name: str = "") -> bool:

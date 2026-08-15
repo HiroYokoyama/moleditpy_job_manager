@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFrame,
+    QGraphicsOpacityEffect,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -38,8 +39,14 @@ from . import PLUGIN_VERSION, host_stats
 from .credentials import needs_password
 from .models import SCHEDULER_WINDOWS, HostProfile
 from .theme import (
-    CY_ACCENT, CY_ACCENT2, CY_AMBER, CY_GREEN, CY_GREY, CY_PURPLE,
-    CY_RED, CY_TEAL,
+    CY_ACCENT,
+    CY_ACCENT2,
+    CY_AMBER,
+    CY_GREEN,
+    CY_GREY,
+    CY_PURPLE,
+    CY_RED,
+    CY_TEAL,
 )
 from .window_utils import make_independent
 from .tasks import run_async
@@ -119,7 +126,8 @@ QPushButton {{
     color: {_DARK["text"]};
     border: 1px solid #363b42;
     border-radius: 5px;
-    padding: 4px 12px;
+    padding: 5px 14px;
+    min-height: 20px;
 }}
 QPushButton:hover {{
     background-color: #30363d;
@@ -130,6 +138,11 @@ QPushButton:checked {{
     border-color: {CY_ACCENT};
     color: {CY_ACCENT};
 }}
+QPushButton:disabled {{
+    color: {_DARK["mid"]};
+    background-color: #17191c;
+    border-color: #2a2e33;
+}}
 QSpinBox {{
     background-color: #0d1117;
     color: {_DARK["text"]};
@@ -137,6 +150,10 @@ QSpinBox {{
     border-radius: 4px;
     padding: 2px 20px 2px 4px;
     min-height: 22px;
+}}
+QSpinBox:disabled {{
+    color: {_DARK["mid"]};
+    background-color: #17191c;
 }}
 QSpinBox::up-button {{
     subcontrol-origin: border;
@@ -147,6 +164,17 @@ QSpinBox::down-button {{
     subcontrol-origin: border;
     subcontrol-position: bottom right;
     width: 18px;
+}}
+QLineEdit, QComboBox {{
+    background-color: #0d1117;
+    color: {_DARK["text"]};
+    border: 1px solid #363b42;
+    border-radius: 4px;
+    padding: 3px 6px;
+}}
+QLineEdit:disabled, QComboBox:disabled {{
+    color: {_DARK["mid"]};
+    background-color: #17191c;
 }}
 """
 
@@ -167,7 +195,8 @@ QPushButton {{
     color: #1f2328;
     border: 1px solid #d0d7de;
     border-radius: 5px;
-    padding: 4px 12px;
+    padding: 5px 14px;
+    min-height: 20px;
 }}
 QPushButton:hover {{
     background-color: #eaeef2;
@@ -178,6 +207,11 @@ QPushButton:checked {{
     border-color: {CY_ACCENT};
     color: {CY_ACCENT};
 }}
+QPushButton:disabled {{
+    color: #8b949e;
+    background-color: #eceff2;
+    border-color: #d0d7de;
+}}
 QSpinBox {{
     background-color: #ffffff;
     color: #1f2328;
@@ -185,6 +219,10 @@ QSpinBox {{
     border-radius: 4px;
     padding: 2px 20px 2px 4px;
     min-height: 22px;
+}}
+QSpinBox:disabled {{
+    color: #8b949e;
+    background-color: #eceff2;
 }}
 QSpinBox::up-button {{
     subcontrol-origin: border;
@@ -195,6 +233,17 @@ QSpinBox::down-button {{
     subcontrol-origin: border;
     subcontrol-position: bottom right;
     width: 18px;
+}}
+QLineEdit, QComboBox {{
+    background-color: #ffffff;
+    color: #1f2328;
+    border: 1px solid #d0d7de;
+    border-radius: 4px;
+    padding: 3px 6px;
+}}
+QLineEdit:disabled, QComboBox:disabled {{
+    color: #8b949e;
+    background-color: #eceff2;
 }}
 """
 
@@ -229,9 +278,7 @@ class Meter(QWidget):
         self._dark = dark
         self.update()
 
-    def show_value(
-        self, fraction: float, detail: str, caption: str = "", tip: str = ""
-    ) -> None:
+    def show_value(self, fraction: float, detail: str, caption: str = "", tip: str = "") -> None:
         self.fraction = max(0.0, min(1.0, float(fraction)))
         self.detail = detail
         if caption:
@@ -409,6 +456,15 @@ class HostCard(QFrame):
         self.lbl_target.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         outer.addWidget(self.lbl_target)
 
+        #: 1-minute load average, shown small and grey beside the target --
+        #: a second, coarser reading next to the instantaneous CPU meter below.
+        self.lbl_load_avg = QLabel("")
+        font = self.lbl_load_avg.font()
+        font.setPointSizeF(max(7.5, font.pointSizeF() * 0.85))
+        self.lbl_load_avg.setFont(font)
+        self.lbl_load_avg.setVisible(False)
+        outer.addWidget(self.lbl_load_avg)
+
         self.meter_cpu = Meter("CPU", GRAPH_CPU)
         self.meter_load = self.meter_cpu
         self.meter_memory = Meter("memory", GRAPH_MEMORY)
@@ -450,10 +506,12 @@ class HostCard(QFrame):
             self.lbl_name.setStyleSheet("color: #f0f6fc; font-weight: bold;")
             self.lbl_state.setStyleSheet("color: #8b949e;")
             self.lbl_target.setStyleSheet("color: #8b949e;")
+            self.lbl_load_avg.setStyleSheet("color: #6e7681;")
         else:
             self.lbl_name.setStyleSheet("color: #1f2328; font-weight: bold;")
             self.lbl_state.setStyleSheet("color: #656d76;")
             self.lbl_target.setStyleSheet("color: #656d76;")
+            self.lbl_load_avg.setStyleSheet("color: #8b949e;")
         self.setStyleSheet(
             f"QFrame#hostCard {{ background-color: {bg}; border: 1px solid {border}; border-radius: 10px; }}"
         )
@@ -496,8 +554,12 @@ class HostCard(QFrame):
             return
 
         _COLORS = {
-            "running": CY_GREEN, "pending": CY_AMBER, "queued": CY_GREY,
-            "done": CY_TEAL, "failed": CY_RED, "lost": CY_PURPLE,
+            "running": CY_GREEN,
+            "pending": CY_AMBER,
+            "queued": CY_GREY,
+            "done": CY_TEAL,
+            "failed": CY_RED,
+            "lost": CY_PURPLE,
             "blocked": CY_RED,
         }
         total_active = len(active)
@@ -509,18 +571,13 @@ class HostCard(QFrame):
         count_parts = []
         if running:
             count_parts.append(
-                f"<span style='color:{CY_GREEN};font-weight:bold'>"
-                f"▶ {running} running</span>"
+                f"<span style='color:{CY_GREEN};font-weight:bold'>▶ {running} running</span>"
             )
         if remaining:
-            count_parts.append(
-                f"<span style='color:{CY_AMBER};'>"
-                f"⧖ {remaining} remaining</span>"
-            )
+            count_parts.append(f"<span style='color:{CY_AMBER};'>⧖ {remaining} remaining</span>")
         if total_all > 0:
             count_parts.append(
-                f"<span style='color:{CY_GREY};'>"
-                f"(task {done_count}/{total_all} done)</span>"
+                f"<span style='color:{CY_GREY};'>(task {done_count}/{total_all} done)</span>"
             )
         counts_html = "  ".join(count_parts)
 
@@ -552,23 +609,31 @@ class HostCard(QFrame):
         if not stats.ok:
             self.show_error(stats.summary)
             return
-        cores = f"{stats.cores} cores" if stats.cores else ""
-        if stats.threads > stats.cores > 0:
-            cores += f", {stats.threads} threads"
-        self.lbl_state.setText(cores)
+        threads = f"{stats.cores} threads" if stats.cores else ""
+        self.lbl_state.setText(threads)
 
         load = stats.load[0] if stats.load else 0.0
         if stats.cores:
             self.meter_cpu.show_value(
                 stats.load_fraction,
                 f"{stats.load_fraction * 100:.0f}%",
-                f"of {stats.cores} cores",
-                f"{load:.2f} of {stats.cores} cores",
+                f"of {stats.cores} threads",
+                f"{load:.2f} of {stats.cores} threads",
             )
         else:
             self.meter_cpu.show_value(
-                0.0, f"{load:.2f}", "CPU", "the host did not report its cores"
+                0.0, f"{load:.2f}", "CPU", "the host did not report its threads"
             )
+
+        if stats.load:
+            self.lbl_load_avg.setText(f"load avg {stats.load[0]:.2f}")
+            self.lbl_load_avg.setToolTip(
+                "1-minute load average, as the host reports it -- separate "
+                "from the CPU meter above, which is instantaneous usage."
+            )
+            self.lbl_load_avg.setVisible(True)
+        else:
+            self.lbl_load_avg.setVisible(False)
 
         total = f"{stats.mem_total_mb / 1024:.1f} GB" if stats.mem_total_mb else ""
         if stats.mem_total_mb and stats.mem_free_mb:
@@ -583,9 +648,7 @@ class HostCard(QFrame):
                 0.0, "-", f"of {total}", f"{total} total, usage not reported"
             )
         else:
-            self.meter_memory.show_value(
-                0.0, "-", "memory", "the host did not report its memory"
-            )
+            self.meter_memory.show_value(0.0, "-", "memory", "the host did not report its memory")
 
         self.graph_cpu.add(stats.load_fraction)
         self.graph_memory.add(stats.memory_fraction)
@@ -596,6 +659,7 @@ class HostCard(QFrame):
         self.setToolTip(first)
         self.meter_cpu.show_value(0.0, "-")
         self.meter_memory.show_value(0.0, "-")
+        self.lbl_load_avg.setVisible(False)
 
 
 class HostMonitorDialog(QDialog):
@@ -711,7 +775,18 @@ class HostMonitorDialog(QDialog):
         layout.addWidget(scroll, 1)
 
         for host in self.service.store.host_list():
-            self.cards[host.id] = HostCard(host)
+            card = HostCard(host)
+            if not getattr(host, "enabled", True):
+                card.setEnabled(False)
+                card.lbl_state.setText("disabled")
+                # HostCard paints its surface and labels with fixed colours,
+                # not through the palette, so setEnabled() alone leaves it
+                # looking identical to an enabled card. An opacity effect dims
+                # it regardless of how its colours are drawn.
+                effect = QGraphicsOpacityEffect(card)
+                effect.setOpacity(0.45)
+                card.setGraphicsEffect(effect)
+            self.cards[host.id] = card
         if not self.cards:
             self.grid.addWidget(QLabel("No hosts yet. Add one under Hosts..."), 0, 0)
         self._relayout()
@@ -725,8 +800,6 @@ class HostMonitorDialog(QDialog):
         self._jobs_bar = _ActiveJobsBar(self.service)
         layout.addWidget(self._jobs_bar)
         layout.addWidget(box)
-
-
 
     def _on_job_updated(self, _job_id: str = "") -> None:
         self._refresh_card_jobs()
@@ -784,13 +857,38 @@ class HostMonitorDialog(QDialog):
         """Repaint this window in dark or light mode, and remember the choice."""
         pal = dark_palette(self._light_palette) if dark else self._light_palette
         self.setPalette(pal)
-        if dark:
-            self.setStyleSheet(_DARK_DIALOG_STYLE)
-        else:
-            self.setStyleSheet("")
+        # Both branches set an explicit stylesheet -- an empty one for "light"
+        # left buttons and fields on whatever native chrome the platform style
+        # drew, which is a different size than the dark-mode style's own
+        # padding, so toggling the button visibly changed size. _LIGHT_DIALOG_STYLE
+        # exists for exactly this and was previously unused.
+        self.setStyleSheet(_DARK_DIALOG_STYLE if dark else _LIGHT_DIALOG_STYLE)
         self.setAutoFillBackground(True)
         if self._scroll is not None:
             self._scroll.viewport().setAutoFillBackground(True)
+            self._scroll.viewport().setPalette(pal)
+            if hasattr(self, "body") and self.body is not None:
+                self.body.setPalette(pal)
+        # Qt caches each widget's resolved style properties; a bare
+        # setStyleSheet() on the dialog does not always invalidate them on
+        # children that already painted once, which is what made a toggle look
+        # like it "stuck" on the previous mode until something else forced a
+        # repaint. unpolish/polish forces every child to recompute.
+        style = self.style()
+        style.unpolish(self)
+        style.polish(self)
+        for child in self.findChildren(QWidget):
+            style.unpolish(child)
+            style.polish(child)
+            child.update()
+        # polish() can synthesize palette roles from the stylesheet's own
+        # background-color (Qt keeps a QSS-styled widget's QPalette in sync
+        # with what it paints), which silently drifted the window's palette
+        # away from ``pal`` -- most visibly, toggling dark off no longer gave
+        # back the exact palette the window started with. Setting it again
+        # after polish is what actually makes it win.
+        self.setPalette(pal)
+        if self._scroll is not None:
             self._scroll.viewport().setPalette(pal)
             if hasattr(self, "body") and self.body is not None:
                 self.body.setPalette(pal)
@@ -816,7 +914,9 @@ class HostMonitorDialog(QDialog):
         return [
             host
             for host in self.service.store.host_list()
-            if host.id in self.cards and not needs_password(self.service, host)
+            if host.id in self.cards
+            and getattr(host, "enabled", True)
+            and not needs_password(self.service, host)
         ]
 
     def _transport_for(self, host: HostProfile):
@@ -910,14 +1010,11 @@ class HostMonitorDialog(QDialog):
 
 
 class _ActiveJobsBar(QWidget):
-    """A one-line strip below the host cards listing every active job.
+    """Summary bar at the bottom of the Host Monitor showing overall counts.
 
     Keeps itself updated via the service's signals rather than the host-monitor
     timer: the job list changes on poll results, not on stats ticks.
     """
-
-class _ActiveJobsBar(QWidget):
-    """Summary bar at the bottom of the Host Monitor showing overall counts."""
 
     def __init__(self, service, parent=None) -> None:
         super().__init__(parent)
@@ -927,9 +1024,7 @@ class _ActiveJobsBar(QWidget):
         layout.setSpacing(10)
 
         self._lbl_count = QLabel()
-        self._lbl_count.setStyleSheet(
-            f"color: {CY_ACCENT}; font-weight: bold;"
-        )
+        self._lbl_count.setStyleSheet(f"color: {CY_ACCENT}; font-weight: bold;")
         layout.addWidget(self._lbl_count)
         layout.addStretch(1)
 
@@ -958,14 +1053,10 @@ class _ActiveJobsBar(QWidget):
         active = list(self.service.store.active_jobs())
         total = len(active)
         if not total:
-            self._lbl_count.setText(
-                f"<span style='color:{CY_GREY};'>● no active jobs</span>"
-            )
+            self._lbl_count.setText(f"<span style='color:{CY_GREY};'>● no active jobs</span>")
             return
 
-        running = sum(
-            1 for j in active if self._display_state(j) == "running"
-        )
+        running = sum(1 for j in active if self._display_state(j) == "running")
         remaining = total - running
         all_jobs = list(self.service.store.jobs.values())
         done_count = sum(1 for j in all_jobs if j.state == "DONE")
@@ -974,18 +1065,13 @@ class _ActiveJobsBar(QWidget):
         parts = []
         if running:
             parts.append(
-                f"<span style='color:{CY_GREEN};font-weight:bold'>"
-                f"▶ {running} running</span>"
+                f"<span style='color:{CY_GREEN};font-weight:bold'>▶ {running} running</span>"
             )
         if remaining:
-            parts.append(
-                f"<span style='color:{CY_AMBER};'>"
-                f"⧖ {remaining} remaining</span>"
-            )
+            parts.append(f"<span style='color:{CY_AMBER};'>⧖ {remaining} remaining</span>")
         if total_all > 0:
             parts.append(
-                f"<span style='color:{CY_GREY};'>"
-                f"(task {done_count}/{total_all} done)</span>"
+                f"<span style='color:{CY_GREY};'>(task {done_count}/{total_all} done)</span>"
             )
         self._lbl_count.setText("  ".join(parts))
 

@@ -7,6 +7,7 @@ installs only pytest) can exercise it directly.
 
 from __future__ import annotations
 
+import os
 import re
 import time
 import uuid
@@ -194,6 +195,16 @@ class HostProfile:
     #: Without this, a program that runs when you ssh in by hand is simply not
     #: found by the job, which is the single most common way a submission fails.
     load_profile: bool = True
+    #: Off means the host is skipped by the monitor, submit wizard and the Host
+    #: Monitor's live panel -- kept in the list rather than deleted, for a
+    #: machine that is down for maintenance or a account you are between uses of.
+    enabled: bool = True
+    #: A local path that mirrors this host's filesystem (a Samba share, a
+    #: mapped drive, an sshfs mount) -- if set, ``equal_path`` + a job's
+    #: remote-relative path *is* the file, with nothing to download. Empty
+    #: means there is no such mirror and results are fetched over the
+    #: transport as before.
+    equal_path: str = ""
 
     @property
     def is_local(self) -> bool:
@@ -232,6 +243,15 @@ class HostProfile:
         if self.is_local:
             return "this machine"
         return f"{self.username}@{self.hostname}" if self.username else self.hostname
+
+    def mirrored_path(self, relative_path: str) -> str:
+        """The local path ``relative_path`` (posix-separated, under the job's
+        remote directory) maps to under :attr:`equal_path`, or "" if this host
+        has no mirror configured."""
+        if not self.equal_path or not relative_path:
+            return ""
+        parts = [p for p in relative_path.replace("\\", "/").split("/") if p]
+        return os.path.join(self.equal_path, *parts) if parts else self.equal_path
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

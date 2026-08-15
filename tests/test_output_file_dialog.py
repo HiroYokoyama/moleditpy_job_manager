@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import MagicMock
 
 import pytest
+
 pytest.importorskip("PyQt6")
 
 from PyQt6.QtWidgets import QApplication
@@ -53,6 +54,7 @@ class TestOutputFileSelectorDialog(unittest.TestCase):
 
     def tearDown(self):
         import shutil
+
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_local_files_populates_tree(self):
@@ -111,7 +113,7 @@ class TestOutputFileSelectorDialog(unittest.TestCase):
         dialog.btn_open.click()
         self.assertEqual(opened, [file1])
 
-    def test_remote_files_disable_open_button(self):
+    def test_remote_files_are_listed_and_still_openable(self):
         # No local files exist
         self.job.downloaded_files = []
         self.job.local_dir = ""
@@ -132,5 +134,7 @@ class TestOutputFileSelectorDialog(unittest.TestCase):
         self.assertEqual(current.text(0), "remote_calc.out")
         self.assertTrue(current.data(0, IS_REMOTE_ROLE))
 
-        # Open button should be disabled for remote files
-        self.assertFalse(dialog.btn_open.isEnabled())
+        # Open is enabled for a remote file too: clicking it now offers to
+        # download and open rather than silently doing nothing, which is what
+        # a disabled button with no explanation looked like before.
+        self.assertTrue(dialog.btn_open.isEnabled())

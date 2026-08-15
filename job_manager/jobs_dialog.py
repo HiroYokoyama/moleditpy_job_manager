@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QSpinBox,
     QSplitter,
+    QStyledItemDelegate,
     QTableView,
     QVBoxLayout,
     QWidget,
@@ -52,7 +53,6 @@ from .theme import (
     CY_PURPLE,
     CY_RED,
     CY_TEAL,
-    DIALOG_STYLESHEET,
     apply_theme,
 )
 from .window_utils import make_independent
@@ -109,6 +109,26 @@ def format_stamp(stamp: float) -> str:
     if not stamp:
         return "-"
     return time.strftime("%m-%d %H:%M", time.localtime(stamp))
+
+
+class _StateColorDelegate(QStyledItemDelegate):
+    """Keeps the State column's colour when its row is selected.
+
+    Qt's item delegate paints selected text with the palette's HighlightedText
+    role and ignores the model's ForegroundRole entirely while a row is
+    selected -- so RUNNING/FAILED/etc. all rendered as the same near-black
+    text the moment you clicked the row, on top of a blue highlight that made
+    it worse. Overriding the palette colours the delegate paints with, rather
+    than the pen colour after the fact, is what actually takes effect for both
+    the selected and unselected states.
+    """
+
+    def initStyleOption(self, option, index) -> None:  # noqa: N802 - Qt's spelling
+        super().initStyleOption(option, index)
+        color = index.data(Qt.ItemDataRole.ForegroundRole)
+        if color is not None:
+            option.palette.setColor(option.palette.ColorRole.Text, color)
+            option.palette.setColor(option.palette.ColorRole.HighlightedText, color)
 
 
 class JobTableModel(QAbstractTableModel):
@@ -368,6 +388,7 @@ class JobsDialog(QDialog):
         header.setHighlightSections(False)
         header.setStretchLastSection(True)
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table.setItemDelegateForColumn(3, _StateColorDelegate(self.table))
         self.table.selectionModel().selectionChanged.connect(lambda *_: self._update_buttons())
         # The log is what a double click is for: it is the thing you want when
         # a job has been running for an hour and you are wondering how far it is.
@@ -657,7 +678,9 @@ class JobsDialog(QDialog):
         has_job = job is not None
         self.btn_cancel.setEnabled(bool(job and job.is_active))
         self.btn_download.setEnabled(bool(job and job.remote_dir))
-        self.btn_open.setEnabled(bool(job and (job.downloaded_files or (job.downloaded and job.remote_dir))))
+        self.btn_open.setEnabled(
+            bool(job and (job.downloaded_files or (job.downloaded and job.remote_dir)))
+        )
         self.btn_tail.setEnabled(bool(job and job.remote_dir))
         # A command-only job has no input files to check for; what makes it
         # resubmittable is the command, which the preset snapshot carries.
@@ -1138,7 +1161,11 @@ class JobsDialog(QDialog):
             try:
                 for entry in os.listdir(job.local_dir):
                     full = os.path.normpath(os.path.join(job.local_dir, entry))
-                    if os.path.isfile(full) and full not in existing_local and not entry.startswith("."):
+                    if (
+                        os.path.isfile(full)
+                        and full not in existing_local
+                        and not entry.startswith(".")
+                    ):
                         existing_local.append(full)
             except OSError:
                 pass
