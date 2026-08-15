@@ -324,13 +324,8 @@ class Sparkline(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = self.rect().adjusted(0, 1, -1, -1)
 
-        bed = QColor(255, 255, 255, 15) if self._dark else QColor(0, 0, 0, 15)
         guide_color = QColor("#8b949e" if self._dark else "#656d76")
         text_color = QColor("#f0f6fc" if self._dark else "#1f2328")
-
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(bed)
-        painter.drawRoundedRect(QRectF(rect), 4.0, 4.0)
 
         guide = QColor(guide_color)
         guide.setAlpha(60)
