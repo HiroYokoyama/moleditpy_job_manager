@@ -483,11 +483,10 @@ class HostCard(QFrame):
             widget.setVisible(False)
             outer.addWidget(widget)
 
-        # Jobs running on this host -- hidden when empty.
-        self.lbl_jobs = QLabel()
+        # Jobs running on this host -- kept visible with space to prevent layout jump.
+        self.lbl_jobs = QLabel("&nbsp;")
         self.lbl_jobs.setTextFormat(Qt.TextFormat.RichText)
         self.lbl_jobs.setWordWrap(True)
-        self.lbl_jobs.setVisible(False)
         outer.addWidget(self.lbl_jobs)
 
         self.restyle()
@@ -545,12 +544,11 @@ class HostCard(QFrame):
     def show_jobs(self, jobs: list) -> None:
         """Update the compact jobs line for this host's active jobs."""
         import html as _html
-        from .models import STATE_DONE
+        from .models import STATE_DONE, STATE_FAILED
 
         active = [j for j in jobs if j.is_active]
         if not active:
-            self.lbl_jobs.setVisible(False)
-            self.lbl_jobs.setText("")
+            self.lbl_jobs.setText("&nbsp;")
             return
 
         _COLORS = {
@@ -564,7 +562,7 @@ class HostCard(QFrame):
         }
         total_active = len(active)
         total_all = len(jobs)
-        done_count = sum(1 for j in jobs if j.state == STATE_DONE)
+        done_count = sum(1 for j in jobs if j.state in (STATE_DONE, STATE_FAILED))
         running = sum(1 for j in active if j.state.upper() == "RUNNING")
         remaining = total_active - running
 
@@ -600,7 +598,6 @@ class HostCard(QFrame):
             full_html = counts_html or chips_html
 
         self.lbl_jobs.setText(full_html)
-        self.lbl_jobs.setVisible(True)
 
     # --- what a sample changes ----------------------------------------------
 
@@ -610,14 +607,16 @@ class HostCard(QFrame):
             self.show_error(stats.summary)
             return
         # Thread usability: load_fraction is computed against the thread
-        # (logical CPU) count now, not the physical core count underneath it,
-        # so the label and the number shown here have to be the same one --
-        # falling back to cores only for a host that did not report threads
-        # (macOS's sysctl branch does not).
-        threads = stats.threads or stats.cores
-        self.lbl_state.setText(f"{threads} threads" if threads else "")
+        # (logical CPU) count now, not the physical core count underneath it.
+        cores = f"{stats.cores} cores" if stats.cores else ""
+        if stats.threads and stats.cores and stats.threads > stats.cores > 0:
+            cores += f", {stats.threads} threads"
+        elif stats.threads and not stats.cores:
+            cores = f"{stats.threads} threads"
+        self.lbl_state.setText(cores)
 
         load = stats.load[0] if stats.load else 0.0
+        threads = stats.threads or stats.cores
         if threads:
             self.meter_cpu.show_value(
                 stats.load_fraction,
@@ -683,7 +682,7 @@ class HostMonitorDialog(QDialog):
         # Wide enough for two columns of cards from the start: one column looks
         # like a list of three things, and two is where the layout reads as a
         # panel you can compare machines across.
-        self.resize(2 * self.CARD_WIDTH + 60, 560)
+        self.resize(2 * self.CARD_WIDTH + 60, 660)
         self.cards: Dict[str, HostCard] = {}
         #: The palette this window was born with, so the dark toggle has
         #: something exact to go back to.
@@ -1082,7 +1081,7 @@ class _ActiveJobsBar(QWidget):
         running = sum(1 for j in active if self._display_state(j) == "running")
         remaining = total - running
         all_jobs = list(self.service.store.jobs.values())
-        done_count = sum(1 for j in all_jobs if j.state == "DONE")
+        done_count = sum(1 for j in all_jobs if j.state in ("DONE", "FAILED"))
         total_all = len(all_jobs)
 
         parts = []

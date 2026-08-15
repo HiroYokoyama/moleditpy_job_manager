@@ -398,8 +398,7 @@ class TestHostCardJobsStrip(HostMonitorTestCase):
 
     def test_hidden_by_default(self):
         card = self._card()
-        self.assertEqual(card.lbl_jobs.text(), "")
-        self.assertTrue(card.lbl_jobs.isHidden())
+        self.assertEqual(card.lbl_jobs.text(), "&nbsp;")
 
     def test_shows_running_job(self):
         job = Job(
@@ -423,8 +422,7 @@ class TestHostCardJobsStrip(HostMonitorTestCase):
         )
         card = self._card()
         card.show_jobs([job])
-        self.assertEqual(card.lbl_jobs.text(), "")
-        self.assertTrue(card.lbl_jobs.isHidden())
+        self.assertEqual(card.lbl_jobs.text(), "&nbsp;")
 
     def test_long_name_is_truncated(self):
         long_name = "z" * 40
@@ -504,8 +502,7 @@ class TestHostCardJobsStrip(HostMonitorTestCase):
     def test_card_updates_on_jobs_changed(self):
         dialog = self.monitor()
         card = dialog.cards[self.host.id]
-        self.assertEqual(card.lbl_jobs.text(), "")
-        self.assertTrue(card.lbl_jobs.isHidden())
+        self.assertEqual(card.lbl_jobs.text(), "&nbsp;")
         self.store.add_job(
             Job(
                 id="j1",

@@ -554,7 +554,9 @@ class SubmitDialog(QDialog):
         if host is not None and self.cmb_preset.currentIndex() == 0:
             # Only where no named preset took the form: a preset the user chose
             # is a decision, and last time's settings must not overwrite it.
-            self._apply_remembered(host)
+            # Do not apply remembered preset so the form resets to default each time.
+            # self._apply_remembered(host)
+            pass
         self._update_chain_row()
 
     def _update_queue_fields(self) -> None:

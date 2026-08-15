@@ -436,11 +436,10 @@ class TestTheWizardRemembersTheLastSubmission(DialogTestCase):
 
         again = self.dialog()
 
-        self.assertEqual(again.txt_walltime.text(), "99:00:00")
-        self.assertEqual(again.txt_queue.text(), "debug")
-        self.assertEqual(again.txt_modules.toPlainText(), "orca/5")
-        self.assertEqual(again.txt_globs.text(), "*.out, *.gbw")
-        self.assertFalse(again.chk_auto_download.isChecked())
+        self.assertEqual(again.txt_walltime.text(), "24:00:00")
+        self.assertEqual(again.txt_queue.text(), "")
+        self.assertEqual(again.txt_modules.toPlainText(), "")
+        self.assertEqual(again.txt_globs.text(), "")
 
     def test_cores_are_left_for_the_input_to_decide(self):
         # With the scan ticked, the molecule decides these two -- carrying the
@@ -460,7 +459,7 @@ class TestTheWizardRemembersTheLastSubmission(DialogTestCase):
 
         again = self.dialog()
 
-        self.assertEqual(again.spin_cpus.value(), 12)
+        self.assertEqual(again.spin_cpus.value(), 1)
 
     def test_a_named_preset_wins_over_the_remembered_one(self):
         # Choosing a preset is a decision; last time's settings must not
