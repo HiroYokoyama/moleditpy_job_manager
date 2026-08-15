@@ -63,6 +63,13 @@ class TestShowMonitor(PluginEntryTestCase):
         self.assertEqual(self.context.register_window.call_args.args[0], "job_monitor")
         dialog_cls.return_value.show.assert_called_once()
 
+    def test_creates_independent_window_with_no_parent(self):
+        job_manager.initialize(self.context)
+        with patch("job_manager.jobs_dialog.JobsDialog") as dialog_cls:
+            job_manager.show_monitor(self.context)
+        dialog_cls.assert_called_once()
+        self.assertIsNone(dialog_cls.call_args.kwargs.get("parent"))
+
     def test_an_existing_window_is_raised_not_rebuilt(self):
         job_manager.initialize(self.context)
         existing = MagicMock()

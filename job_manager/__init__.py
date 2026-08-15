@@ -258,7 +258,7 @@ def show_monitor(context=None) -> None:
         from .jobs_dialog import JobsDialog
 
         service = get_service()
-        window = JobsDialog(service, context.get_main_window())
+        window = JobsDialog(service, parent=None)
         context.register_window(WINDOW_KEY, window)
         window.show()
     except Exception as exc:
