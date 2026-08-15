@@ -10,7 +10,7 @@ The normal path, end to end, plus what to do when a job goes wrong.
 |---|---|
 | Hostname / Username / Port | Or just the alias from your `~/.ssh/config` |
 | Backend | **OpenSSH** unless the host needs a password, or **This machine** for no SSH at all |
-| Scheduler | SLURM, PBS/Torque, SGE/UGE, None (background process), or None (Windows, PowerShell) |
+| Scheduler | SLURM, PBS/Torque, SGE/UGE, Built-in (background process), or Built-in (Windows, PowerShell) |
 | Private key | Optional. Leave empty to use your agent and `ssh_config` |
 | Jump host | `user@bastion` — OpenSSH backend only |
 | Remote root | Where job directories are created, default `~/moleditpy_jobs` |
@@ -168,7 +168,7 @@ directory here, and "upload" and "download" are file copies.
 
 The bash schedulers need a POSIX shell — free on macOS and Linux, and on
 Windows meaning Git Bash or WSL. The Hosts dialog says so if it cannot find
-one. On Windows you can instead pick the **None (Windows, PowerShell)**
+one. On Windows you can instead pick the **Built-in (Windows, PowerShell)**
 scheduler and need nothing at all; see below.
 
 ### Running jobs one after another
@@ -231,7 +231,7 @@ where a scheduler stops reading.
 
 ### Running on Windows, with nothing to install
 
-Choose the scheduler **None (Windows, PowerShell)** and the whole workflow runs
+Choose the scheduler **Built-in (Windows, PowerShell)** and the whole workflow runs
 through PowerShell: the wrapper, the status checks, the cancel, and the
 plugin's own housekeeping. Windows PowerShell 5.1 ships with the operating
 system, so nothing needs installing; PowerShell 7 (`pwsh`) is used where both

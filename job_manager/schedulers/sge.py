@@ -48,6 +48,7 @@ _STATE_MAP: Dict[str, str] = {
 class SgeScheduler(Scheduler):
     name = "sge"
     label = "SGE / UGE"
+    order = 50
     # -hold_jid releases on the predecessor finishing, however it finished.
     chain_releases_on_failure = True
 

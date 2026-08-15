@@ -39,6 +39,7 @@ _STATE_MAP: Dict[str, str] = {
 class PbsScheduler(Scheduler):
     name = "pbs"
     label = "PBS / Torque"
+    order = 40
 
     def directives(self, job_name: str, preset: SubmitPreset, log_file: str) -> List[str]:
         lines = [

@@ -42,6 +42,7 @@ _STATE_MAP: Dict[str, str] = {
 class SlurmScheduler(Scheduler):
     name = "slurm"
     label = "SLURM"
+    order = 30
 
     def directives(self, job_name: str, preset: SubmitPreset, log_file: str) -> List[str]:
         lines = [

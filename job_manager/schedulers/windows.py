@@ -74,7 +74,8 @@ class WindowsScheduler(Scheduler):
     """Run jobs directly on a Windows machine, tracked by process id."""
 
     name = "windows"
-    label = "None (Windows, PowerShell)"
+    label = "Built-in (Windows, PowerShell)"
+    order = 20
     script_name = SCRIPT_NAME
     supports_chaining = True
     # Liveness is a process check, so a predecessor that failed is simply gone

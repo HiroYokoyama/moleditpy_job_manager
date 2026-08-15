@@ -171,6 +171,10 @@ class Scheduler(ABC):
     name: str = ""
     #: Human label for the UI.
     label: str = ""
+    #: Where this sits in the scheduler list. Low first, so the built-in modes
+    #: -- the ones that work with nothing installed -- lead, and the clusters
+    #: follow in the order people meet them.
+    order: int = 100
     #: File name of the generated submit script.
     script_name: str = "moleditpy_run.sh"
 
@@ -393,7 +397,7 @@ def get_scheduler(name: str) -> Scheduler:
 
 
 def available_schedulers() -> List[Scheduler]:
-    return [_REGISTRY[key] for key in sorted(_REGISTRY)]
+    return sorted(_REGISTRY.values(), key=lambda s: (s.order, s.label))
 
 
 def canonical_state(raw: str, mapping: Dict[str, str]) -> str:

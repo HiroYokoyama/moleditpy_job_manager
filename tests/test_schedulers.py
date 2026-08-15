@@ -27,6 +27,17 @@ class TestRegistry(unittest.TestCase):
     def test_every_scheduler_has_a_label(self):
         self.assertTrue(all(s.label for s in available_schedulers()))
 
+    def test_the_built_in_modes_lead_the_list(self):
+        # The two that need nothing installed on the far end come first, and a
+        # new host defaults to the first of them.
+        self.assertEqual([s.name for s in available_schedulers()][:2], ["shell", "windows"])
+        self.assertEqual([s.name for s in available_schedulers()][2:], ["slurm", "pbs", "sge"])
+
+    def test_a_new_host_uses_the_built_in_mode(self):
+        from job_manager.models import SCHEDULER_SHELL, HostProfile
+
+        self.assertEqual(HostProfile().scheduler, SCHEDULER_SHELL)
+
 
 class TestFormatCommand(unittest.TestCase):
     def setUp(self):

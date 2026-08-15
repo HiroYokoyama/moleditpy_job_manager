@@ -24,7 +24,8 @@ from .base import (
 
 class ShellScheduler(Scheduler):
     name = "shell"
-    label = "None (background process)"
+    label = "Built-in (background process)"
+    order = 10
     # Nothing else serialises work on a machine with no queue, so this is the
     # one scheduler where "run after that job" has to be arranged by hand.
     supports_chaining = True

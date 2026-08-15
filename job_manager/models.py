@@ -124,7 +124,10 @@ class HostProfile:
     username: str = ""
     port: int = 22
     backend: str = BACKEND_OPENSSH
-    scheduler: str = SCHEDULER_SLURM
+    #: The built-in mode, which needs nothing installed on the far end. A host
+    #: with a real queue is a deliberate choice; guessing SLURM for every new
+    #: profile was not.
+    scheduler: str = SCHEDULER_SHELL
     key_path: str = ""
     jump_host: str = ""
     remote_root: str = "~/moleditpy_jobs"
