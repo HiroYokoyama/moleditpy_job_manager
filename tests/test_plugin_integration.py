@@ -31,7 +31,7 @@ HAS_MAIN_APP = _MAIN_APP_SRC is not None
 
 #: Every PluginContext member this plugin touches, anywhere in its source.
 USED_CONTEXT_MEMBERS = (
-    "add_plugin_menu",
+    "add_menu_action",
     "get_window",
     "register_window",
     "get_main_window",
@@ -48,8 +48,13 @@ class StubPluginContext:
         self.status_messages = []
         self.main_window = MagicMock()
 
-    def add_plugin_menu(self, path, callback, text=None, icon=None, shortcut=None):
+    def add_menu_action(self, path, callback, text=None, icon=None, shortcut=None):
         self.menu_actions.append((path, callback))
+
+    def add_plugin_menu(self, path, callback, text=None, icon=None, shortcut=None):
+        # Present because the host has it, and asserted against: these entries
+        # belong under Extensions, which this method cannot reach.
+        raise AssertionError("add_plugin_menu is hard-wired to the Plugin menu")
 
     def register_window(self, window_id, window):
         self.windows[window_id] = window
@@ -73,9 +78,11 @@ class TestInitializeContract(unittest.TestCase):
     def test_two_menu_actions_are_registered(self):
         self.assertEqual(len(self.context.menu_actions), 2)
 
-    def test_actions_live_under_the_plugin_menu(self):
+    def test_actions_live_under_the_extensions_menu(self):
+        # A top-level menu of its own, which the host creates on demand --
+        # see plugin_menu_manager.add_registered_plugin_actions.
         for path, _callback in self.context.menu_actions:
-            self.assertTrue(path.startswith("Job Manager/"), path)
+            self.assertTrue(path.startswith("Extensions/Job Manager/"), path)
 
     def test_callbacks_are_callable(self):
         for _path, callback in self.context.menu_actions:

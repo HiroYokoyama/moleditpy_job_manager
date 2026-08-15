@@ -26,8 +26,17 @@ class PluginEntryTestCase(unittest.TestCase):
 class TestInitialize(PluginEntryTestCase):
     def test_registers_both_menu_entries(self):
         job_manager.initialize(self.context)
-        paths = [call.args[0] for call in self.context.add_plugin_menu.call_args_list]
-        self.assertEqual(paths, ["Job Manager/Job Monitor", "Job Manager/Submit Job..."])
+        paths = [call.args[0] for call in self.context.add_menu_action.call_args_list]
+        self.assertEqual(
+            paths,
+            ["Extensions/Job Manager/Job Monitor", "Extensions/Job Manager/Submit Job..."],
+        )
+
+    def test_it_does_not_land_in_the_plugin_menu(self):
+        # add_plugin_menu is hard-wired to "Plugin/<path>", which is the one
+        # place these entries are not meant to be.
+        job_manager.initialize(self.context)
+        self.context.add_plugin_menu.assert_not_called()
 
     def test_the_context_is_remembered(self):
         job_manager.initialize(self.context)
@@ -133,7 +142,10 @@ class TestContextContract(unittest.TestCase):
     """Only PluginContext methods the manual documents may be used."""
 
     DOCUMENTED = {
-        "add_plugin_menu",
+        # PLUGIN_DEVELOPMENT_MANUAL_V4.md 3.1: "Add item to any main menu".
+        # The host creates a top-level menu it does not have, which is how
+        # these entries reach Extensions rather than Plugin.
+        "add_menu_action",
         "get_window",
         "register_window",
         "get_main_window",

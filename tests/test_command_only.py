@@ -435,6 +435,14 @@ class TestTheHostEnvironmentReachesTheScript(unittest.TestCase):
         for line in make_host(load_profile=True).environment_commands():
             self.assertTrue(line.endswith("|| true"), line)
 
+    def test_aliases_are_expanded_before_the_files_are_read(self):
+        # bash expands aliases only in an interactive shell unless told
+        # otherwise, so a launch command defined as `alias orca6=...` in a
+        # dotfile is read as a plain word and reported as not found.
+        lines = make_host(load_profile=True).environment_commands()
+        self.assertIn("expand_aliases", lines[0])
+        self.assertTrue(any(".bashrc" in line for line in lines[1:]))
+
     def test_nothing_is_added_when_the_box_is_unticked(self):
         host = make_host(load_profile=False, login_commands=["module load orca"])
         self.assertEqual(host.environment_commands(), ["module load orca"])

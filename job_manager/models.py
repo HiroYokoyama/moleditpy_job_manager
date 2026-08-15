@@ -86,6 +86,11 @@ SCHEDULER_WINDOWS = "windows"
 #: this is not a complete substitute for a login shell -- but anything the user
 #: put *above* that guard, which is where module loads usually end up, does run.
 PROFILE_COMMANDS = (
+    # First, or the aliases the next four lines define are read as ordinary
+    # words: bash expands aliases only in an interactive shell unless told
+    # otherwise, and a job script is not one. A user whose launch command is
+    # `alias orca6=...` in ~/.bashrc gets "orca6: command not found" without it.
+    "shopt -s expand_aliases 2>/dev/null || true",
     "[ -f /etc/profile ] && . /etc/profile || true",
     "[ -f ~/.bash_profile ] && . ~/.bash_profile || true",
     "[ -f ~/.profile ] && . ~/.profile || true",

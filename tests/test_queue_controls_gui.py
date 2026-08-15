@@ -23,7 +23,7 @@ from job_manager.models import (  # noqa: E402
 )
 from job_manager.remote_runner import PAUSED_NAME  # noqa: E402
 
-from .fakes import FakeTransport, make_host  # noqa: E402
+from .fakes import FakeTransport, make_host, make_preset  # noqa: E402
 from .test_dialogs import DialogTestCase  # noqa: E402
 
 
@@ -325,6 +325,32 @@ class TestTheWizardReadsTheInput(DialogTestCase):
         self.assertEqual(dialog.txt_memory.text(), "4G")
         self.assertEqual(dialog.spin_cpus.value(), 2)
 
+    def test_a_prefilled_wizard_reads_the_input_too(self):
+        # Every way into the wizard bar "Add files..." goes through prefill: a
+        # drop on the monitor, the input generators' Submit to Cluster, and
+        # Resubmit. Reading the input only on the button meant those three
+        # asked the queue for one core and no memory.
+        dialog = self.dialog()
+
+        dialog.prefill(files=[self.orca_input()])
+
+        self.assertEqual(dialog.spin_cpus.value(), 8)
+        self.assertEqual(dialog.txt_memory.text(), "24000M")
+
+    def test_a_resubmit_keeps_the_numbers_it_ran_with(self):
+        # The preset is applied before the scan, and the scan only fills a
+        # field still at its default, so a job resubmitted with 2 CPUs stays
+        # at 2 rather than being "corrected" from the file.
+        dialog = self.dialog()
+
+        dialog.prefill(
+            files=[self.orca_input()],
+            preset={"cpus_per_task": 2, "memory": "4G", "command_template": "orca {input}"},
+        )
+
+        self.assertEqual(dialog.spin_cpus.value(), 2)
+        self.assertEqual(dialog.txt_memory.text(), "4G")
+
     def test_unticking_the_box_leaves_both_fields_alone(self):
         dialog = self.dialog()
         dialog.chk_scan_resources.setChecked(False)
@@ -381,3 +407,80 @@ class TestTheWizardReadsTheInput(DialogTestCase):
 
         self.assertEqual(preset.memory, "24000M")
         self.assertEqual(preset.cpus_per_task, 8)
+
+
+class TestTheWizardRemembersTheLastSubmission(DialogTestCase):
+    """Site settings come back; what the molecule decides does not."""
+
+    def dialog(self):
+        from job_manager.submit_dialog import SubmitDialog
+
+        dialog = SubmitDialog(self.service)
+        self.addCleanup(dialog.deleteLater)
+        return dialog
+
+    def submit_once(self, **fields):
+        dialog = self.dialog()
+        dialog.txt_walltime.setText(fields.get("walltime", "99:00:00"))
+        dialog.txt_queue.setText(fields.get("queue", "debug"))
+        dialog.txt_modules.setPlainText(fields.get("modules", "orca/5"))
+        dialog.txt_globs.setText(fields.get("globs", "*.out, *.gbw"))
+        dialog.txt_command.setText("orca {input} > {stem}.out")
+        dialog.chk_auto_download.setChecked(False)
+        dialog.spin_cpus.setValue(12)
+        dialog._remember(self.host, dialog.collect_preset())
+        return dialog
+
+    def test_the_site_settings_come_back(self):
+        self.submit_once()
+
+        again = self.dialog()
+
+        self.assertEqual(again.txt_walltime.text(), "99:00:00")
+        self.assertEqual(again.txt_queue.text(), "debug")
+        self.assertEqual(again.txt_modules.toPlainText(), "orca/5")
+        self.assertEqual(again.txt_globs.text(), "*.out, *.gbw")
+        self.assertFalse(again.chk_auto_download.isChecked())
+
+    def test_cores_are_left_for_the_input_to_decide(self):
+        # With the scan ticked, the molecule decides these two -- carrying the
+        # last job's twelve cores onto a different molecule is how a job ends
+        # up asking for resources it does not need.
+        self.submit_once()
+
+        again = self.dialog()
+
+        self.assertTrue(again.chk_scan_resources.isChecked())
+        self.assertEqual(again.spin_cpus.value(), 1)
+        self.assertEqual(again.txt_memory.text(), "")
+
+    def test_with_the_scan_off_the_numbers_come_back_too(self):
+        self.store.set_pref("scan_resources", False)
+        self.submit_once()
+
+        again = self.dialog()
+
+        self.assertEqual(again.spin_cpus.value(), 12)
+
+    def test_a_named_preset_wins_over_the_remembered_one(self):
+        # Choosing a preset is a decision; last time's settings must not
+        # quietly overwrite it.
+        self.submit_once()
+        preset = make_preset(host_id=self.host.id, name="mine", walltime="01:00:00")
+        self.store.add_preset(preset)
+
+        again = self.dialog()
+
+        self.assertEqual(again.txt_walltime.text(), "01:00:00")
+
+    def test_nothing_is_remembered_for_a_different_host(self):
+        from job_manager.models import HostProfile
+
+        self.submit_once()
+        other = HostProfile(id="other", name="second", hostname="b.example.org")
+        self.store.add_host(other)
+
+        again = self.dialog()
+        again.cmb_host.setCurrentIndex(again.cmb_host.findData("other"))
+
+        self.assertNotEqual(again.txt_walltime.text(), "99:00:00")

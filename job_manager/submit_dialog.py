@@ -31,7 +31,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from . import input_scan
+from . import PLUGIN_VERSION, input_scan
 from .command_templates import CommandTemplate, suggest, templates_for
 from .credentials import ensure_password
 from .models import HostProfile, Job, SubmitPreset
@@ -39,7 +39,20 @@ from .runner import make_remote_dir
 from .schedulers import get_scheduler, references_input
 from .service import JobService
 
-INPUT_FILTER = "Calculation inputs (*.inp *.com *.gjf *.in *.xyz *.sh *.slurm);;All files (*)"
+#: Offered by the file picker, in order. The first is the default until the
+#: user picks another, after which their choice is what opens next time: a
+#: person who submits Gaussian jobs all day should not scroll past every other
+#: program's extensions every time.
+INPUT_FILTERS = (
+    "Calculation inputs (*.inp *.com *.gjf *.in *.xyz *.sh *.slurm)",
+    "ORCA / CP2K / GAMESS (*.inp)",
+    "Gaussian (*.com *.gjf)",
+    "Quantum ESPRESSO / VASP / generic (*.in)",
+    "Structures (*.xyz)",
+    "Scripts (*.sh *.slurm *.pbs)",
+    "All files (*)",
+)
+INPUT_FILTER = ";;".join(INPUT_FILTERS)
 
 #: Dropdown entries that are actions rather than templates.
 _SAVE_TEMPLATE = object()
@@ -53,7 +66,7 @@ class SubmitDialog(QDialog):
         super().__init__(parent)
         self.service = service
         self.store = service.store
-        self.setWindowTitle("Job Manager - Submit Job")
+        self.setWindowTitle(f"Job Manager {PLUGIN_VERSION} - Submit Job")
         self.resize(760, self._preferred_height(640))
         # Input files can be dropped straight onto the wizard.
         self.setAcceptDrops(True)
@@ -94,6 +107,13 @@ class SubmitDialog(QDialog):
             first = os.path.dirname(files[0])
             if first:
                 self.store.set_pref("last_input_dir", first)
+            # After any preset above, so a resubmit keeps the numbers it ran
+            # with: the scan only fills a field still at its default. Without
+            # this the wizard read the input only when the file arrived through
+            # "Add files...", and every other way in -- a drop, the input
+            # generators' Submit to Cluster, Resubmit -- silently asked the
+            # queue for one core.
+            self._apply_scanned_resources(files[0])
         if name:
             self.txt_job_name.setText(name)
         elif files:
@@ -508,6 +528,10 @@ class SubmitDialog(QDialog):
         if self.cmb_preset.count() > 1:
             self.cmb_preset.setCurrentIndex(1)
         self._on_preset_changed()
+        if host is not None and self.cmb_preset.currentIndex() == 0:
+            # Only where no named preset took the form: a preset the user chose
+            # is a decision, and last time's settings must not overwrite it.
+            self._apply_remembered(host)
         self._update_chain_row()
 
     #: How each scheduler is told to wait, for the hint under the checkbox.
@@ -755,7 +779,16 @@ class SubmitDialog(QDialog):
 
     def _add_files(self) -> None:
         start = self.store.get_pref("last_input_dir", "") or ""
-        paths, _ = QFileDialog.getOpenFileNames(self, "Select input files", start, INPUT_FILTER)
+        chosen = self.store.get_pref("input_filter", "") or INPUT_FILTERS[0]
+        if chosen not in INPUT_FILTERS:
+            # A filter from a version that offered different ones. Qt would
+            # simply show nothing selected, so fall back rather than puzzle.
+            chosen = INPUT_FILTERS[0]
+        paths, used = QFileDialog.getOpenFileNames(
+            self, "Select input files", start, INPUT_FILTER, chosen
+        )
+        if used:
+            self.store.set_pref("input_filter", used)
         self.add_files(paths or [])
 
     def add_files(self, paths: Sequence[str]) -> None:
@@ -975,7 +1008,33 @@ class SubmitDialog(QDialog):
             remote_dir=remote_dir,
             remote_input=self.remote_input(),
         )
+        self._remember(host, preset)
         self.accept()
+
+    def _remember(self, host: HostProfile, preset: SubmitPreset) -> None:
+        """Keep this submission's settings as the starting point for the next.
+
+        Presets are the named, deliberate version of this; a person who submits
+        the same kind of job every day should not have to name one to stop
+        retyping the walltime, the modules and the fetch patterns each time.
+        """
+        remembered = dict(self.store.get_pref("last_preset", {}) or {})
+        remembered[host.id] = preset.to_dict()
+        self.store.set_pref("last_preset", remembered)
+
+    def _apply_remembered(self, host: HostProfile) -> None:
+        """Restore the last submission to this host, where nothing else has."""
+        data = (self.store.get_pref("last_preset", {}) or {}).get(host.id)
+        if not data:
+            return
+        self._apply_preset(SubmitPreset.from_dict(data))
+        if self.chk_scan_resources.isChecked():
+            # Those two describe the molecule, not the site: with the box
+            # ticked they come from the input file, so they are put back to
+            # their defaults for the scan to fill. Unticked, last time's
+            # numbers are exactly what was wanted.
+            self.spin_cpus.setValue(1)
+            self.txt_memory.setText("")
 
     def _default_job_name(self, files: List[str], remote_dir: str) -> str:
         """What the job is called when the user did not name it."""

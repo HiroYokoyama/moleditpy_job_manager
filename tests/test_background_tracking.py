@@ -135,7 +135,7 @@ class TestResumingAfterRestart(TrackingTestCase):
 
         job_manager.initialize(self.context)  # must not raise
 
-        self.context.add_plugin_menu.assert_called()
+        self.context.add_menu_action.assert_called()
 
 
 class TestStatusBarIndicator(TrackingTestCase):

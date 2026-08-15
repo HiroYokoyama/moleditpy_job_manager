@@ -4,7 +4,7 @@ The normal path, end to end, plus what to do when a job goes wrong.
 
 ## 1. Add a host, once
 
-**Job Manager → Job Monitor → Hosts...**
+**Extensions → Job Manager → Job Monitor → Hosts...**
 
 | Field | Notes |
 |---|---|
@@ -94,6 +94,20 @@ extensions are deliberately not claimed application-wide, since that would take
 
 Check the **Script preview** tab: that is the exact script that gets uploaded.
 Then **Submit**.
+
+### What the wizard remembers
+
+Everything that describes the *site* rather than the molecule comes back the
+next time you submit to the same host: queue, account, walltime, nodes, tasks,
+modules, pre-commands, extra directives, the command, the fetch patterns and
+whether results download by themselves. No preset needs naming for this — a
+preset is the deliberate, named version of the same idea, and one you have
+chosen always wins over what was merely used last.
+
+**Cores and memory are the exception.** They describe the molecule, and with
+**Take these two from the input file** ticked they are read from the input each
+time, so last week's twelve cores are not carried onto a job that does not need
+them. Untick it and they are remembered like everything else.
 
 ### Where the results go
 
@@ -629,3 +643,66 @@ helper is running — it only ever reads what is under `.moleditpy_runner/`.
 | A job asks for more memory than the machine has | It is given the whole machine and runs alone, rather than waiting for ever |
 | The helper is not running between batches | By design: it exits as soon as its queue is empty and the next submission starts it again |
 | The wizard filled in a memory figure you did not expect | It was read from the input. ORCA's `%maxcore` is **per core**, so it is multiplied by `%pal nprocs`. Overwrite the field and it is left alone |
+| `command not found` for something that works when you ssh in | See below — it is almost always the guard at the top of `~/.bashrc` |
+
+### "command not found", but it works when I ssh in
+
+The job runs `moleditpy_run.sh` through a shell that is **not interactive**, and
+that one difference is behind nearly every one of these.
+
+**1. Your `~/.bashrc` stops before your line.** The stock Debian and Ubuntu file
+opens with:
+
+```bash
+# If not running interactively, don't do anything
+case $- in
+    *i*) ;;
+      *) return;;
+esac
+```
+
+Sourcing that file from a job returns at line 6. Everything below — including
+the `export PATH=...` you added at the bottom — never runs. Ticking
+**Environment** does not help, because the file itself declines to do anything.
+Logging in by hand works because *that* shell is interactive.
+
+Confirm it, and see exactly what the job sees:
+
+```bash
+ssh myhost 'shopt -s expand_aliases
+  [ -f /etc/profile ] && . /etc/profile
+  [ -f ~/.bash_profile ] && . ~/.bash_profile
+  [ -f ~/.profile ] && . ~/.profile
+  [ -f ~/.bashrc ] && . ~/.bashrc
+  type mycommand; echo "PATH=$PATH"'
+
+ssh myhost 'grep -n "case \$- in" ~/.bashrc; grep -n mycommand ~/.bashrc'
+```
+
+A definition *below* the guard's line number is the whole story. Three fixes, in
+order of reliability:
+
+1. **Put the export in the host's Login commands** (Hosts… → Advanced). It runs
+   unconditionally, in the job script and around every command sent to the host,
+   and depends on no dotfile at all.
+2. **Move the export above the guard** in `~/.bashrc` — fixes it for every tool
+   you drive over SSH, not just this one.
+3. **Move it to `~/.bash_profile` or `~/.profile`**, which carry no such guard
+   and which **Environment** also reads.
+
+**2. It is an alias.** Bash expands aliases only in an interactive shell, so
+`alias orca6=...` is read as a plain word. The preamble now sets
+`shopt -s expand_aliases` before sourcing, which makes aliases work — provided
+they are reached at all, i.e. provided (1) is not also in the way. A shell
+*function* has never needed this.
+
+**3. It is on `PATH` only for a login shell.** Site software often lives behind
+`module`, whose own initialisation is in `/etc/profile.d`. **Environment** reads
+`/etc/profile`, which reads those — so tick it, then `module load ...` in
+**Login commands**.
+
+**4. The name resolves to the wrong program.** `type -a orca` on a Linux desktop
+usually reports `/usr/bin/orca` — the GNOME **screen reader**. A job calling it
+prints "The following are not valid: <file>" and "Cannot start the screen reader
+because it cannot connect to the Desktop", then exits 1 with no output file. Use
+the absolute path, which ORCA requires anyway for `%pal nprocs > 1`.

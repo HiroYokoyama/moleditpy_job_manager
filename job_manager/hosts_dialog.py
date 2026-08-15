@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from . import PLUGIN_VERSION
 from .credentials import ensure_password, needs_password
 from .models import (
     BACKEND_LOCAL,
@@ -70,7 +71,7 @@ class HostsDialog(QDialog):
         super().__init__(parent)
         self.service = service
         self.store = service.store
-        self.setWindowTitle("Job Manager - Hosts")
+        self.setWindowTitle(f"Job Manager {PLUGIN_VERSION} - Hosts")
         self.resize(720, 560)
         self._current: Optional[HostProfile] = None
         #: True while the pause box is being set to match the host, so that
@@ -175,8 +176,10 @@ class HostsDialog(QDialog):
         form.addRow("Private key", key_row)
         form.addRow("Jump host", self.txt_jump)
         self.cmb_concurrency = QComboBox()
-        self.cmb_concurrency.addItem("Chain the jobs together", MODE_LANES)
+        # The helper first, because it is the default and the better of the two:
+        # it is the only one that can schedule on cores and memory at all.
         self.cmb_concurrency.addItem("Queue them with a helper on the host", MODE_RUNNER)
+        self.cmb_concurrency.addItem("Chain the jobs together", MODE_LANES)
         self.cmb_concurrency.setToolTip(
             "How the limit above is kept.\n\n"
             "Chaining leaves nothing behind on the host: each job is told to "

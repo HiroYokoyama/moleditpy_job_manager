@@ -1407,3 +1407,133 @@ class TestCommandTemplateDropdown(DialogTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestJobDetails(DialogTestCase):
+    """The record, and the four settings that still decide what happens next."""
+
+    def setUp(self):
+        super().setUp()
+        self.job = Job(
+            id="j1",
+            name="opt",
+            host_id=self.host.id,
+            host_name=self.host.name,
+            scheduler="slurm",
+            remote_job_id="42",
+            state=STATE_RUNNING,
+            remote_dir="~/work/opt",
+            log_file="job.log",
+            command="#!/bin/bash\norca mol.inp\n",
+            fetch_globs=["*.out"],
+            preset=make_preset(cpus_per_task=8, memory="24000M").to_dict(),
+        )
+        self.store.add_job(self.job)
+        self.dialog = JobsDialog(self.service)
+        self.addCleanup(self.dialog.deleteLater)
+        self.dialog.table.selectRow(0)
+
+    def details(self):
+        from job_manager.details_dialog import JobDetailsDialog
+
+        self.dialog._show_details()
+        dialog = self.dialog._detail_dialogs[-1]
+        self.assertIsInstance(dialog, JobDetailsDialog)
+        self.addCleanup(dialog.deleteLater)
+        return dialog
+
+    def test_the_record_names_the_resources_it_asked_for(self):
+        text = self.dialog._describe(self.job)
+        self.assertIn("CPUs per task", text)
+        self.assertIn("8", text)
+        self.assertIn("24000M", text)
+
+    def test_the_record_shows_the_script_that_ran(self):
+        self.assertIn("orca mol.inp", self.dialog._describe(self.job))
+
+    def test_the_record_says_whether_the_login_files_are_read(self):
+        # The one host setting that decides whether the command is found.
+        self.assertIn("Reads login files", self.dialog._describe(self.job))
+
+    def test_the_download_settings_are_editable_and_persist(self):
+        dialog = self.details()
+        dialog.txt_globs.setText("*.out, *.gbw")
+        dialog.chk_auto.setChecked(False)
+        dialog.txt_local.setText(self.tmp)
+
+        dialog._save()
+
+        stored = JobStore(self.tmp).jobs["j1"]
+        self.assertEqual(stored.fetch_globs, ["*.out", "*.gbw"])
+        self.assertFalse(stored.auto_download)
+        self.assertEqual(stored.local_dir, self.tmp)
+
+    def test_renaming_a_job_reaches_the_table(self):
+        dialog = self.details()
+        dialog.txt_name.setText("optimisation")
+
+        dialog._save()
+
+        self.assertEqual(JobStore(self.tmp).jobs["j1"].name, "optimisation")
+
+    def test_a_blank_name_is_refused_rather_than_stored(self):
+        dialog = self.details()
+        dialog.txt_name.setText("   ")
+        dialog._save()
+        self.assertEqual(self.job.name, "opt")
+
+    def test_details_works_for_an_archived_job(self):
+        # It reads only what is recorded, so it needs no host and no network.
+        self.dialog._archive_path = "/somewhere/jobs_2026.pmejbs"
+        self.dialog._update_buttons()
+        self.assertTrue(self.dialog.btn_details.isEnabled())
+        self.assertFalse(self.dialog.btn_tail.isEnabled())
+
+
+class TestTailWindow(DialogTestCase):
+    def setUp(self):
+        super().setUp()
+        self.store.add_job(
+            Job(
+                id="j1",
+                name="opt",
+                host_id=self.host.id,
+                remote_dir="~/work/opt",
+                log_file="job.log",
+            )
+        )
+        self.dialog = JobsDialog(self.service)
+        self.addCleanup(self.dialog.deleteLater)
+        self.dialog.table.selectRow(0)
+
+    def test_tailing_opens_a_window_of_its_own(self):
+        self.dialog._tail_selected()
+        self.assertIsNotNone(self.dialog._tail_dialog)
+        self.addCleanup(self.dialog._tail_dialog.deleteLater)
+        self.assertIn("job.log", self.dialog._tail_dialog.windowTitle())
+
+    def test_the_tail_lands_in_that_window_not_the_strip(self):
+        self.dialog._tail_selected()
+        self.addCleanup(self.dialog._tail_dialog.deleteLater)
+
+        self.dialog._show_log("SCF converged\n")
+
+        self.assertIn("SCF converged", self.dialog._tail_dialog.view.toPlainText())
+        self.assertNotIn("SCF converged", self.dialog.txt_log.toPlainText())
+
+    def test_a_second_tail_reuses_the_window(self):
+        self.dialog._tail_selected()
+        first = self.dialog._tail_dialog
+        self.addCleanup(first.deleteLater)
+        self.dialog._tail_selected()
+        self.assertIs(self.dialog._tail_dialog, first)
+
+    def test_double_clicking_a_row_tails_it(self):
+        self.dialog.table.doubleClicked.emit(self.dialog.model.index(0, 0))
+        self.assertIsNotNone(self.dialog._tail_dialog)
+        self.addCleanup(self.dialog._tail_dialog.deleteLater)
+
+    def test_a_tail_with_no_window_open_still_goes_somewhere(self):
+        # The window can be closed while the read is in flight.
+        self.dialog._show_log("orphaned output")
+        self.assertIn("orphaned output", self.dialog.txt_log.toPlainText())

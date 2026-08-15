@@ -103,6 +103,13 @@ DEFAULT_PREFS: Dict[str, Any] = {
     #: The badge is a persistent change to how MoleditPy looks; this is not.
     "notify_on_finish": True,
     "last_input_dir": "",
+    #: Which file type the input picker opens on. Empty means the first one.
+    "input_filter": "",
+    #: The last submission's settings, per host id: walltime, queue, modules,
+    #: command, fetch patterns and the rest. Everything in it describes the
+    #: site rather than the molecule, so it is worth restoring; what the input
+    #: file decides is not kept. {host_id: preset dict}.
+    "last_preset": {},
     #: Read the core count and memory request out of the input file. On,
     #: because those numbers are already written there and the copy the queue
     #: schedules on is the one that gets forgotten.

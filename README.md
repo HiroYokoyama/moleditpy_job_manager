@@ -176,7 +176,7 @@ success. `FAILED (rc=143)` is what a walltime kill looks like now.
 
 ## Usage
 
-1. **Plugins ▸ Job Manager ▸ Job Monitor**, then **Hosts…** to add a cluster:
+1. **Extensions ▸ Job Manager ▸ Job Monitor**, then **Hosts…** to add a cluster:
    hostname, user, scheduler, and a remote working directory. Press
    **Test Connection**.
 2. **New Job…** — pick the host, add your input file, fill in walltime / nodes /

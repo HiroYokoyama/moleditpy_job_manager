@@ -16,7 +16,7 @@ import logging
 from typing import Any, Optional
 
 PLUGIN_NAME = "Job Manager"
-PLUGIN_VERSION = "0.12.0"
+PLUGIN_VERSION = "0.13.0"
 PLUGIN_AUTHOR = "HiroYokoyama"
 PLUGIN_DESCRIPTION = (
     "Submit calculations to remote HPC clusters over SSH, track queue status, "
@@ -180,8 +180,12 @@ def initialize(context) -> None:
     """Entry point called by the host at plugin load."""
     global _context
     _context = context
-    context.add_plugin_menu("Job Manager/Job Monitor", lambda: show_monitor(context))
-    context.add_plugin_menu("Job Manager/Submit Job...", lambda: show_submit(context))
+    # Extensions rather than the Plugin menu. The host has no Extensions menu
+    # of its own and creates it on demand, so this is a top-level entry.
+    # add_menu_action, not add_plugin_menu: the latter is hard-wired to
+    # "Plugin/<path>". Both have existed since v3, so no fallback is needed.
+    context.add_menu_action("Extensions/Job Manager/Job Monitor", lambda: show_monitor(context))
+    context.add_menu_action("Extensions/Job Manager/Submit Job...", lambda: show_submit(context))
 
     from .store import JOB_EXTENSION
 

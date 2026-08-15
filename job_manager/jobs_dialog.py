@@ -31,6 +31,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from . import PLUGIN_VERSION
 from .credentials import ensure_password
 from .models import (
     STATE_BLOCKED,
@@ -223,10 +224,17 @@ class JobsDialog(QDialog):
     def __init__(self, service: JobService, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.service = service
-        self.setWindowTitle("Job Manager")
+        # The version is in the title of every window: a bug report that names
+        # it is worth several rounds of asking.
+        self.setWindowTitle(f"Job Manager {PLUGIN_VERSION} - Job Monitor")
         self.resize(940, 560)
         #: Non-empty while a cleared list is being viewed read-only.
         self._archive_path = ""
+        #: The open log window, if any; the tail goes there rather than into
+        #: the four-line strip at the bottom.
+        self._tail_dialog: Optional[QDialog] = None
+        #: Detail windows stay open until closed, so they have to be held.
+        self._detail_dialogs: List[QDialog] = []
         # Dropping a job list opens it: read-only when the file says it is
         # archived, otherwise it becomes the list in use for this session.
         self.setAcceptDrops(True)
@@ -311,6 +319,9 @@ class JobsDialog(QDialog):
         header.setStretchLastSection(True)
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.table.selectionModel().selectionChanged.connect(lambda *_: self._update_buttons())
+        # The log is what a double click is for: it is the thing you want when
+        # a job has been running for an hour and you are wondering how far it is.
+        self.table.doubleClicked.connect(lambda *_: self._tail_selected())
         splitter.addWidget(self.table)
 
         self.txt_log = QPlainTextEdit()
@@ -328,7 +339,18 @@ class JobsDialog(QDialog):
         self.btn_open = QPushButton("Open Result")
         self.btn_open.clicked.connect(self._open_selected_result)
         self.btn_tail = QPushButton("Tail Log")
+        self.btn_tail.setToolTip(
+            "Read the end of the job's log into a window of its own, which can "
+            "be resized, kept open beside the table and refreshed.\n\n"
+            "Double-clicking a row does the same."
+        )
         self.btn_tail.clicked.connect(self._tail_selected)
+        self.btn_details = QPushButton("Details")
+        self.btn_details.setToolTip(
+            "Everything recorded about this job -- host, scheduler, queue id, "
+            "timings, directories, exit code -- and the script that ran, in full."
+        )
+        self.btn_details.clicked.connect(self._show_details)
         self.btn_resubmit = QPushButton("Resubmit")
         self.btn_resubmit.setToolTip(
             "Open the submit wizard prefilled from this job: same host, same "
@@ -355,24 +377,35 @@ class JobsDialog(QDialog):
             "first, with the date in its name -- nothing is deleted on the cluster."
         )
         self.btn_clear.clicked.connect(self._clear_jobs)
+        # Two rows, split by what they act on: the selected job above, the list
+        # as a whole below. Ten buttons on one line ran off the side of a narrow
+        # window, and put "Clear List..." within a slip of "Cancel Job".
         for button in (
             self.btn_cancel,
             self.btn_download,
             self.btn_open,
             self.btn_tail,
+            self.btn_details,
             self.btn_resubmit,
             self.btn_remove,
         ):
             actions.addWidget(button)
-        actions.addSpacing(16)
+        actions.addStretch(1)
+        layout.addLayout(actions)
+
+        list_actions = QHBoxLayout()
         for button in (
             self.btn_save_as,
             self.btn_export_csv,
             self.btn_archive,
             self.btn_clear,
         ):
-            actions.addWidget(button)
-        actions.addStretch(1)
+            list_actions.addWidget(button)
+        list_actions.addStretch(1)
+        layout.addLayout(list_actions)
+
+        # And the preferences on a line of their own: they are not actions.
+        actions = QHBoxLayout()
         self.chk_auto_open = QCheckBox("Open results automatically")
         self.chk_auto_open.setChecked(
             bool(self.service.store.get_pref("open_result_after_download", True))
@@ -406,6 +439,7 @@ class JobsDialog(QDialog):
             lambda checked: self.service.store.set_pref("notify_on_finish", bool(checked))
         )
         actions.addWidget(self.chk_notify)
+        actions.addStretch(1)
         layout.addLayout(actions)
 
         self.lbl_status = QLabel("")
@@ -469,6 +503,11 @@ class JobsDialog(QDialog):
         self._append_message(text)
 
     def _show_log(self, text: str) -> None:
+        if self._tail_dialog is not None:
+            self._tail_dialog.set_text(text)
+            return
+        # No window open: the tail was asked for by something else, or the
+        # window was closed while the read was in flight.
         self.txt_log.setPlainText(text)
 
     def _update_buttons(self) -> None:
@@ -487,6 +526,7 @@ class JobsDialog(QDialog):
                 self.btn_clear,
             ):
                 button.setEnabled(False)
+            self.btn_details.setEnabled(self.selected_job() is not None)
             return
 
         for button in (self.btn_save_as, self.btn_export_csv, self.btn_clear):
@@ -501,6 +541,9 @@ class JobsDialog(QDialog):
         # resubmittable is the command, which the preset snapshot carries.
         self.btn_resubmit.setEnabled(bool(job and (job.input_files or job.preset)))
         self.btn_remove.setEnabled(has_job)
+        # Details reads only what is already recorded, so it needs no host and
+        # works for an archived job too -- which is when it is most useful.
+        self.btn_details.setEnabled(has_job)
 
     # --- actions ------------------------------------------------------------
 
@@ -617,9 +660,99 @@ class JobsDialog(QDialog):
 
     def _tail_selected(self) -> None:
         job = self.selected_job()
-        if job is not None and self._has_credentials(job):
-            self._append_message(f"Reading {job.log_file}...")
-            self.service.tail(job)
+        if job is None or not self._has_credentials(job):
+            return
+        from .text_dialog import TextDialog
+
+        if self._tail_dialog is None:
+            self._tail_dialog = TextDialog(
+                f"Job Manager {PLUGIN_VERSION} - {job.name}: {job.log_file}",
+                "Reading...",
+                self,
+                on_refresh=self._tail_selected,
+            )
+            # Cleared on close so the next tail builds a live window rather
+            # than writing into a destroyed one.
+            self._tail_dialog.finished.connect(lambda *_: setattr(self, "_tail_dialog", None))
+            self._tail_dialog.show()
+        else:
+            self._tail_dialog.setWindowTitle(
+                f"Job Manager {PLUGIN_VERSION} - {job.name}: {job.log_file}"
+            )
+            self._tail_dialog.raise_()
+            self._tail_dialog.activateWindow()
+        self.service.tail(job)
+
+    def _show_details(self) -> None:
+        """Everything recorded about this job, including the script that ran."""
+        job = self.selected_job()
+        if job is None:
+            return
+        from .details_dialog import JobDetailsDialog
+
+        dialog = JobDetailsDialog(
+            self.service,
+            job,
+            self._describe(job),
+            f"Job Manager {PLUGIN_VERSION} - {job.name}",
+            self,
+        )
+        dialog.show()
+        # Held so Python does not collect the window the moment this returns.
+        self._detail_dialogs.append(dialog)
+        dialog.finished.connect(lambda *_: self._detail_dialogs.remove(dialog))
+
+    def _describe(self, job: Job) -> str:
+        """The job record as text: what was asked for, and what happened."""
+        host = self.service.store.hosts.get(job.host_id)
+        rows = [
+            ("Name", job.name),
+            ("State", job.state + (f" (exit {job.rc})" if job.rc is not None else "")),
+            ("Host", job.host_name or (host.name if host else "(profile removed)")),
+            ("Scheduler", job.scheduler),
+            ("Queue id", job.remote_job_id or "-"),
+            ("Submitted", format_stamp(job.submitted_at)),
+            ("Started", format_stamp(job.started_at)),
+            ("Finished", format_stamp(job.finished_at)),
+            ("Remote directory", job.remote_dir),
+            ("Log file", job.log_file),
+            ("Input files", ", ".join(job.input_files) or "-"),
+            ("Downloaded to", job.local_dir or "-"),
+            ("Last error", job.last_error or "-"),
+        ]
+        # The resources it was submitted with, from the snapshot taken at
+        # submit time rather than the named preset -- which may since have been
+        # edited or deleted, and would then describe a different job.
+        preset = job.preset or {}
+        if preset:
+            rows += [
+                ("", ""),
+                ("Command", preset.get("command_template", "")),
+                ("Queue / partition", preset.get("queue", "") or "-"),
+                ("Account", preset.get("account", "") or "-"),
+                ("Walltime", preset.get("walltime", "") or "-"),
+                ("Nodes", str(preset.get("nodes", "") or "-")),
+                ("Tasks", str(preset.get("ntasks", "") or "-")),
+                ("CPUs per task", str(preset.get("cpus_per_task", "") or "-")),
+                ("Memory", preset.get("memory", "") or "-"),
+                ("Modules", ", ".join(preset.get("modules") or []) or "-"),
+                ("Pre-commands", "; ".join(preset.get("pre_commands") or []) or "-"),
+                ("Extra directives", "; ".join(preset.get("extra_directives") or []) or "-"),
+                ("Fetch patterns", ", ".join(preset.get("fetch_globs") or []) or "-"),
+            ]
+        if host is not None:
+            rows += [
+                ("", ""),
+                ("Host target", host.target),
+                ("Reads login files", "yes" if host.load_profile else "no"),
+                ("Login commands", "; ".join(host.login_commands or []) or "-"),
+            ]
+        width = max(len(label) for label, _ in rows)
+        lines = [f"{label.ljust(width)}  {value}".rstrip() for label, value in rows]
+        # The script last and in full: it is the answer to "what actually ran",
+        # and it is the thing worth copying into a terminal to try by hand.
+        lines += ["", "--- script ---", job.command or "(not recorded)"]
+        return "\n".join(lines)
 
     def _remove_selected(self) -> None:
         job = self.selected_job()
