@@ -481,6 +481,21 @@ class TestSubmitDialog(DialogTestCase):
         box = self.dialog.findChild(QDialogButtonBox)
         self.assertNotIn(box, scroll.widget().findChildren(QDialogButtonBox))
 
+    def test_the_command_is_visible_without_opening_a_tab(self):
+        from PyQt6.QtWidgets import QTabWidget
+
+        # A job is a command; behind a tab of queue settings the wizard read as
+        # though a job were an input file and nothing else.
+        tabs = self.dialog.findChild(QTabWidget)
+        self.assertNotIn(self.dialog.txt_command, tabs.findChildren(type(self.dialog.txt_command)))
+        self.assertTrue(self.dialog.txt_command.isVisibleTo(self.dialog))
+
+    def test_the_file_list_says_it_is_optional(self):
+        from PyQt6.QtWidgets import QGroupBox
+
+        titles = [box.title() for box in self.dialog.findChildren(QGroupBox)]
+        self.assertTrue(any("optional" in title for title in titles if title.startswith("Input")))
+
     def test_it_fits_on_a_short_screen(self):
         self.assertLessEqual(self.dialog._preferred_height(4000), 4000)
         self.assertGreaterEqual(self.dialog._preferred_height(640), 400)

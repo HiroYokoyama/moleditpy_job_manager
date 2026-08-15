@@ -144,7 +144,16 @@ class SubmitDialog(QDialog):
         top.addRow("Job name", self.txt_job_name)
         layout.addLayout(top)
 
-        files_box = QGroupBox("Input files to upload (the first one is passed to the command)")
+        files_box = QGroupBox(
+            "Input files to upload - optional (the first one is passed to the command)"
+        )
+        files_box.setToolTip(
+            "A job does not need one. Leave the list empty and the command runs "
+            "on its own, in a new directory on the host -- for a script already "
+            "installed there, or a command that makes its own input.\n\n"
+            "A command that names {input} does need a file, either uploaded "
+            "here or named under 'Work already on the host'."
+        )
         files_layout = QVBoxLayout(files_box)
         self.list_files = QListWidget()
         files_layout.addWidget(self.list_files)
@@ -164,6 +173,10 @@ class SubmitDialog(QDialog):
         tabs.addTab(self._build_resources_tab(), "Resources")
         tabs.addTab(self._build_preview_tab(), "Script preview")
         layout.addWidget(tabs, 1)
+        # Built with the resources tab, but shown up here: the command is what
+        # the job *is*, and behind a tab of queue settings it read as though a
+        # job were an input file and nothing else.
+        top.addRow("Command", self.command_row)
 
         preset_row = QHBoxLayout()
         save_preset = QPushButton("Save as preset")
@@ -439,12 +452,11 @@ class SubmitDialog(QDialog):
         form.addRow("Modules", self.txt_modules)
         form.addRow("Pre-commands", self.txt_pre)
         form.addRow("Extra directives", self.txt_extra)
-        command_row = QWidget()
-        command_layout = QHBoxLayout(command_row)
+        self.command_row = QWidget()
+        command_layout = QHBoxLayout(self.command_row)
         command_layout.setContentsMargins(0, 0, 0, 0)
         command_layout.addWidget(self.txt_command, 1)
         command_layout.addWidget(self.cmb_template)
-        form.addRow("Command", command_row)
         form.addRow("Fetch patterns", self.txt_globs)
         form.addRow("", self.chk_auto_download)
         form.addRow("", self.chk_beside_input)
