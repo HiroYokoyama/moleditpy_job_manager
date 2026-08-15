@@ -103,6 +103,10 @@ DEFAULT_PREFS: Dict[str, Any] = {
     #: The badge is a persistent change to how MoleditPy looks; this is not.
     "notify_on_finish": True,
     "last_input_dir": "",
+    #: Read the core count and memory request out of the input file. On,
+    #: because those numbers are already written there and the copy the queue
+    #: schedules on is the one that gets forgotten.
+    "scan_resources": True,
     #: The user's own command templates: [{"label": ..., "command": ...}].
     "command_templates": [],
 }

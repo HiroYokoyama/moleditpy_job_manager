@@ -324,6 +324,43 @@ class TestTheWizardReadsTheInput(DialogTestCase):
         self.assertEqual(dialog.txt_memory.text(), "4G")
         self.assertEqual(dialog.spin_cpus.value(), 2)
 
+    def test_unticking_the_box_leaves_both_fields_alone(self):
+        dialog = self.dialog()
+        dialog.chk_scan_resources.setChecked(False)
+
+        dialog.add_files([self.orca_input()])
+
+        self.assertEqual(dialog.txt_memory.text(), "")
+        self.assertEqual(dialog.spin_cpus.value(), 1)
+        self.assertFalse(dialog.lbl_scanned.isVisibleTo(dialog))
+
+    def test_the_choice_is_remembered(self):
+        dialog = self.dialog()
+        dialog.chk_scan_resources.setChecked(False)
+        self.assertFalse(self.store.get_pref("scan_resources", True))
+        self.assertFalse(self.dialog().chk_scan_resources.isChecked())
+
+    def test_ticking_it_reads_the_file_already_chosen(self):
+        # Otherwise the box only takes effect on the next file added, and the
+        # one already in the list stays unread with no way to ask for it.
+        dialog = self.dialog()
+        dialog.chk_scan_resources.setChecked(False)
+        dialog.add_files([self.orca_input()])
+
+        dialog.chk_scan_resources.setChecked(True)
+
+        self.assertEqual(dialog.spin_cpus.value(), 8)
+
+    def test_the_command_is_not_rewritten_by_the_scan(self):
+        # The scan fills resources only: a command the user chose or typed is
+        # never touched by what the input file says about cores.
+        dialog = self.dialog()
+        dialog.txt_command.setText("orca {input} > {stem}.out")
+
+        dialog.add_files([self.orca_input()])
+
+        self.assertEqual(dialog.txt_command.text(), "orca {input} > {stem}.out")
+
     def test_a_file_that_states_nothing_changes_nothing(self):
         path = os.path.join(self.tmp, "mol.xyz")
         with open(path, "w", encoding="utf-8") as handle:

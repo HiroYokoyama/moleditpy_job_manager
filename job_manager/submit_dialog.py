@@ -309,6 +309,21 @@ class SubmitDialog(QDialog):
             "Filled in from the input file where it says. Note that ORCA's "
             "%maxcore is per core, so it is multiplied by the core count."
         )
+        self.chk_scan_resources = QCheckBox("Take these two from the input file")
+        self.chk_scan_resources.setToolTip(
+            "Read the core count and the memory request out of the input itself "
+            "-- ORCA's %pal nprocs and %maxcore, Gaussian's %nprocshared and "
+            "%mem, and the equivalents for Psi4, NWChem, Q-Chem and GAMESS.\n\n"
+            "They are already written there, and the copy the queue schedules "
+            "on is the one that gets forgotten: that is how two 90 GB jobs end "
+            "up on a 120 GB machine.\n\n"
+            "Untick to keep whatever you type here. Nothing is read, and adding "
+            "another input file leaves both fields alone.\n\n"
+            "Either way the input file itself is never edited, and the command "
+            "line is not touched."
+        )
+        self.chk_scan_resources.setChecked(bool(self.store.get_pref("scan_resources", True)))
+        self.chk_scan_resources.toggled.connect(self._on_scan_resources_toggled)
         self.lbl_scanned = QLabel("")
         self.lbl_scanned.setWordWrap(True)
         self.lbl_scanned.setStyleSheet("color: palette(mid);")
@@ -419,6 +434,7 @@ class SubmitDialog(QDialog):
         form.addRow("Tasks", self.spin_ntasks)
         form.addRow("CPUs per task", self.spin_cpus)
         form.addRow("Memory", self.txt_memory)
+        form.addRow("", self.chk_scan_resources)
         form.addRow("", self.lbl_scanned)
         form.addRow("Modules", self.txt_modules)
         form.addRow("Pre-commands", self.txt_pre)
@@ -754,10 +770,16 @@ class SubmitDialog(QDialog):
         copy the queue schedules on is the one that gets forgotten, which is
         how two 90 GB jobs end up on a 120 GB machine.
 
-        Never over a value already there, for the same reason the command
-        template is never written over one you have edited: a filled field is
-        a decision, and a guess must not silently replace it.
+        Only while the box under the two fields is ticked, and only into a
+        field that is still at its default: a value already there is a
+        decision, and a guess must not silently replace it. Untick the box to
+        keep the fields entirely by hand.
+
+        The command line is never touched by any of this, and neither is the
+        input file.
         """
+        if not self.chk_scan_resources.isChecked():
+            return
         found = input_scan.scan(path)
         if not found.found:
             return
@@ -771,9 +793,20 @@ class SubmitDialog(QDialog):
             filled.append(f"{found.cores} CPUs")
         if filled:
             self.lbl_scanned.setText(
-                f"Read from the {found.program} input: {', '.join(filled)}. Edit if wrong."
+                f"Read from the {found.program} input: {', '.join(filled)}. "
+                "Edit if wrong, or untick to enter them by hand."
             )
             self.lbl_scanned.setVisible(True)
+
+    def _on_scan_resources_toggled(self, checked: bool) -> None:
+        """Remember the choice, and act on it for the file already chosen."""
+        self.store.set_pref("scan_resources", bool(checked))
+        if not checked:
+            self.lbl_scanned.setVisible(False)
+            return
+        files = self.selected_files()
+        if files:
+            self._apply_scanned_resources(files[0])
 
     # --- drops ---------------------------------------------------------------
 
