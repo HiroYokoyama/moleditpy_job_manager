@@ -16,6 +16,9 @@ Generator Pro) and *read* the results (ORCA Result Analyzer, Gaussian MO & Freq
 Analyzers, Cube Viewer). Job Manager fills in the middle: upload, submit, watch,
 fetch, open.
 
+![job manager](img/job-manager.png)
+![host monitor](img/host-monitor.png)
+
 ## What it does
 
 - **Submit** an input file to SLURM, PBS/Torque, SGE/UGE — or to a plain
