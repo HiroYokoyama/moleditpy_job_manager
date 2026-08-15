@@ -384,6 +384,13 @@ value you have already typed.
 and is taken as one. Anything the wizard cannot read leaves the fields alone
 rather than guessing.
 
+Untick **Take these two from the input file**, under the same two fields, to
+turn the reading off and type both by hand; ticking it again reads the file
+already added. The choice is remembered between submissions. The **Command**
+line is never written by any of this — it comes from the template dropdown, and
+only into a command you have not edited — and the input file itself is never
+modified.
+
 ### Holding the helper's queue
 
 Where the *Queueing* setting is **Queue them with a helper on the host**, the
