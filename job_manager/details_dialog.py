@@ -17,6 +17,7 @@ from typing import Optional
 
 from PyQt6.QtGui import QFontDatabase
 
+from .theme import DIALOG_STYLESHEET
 from .window_utils import make_independent
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -53,6 +54,7 @@ class JobDetailsDialog(QDialog):
         self.job = job
         self.setWindowTitle(title)
         make_independent(self)
+        self.setStyleSheet(DIALOG_STYLESHEET)
         self.resize(820, 620)
 
         layout = QVBoxLayout(self)

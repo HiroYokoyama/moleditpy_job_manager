@@ -12,6 +12,7 @@ from typing import Callable, Optional
 
 from PyQt6.QtGui import QFontDatabase
 
+from .theme import DIALOG_STYLESHEET
 from .window_utils import make_independent
 from PyQt6.QtWidgets import (
     QDialog,
@@ -36,6 +37,7 @@ class TextDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(title)
         make_independent(self)
+        self.setStyleSheet(DIALOG_STYLESHEET)
         self.resize(820, 520)
         layout = QVBoxLayout(self)
         self.view = QPlainTextEdit()

@@ -37,6 +37,10 @@ from PyQt6.QtWidgets import (
 from . import PLUGIN_VERSION, host_stats
 from .credentials import needs_password
 from .models import SCHEDULER_WINDOWS, HostProfile
+from .theme import (
+    CY_ACCENT, CY_ACCENT2, CY_AMBER, CY_GREEN, CY_GREY, CY_PURPLE,
+    CY_RED, CY_TEAL,
+)
 from .window_utils import make_independent
 from .tasks import run_async
 
@@ -58,27 +62,19 @@ OPENSSH_INTERVAL_SECONDS = 10
 #: every tick for as long as the window is open.
 MAX_BACKOFF_TICKS = 16
 
-#: A dark palette for this window only, for the case it is built for: a queue
-#: left up on a second screen. It does not touch the application, which owns
-#: its own theme, and the bar and graph colours were chosen to read on both.
+#: Dark theme palette and styling definitions for the Host Monitor window.
 _DARK = {
-    "window": "#23272a",
-    "base": "#2b2f33",
-    "alternate": "#31363b",
-    "text": "#e8eaed",
-    "mid": "#8b9299",
-    "highlight": "#3daee9",
+    "window": "#16181a",
+    "base": "#1f2327",
+    "alternate": "#282c34",
+    "text": "#f0f6fc",
+    "mid": "#8b949e",
+    "highlight": "#2979ff",
 }
 
 
 def dark_palette(base: Optional[QPalette] = None) -> QPalette:
-    """A dark palette built *from* the one in use, not from scratch.
-
-    A default-constructed QPalette leaves every role this function does not
-    name at its own defaults -- Light, Midlight, Dark, Shadow and the rest --
-    and those, mixed with the few dark ones set here, are what made the window
-    come back muddy brown when the toggle was turned off and on again.
-    """
+    """A dark palette built from the current palette."""
     palette = QPalette(base) if base is not None else QPalette()
     window = QColor(_DARK["window"])
     base = QColor(_DARK["base"])
@@ -106,21 +102,91 @@ def dark_palette(base: Optional[QPalette] = None) -> QPalette:
     return palette
 
 
+_DARK_DIALOG_STYLE = f"""
+HostMonitorDialog, QDialog {{
+    background-color: {_DARK["window"]};
+    color: {_DARK["text"]};
+}}
+QScrollArea, QScrollArea > QWidget > QWidget {{
+    background-color: {_DARK["window"]};
+    background: {_DARK["window"]};
+}}
+QLabel {{
+    color: {_DARK["text"]};
+}}
+QPushButton {{
+    background-color: #21262d;
+    color: {_DARK["text"]};
+    border: 1px solid #363b42;
+    border-radius: 5px;
+    padding: 4px 12px;
+}}
+QPushButton:hover {{
+    background-color: #30363d;
+    border-color: {CY_ACCENT};
+}}
+QPushButton:checked {{
+    background-color: #1e3a5f;
+    border-color: {CY_ACCENT};
+    color: {CY_ACCENT};
+}}
+QSpinBox {{
+    background-color: #0d1117;
+    color: {_DARK["text"]};
+    border: 1px solid #363b42;
+    border-radius: 4px;
+    padding: 2px 4px;
+}}
+"""
+
+_LIGHT_DIALOG_STYLE = f"""
+HostMonitorDialog, QDialog {{
+    background-color: #f6f8fa;
+    color: #1f2328;
+}}
+QScrollArea, QScrollArea > QWidget > QWidget {{
+    background-color: #f6f8fa;
+    background: #f6f8fa;
+}}
+QLabel {{
+    color: #1f2328;
+}}
+QPushButton {{
+    background-color: #f6f8fa;
+    color: #1f2328;
+    border: 1px solid #d0d7de;
+    border-radius: 5px;
+    padding: 4px 12px;
+}}
+QPushButton:hover {{
+    background-color: #eaeef2;
+    border-color: {CY_ACCENT};
+}}
+QPushButton:checked {{
+    background-color: #ddf4ff;
+    border-color: {CY_ACCENT};
+    color: {CY_ACCENT};
+}}
+QSpinBox {{
+    background-color: #ffffff;
+    color: #1f2328;
+    border: 1px solid #d0d7de;
+    border-radius: 4px;
+    padding: 2px 4px;
+}}
+"""
+
+
 #: One colour per thing measured, and the bar and the graph under it share it:
 #: load green, memory blue. Colouring the bar by how full it was instead made
 #: the pair look like two unrelated readings, and a bar that changes hue as the
 #: value moves is harder to compare across cards than one that does not.
-GRAPH_LOAD = QColor("#66bb6a")
-GRAPH_MEMORY = QColor("#64b5f6")
+GRAPH_LOAD = QColor(CY_GREEN)
+GRAPH_MEMORY = QColor(CY_ACCENT2)
 
 
 class Meter(QWidget):
-    """A column that fills from the bottom: the default view of one number.
-
-    Vertical because that is how a tank reads -- full is up -- and because two
-    of them side by side can be compared at a glance without either one's
-    length depending on how wide the card happens to be.
-    """
+    """A vertical bar displaying resource usage."""
 
     def __init__(self, caption: str, color: QColor, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -128,6 +194,7 @@ class Meter(QWidget):
         self.color = color
         self.fraction = 0.0
         self.detail = "-"
+        self._dark = False
         self.setMinimumHeight(110)
         self.setMinimumWidth(56)
         self.setMaximumWidth(110)
@@ -135,15 +202,13 @@ class Meter(QWidget):
     def sizeHint(self) -> QSize:
         return QSize(84, 130)
 
+    def set_dark(self, dark: bool = False) -> None:
+        self._dark = dark
+        self.update()
+
     def show_value(
         self, fraction: float, detail: str, caption: str = "", tip: str = ""
     ) -> None:
-        """``detail`` is printed under the column, ``caption`` under that.
-
-        The caption carries what the bar is a fraction *of* -- "of 62.5 GB",
-        "of 8 cores" -- because a percentage on its own does not say whether
-        the machine that is 75% full has four gigabytes left or forty.
-        """
         self.fraction = max(0.0, min(1.0, float(fraction)))
         self.detail = detail
         if caption:
@@ -151,32 +216,25 @@ class Meter(QWidget):
         self.setToolTip(tip or detail)
         self.update()
 
-    def paintEvent(self, event) -> None:  # noqa: N802 - Qt's spelling
+    def paintEvent(self, event) -> None:  # noqa: N802
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         metrics = painter.fontMetrics()
         line = metrics.height()
-        # Two lines under the column: the percentage, then what it is of.
         column = QRectF(self.rect().adjusted(6, 2, -6, -(2 * line + 6)))
         radius = 4.0
 
-        track = QColor(self.palette().mid().color())
-        track.setAlpha(50)
+        track = QColor(255, 255, 255, 25) if self._dark else QColor(0, 0, 0, 25)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(track)
         painter.drawRoundedRect(column, radius, radius)
 
         if self.fraction > 0:
             filled = QRectF(column)
-            # Anchored to the bottom and grown upwards, never narrower than its
-            # own corners.
             height = max(2 * radius, column.height() * self.fraction)
             filled.setTop(column.bottom() - height)
 
-            # A glow behind it, then the column, then a lit top edge: three
-            # cheap passes that make a flat rectangle read as something with a
-            # light in it, without an image or a shader.
             glow = QColor(self.color)
             glow.setAlpha(60)
             painter.setBrush(glow)
@@ -191,18 +249,21 @@ class Meter(QWidget):
             top.setHeight(min(3.0, filled.height()))
             painter.drawRoundedRect(top, 1.5, 1.5)
 
+        text_color = QColor("#f0f6fc" if self._dark else "#1f2328")
+        subtext_color = QColor("#8b949e" if self._dark else "#656d76")
+
         number = QFont(painter.font())
         number.setBold(True)
         number.setPointSizeF(max(9.0, number.pointSizeF() * 1.15))
         painter.setFont(number)
-        painter.setPen(QPen(self.palette().text().color()))
+        painter.setPen(QPen(text_color))
         painter.drawText(
             QRectF(self.rect()).adjusted(0, column.height() + 2, 0, -line),
             int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop),
             self.detail,
         )
         painter.setFont(QFont(self.font()))
-        painter.setPen(QPen(self.palette().mid().color()))
+        painter.setPen(QPen(subtext_color))
         painter.drawText(
             QRectF(self.rect()).adjusted(0, column.height() + 2 + line, 0, 0),
             int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop),
@@ -211,22 +272,22 @@ class Meter(QWidget):
 
 
 class Sparkline(QWidget):
-    """History left to right: oldest at the left, newest at the right.
-
-    Time runs the way it is read, and the value is the height -- so a rising
-    line is a machine filling up, which is the shape people already know from
-    every other load graph they have seen.
-    """
+    """History graph displaying samples over time."""
 
     def __init__(self, color: QColor, caption: str = "", parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.color = color
         self.caption = caption
         self.values: Deque[float] = deque(maxlen=HISTORY)
+        self._dark = False
         self.setMinimumHeight(70)
 
     def sizeHint(self) -> QSize:
         return QSize(180, 84)
+
+    def set_dark(self, dark: bool = False) -> None:
+        self._dark = dark
+        self.update()
 
     def add(self, value: float) -> None:
         self.values.append(max(0.0, min(1.0, float(value))))
@@ -236,23 +297,20 @@ class Sparkline(QWidget):
         self.values.clear()
         self.update()
 
-    def paintEvent(self, event) -> None:  # noqa: N802 - Qt's spelling
+    def paintEvent(self, event) -> None:  # noqa: N802
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = self.rect().adjusted(0, 1, -1, -1)
 
-        # A faint bed, rounded like the bars above it, so an empty graph still
-        # reads as a graph rather than as a piece of the dialog that failed to
-        # draw.
-        bed = QColor(self.palette().mid().color())
-        bed.setAlpha(40)
+        bed = QColor(255, 255, 255, 15) if self._dark else QColor(0, 0, 0, 15)
+        guide_color = QColor("#8b949e" if self._dark else "#656d76")
+        text_color = QColor("#f0f6fc" if self._dark else "#1f2328")
+
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(bed)
         painter.drawRoundedRect(QRectF(rect), 4.0, 4.0)
 
-        # Quarter lines, so a shape can be read as a level rather than only as
-        # a shape. Faint enough to stay behind the line.
-        guide = QColor(self.palette().mid().color())
+        guide = QColor(guide_color)
         guide.setAlpha(60)
         painter.setPen(QPen(guide, 1.0, Qt.PenStyle.DotLine))
         for share in (0.25, 0.5, 0.75):
@@ -260,7 +318,7 @@ class Sparkline(QWidget):
             painter.drawLine(rect.left() + 2, y, rect.right() - 2, y)
 
         if self.caption:
-            painter.setPen(QPen(QColor(self.palette().mid().color())))
+            painter.setPen(QPen(guide_color))
             painter.drawText(
                 rect.adjusted(6, 2, -6, 0),
                 Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft,
@@ -268,7 +326,7 @@ class Sparkline(QWidget):
             )
 
         if len(self.values) < 2:
-            painter.setPen(QPen(self.palette().mid().color()))
+            painter.setPen(QPen(guide_color))
             painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "collecting...")
             return
 
@@ -292,8 +350,6 @@ class Sparkline(QWidget):
         line.moveTo(*points[0])
         for x, y in points[1:]:
             line.lineTo(x, y)
-        # Twice: a wide, faint pass under a thin, solid one. That is what makes
-        # a line look lit rather than merely coloured.
         halo = QColor(self.color)
         halo.setAlpha(70)
         painter.setPen(QPen(halo, 4.0))
@@ -301,7 +357,6 @@ class Sparkline(QWidget):
         painter.setPen(QPen(self.color, 1.6))
         painter.drawPath(line)
 
-        # And a dot on the newest sample: the eye should land on "now".
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor(self.color).lighter(130))
         painter.drawEllipse(QRectF(points[-1][0] - 2.5, points[-1][1] - 2.5, 5, 5))
@@ -321,7 +376,8 @@ class HostCard(QFrame):
         self.host = host
         self.setObjectName("hostCard")
         self.setFrameShape(QFrame.Shape.NoFrame)
-        self.restyle()
+        self._surface = QColor()
+        self._edge = QColor()
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(12, 10, 12, 10)
@@ -330,17 +386,12 @@ class HostCard(QFrame):
         header = QHBoxLayout()
         self.lbl_name = QLabel(f"<b>{host.name}</b>")
         self.lbl_state = QLabel("waiting...")
-        self.lbl_state.setStyleSheet("color: palette(mid);")
         header.addWidget(self.lbl_name)
         header.addStretch(1)
         header.addWidget(self.lbl_state)
         outer.addLayout(header)
 
         self.lbl_target = QLabel(host.target)
-        self.lbl_target.setStyleSheet("color: palette(mid);")
-        # Elided rather than wrapped: an address is one line, and a card that
-        # grows a second one for a long user@host is a card of a different size
-        # from its neighbours.
         self.lbl_target.setTextFormat(Qt.TextFormat.PlainText)
         self.lbl_target.setMinimumWidth(0)
         self.lbl_target.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
@@ -356,36 +407,56 @@ class HostCard(QFrame):
         columns.addStretch(1)
         outer.addLayout(columns)
 
-        # Built now, shown on request: a card that has to be rebuilt to expand
-        # would lose the history it is being asked to show.
         self.graph_load = Sparkline(GRAPH_LOAD, "load, last 2 min")
         self.graph_memory = Sparkline(GRAPH_MEMORY, "memory")
         for widget in (self.graph_load, self.graph_memory):
             widget.setVisible(False)
             outer.addWidget(widget)
 
-    def restyle(self, palette: Optional[QPalette] = None) -> None:
-        """Rounded, faintly lit, and readable on either palette.
+        # Jobs running on this host -- hidden when empty.
+        self.lbl_jobs = QLabel()
+        self.lbl_jobs.setTextFormat(Qt.TextFormat.RichText)
+        self.lbl_jobs.setWordWrap(True)
+        self.lbl_jobs.setVisible(False)
+        outer.addWidget(self.lbl_jobs)
 
-        The palette is passed in rather than read from ``self``: a widget that
-        carries a style sheet resolves its own palette through it, so asking
-        the card what colours it has returns what the sheet already said and
-        the card never followed the window into dark mode.
-        """
+        self.restyle()
+
+    def restyle(self, palette: Optional[QPalette] = None, dark: Optional[bool] = None) -> None:
+        """Recalculate the card's surface and border colours for the palette."""
         palette = palette or self.palette()
-        base = palette.base().color()
-        window = palette.window().color()
-        dark = window.lightness() < 128
-        surface = base.lighter(108) if dark else base
-        edge = QColor(GRAPH_MEMORY)
-        edge.setAlpha(90 if dark else 60)
+        if dark is None:
+            dark = palette.window().color().lightness() < 128
+        self._dark = dark
+        bg = "#1f2327" if dark else "#ffffff"
+        border = "#33383f" if dark else "#d0d7de"
+        self._surface = QColor(bg)
+        self._edge = QColor(border)
+        if dark:
+            self.lbl_name.setStyleSheet("color: #f0f6fc; font-weight: bold;")
+            self.lbl_state.setStyleSheet("color: #8b949e;")
+            self.lbl_target.setStyleSheet("color: #8b949e;")
+        else:
+            self.lbl_name.setStyleSheet("color: #1f2328; font-weight: bold;")
+            self.lbl_state.setStyleSheet("color: #656d76;")
+            self.lbl_target.setStyleSheet("color: #656d76;")
         self.setStyleSheet(
-            "QFrame#hostCard {"
-            f" background: rgba({surface.red()},{surface.green()},{surface.blue()},"
-            f"{235 if dark else 255});"
-            f" border: 1px solid rgba({edge.red()},{edge.green()},{edge.blue()},{edge.alpha()});"
-            " border-radius: 10px; }"
+            f"QFrame#hostCard {{ background-color: {bg}; border: 1px solid {border}; border-radius: 10px; }}"
         )
+        self.meter_load.set_dark(dark)
+        self.meter_memory.set_dark(dark)
+        self.graph_load.set_dark(dark)
+        self.graph_memory.set_dark(dark)
+        self.setPalette(palette)
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        """Draw the rounded card surface and border."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(self._edge, 1.0))
+        painter.setBrush(self._surface)
+        painter.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), 10.0, 10.0)
 
     # --- expanding ----------------------------------------------------------
 
@@ -407,6 +478,35 @@ class HostCard(QFrame):
         self.graph_memory.setVisible(expanded)
         self.meter_load.setVisible(not expanded)
         self.meter_memory.setVisible(not expanded)
+
+    def show_jobs(self, jobs: list) -> None:
+        """Update the compact jobs line for this host's active jobs."""
+        import html as _html
+
+        active = [j for j in jobs if j.is_active]
+        if not active:
+            self.lbl_jobs.setVisible(False)
+            self.lbl_jobs.setText("")
+            return
+
+        _COLORS = {
+            "running": CY_GREEN, "pending": CY_AMBER, "queued": CY_GREY,
+            "done": CY_TEAL, "failed": CY_RED, "lost": CY_PURPLE,
+            "blocked": CY_RED,
+        }
+        chips = []
+        for job in active[:5]:
+            state = job.state.lower()
+            color = _COLORS.get(state, CY_GREY)
+            name = _html.escape(job.name[:20] + ("…" if len(job.name) > 20 else ""))
+            chips.append(
+                f"<span style='color:{color}'>{name} "
+                f"<span style='color:{CY_GREY}'>[{state}]</span></span>"
+            )
+        overflow = len(active) - len(chips)
+        suffix = f" <span style='color:{CY_GREY}'>+{overflow} more</span>" if overflow else ""
+        self.lbl_jobs.setText("&nbsp; ".join(chips) + suffix)
+        self.lbl_jobs.setVisible(True)
 
     # --- what a sample changes ----------------------------------------------
 
@@ -480,7 +580,7 @@ class HostMonitorDialog(QDialog):
     def __init__(self, service, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.service = service
-        self.setWindowTitle(f"Job Manager {PLUGIN_VERSION} - Hosts at work")
+        self.setWindowTitle(f"Job Manager {PLUGIN_VERSION} - Hosts Monitor")
         make_independent(self)
         # Wide enough for two columns of cards from the start: one column looks
         # like a list of three things, and two is where the layout reads as a
@@ -586,12 +686,33 @@ class HostMonitorDialog(QDialog):
         if not self.cards:
             self.grid.addWidget(QLabel("No hosts yet. Add one under Hosts..."), 0, 0)
         self._relayout()
+        self.service.jobs_changed.connect(self._refresh_card_jobs)
+        self.service.job_updated.connect(self._on_job_updated)
+        self._refresh_card_jobs()
 
         box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         box.rejected.connect(self.reject)
+
+        self._jobs_bar = _ActiveJobsBar(self.service)
+        layout.addWidget(self._jobs_bar)
         layout.addWidget(box)
 
 
+
+    def _on_job_updated(self, _job_id: str = "") -> None:
+        self._refresh_card_jobs()
+
+    def _refresh_card_jobs(self) -> None:
+        """Push each host's active jobs into its card's jobs strip."""
+        jobs_by_host: dict = {}
+        for job in self.service.store.jobs.values():
+            if job.host_id:
+                jobs_by_host.setdefault(job.host_id, []).append(job)
+            if job.host_name:
+                jobs_by_host.setdefault(job.host_name, []).append(job)
+        for host_id, card in self.cards.items():
+            card_jobs = jobs_by_host.get(card.host.id) or jobs_by_host.get(card.host.name, [])
+            card.show_jobs(card_jobs)
 
     def _columns(self) -> int:
         return max(1, min(len(self.cards) or 1, self.width() // self.CARD_WIDTH or 1))
@@ -631,22 +752,23 @@ class HostMonitorDialog(QDialog):
         self.service.store.set_pref("host_monitor_history", bool(shown))
 
     def _set_dark(self, dark: bool) -> None:
-        """Repaint this window, and remember the choice.
-
-        The palette goes on the window and nowhere else. Qt gives it to every
-        child that has not been given one of its own, so assigning it to each
-        of them by hand -- which an earlier version did -- only broke that
-        inheritance, and turning the toggle off then left the window wearing a
-        palette assembled from two.
-        """
-        self.setPalette(dark_palette(self._light_palette) if dark else self._light_palette)
-        # The window and the scroll area's viewport both paint their own
-        # background, so both have to be told to use the new one.
+        """Repaint this window in dark or light mode, and remember the choice."""
+        pal = dark_palette(self._light_palette) if dark else self._light_palette
+        self.setPalette(pal)
+        if dark:
+            self.setStyleSheet(_DARK_DIALOG_STYLE)
+        else:
+            self.setStyleSheet("")
         self.setAutoFillBackground(True)
         if self._scroll is not None:
             self._scroll.viewport().setAutoFillBackground(True)
+            self._scroll.viewport().setPalette(pal)
+            if hasattr(self, "body") and self.body is not None:
+                self.body.setPalette(pal)
         for card in self.cards.values():
-            card.restyle(self.palette())
+            card.restyle(pal, dark=dark)
+        if hasattr(self, "_jobs_bar") and self._jobs_bar is not None:
+            self._jobs_bar.refresh()
         self.update()
         self.service.store.set_pref("host_monitor_dark", bool(dark))
 
@@ -756,6 +878,118 @@ class HostMonitorDialog(QDialog):
         for host_id in list(self._transports):
             self._close_transport(host_id)
         super().reject()
+
+
+class _ActiveJobsBar(QWidget):
+    """A one-line strip below the host cards listing every active job.
+
+    Keeps itself updated via the service's signals rather than the host-monitor
+    timer: the job list changes on poll results, not on stats ticks.
+    """
+
+    #: Maximum job chips shown inline before " +N more" is appended.
+    _MAX_CHIPS = 7
+
+    #: Colours per display state -- resolved at construction time from theme.
+    _COLORS = {
+        "running": CY_GREEN,
+        "pending": CY_AMBER,
+        "queued": CY_GREY,
+        "done": CY_TEAL,
+        "failed": CY_RED,
+        "lost": CY_PURPLE,
+        "blocked": CY_RED,
+    }
+
+    def __init__(self, service, parent=None) -> None:
+        super().__init__(parent)
+        self.service = service
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(6, 3, 6, 2)
+        layout.setSpacing(10)
+
+        self._lbl_count = QLabel()
+        self._lbl_count.setStyleSheet(
+            f"color: {CY_ACCENT}; font-weight: bold;"
+        )
+        layout.addWidget(self._lbl_count)
+
+        sep = QLabel("│")
+        sep.setStyleSheet(f"color: {CY_ACCENT2};")
+        layout.addWidget(sep)
+
+        self._lbl_jobs = QLabel()
+        self._lbl_jobs.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(self._lbl_jobs, 1)
+
+        service.jobs_changed.connect(self.refresh)
+        service.job_updated.connect(self._on_updated)
+        self.refresh()
+
+    def _on_updated(self, _job_id: str = "") -> None:
+        self.refresh()
+
+    def _display_state(self, job) -> str:
+        """Mirrors JobTableModel.display_state without importing it."""
+        store = self.service.store
+        if store.chain_blocker(job) is not None:
+            return "blocked"
+        if (
+            job.after_job_id
+            and job.is_active
+            and store.jobs.get(job.after_job_id) is not None
+            and store.jobs[job.after_job_id].is_active
+        ):
+            return "queued"
+        return job.state.lower()
+
+    def refresh(self) -> None:
+        import html as _html
+
+        active = list(self.service.store.active_jobs())
+        total = len(active)
+        if not total:
+            self._lbl_count.setText(
+                f"<span style='color:{CY_GREY};'>● no active jobs</span>"
+            )
+            self._lbl_jobs.setText("")
+            return
+
+        running = sum(
+            1 for j in active if self._display_state(j) == "running"
+        )
+        remaining = total - running
+
+        parts = []
+        if running:
+            parts.append(
+                f"<span style='color:{CY_GREEN};font-weight:bold'>"
+                f"▶ {running} running</span>"
+            )
+        if remaining:
+            parts.append(
+                f"<span style='color:{CY_AMBER};'>"
+                f"⧖ {remaining} remaining</span>"
+            )
+        self._lbl_count.setText("  ".join(parts))
+
+        chips_src = active[: self._MAX_CHIPS]
+        chips = []
+        for job in chips_src:
+            state = self._display_state(job)
+            color = self._COLORS.get(state, CY_GREY)
+            name = _html.escape(job.name[:24] + ("…" if len(job.name) > 24 else ""))
+            chips.append(
+                f"<span style='color:{color}'>{name}"
+                f"<span style='color:{CY_GREY};'> [{state}]</span></span>"
+            )
+        overflow = total - len(chips_src)
+        suffix = (
+            f"  <span style='color:{CY_GREY};'>+{overflow} more</span>"
+            if overflow
+            else ""
+        )
+        self._lbl_jobs.setText("&nbsp;&nbsp;".join(chips) + suffix)
 
 
 __all__ = ["HostCard", "HostMonitorDialog", "Sparkline"]

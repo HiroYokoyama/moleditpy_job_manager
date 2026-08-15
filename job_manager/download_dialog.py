@@ -35,6 +35,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from .theme import DIALOG_STYLESHEET
+
 #: Where a tree item keeps its path relative to the job directory. Only files
 #: carry one; a folder item has None, which is how the two are told apart.
 PATH_ROLE = Qt.ItemDataRole.UserRole
@@ -54,6 +56,7 @@ class DownloadDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(title)
+        self.setStyleSheet(DIALOG_STYLESHEET)
         self.resize(600, 520)
         #: True while check states are being propagated, so a change made in
         #: response to a change does not start another round.

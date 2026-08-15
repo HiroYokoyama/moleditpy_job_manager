@@ -15,16 +15,17 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtWidgets import QLabel
 
 from . import taskbar
 from .models import STATE_RUNNING
 from .service import JobService
+from .theme import CY_GREEN, CY_RED
 
 #: Colours match the monitor's State column, so the two agree at a glance.
-_BUSY_COLOR = "#2e7d32"
-_BLOCKED_COLOR = "#c62828"
+_BUSY_COLOR = CY_GREEN
+_BLOCKED_COLOR = CY_RED
 
 
 class JobStatusWidget(QLabel):
@@ -34,6 +35,7 @@ class JobStatusWidget(QLabel):
         super().__init__(parent)
         self.service = service
         self._on_click = on_click
+        self._color = ""
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         # Named methods, not lambdas: a lambda slot keeps a strong reference to
         # this widget and can never be disconnected again, so a status bar
@@ -89,10 +91,14 @@ class JobStatusWidget(QLabel):
         self.setVisible(bool(text))
         if not text:
             self.setText("")
+            self._color = ""
             return
-        color = _BLOCKED_COLOR if counts["blocked"] else _BUSY_COLOR
+        self._color = _BLOCKED_COLOR if counts["blocked"] else _BUSY_COLOR
         self.setText(f"⚙ {text}")
-        self.setStyleSheet(f"color: {color};")
+        # Do NOT call setStyleSheet here.  Once a widget has a stylesheet Qt
+        # resolves its palette through it, so the colour never follows a later
+        # theme switch.  QPalette override instead -- it respects change events.
+        self._apply_color()
         self.setToolTip(
             "MoleditPy job manager: click to open the monitor.\n"
             + (
@@ -102,6 +108,24 @@ class JobStatusWidget(QLabel):
                 else "Jobs are being tracked in the background."
             )
         )
+
+    def _apply_color(self) -> None:
+        """Push the stored accent colour into the palette so it survives theme changes."""
+        if not self._color:
+            return
+        from PyQt6.QtGui import QColor, QPalette
+
+        palette = self.palette()
+        c = QColor(self._color)
+        palette.setColor(QPalette.ColorRole.WindowText, c)
+        palette.setColor(QPalette.ColorRole.Text, c)
+        self.setPalette(palette)
+
+    def changeEvent(self, event) -> None:  # noqa: N802 - Qt's spelling
+        """Re-apply the accent colour when the application theme switches."""
+        if event.type() == QEvent.Type.PaletteChange:
+            self._apply_color()
+        super().changeEvent(event)
 
     def mouseDoubleClickEvent(self, event) -> None:
         """Same as a single click: a counter that opens on one is expected to

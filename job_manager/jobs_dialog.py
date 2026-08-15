@@ -45,6 +45,15 @@ from .models import (
     Job,
 )
 from .service import JobService
+from .theme import (
+    CY_AMBER,
+    CY_GREEN,
+    CY_GREY,
+    CY_PURPLE,
+    CY_RED,
+    CY_TEAL,
+    DIALOG_STYLESHEET,
+)
 from .window_utils import make_independent
 from .store import (
     JOB_EXTENSION,
@@ -60,23 +69,27 @@ JOB_LIST_FILTER = f"Job lists (*{JOB_EXTENSION} *.json);;All files (*)"
 
 #: Used for the two banners above the table. Palette roles rather than fixed
 #: pastels: the old pair were light-theme colours, so a dark-theme user read
-#: navy on near-white inside an otherwise dark window.
+#: navy on near-white inside an otherwise dark window.  The left border picks
+#: up the accent colour so the banner stands out without a hard background.
+from .theme import CY_ACCENT2 as _ACCENT2  # noqa: E402 – after other imports
+
 BANNER_STYLE = (
-    "background: palette(alternate-base); color: palette(text); "
-    "border: 1px solid palette(mid); padding: 6px; border-radius: 4px;"
+    f"background: palette(alternate-base); color: palette(text); "
+    f"border: 1px solid palette(mid); border-left: 3px solid {_ACCENT2}; "
+    "padding: 6px 10px; border-radius: 4px;"
 )
 
 
 COLUMNS = ("Name", "Host", "Queue ID", "State", "After", "Elapsed", "Updated")
 
 _STATE_COLORS = {
-    STATE_RUNNING: "#2e7d32",
-    STATE_PENDING: "#b58900",
-    STATE_DONE: "#0a7d8c",
-    STATE_FAILED: "#c62828",
-    STATE_LOST: "#8e24aa",
-    STATE_QUEUED: "#6c757d",
-    STATE_BLOCKED: "#c62828",
+    STATE_RUNNING: CY_GREEN,
+    STATE_PENDING: CY_AMBER,
+    STATE_DONE: CY_TEAL,
+    STATE_FAILED: CY_RED,
+    STATE_LOST: CY_PURPLE,
+    STATE_QUEUED: CY_GREY,
+    STATE_BLOCKED: CY_RED,
 }
 
 
@@ -239,6 +252,7 @@ class JobsDialog(QDialog):
         # it is worth several rounds of asking.
         self.setWindowTitle(f"Job Manager {PLUGIN_VERSION} - Job Monitor")
         make_independent(self)
+        self.setStyleSheet(DIALOG_STYLESHEET)
         self.resize(940, 560)
         #: Non-empty while a cleared list is being viewed read-only.
         self._archive_path = ""
@@ -281,7 +295,7 @@ class JobsDialog(QDialog):
         self.btn_hosts.clicked.connect(self.open_hosts_dialog)
         self.btn_refresh = QPushButton("Refresh Now")
         self.btn_refresh.clicked.connect(self._refresh_now)
-        self.btn_host_monitor = QPushButton("Hosts at Work...")
+        self.btn_host_monitor = QPushButton("Hosts Monitor...")
         self.btn_host_monitor.setToolTip(
             "Live load and memory for every host, with a graph each.\n\n"
             "Asks each host once every couple of seconds -- but only while that "
@@ -308,7 +322,7 @@ class JobsDialog(QDialog):
         self.spin_interval.valueChanged.connect(self._on_interval_changed)
         toolbar.addWidget(self.spin_interval)
         self.lbl_interval_warning = QLabel("")
-        self.lbl_interval_warning.setStyleSheet("color: #d08000;")
+        self.lbl_interval_warning.setStyleSheet(f"color: {CY_AMBER};")
         toolbar.addWidget(self.lbl_interval_warning)
         layout.addLayout(toolbar)
 
