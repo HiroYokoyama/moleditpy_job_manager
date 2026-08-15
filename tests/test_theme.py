@@ -175,6 +175,70 @@ class TestStateColours(DialogTestCase):
         self.assertNotIn("Hosts at Work", dialog.btn_host_monitor.text())
 
 
+class TestStateColumnStaysReadableWhenSelected(DialogTestCase):
+    """Qt's own delegate paints selected text in HighlightedText, ignoring the
+    model's ForegroundRole -- which is how a FAILED row went from red to the
+    theme's ordinary (near-black in light mode) text colour the moment it was
+    clicked, on top of the selection highlight."""
+
+    def _index_for(self, dialog, state):
+        from job_manager.models import Job
+
+        job = Job(id="j1", name="mol", host_name="h", state=state, submitted_at=1000.0)
+        self.service.store.jobs[job.id] = job
+        dialog.model.reload()
+        row = dialog.model.row_of(job.id)
+        return dialog.model.index(row, 3)
+
+    def test_the_table_uses_the_delegate_on_the_state_column(self):
+        from job_manager.jobs_dialog import _StateColorDelegate
+
+        dialog = JobsDialog(self.service)
+        self.addCleanup(dialog.deleteLater)
+        self.assertIsInstance(dialog.table.itemDelegateForColumn(3), _StateColorDelegate)
+
+    def test_selected_state_text_keeps_its_colour(self):
+        from PyQt6.QtWidgets import QStyle, QStyleOptionViewItem
+        from PyQt6.QtGui import QPalette
+
+        from job_manager.jobs_dialog import _StateColorDelegate
+        from job_manager.models import STATE_FAILED
+
+        dialog = JobsDialog(self.service)
+        self.addCleanup(dialog.deleteLater)
+        index = self._index_for(dialog, STATE_FAILED)
+
+        delegate = _StateColorDelegate(dialog.table)
+        option = QStyleOptionViewItem()
+        option.state |= QStyle.StateFlag.State_Selected
+        delegate.initStyleOption(option, index)
+
+        expected = QColor(theme.CY_RED)
+        self.assertEqual(option.palette.color(QPalette.ColorRole.Text), expected)
+        self.assertEqual(option.palette.color(QPalette.ColorRole.HighlightedText), expected)
+
+    def test_an_unstyled_column_is_left_alone(self):
+        from PyQt6.QtWidgets import QStyleOptionViewItem
+
+        from job_manager.jobs_dialog import _StateColorDelegate
+        from job_manager.models import STATE_FAILED
+
+        dialog = JobsDialog(self.service)
+        self.addCleanup(dialog.deleteLater)
+        index = self._index_for(dialog, STATE_FAILED)
+        name_index = dialog.model.index(index.row(), 0)
+
+        delegate = _StateColorDelegate(dialog.table)
+        before = QStyleOptionViewItem()
+        delegate.initStyleOption(before, name_index)
+        # No ForegroundRole on the Name column, so nothing to override with.
+        default = QStyleOptionViewItem()
+        self.assertEqual(
+            before.palette.color(QPalette.ColorRole.Text),
+            default.palette.color(QPalette.ColorRole.Text),
+        )
+
+
 # ---------------------------------------------------------------------------
 # Status widget dark-mode fix
 # ---------------------------------------------------------------------------

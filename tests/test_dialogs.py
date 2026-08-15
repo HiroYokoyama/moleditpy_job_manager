@@ -488,6 +488,43 @@ class TestHostsDialog(DialogTestCase):
         self.assertTrue(self.dialog.btn_save.isEnabled())
 
 
+class TestHostEnabledAndEqualPath(DialogTestCase):
+    def setUp(self):
+        super().setUp()
+        self.dialog = HostsDialog(self.service)
+        self.addCleanup(self.dialog.deleteLater)
+
+    def test_a_loaded_host_shows_enabled(self):
+        self.assertTrue(self.dialog.chk_enabled.isChecked())
+
+    def test_unchecking_and_saving_disables_the_host(self):
+        self.dialog.chk_enabled.setChecked(False)
+        host = self.dialog._save_current()
+        self.assertFalse(host.enabled)
+        self.assertFalse(JobStore(self.tmp).hosts[self.host.id].enabled)
+
+    def test_a_disabled_host_is_marked_in_the_list(self):
+        self.dialog.chk_enabled.setChecked(False)
+        self.dialog._save_current()
+        self.assertIn("[disabled]", self.dialog.list.item(0).text())
+
+    def test_equal_path_round_trips(self):
+        self.dialog.txt_equal_path.setText("/mnt/cluster")
+        host = self.dialog._save_current()
+        self.assertEqual(host.equal_path, "/mnt/cluster")
+        self.assertEqual(JobStore(self.tmp).hosts[self.host.id].equal_path, "/mnt/cluster")
+
+    def test_equal_path_is_disabled_for_a_local_host(self):
+        from job_manager.models import BACKEND_LOCAL
+
+        index = self.dialog.cmb_backend.findData(BACKEND_LOCAL)
+        self.dialog.cmb_backend.setCurrentIndex(index)
+        self.assertFalse(self.dialog.txt_equal_path.isEnabled())
+
+    def test_equal_path_is_enabled_for_a_remote_host(self):
+        self.assertTrue(self.dialog.txt_equal_path.isEnabled())
+
+
 class TestSubmitDialog(DialogTestCase):
     def setUp(self):
         super().setUp()

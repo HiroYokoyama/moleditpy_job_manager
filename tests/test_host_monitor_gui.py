@@ -844,3 +844,53 @@ class TestHostMonitorIndependentWindow(HostMonitorTestCase):
         self.addCleanup(first_monitor.deleteLater)
         dialog.open_host_monitor()
         self.assertIs(dialog._host_monitor, first_monitor)
+
+
+class TestDisabledHosts(HostMonitorTestCase):
+    """A disabled host still gets a card, but is skipped by the timer."""
+
+    def _add_disabled_host(self):
+        from .fakes import make_host
+
+        host = make_host(id="disabled_one", name="offline", enabled=False)
+        self.store.add_host(host)
+        return host
+
+    def test_a_disabled_host_is_skipped_by_sampling(self):
+        self._add_disabled_host()
+        dialog = self.monitor()
+        ids = [host.id for host in dialog._hosts()]
+        self.assertNotIn("disabled_one", ids)
+        self.assertIn(self.host.id, ids)
+
+    def test_a_disabled_host_still_gets_a_card(self):
+        self._add_disabled_host()
+        dialog = self.monitor()
+        self.assertIn("disabled_one", dialog.cards)
+
+    def test_a_disabled_host_card_is_dimmed(self):
+        self._add_disabled_host()
+        dialog = self.monitor()
+        card = dialog.cards["disabled_one"]
+        self.assertFalse(card.isEnabled())
+        self.assertIsNotNone(card.graphicsEffect())
+
+    def test_an_enabled_host_card_is_not_dimmed(self):
+        dialog = self.monitor()
+        card = dialog.cards[self.host.id]
+        self.assertTrue(card.isEnabled())
+        self.assertIsNone(card.graphicsEffect())
+
+
+class TestThreadScaledMeter(HostMonitorTestCase):
+    """The CPU meter reads thread usability, matching its own label."""
+
+    def test_label_and_meter_agree_on_threads(self):
+        self.transports[self.host.id] = CountingTransport(
+            output="cores=8\nthreads=16\nload=8.0 8.0 8.0\nmem_total=64000\nmem_free=16000\n"
+        )
+        dialog = self.monitor()
+        card = dialog.cards[self.host.id]
+        self.assertIn("16 threads", card.lbl_state.text())
+        self.assertAlmostEqual(card.meter_cpu.fraction, 0.5)
+        self.assertIn("16 threads", card.meter_cpu.toolTip())

@@ -1,3 +1,4 @@
+import os
 import time
 import unittest
 
@@ -61,6 +62,42 @@ class TestHostProfile(unittest.TestCase):
     def test_no_secret_fields_exist(self):
         # A password must never be persistable; the model has no slot for one.
         self.assertNotIn("password", HostProfile().to_dict())
+
+    def test_a_new_host_is_enabled(self):
+        self.assertTrue(HostProfile().enabled)
+
+    def test_a_host_saved_before_enabled_existed_stays_enabled(self):
+        # Forward compatibility: from_dict ignores unknown keys and the
+        # dataclass default applies, so an old settings.json with no
+        # "enabled" key must not silently start skipping every host it lists.
+        data = HostProfile(name="c").to_dict()
+        del data["enabled"]
+        self.assertTrue(HostProfile.from_dict(data).enabled)
+
+    def test_a_new_host_has_no_equal_path(self):
+        self.assertEqual(HostProfile().equal_path, "")
+
+    def test_mirrored_path_with_no_equal_path(self):
+        self.assertEqual(HostProfile(equal_path="").mirrored_path("out/calc.log"), "")
+
+    def test_mirrored_path_joins_the_relative_parts(self):
+        host = HostProfile(equal_path="/mnt/cluster")
+        self.assertEqual(
+            host.mirrored_path("out/calc.log"),
+            os.path.join("/mnt/cluster", "out", "calc.log"),
+        )
+
+    def test_mirrored_path_accepts_backslashes(self):
+        # A user pasting a Windows-flavoured relative path in from habit.
+        host = HostProfile(equal_path="/mnt/cluster")
+        self.assertEqual(
+            host.mirrored_path("out\\calc.log"),
+            os.path.join("/mnt/cluster", "out", "calc.log"),
+        )
+
+    def test_mirrored_path_with_no_relative_path(self):
+        host = HostProfile(equal_path="/mnt/cluster")
+        self.assertEqual(host.mirrored_path(""), "")
 
 
 class TestSubmitPreset(unittest.TestCase):

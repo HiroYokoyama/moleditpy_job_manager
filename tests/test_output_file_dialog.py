@@ -19,6 +19,7 @@ from job_manager.output_file_dialog import (
     describe_file_type,
     format_file_size,
     IS_REMOTE_ROLE,
+    PATH_ROLE,
 )
 
 app = QApplication.instance() or QApplication([])
@@ -138,3 +139,99 @@ class TestOutputFileSelectorDialog(unittest.TestCase):
         # download and open rather than silently doing nothing, which is what
         # a disabled button with no explanation looked like before.
         self.assertTrue(dialog.btn_open.isEnabled())
+
+    def test_remote_files_are_greyed_out(self):
+        self.job.downloaded_files = []
+        self.job.local_dir = ""
+        self.service.list_remote_results.side_effect = lambda job, on_ok, on_error: on_ok(
+            ["remote_calc.out"]
+        )
+        dialog = OutputFileSelectorDialog(self.service, self.job)
+        self.addCleanup(dialog.deleteLater)
+
+        item = dialog.tree.topLevelItem(0)
+        from PyQt6.QtGui import QColor
+
+        self.assertEqual(item.foreground(0).color(), QColor("#8b949e"))
+        self.assertTrue(item.font(0).italic())
+
+    def test_folders_are_built_from_slash_separated_names(self):
+        self.job.downloaded_files = []
+        self.job.local_dir = ""
+        self.service.list_remote_results.side_effect = lambda job, on_ok, on_error: on_ok(
+            ["top.out", "scratch/benzene.tmp", "scratch/nested/deep.log"]
+        )
+        dialog = OutputFileSelectorDialog(self.service, self.job)
+        self.addCleanup(dialog.deleteLater)
+
+        # One top-level file and one top-level folder -- not three flat rows.
+        self.assertEqual(dialog.tree.topLevelItemCount(), 2)
+        names = {dialog.tree.topLevelItem(i).text(0) for i in range(2)}
+        self.assertEqual(names, {"top.out", "scratch"})
+
+        folder = next(
+            dialog.tree.topLevelItem(i)
+            for i in range(2)
+            if dialog.tree.topLevelItem(i).text(0) == "scratch"
+        )
+        self.assertEqual(folder.childCount(), 2)
+        child_names = {folder.child(i).text(0) for i in range(2)}
+        self.assertEqual(child_names, {"benzene.tmp", "nested"})
+
+    def test_a_folder_row_is_not_selectable(self):
+        self.job.downloaded_files = []
+        self.job.local_dir = ""
+        self.service.list_remote_results.side_effect = lambda job, on_ok, on_error: on_ok(
+            ["scratch/benzene.tmp"]
+        )
+        dialog = OutputFileSelectorDialog(self.service, self.job)
+        self.addCleanup(dialog.deleteLater)
+
+        folder = dialog.tree.topLevelItem(0)
+        self.assertEqual(folder.text(0), "scratch")
+        self.assertIsNone(folder.data(0, IS_REMOTE_ROLE))
+        # Double-clicking a folder must not crash trying to open it.
+        dialog._open_item(folder)
+
+    def test_a_mirrored_file_opens_without_downloading(self):
+        from job_manager.models import HostProfile
+
+        mirror_root = tempfile.mkdtemp(prefix="mirror_")
+        self.addCleanup(lambda: __import__("shutil").rmtree(mirror_root, ignore_errors=True))
+        job_dir = os.path.join(mirror_root, "benzene_opt")
+        os.makedirs(job_dir)
+        with open(os.path.join(job_dir, "remote_calc.out"), "w") as f:
+            f.write("mirrored")
+
+        host = HostProfile(id="h1", remote_root="/scratch/user", equal_path=mirror_root)
+        self.service.store.hosts = {"h1": host}
+        self.job.downloaded_files = []
+        self.job.local_dir = ""
+        self.service.list_remote_results.side_effect = lambda job, on_ok, on_error: on_ok(
+            ["remote_calc.out"]
+        )
+
+        dialog = OutputFileSelectorDialog(self.service, self.job)
+        self.addCleanup(dialog.deleteLater)
+
+        item = dialog.tree.topLevelItem(0)
+        self.assertFalse(item.data(0, IS_REMOTE_ROLE))
+        self.assertEqual(item.data(0, PATH_ROLE), os.path.join(job_dir, "remote_calc.out"))
+        self.service.download.assert_not_called()
+
+    def test_no_mirror_configured_still_shows_it_as_remote(self):
+        from job_manager.models import HostProfile
+
+        host = HostProfile(id="h1", remote_root="/scratch/user", equal_path="")
+        self.service.store.hosts = {"h1": host}
+        self.job.downloaded_files = []
+        self.job.local_dir = ""
+        self.service.list_remote_results.side_effect = lambda job, on_ok, on_error: on_ok(
+            ["remote_calc.out"]
+        )
+
+        dialog = OutputFileSelectorDialog(self.service, self.job)
+        self.addCleanup(dialog.deleteLater)
+
+        item = dialog.tree.topLevelItem(0)
+        self.assertTrue(item.data(0, IS_REMOTE_ROLE))

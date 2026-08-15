@@ -93,6 +93,47 @@ class TestShowMonitor(PluginEntryTestCase):
         job_manager.show_monitor(None)
 
 
+class TestShowHostMonitorStandalone(PluginEntryTestCase):
+    """Extensions > Job Manager > Host Monitor -- no job monitor behind it."""
+
+    def test_creates_and_registers_the_window(self):
+        job_manager.initialize(self.context)
+        with patch("job_manager.host_monitor.HostMonitorDialog") as dialog_cls:
+            job_manager.show_host_monitor_standalone(self.context)
+        self.assertEqual(
+            self.context.register_window.call_args_list[0].args[0],
+            job_manager.HOST_MONITOR_WINDOW_KEY,
+        )
+        dialog_cls.return_value.show.assert_called_once()
+
+    def test_it_does_not_open_the_job_monitor(self):
+        job_manager.initialize(self.context)
+        with patch("job_manager.host_monitor.HostMonitorDialog"):
+            with patch("job_manager.jobs_dialog.JobsDialog") as job_dialog_cls:
+                job_manager.show_host_monitor_standalone(self.context)
+        job_dialog_cls.assert_not_called()
+        registered_keys = [c.args[0] for c in self.context.register_window.call_args_list]
+        self.assertNotIn(job_manager.WINDOW_KEY, registered_keys)
+
+    def test_an_existing_window_is_raised_not_rebuilt(self):
+        job_manager.initialize(self.context)
+        existing = MagicMock()
+        self.context.get_window.return_value = existing
+        with patch("job_manager.host_monitor.HostMonitorDialog") as dialog_cls:
+            job_manager.show_host_monitor_standalone(self.context)
+        dialog_cls.assert_not_called()
+        existing.raise_.assert_called_once()
+
+    def test_a_construction_failure_is_reported_not_raised(self):
+        job_manager.initialize(self.context)
+        with patch("job_manager.host_monitor.HostMonitorDialog", side_effect=RuntimeError("boom")):
+            job_manager.show_host_monitor_standalone(self.context)
+        self.context.show_status_message.assert_called_once()
+
+    def test_without_a_context_it_is_a_no_op(self):
+        job_manager.show_host_monitor_standalone(None)
+
+
 class TestShowSubmit(PluginEntryTestCase):
     def test_opens_the_monitor_then_the_wizard(self):
         job_manager.initialize(self.context)
