@@ -267,12 +267,12 @@ class Meter(QWidget):
         self.fraction = 0.0
         self.detail = "-"
         self._dark = False
-        self.setMinimumHeight(110)
-        self.setMinimumWidth(56)
-        self.setMaximumWidth(110)
+        self.setMinimumHeight(132)
+        self.setMinimumWidth(67)
+        self.setMaximumWidth(132)
 
     def sizeHint(self) -> QSize:
-        return QSize(84, 130)
+        return QSize(100, 156)
 
     def set_dark(self, dark: bool = False) -> None:
         self._dark = dark
@@ -462,7 +462,7 @@ class HostCard(QFrame):
         font = self.lbl_load_avg.font()
         font.setPointSizeF(max(7.5, font.pointSizeF() * 0.85))
         self.lbl_load_avg.setFont(font)
-        self.lbl_load_avg.setVisible(False)
+        self.lbl_load_avg.setText("&nbsp;")
         outer.addWidget(self.lbl_load_avg)
 
         self.meter_cpu = Meter("CPU", GRAPH_CPU)
@@ -635,9 +635,9 @@ class HostCard(QFrame):
                 "1-minute load average, as the host reports it -- separate "
                 "from the CPU meter above, which is instantaneous usage."
             )
-            self.lbl_load_avg.setVisible(True)
         else:
-            self.lbl_load_avg.setVisible(False)
+            self.lbl_load_avg.setText("&nbsp;")
+            self.lbl_load_avg.setToolTip("")
 
         total = f"{stats.mem_total_mb / 1024:.1f} GB" if stats.mem_total_mb else ""
         if stats.mem_total_mb and stats.mem_free_mb:
@@ -663,7 +663,7 @@ class HostCard(QFrame):
         self.setToolTip(first)
         self.meter_cpu.show_value(0.0, "-")
         self.meter_memory.show_value(0.0, "-")
-        self.lbl_load_avg.setVisible(False)
+        self.lbl_load_avg.setText("&nbsp;")
 
 
 class HostMonitorDialog(QDialog):

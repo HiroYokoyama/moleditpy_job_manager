@@ -439,7 +439,7 @@ class TestTheWizardRemembersTheLastSubmission(DialogTestCase):
         self.assertEqual(again.txt_walltime.text(), "24:00:00")
         self.assertEqual(again.txt_queue.text(), "")
         self.assertEqual(again.txt_modules.toPlainText(), "")
-        self.assertEqual(again.txt_globs.text(), "")
+        self.assertEqual(again.txt_globs.text(), "*.out, *.log, *.xyz, *.hess, *.fchk")
 
     def test_cores_are_left_for_the_input_to_decide(self):
         # With the scan ticked, the molecule decides these two -- carrying the
