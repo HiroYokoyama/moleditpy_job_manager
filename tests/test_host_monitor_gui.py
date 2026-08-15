@@ -800,3 +800,51 @@ class TestItOpensWideEnoughToCompare(HostMonitorTestCase):
 
         self.assertGreaterEqual(dialog.width(), 2 * dialog.CARD_WIDTH)
         self.assertEqual(dialog._columns(), 2)
+
+
+class TestCPUMeterAndSparklineRenaming(HostMonitorTestCase):
+    """Verifies that the primary meter and sparkline are labeled CPU and alias load."""
+
+    def test_meter_and_sparkline_labeled_cpu(self):
+        from job_manager.host_monitor import HostCard
+        card = HostCard(self.host)
+        self.addCleanup(card.deleteLater)
+        self.assertEqual(card.meter_cpu.caption, "CPU")
+        self.assertEqual(card.graph_cpu.caption, "CPU")
+
+    def test_load_aliases_point_to_cpu_widgets(self):
+        dialog = self.monitor()
+        card = dialog.cards[self.host.id]
+        self.assertIs(card.meter_load, card.meter_cpu)
+        self.assertIs(card.graph_load, card.graph_cpu)
+
+    def test_graph_cpu_constant_exported(self):
+        from job_manager.host_monitor import GRAPH_CPU, GRAPH_LOAD
+        self.assertEqual(GRAPH_CPU.name(), GRAPH_LOAD.name())
+
+
+class TestHostMonitorIndependentWindow(HostMonitorTestCase):
+    """Host monitor behaves as a separate top-level independent window."""
+
+    def test_open_host_monitor_creates_parentless_window(self):
+        from PyQt6.QtCore import Qt
+        dialog = JobsDialog(self.service)
+        self.addCleanup(dialog.deleteLater)
+        dialog.open_host_monitor()
+        monitor = dialog._host_monitor
+        self.assertIsNotNone(monitor)
+        self.addCleanup(monitor.deleteLater)
+        self.assertIsNone(monitor.parent())
+        self.assertTrue(bool(monitor.windowFlags() & Qt.WindowType.Window))
+        self.assertFalse(monitor.testAttribute(Qt.WidgetAttribute.WA_QuitOnClose))
+
+    def test_reopen_host_monitor_raises_existing_window(self):
+        dialog = JobsDialog(self.service)
+        self.addCleanup(dialog.deleteLater)
+        dialog.open_host_monitor()
+        first_monitor = dialog._host_monitor
+        self.addCleanup(first_monitor.deleteLater)
+        dialog.open_host_monitor()
+        self.assertIs(dialog._host_monitor, first_monitor)
+
+

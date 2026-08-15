@@ -168,3 +168,21 @@ class TestCoresAreNotThreads(unittest.TestCase):
         stats = host_stats.parse(result.stdout)
         self.assertGreaterEqual(stats.cores, 1)
         self.assertGreaterEqual(stats.threads, stats.cores)
+
+
+class TestInstantaneousCPUStatParsing(unittest.TestCase):
+    """Real-time CPU parsing and summary formatting."""
+
+    def test_posix_command_samples_proc_stat(self):
+        self.assertIn("/proc/stat", host_stats.POSIX_COMMAND)
+        self.assertIn("sleep", host_stats.POSIX_COMMAND)
+
+    def test_summary_reports_cpu_label(self):
+        stats = host_stats.parse("cores=4\nload=2.50 1.00 0.50\nmem_total=16000\nmem_free=8000\n")
+        self.assertIn("CPU 2.50 1.00 0.50", stats.summary)
+
+    def test_instant_cpu_fraction_computation(self):
+        stats = host_stats.parse("cores=4\nload=3.60 1.20 0.80\n")
+        self.assertEqual(stats.load[0], 3.60)
+        self.assertAlmostEqual(stats.load_fraction, 0.90)
+
