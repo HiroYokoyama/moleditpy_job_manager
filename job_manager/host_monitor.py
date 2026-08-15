@@ -135,7 +135,18 @@ QSpinBox {{
     color: {_DARK["text"]};
     border: 1px solid #363b42;
     border-radius: 4px;
-    padding: 2px 4px;
+    padding: 2px 20px 2px 4px;
+    min-height: 22px;
+}}
+QSpinBox::up-button {{
+    subcontrol-origin: border;
+    subcontrol-position: top right;
+    width: 18px;
+}}
+QSpinBox::down-button {{
+    subcontrol-origin: border;
+    subcontrol-position: bottom right;
+    width: 18px;
 }}
 """
 
@@ -172,7 +183,18 @@ QSpinBox {{
     color: #1f2328;
     border: 1px solid #d0d7de;
     border-radius: 4px;
-    padding: 2px 4px;
+    padding: 2px 20px 2px 4px;
+    min-height: 22px;
+}}
+QSpinBox::up-button {{
+    subcontrol-origin: border;
+    subcontrol-position: top right;
+    width: 18px;
+}}
+QSpinBox::down-button {{
+    subcontrol-origin: border;
+    subcontrol-position: bottom right;
+    width: 18px;
 }}
 """
 
@@ -482,6 +504,7 @@ class HostCard(QFrame):
     def show_jobs(self, jobs: list) -> None:
         """Update the compact jobs line for this host's active jobs."""
         import html as _html
+        from .models import STATE_DONE
 
         active = [j for j in jobs if j.is_active]
         if not active:
@@ -494,8 +517,32 @@ class HostCard(QFrame):
             "done": CY_TEAL, "failed": CY_RED, "lost": CY_PURPLE,
             "blocked": CY_RED,
         }
+        total_active = len(active)
+        total_all = len(jobs)
+        done_count = sum(1 for j in jobs if j.state == STATE_DONE)
+        running = sum(1 for j in active if j.state.upper() == "RUNNING")
+        remaining = total_active - running
+
+        count_parts = []
+        if running:
+            count_parts.append(
+                f"<span style='color:{CY_GREEN};font-weight:bold'>"
+                f"▶ {running} running</span>"
+            )
+        if remaining:
+            count_parts.append(
+                f"<span style='color:{CY_AMBER};'>"
+                f"⧖ {remaining} remaining</span>"
+            )
+        if total_all > 0:
+            count_parts.append(
+                f"<span style='color:{CY_GREY};'>"
+                f"(task {done_count}/{total_all} done)</span>"
+            )
+        counts_html = "  ".join(count_parts)
+
         chips = []
-        for job in active[:5]:
+        for job in active[:4]:
             state = job.state.lower()
             color = _COLORS.get(state, CY_GREY)
             name = _html.escape(job.name[:20] + ("…" if len(job.name) > 20 else ""))
@@ -503,9 +550,16 @@ class HostCard(QFrame):
                 f"<span style='color:{color}'>{name} "
                 f"<span style='color:{CY_GREY}'>[{state}]</span></span>"
             )
-        overflow = len(active) - len(chips)
+        overflow = total_active - len(chips)
         suffix = f" <span style='color:{CY_GREY}'>+{overflow} more</span>" if overflow else ""
-        self.lbl_jobs.setText("&nbsp; ".join(chips) + suffix)
+        chips_html = "&nbsp; ".join(chips) + suffix
+
+        if counts_html and chips_html:
+            full_html = f"{counts_html} &nbsp;│&nbsp; {chips_html}"
+        else:
+            full_html = counts_html or chips_html
+
+        self.lbl_jobs.setText(full_html)
         self.lbl_jobs.setVisible(True)
 
     # --- what a sample changes ----------------------------------------------
@@ -959,6 +1013,9 @@ class _ActiveJobsBar(QWidget):
             1 for j in active if self._display_state(j) == "running"
         )
         remaining = total - running
+        all_jobs = list(self.service.store.jobs.values())
+        done_count = sum(1 for j in all_jobs if j.state == "DONE")
+        total_all = len(all_jobs)
 
         parts = []
         if running:
@@ -970,6 +1027,11 @@ class _ActiveJobsBar(QWidget):
             parts.append(
                 f"<span style='color:{CY_AMBER};'>"
                 f"⧖ {remaining} remaining</span>"
+            )
+        if total_all > 0:
+            parts.append(
+                f"<span style='color:{CY_GREY};'>"
+                f"(task {done_count}/{total_all} done)</span>"
             )
         self._lbl_count.setText("  ".join(parts))
 

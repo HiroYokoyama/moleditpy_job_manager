@@ -394,6 +394,21 @@ class TestHostCardJobsStrip(HostMonitorTestCase):
         self.assertIn("mol", card.lbl_jobs.text())
         self.assertFalse(card.lbl_jobs.isHidden())
 
+    def test_task_done_progress_counter(self):
+        from job_manager.models import STATE_DONE
+        j_done = Job(id="j1", name="job1", state=STATE_DONE,
+                     host_name=self.host.name, submitted_at=1000.0)
+        j_run = Job(id="j2", name="job2", state=STATE_RUNNING,
+                    host_name=self.host.name, submitted_at=1001.0)
+        j_pend = Job(id="j3", name="job3", state=STATE_PENDING,
+                     host_name=self.host.name, submitted_at=1002.0)
+        card = self._card()
+        card.show_jobs([j_done, j_run, j_pend])
+        text = card.lbl_jobs.text()
+        self.assertIn("1 running", text)
+        self.assertIn("1 remaining", text)
+        self.assertIn("task 1/3 done", text)
+
     def test_card_updates_on_jobs_changed(self):
         dialog = self.monitor()
         card = dialog.cards[self.host.id]
@@ -404,3 +419,36 @@ class TestHostCardJobsStrip(HostMonitorTestCase):
         self.service.jobs_changed.emit()
         self.assertIn("newjob", card.lbl_jobs.text())
         self.assertFalse(card.lbl_jobs.isHidden())
+
+
+
+
+# ---------------------------------------------------------------------------
+# Spin box up/down arrow controls
+# ---------------------------------------------------------------------------
+
+class TestSpinBoxArrowControls(DialogTestCase):
+    """QSpinBox up and down buttons click and adjust values correctly."""
+
+    def test_spinbox_up_and_down_clicks_with_theme(self):
+        from PyQt6.QtWidgets import QSpinBox
+        from PyQt6.QtTest import QTest
+        from PyQt6.QtCore import Qt, QPoint
+
+        spin = QSpinBox()
+        self.addCleanup(spin.deleteLater)
+        spin.setStyleSheet(theme.DIALOG_STYLESHEET)
+        spin.setRange(1, 100)
+        spin.setValue(10)
+        spin.resize(100, 26)
+        spin.show()
+
+        # Click top right (up arrow)
+        QTest.mouseClick(spin, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+                         QPoint(spin.width() - 6, 4))
+        self.assertEqual(spin.value(), 11)
+
+        # Click bottom right (down arrow)
+        QTest.mouseClick(spin, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+                         QPoint(spin.width() - 6, spin.height() - 4))
+        self.assertEqual(spin.value(), 10)

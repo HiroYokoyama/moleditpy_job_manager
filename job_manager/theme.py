@@ -167,11 +167,24 @@ QSpinBox {{
     color: palette(text);
     border: 1px solid palette(mid);
     border-radius: 4px;
-    padding: 2px 4px;
+    padding: 2px 20px 2px 4px;
+    min-height: 22px;
 }}
 
 QSpinBox:focus {{
     border-color: {CY_ACCENT2};
+}}
+
+QSpinBox::up-button {{
+    subcontrol-origin: border;
+    subcontrol-position: top right;
+    width: 18px;
+}}
+
+QSpinBox::down-button {{
+    subcontrol-origin: border;
+    subcontrol-position: bottom right;
+    width: 18px;
 }}
 
 /* --- combo box ------------------------------------------------------------ */
