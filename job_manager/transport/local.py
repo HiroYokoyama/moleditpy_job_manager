@@ -38,8 +38,13 @@ _WINDOWS_BASH_CANDIDATES = (
 #: path at all -- every job directory handed to it comes back as "wsl: Failed to
 #: translate 'G:\\...'" -- so a host that picked it up would report a working
 #: shell and then fail every single job.
+#: Built with backslashes explicitly: os.path.join uses "/" off Windows, so on
+#: a Linux CI runner this constant and the path being compared were separated
+#: by nothing but the separator.
 _WSL_LAUNCHER = os.path.normcase(
-    os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "bash.exe")
+    os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "bash.exe").replace(
+        "/", "\\"
+    )
 )
 
 #: Where PowerShell lives when it is not on PATH. Windows PowerShell 5.1 ships

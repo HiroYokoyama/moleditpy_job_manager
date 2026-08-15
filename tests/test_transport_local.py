@@ -210,13 +210,29 @@ class TestShellDetection(unittest.TestCase):
         # C:\Windows\System32\bash.exe comes first on PATH on any machine with
         # WSL enabled, and it cannot see G:\... at all: taking it would report a
         # working shell and then fail every job with "Failed to translate".
-        launcher = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "bash.exe")
+        # Backslashes, as which() reports them -- and spelled out here rather
+        # than joined, because os.path.join uses "/" on the Linux runner.
+        launcher = os.path.join(
+            os.environ.get("SystemRoot", r"C:\Windows"), "System32", "bash.exe"
+        ).replace("/", "\\")
         git_bash = r"C:\Program Files\Git\bin\bash.exe"
         with (
             patch("shutil.which", return_value=launcher),
             patch("os.path.isfile", lambda path: path == git_bash),
         ):
             self.assertEqual(find_shell(), git_bash)
+
+    def test_the_launcher_is_recognised_however_it_is_spelled(self):
+        # The separator must not decide the answer: the check is built from
+        # os.path.join, which produces "/" on the Linux runner and "\" here.
+        from job_manager.transport.local import is_wsl_launcher
+
+        root = os.environ.get("SystemRoot", r"C:\Windows")
+        backslashes = os.path.join(root, "System32", "bash.exe").replace("/", "\\")
+        self.assertTrue(is_wsl_launcher(backslashes))
+        self.assertTrue(is_wsl_launcher(backslashes.replace("\\", "/")))
+        self.assertFalse(is_wsl_launcher(r"C:\Program Files\Git\bin\bash.exe"))
+        self.assertFalse(is_wsl_launcher("/usr/bin/bash"))
 
     def test_nothing_found_is_empty_not_an_error(self):
         with patch("shutil.which", return_value=None), patch("os.path.isfile", return_value=False):
