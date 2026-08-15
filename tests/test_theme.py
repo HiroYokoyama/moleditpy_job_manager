@@ -253,28 +253,6 @@ class TestActiveJobsBar(HostMonitorTestCase):
         bar = self._bar()
         self.assertIn("remaining", bar._lbl_count.text())
 
-    def test_job_names_appear_in_chips(self):
-        self.store.add_job(Job(id="j1", name="mycomputation", state=STATE_RUNNING,
-                               submitted_at=1000.0))
-        bar = self._bar()
-        self.assertIn("mycomputation", bar._lbl_jobs.text())
-
-    def test_long_names_are_truncated(self):
-        long_name = "a" * 40
-        self.store.add_job(Job(id="j1", name=long_name, state=STATE_RUNNING,
-                               submitted_at=1000.0))
-        bar = self._bar()
-        # The chip must be shorter than the full name.
-        self.assertNotIn(long_name, bar._lbl_jobs.text())
-        self.assertIn("…", bar._lbl_jobs.text())
-
-    def test_overflow_label_appears_beyond_max_chips(self):
-        for i in range(10):
-            self.store.add_job(Job(id=f"j{i}", name=f"job{i}",
-                                   state=STATE_RUNNING, submitted_at=float(i)))
-        bar = self._bar()
-        self.assertIn("more", bar._lbl_jobs.text())
-
     def test_updates_on_jobs_changed(self):
         bar = self._bar()
         self.assertIn("no active jobs", bar._lbl_count.text())
@@ -295,14 +273,13 @@ class TestActiveJobsBar(HostMonitorTestCase):
         self.service.job_updated.emit("j1")
         self.assertIn("no active jobs", bar._lbl_count.text())
 
-    def test_blocked_job_shows_as_blocked(self):
-        dead = Job(id="dead", name="prev", state=STATE_FAILED, submitted_at=900.0)
-        waiting = Job(id="j1", name="mol", state=STATE_RUNNING,
-                      submitted_at=1000.0, after_job_id="dead")
-        self.store.add_job(dead)
-        self.store.add_job(waiting)
+    def test_task_done_progress_on_summary_bar(self):
+        from job_manager.models import STATE_DONE
+        self.store.add_job(Job(id="j1", name="done1", state=STATE_DONE, submitted_at=900.0))
+        self.store.add_job(Job(id="j2", name="run1", state=STATE_RUNNING, submitted_at=1000.0))
         bar = self._bar()
-        self.assertIn("blocked", bar._lbl_jobs.text())
+        self.assertIn("1 running", bar._lbl_count.text())
+        self.assertIn("task 1/2 done", bar._lbl_count.text())
 
     def test_bar_is_present_in_the_monitor_dialog(self):
         dialog = self.monitor()

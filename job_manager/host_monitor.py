@@ -941,19 +941,8 @@ class _ActiveJobsBar(QWidget):
     timer: the job list changes on poll results, not on stats ticks.
     """
 
-    #: Maximum job chips shown inline before " +N more" is appended.
-    _MAX_CHIPS = 7
-
-    #: Colours per display state -- resolved at construction time from theme.
-    _COLORS = {
-        "running": CY_GREEN,
-        "pending": CY_AMBER,
-        "queued": CY_GREY,
-        "done": CY_TEAL,
-        "failed": CY_RED,
-        "lost": CY_PURPLE,
-        "blocked": CY_RED,
-    }
+class _ActiveJobsBar(QWidget):
+    """Summary bar at the bottom of the Host Monitor showing overall counts."""
 
     def __init__(self, service, parent=None) -> None:
         super().__init__(parent)
@@ -967,14 +956,7 @@ class _ActiveJobsBar(QWidget):
             f"color: {CY_ACCENT}; font-weight: bold;"
         )
         layout.addWidget(self._lbl_count)
-
-        sep = QLabel("│")
-        sep.setStyleSheet(f"color: {CY_ACCENT2};")
-        layout.addWidget(sep)
-
-        self._lbl_jobs = QLabel()
-        self._lbl_jobs.setTextFormat(Qt.TextFormat.RichText)
-        layout.addWidget(self._lbl_jobs, 1)
+        layout.addStretch(1)
 
         service.jobs_changed.connect(self.refresh)
         service.job_updated.connect(self._on_updated)
@@ -998,15 +980,12 @@ class _ActiveJobsBar(QWidget):
         return job.state.lower()
 
     def refresh(self) -> None:
-        import html as _html
-
         active = list(self.service.store.active_jobs())
         total = len(active)
         if not total:
             self._lbl_count.setText(
                 f"<span style='color:{CY_GREY};'>● no active jobs</span>"
             )
-            self._lbl_jobs.setText("")
             return
 
         running = sum(
@@ -1034,24 +1013,6 @@ class _ActiveJobsBar(QWidget):
                 f"(task {done_count}/{total_all} done)</span>"
             )
         self._lbl_count.setText("  ".join(parts))
-
-        chips_src = active[: self._MAX_CHIPS]
-        chips = []
-        for job in chips_src:
-            state = self._display_state(job)
-            color = self._COLORS.get(state, CY_GREY)
-            name = _html.escape(job.name[:24] + ("…" if len(job.name) > 24 else ""))
-            chips.append(
-                f"<span style='color:{color}'>{name}"
-                f"<span style='color:{CY_GREY};'> [{state}]</span></span>"
-            )
-        overflow = total - len(chips_src)
-        suffix = (
-            f"  <span style='color:{CY_GREY};'>+{overflow} more</span>"
-            if overflow
-            else ""
-        )
-        self._lbl_jobs.setText("&nbsp;&nbsp;".join(chips) + suffix)
 
 
 __all__ = ["HostCard", "HostMonitorDialog", "Sparkline"]
