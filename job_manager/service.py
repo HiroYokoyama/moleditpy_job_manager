@@ -397,6 +397,33 @@ class JobService(QObject):
 
         run_async(self.pool, work, on_success=done, on_error=failed)
 
+    def fetch_file_to_cache(self, job: Job, filename: str, on_ok, on_error) -> None:
+        """Fetch one remote file into a local temporary cache directory."""
+        import tempfile
+
+        host = self.store.hosts.get(job.host_id)
+        if host is None:
+            on_error(f"Host profile for {job.name} no longer exists")
+            return
+
+        cache_dir = os.path.join(tempfile.gettempdir(), "moleditpy_job_manager_cache", job.id)
+        os.makedirs(cache_dir, exist_ok=True)
+
+        def work() -> str:
+            transport = self.transport_for(host)
+            try:
+                paths = fetch_results(transport, job, cache_dir, globs=[filename])
+                if paths and os.path.isfile(paths[0]):
+                    return paths[0]
+                local_path = os.path.join(cache_dir, filename)
+                if os.path.isfile(local_path):
+                    return local_path
+                raise FileNotFoundError(f"Remote file '{filename}' was not found or could not be downloaded")
+            finally:
+                transport.close()
+
+        run_async(self.pool, work, on_success=on_ok, on_error=on_error)
+
     def cancel(self, job: Job) -> None:
         host = self.store.hosts.get(job.host_id)
         if host is None:

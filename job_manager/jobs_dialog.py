@@ -388,6 +388,11 @@ class JobsDialog(QDialog):
         self.btn_download = QPushButton("Download")
         self.btn_download.clicked.connect(self._download_selected)
         self.btn_open = QPushButton("Open Result")
+        self.btn_open.setToolTip(
+            "Select and open calculation outputs in MoleditPy.\n\n"
+            "If outputs have not been downloaded yet, chosen files are cached into "
+            "the temporary folder on demand."
+        )
         self.btn_open.clicked.connect(self._open_selected_result)
         self.btn_tail = QPushButton("Tail Log")
         self.btn_tail.setToolTip(
@@ -652,7 +657,7 @@ class JobsDialog(QDialog):
         has_job = job is not None
         self.btn_cancel.setEnabled(bool(job and job.is_active))
         self.btn_download.setEnabled(bool(job and job.remote_dir))
-        self.btn_open.setEnabled(bool(job and job.downloaded_files))
+        self.btn_open.setEnabled(bool(job and (job.downloaded_files or (job.downloaded and job.remote_dir))))
         self.btn_tail.setEnabled(bool(job and job.remote_dir))
         # A command-only job has no input files to check for; what makes it
         # resubmittable is the command, which the preset snapshot carries.
@@ -1120,9 +1125,37 @@ class JobsDialog(QDialog):
 
     def _open_selected_result(self) -> None:
         job = self.selected_job()
-        if job is None or not job.downloaded_files:
+        if job is None:
             return
-        self.open_result_files(job.downloaded_files)
+        from .output_file_dialog import OutputFileSelectorDialog
+
+        # Check existing local files
+        existing_local: List[str] = []
+        for path in job.downloaded_files or []:
+            if path and os.path.isfile(path) and path not in existing_local:
+                existing_local.append(os.path.normpath(path))
+        if job.local_dir and os.path.isdir(job.local_dir):
+            try:
+                for entry in os.listdir(job.local_dir):
+                    full = os.path.normpath(os.path.join(job.local_dir, entry))
+                    if os.path.isfile(full) and full not in existing_local and not entry.startswith("."):
+                        existing_local.append(full)
+            except OSError:
+                pass
+
+        # If exactly 1 local file and no remote directory, open directly
+        if len(existing_local) == 1 and not job.remote_dir:
+            self.open_result_files(existing_local)
+            return
+
+        # Otherwise open the output file selector dialog
+        dialog = OutputFileSelectorDialog(
+            self.service,
+            job,
+            parent=self,
+            on_open_callback=lambda path: self.open_result_files([path]),
+        )
+        dialog.exec()
 
     def _on_results_ready(self, job_id: str, paths: list) -> None:
         if not self.chk_auto_open.isChecked():
