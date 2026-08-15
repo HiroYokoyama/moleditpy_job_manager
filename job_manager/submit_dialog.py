@@ -178,12 +178,15 @@ class SubmitDialog(QDialog):
         # job were an input file and nothing else.
         top.addRow("Command", self.command_row)
 
+        # Its own line, outside the scroll area and above Submit: saving a
+        # preset is a different kind of act from submitting, and on one row with
+        # them it was a button you could hit while reaching for Submit.
         preset_row = QHBoxLayout()
-        save_preset = QPushButton("Save as preset")
-        save_preset.clicked.connect(self._save_preset)
-        preset_row.addWidget(save_preset)
+        self.btn_save_preset = QPushButton("Save as preset")
+        self.btn_save_preset.clicked.connect(self._save_preset)
+        preset_row.addWidget(self.btn_save_preset)
         preset_row.addStretch(1)
-        layout.addLayout(preset_row)
+        outer.addLayout(preset_row)
 
         box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel

@@ -540,6 +540,16 @@ class TestSubmitDialog(DialogTestCase):
         titles = [box.title() for box in self.dialog.findChildren(QGroupBox)]
         self.assertTrue(any("optional" in title for title in titles if title.startswith("Input")))
 
+    def test_save_as_preset_has_a_line_of_its_own(self):
+        from PyQt6.QtWidgets import QDialogButtonBox, QPushButton, QScrollArea
+
+        scroll = self.dialog.findChild(QScrollArea)
+        box = self.dialog.findChild(QDialogButtonBox)
+        # Pinned like Submit rather than scrolling with the body, and not on the
+        # same row as it: saving a preset is not submitting.
+        self.assertNotIn(self.dialog.btn_save_preset, scroll.widget().findChildren(QPushButton))
+        self.assertNotIn(self.dialog.btn_save_preset, box.buttons())
+
     def test_it_fits_on_a_short_screen(self):
         self.assertLessEqual(self.dialog._preferred_height(4000), 4000)
         self.assertGreaterEqual(self.dialog._preferred_height(640), 400)
