@@ -416,6 +416,33 @@ class TestHostsDialog(DialogTestCase):
         host = self.dialog._save_current()
         self.assertEqual(host.login_commands, ["source /etc/profile", "module purge"])
 
+    def test_saving_says_so(self):
+        self.dialog._save_current()
+        self.assertIn("Saved", self.dialog.lbl_test.text())
+
+    def test_the_form_is_dead_with_nothing_selected(self):
+        from PyQt6.QtWidgets import QMessageBox
+
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
+            self.dialog._remove_host()
+        self.assertEqual(self.dialog.list.count(), 0)
+        # Otherwise a whole profile can be typed in with nowhere for it to go,
+        # and Save and Test Connection both quietly do nothing.
+        self.assertFalse(self.dialog.form_box.isEnabled())
+        self.assertFalse(self.dialog.adv_box.isEnabled())
+        self.assertFalse(self.dialog.btn_save.isEnabled())
+        self.assertFalse(self.dialog.btn_test.isEnabled())
+        self.assertIn("Add", self.dialog.lbl_test.text())
+
+    def test_the_form_comes_back_with_a_new_host(self):
+        from PyQt6.QtWidgets import QMessageBox
+
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
+            self.dialog._remove_host()
+        self.dialog._add_host()
+        self.assertTrue(self.dialog.form_box.isEnabled())
+        self.assertTrue(self.dialog.btn_save.isEnabled())
+
 
 class TestSubmitDialog(DialogTestCase):
     def setUp(self):
@@ -440,6 +467,23 @@ class TestSubmitDialog(DialogTestCase):
     def test_the_preview_follows_the_resources(self):
         self.dialog.txt_walltime.setText("99:00:00")
         self.assertIn("99:00:00", self.dialog.txt_preview.toPlainText())
+
+    def test_the_body_scrolls(self):
+        from PyQt6.QtWidgets import QDialogButtonBox, QScrollArea
+
+        scroll = self.dialog.findChild(QScrollArea)
+        self.assertIsNotNone(scroll)
+        self.assertTrue(scroll.widgetResizable())
+        self.assertIn(
+            self.dialog.txt_preview, scroll.widget().findChildren(type(self.dialog.txt_preview))
+        )
+        # Submit must not scroll away with the rest of it.
+        box = self.dialog.findChild(QDialogButtonBox)
+        self.assertNotIn(box, scroll.widget().findChildren(QDialogButtonBox))
+
+    def test_it_fits_on_a_short_screen(self):
+        self.assertLessEqual(self.dialog._preferred_height(4000), 4000)
+        self.assertGreaterEqual(self.dialog._preferred_height(640), 400)
 
     def test_saving_a_preset(self):
         self.dialog.txt_job_name.setText("orca opt")

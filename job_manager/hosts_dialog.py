@@ -94,16 +94,16 @@ class HostsDialog(QDialog):
         buttons = QHBoxLayout()
         add = QPushButton("Add")
         add.clicked.connect(self._add_host)
-        remove = QPushButton("Remove")
-        remove.clicked.connect(self._remove_host)
+        self.btn_remove = QPushButton("Remove")
+        self.btn_remove.clicked.connect(self._remove_host)
         buttons.addWidget(add)
-        buttons.addWidget(remove)
+        buttons.addWidget(self.btn_remove)
         left.addLayout(buttons)
         outer.addLayout(left, 1)
 
         right = QVBoxLayout()
-        form_box = QGroupBox("Connection")
-        form = QFormLayout(form_box)
+        self.form_box = QGroupBox("Connection")
+        form = QFormLayout(self.form_box)
 
         self.txt_name = QLineEdit()
         self.txt_hostname = QLineEdit()
@@ -216,10 +216,10 @@ class HostsDialog(QDialog):
         form.addRow("Queueing", self.cmb_concurrency)
         form.addRow("Cores available", self.spin_runner_cores)
         form.addRow("Memory available", self.spin_runner_memory)
-        right.addWidget(form_box)
+        right.addWidget(self.form_box)
 
-        adv_box = QGroupBox("Advanced")
-        adv = QFormLayout(adv_box)
+        self.adv_box = QGroupBox("Advanced")
+        adv = QFormLayout(self.adv_box)
         self.txt_login = QPlainTextEdit()
         self.txt_login.setPlaceholderText("source /etc/profile\nmodule purge")
         self.txt_login.setMaximumHeight(70)
@@ -236,7 +236,7 @@ class HostsDialog(QDialog):
         adv.addRow("ssh -o options", self.txt_options)
         adv.addRow("Connect timeout", self.spin_connect_timeout)
         adv.addRow("Command timeout", self.spin_command_timeout)
-        right.addWidget(adv_box)
+        right.addWidget(self.adv_box)
 
         self.chk_ask_password = QCheckBox(
             "Ask for a password when connecting (kept in memory for this session only)"
@@ -304,7 +304,8 @@ class HostsDialog(QDialog):
         box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Close
         )
-        box.button(QDialogButtonBox.StandardButton.Save).clicked.connect(self._save_current)
+        self.btn_save = box.button(QDialogButtonBox.StandardButton.Save)
+        self.btn_save.clicked.connect(self._save_current)
         box.rejected.connect(self.reject)
         box.button(QDialogButtonBox.StandardButton.Close).clicked.connect(self.accept)
         right.addWidget(box)
@@ -343,6 +344,25 @@ class HostsDialog(QDialog):
             return None
         return self.store.hosts.get(item.data(Qt.ItemDataRole.UserRole))
 
+    def _set_editor_enabled(self, enabled: bool) -> None:
+        """Nothing is editable until a host is selected.
+
+        Everything the form collects belongs to the selected profile, so with
+        no selection there is nowhere for a keystroke to go: Save and Test
+        Connection both found no host and returned in silence, which reads as
+        the buttons being broken rather than as nothing being selected.
+        """
+        for widget in (
+            self.form_box,
+            self.adv_box,
+            self.chk_ask_password,
+            self.queue_box,
+            self.btn_test,
+            self.btn_save,
+            self.btn_remove,
+        ):
+            widget.setEnabled(enabled)
+
     def _clear_form(self) -> None:
         self.txt_name.setText("")
         self.txt_hostname.setText("")
@@ -362,6 +382,8 @@ class HostsDialog(QDialog):
         self.chk_ask_password.setChecked(False)
         self._set_pause_checkbox(False)
         self.lbl_queue.setText("")
+        self._set_editor_enabled(False)
+        self.lbl_test.setText("No host selected - press Add to create one.")
 
     def _load_selected(self) -> None:
         host = self._selected_host()
@@ -369,6 +391,7 @@ class HostsDialog(QDialog):
         if host is None:
             self._clear_form()
             return
+        self._set_editor_enabled(True)
         self.txt_name.setText(host.name)
         self.txt_hostname.setText(host.hostname)
         self.txt_username.setText(host.username)
@@ -531,6 +554,10 @@ class HostsDialog(QDialog):
         self._collect(host)
         self.store.add_host(host)
         self._reload_list(select_id=host.id)
+        # After the reload, which re-selects and so clears this label. Saving
+        # was silent before, which is indistinguishable from a Save that did
+        # nothing at all.
+        self.lbl_test.setText(f"Saved '{host.name}'.")
         return host
 
     def _persist_current(self) -> Optional[HostProfile]:
@@ -741,6 +768,7 @@ class HostsDialog(QDialog):
     def _test_connection(self) -> None:
         host = self._save_current()
         if host is None:
+            self.lbl_test.setText("Select a host first.")
             return
         if not host.hostname and not host.is_local:
             self.lbl_test.setText("Enter a hostname first.")
