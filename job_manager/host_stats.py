@@ -121,7 +121,7 @@ class HostStats:
             return self.error
         parts = []
         if self.load:
-            parts.append("load " + " ".join(f"{value:.2f}" for value in self.load))
+            parts.append("CPU " + " ".join(f"{value:.2f}" for value in self.load))
         if self.cores:
             cores = f"{self.cores} cores"
             if self.threads > self.cores:

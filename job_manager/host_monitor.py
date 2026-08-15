@@ -203,7 +203,8 @@ QSpinBox::down-button {{
 #: load green, memory blue. Colouring the bar by how full it was instead made
 #: the pair look like two unrelated readings, and a bar that changes hue as the
 #: value moves is harder to compare across cards than one that does not.
-GRAPH_LOAD = QColor(CY_GREEN)
+GRAPH_CPU = QColor(CY_GREEN)
+GRAPH_LOAD = GRAPH_CPU
 GRAPH_MEMORY = QColor(CY_ACCENT2)
 
 
@@ -380,13 +381,7 @@ class Sparkline(QWidget):
 
 
 class HostCard(QFrame):
-    """One host: what it is doing now, and its history on a double click.
-
-    The bars are the default because they answer the question people actually
-    open this for -- is there room on that machine? -- at a glance and from
-    across the room. The graphs answer a different one, "has it been like that
-    long?", and are worth the space only when it is being asked.
-    """
+    """One host: what it is doing now, and its history on a double click."""
 
     def __init__(self, host: HostProfile, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -414,19 +409,21 @@ class HostCard(QFrame):
         self.lbl_target.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         outer.addWidget(self.lbl_target)
 
-        self.meter_load = Meter("load", GRAPH_LOAD)
+        self.meter_cpu = Meter("CPU", GRAPH_CPU)
+        self.meter_load = self.meter_cpu
         self.meter_memory = Meter("memory", GRAPH_MEMORY)
         columns = QHBoxLayout()
         columns.setSpacing(14)
         columns.addStretch(1)
-        columns.addWidget(self.meter_load)
+        columns.addWidget(self.meter_cpu)
         columns.addWidget(self.meter_memory)
         columns.addStretch(1)
         outer.addLayout(columns)
 
-        self.graph_load = Sparkline(GRAPH_LOAD, "load, last 2 min")
+        self.graph_cpu = Sparkline(GRAPH_CPU, "CPU")
+        self.graph_load = self.graph_cpu
         self.graph_memory = Sparkline(GRAPH_MEMORY, "memory")
-        for widget in (self.graph_load, self.graph_memory):
+        for widget in (self.graph_cpu, self.graph_memory):
             widget.setVisible(False)
             outer.addWidget(widget)
 
@@ -460,9 +457,9 @@ class HostCard(QFrame):
         self.setStyleSheet(
             f"QFrame#hostCard {{ background-color: {bg}; border: 1px solid {border}; border-radius: 10px; }}"
         )
-        self.meter_load.set_dark(dark)
+        self.meter_cpu.set_dark(dark)
         self.meter_memory.set_dark(dark)
-        self.graph_load.set_dark(dark)
+        self.graph_cpu.set_dark(dark)
         self.graph_memory.set_dark(dark)
         self.setPalette(palette)
         self.update()
@@ -479,21 +476,12 @@ class HostCard(QFrame):
 
     @property
     def expanded(self) -> bool:
-        # isHidden, not isVisible: isVisible() is False for every widget whose
-        # window has not been shown yet, so this could not answer for a card
-        # that had been expanded before the window came up.
-        return not self.graph_load.isHidden()
+        return not self.graph_cpu.isHidden()
 
     def set_expanded(self, expanded: bool) -> None:
-        """History instead of the bars, not as well as them.
-
-        The two say the same thing, and the right-hand end of the graph is the
-        bar -- so showing both is one reading twice, in a card that then needs
-        twice the height.
-        """
-        self.graph_load.setVisible(expanded)
+        self.graph_cpu.setVisible(expanded)
         self.graph_memory.setVisible(expanded)
-        self.meter_load.setVisible(not expanded)
+        self.meter_cpu.setVisible(not expanded)
         self.meter_memory.setVisible(not expanded)
 
     def show_jobs(self, jobs: list) -> None:
@@ -566,26 +554,20 @@ class HostCard(QFrame):
             return
         cores = f"{stats.cores} cores" if stats.cores else ""
         if stats.threads > stats.cores > 0:
-            # Named separately: a user who knows the machine as "12 threads"
-            # should see why the bar is scaled to 8 rather than assume it is
-            # broken.
             cores += f", {stats.threads} threads"
         self.lbl_state.setText(cores)
 
-        # The percentage first, because that is the comparable number: a load
-        # of 8 means nothing until you know whether the machine has four cores
-        # or sixty-four. The raw figures follow it for anyone who wants them.
         load = stats.load[0] if stats.load else 0.0
         if stats.cores:
-            self.meter_load.show_value(
+            self.meter_cpu.show_value(
                 stats.load_fraction,
                 f"{stats.load_fraction * 100:.0f}%",
                 f"of {stats.cores} cores",
-                f"load {load:.2f} of {stats.cores} cores",
+                f"{load:.2f} of {stats.cores} cores",
             )
         else:
-            self.meter_load.show_value(
-                0.0, f"{load:.2f}", "load", "the host did not report its cores"
+            self.meter_cpu.show_value(
+                0.0, f"{load:.2f}", "CPU", "the host did not report its cores"
             )
 
         total = f"{stats.mem_total_mb / 1024:.1f} GB" if stats.mem_total_mb else ""
@@ -597,8 +579,6 @@ class HostCard(QFrame):
                 f"{stats.mem_used_mb / 1024:.1f} of {total} in use",
             )
         elif stats.mem_total_mb:
-            # The host has no MemAvailable to report, so the bar would be a
-            # guess -- but the size of the machine is still worth saying.
             self.meter_memory.show_value(
                 0.0, "-", f"of {total}", f"{total} total, usage not reported"
             )
@@ -607,14 +587,14 @@ class HostCard(QFrame):
                 0.0, "-", "memory", "the host did not report its memory"
             )
 
-        self.graph_load.add(stats.load_fraction)
+        self.graph_cpu.add(stats.load_fraction)
         self.graph_memory.add(stats.memory_fraction)
 
     def show_error(self, message: str) -> None:
         first = message.splitlines()[0] if message else "no answer"
         self.lbl_state.setText(first)
         self.setToolTip(first)
-        self.meter_load.show_value(0.0, "-")
+        self.meter_cpu.show_value(0.0, "-")
         self.meter_memory.show_value(0.0, "-")
 
 
