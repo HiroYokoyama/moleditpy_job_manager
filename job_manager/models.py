@@ -89,7 +89,7 @@ PROFILE_COMMANDS = (
     # First, or the aliases the next four lines define are read as ordinary
     # words: bash expands aliases only in an interactive shell unless told
     # otherwise, and a job script is not one. A user whose launch command is
-    # `alias orca6=...` in ~/.bashrc gets "orca6: command not found" without it.
+    # `alias myorca=...` in ~/.bashrc gets "myorca: command not found" without it.
     "shopt -s expand_aliases 2>/dev/null || true",
     "[ -f /etc/profile ] && . /etc/profile || true",
     "[ -f ~/.bash_profile ] && . ~/.bash_profile || true",

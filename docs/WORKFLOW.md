@@ -691,7 +691,7 @@ order of reliability:
    and which **Environment** also reads.
 
 **2. It is an alias.** Bash expands aliases only in an interactive shell, so
-`alias orca6=...` is read as a plain word. The preamble now sets
+`alias myorca=...` is read as a plain word. The preamble now sets
 `shopt -s expand_aliases` before sourcing, which makes aliases work — provided
 they are reached at all, i.e. provided (1) is not also in the way. A shell
 *function* has never needed this.

@@ -437,7 +437,7 @@ class TestTheHostEnvironmentReachesTheScript(unittest.TestCase):
 
     def test_aliases_are_expanded_before_the_files_are_read(self):
         # bash expands aliases only in an interactive shell unless told
-        # otherwise, so a launch command defined as `alias orca6=...` in a
+        # otherwise, so a launch command defined as `alias myorca=...` in a
         # dotfile is read as a plain word and reported as not found.
         lines = make_host(load_profile=True).environment_commands()
         self.assertIn("expand_aliases", lines[0])
