@@ -215,6 +215,36 @@ class TestWhatItCosts(HostMonitorTestCase):
         self.monitor()
         self.assertEqual(self.transports[self.host.id].closes, 1)
 
+    def test_closing_does_not_block_the_caller_on_the_network(self):
+        # transport.close() (paramiko especially) can block sending a
+        # disconnect over a stalled socket. Closing the window queued it onto
+        # the pool instead of calling it inline, so a pool that never runs its
+        # queued work must still return from reject()/closeEvent() immediately,
+        # with the transport already forgotten either way.
+        class QueueOnlyPool:
+            def __init__(self):
+                self.queued = []
+
+            def start(self, task):
+                self.queued.append(task)
+
+            def clear(self):
+                pass
+
+            def waitForDone(self, msecs):
+                pass
+
+        dialog = self.monitor()
+        pool = QueueOnlyPool()
+        dialog.service.pool = pool
+        transport = self.transports[self.host.id]
+
+        dialog.reject()
+
+        self.assertEqual(transport.closes, 0)  # not run inline
+        self.assertEqual(len(pool.queued), 1)  # queued for the pool instead
+        self.assertEqual(dialog._transports, {})  # forgotten immediately regardless
+
     def test_a_host_that_would_prompt_for_a_password_is_left_alone(self):
         from job_manager.models import BACKEND_PARAMIKO
 

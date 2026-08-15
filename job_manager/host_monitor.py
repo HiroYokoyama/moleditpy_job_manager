@@ -990,16 +990,34 @@ class HostMonitorDialog(QDialog):
     # --- teardown -----------------------------------------------------------
 
     def _close_transport(self, host_id: str) -> None:
+        """Hand a transport's teardown to the pool instead of closing it here.
+
+        paramiko's close() sends a disconnect over the socket and can block on
+        it -- normally milliseconds, but a host that has gone quiet (the exact
+        case that just made this probe fail, or that the window is closing on
+        with a probe still in flight) can leave it waiting on a stalled or
+        already-dead connection. Popped from ``self._transports`` immediately
+        either way, so a probe that is mid-flight for this host stops seeing
+        it as open the moment this returns; only the network teardown itself
+        moves off the GUI thread.
+        """
         transport = self._transports.pop(host_id, None)
         if transport is None:
             return
-        try:
-            transport.close()
-        except Exception:  # pragma: no cover - closing must never raise here
-            pass
+
+        def close() -> None:
+            try:
+                transport.close()
+            except Exception:  # pragma: no cover - closing must never raise here
+                pass
+
+        run_async(self.service.pool, close, quiet=True)
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt's spelling
-        """Stop the timer and hand every connection back."""
+        """Stop the timer and hand every connection back.
+
+        Closing itself must not wait on the network: see _close_transport.
+        """
         self._timer.stop()
         for host_id in list(self._transports):
             self._close_transport(host_id)
