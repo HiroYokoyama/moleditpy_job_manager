@@ -31,6 +31,16 @@ except (ImportError, TypeError):  # pragma: no cover - exercised via the flag
 
 PARAMIKO_AVAILABLE = paramiko is not None
 
+if PARAMIKO_AVAILABLE:
+    # paramiko announces every connection and every successful authentication
+    # at INFO -- "Connected (version 2.0...)", "Authentication (publickey)
+    # successful!" -- straight into the application's log. One line per SSH
+    # session is noise in a plugin that opens one per poll, and the host panel
+    # opens one per host. Warnings and errors still come through, and anyone
+    # debugging a connection can set the level back:
+    #     logging.getLogger("paramiko").setLevel(logging.DEBUG)
+    logging.getLogger("paramiko").setLevel(logging.WARNING)
+
 INSTALL_HINT = "paramiko is not installed. Run: pip install paramiko"
 
 

@@ -153,6 +153,9 @@ class TestContextContract(unittest.TestCase):
         # PLUGIN_DEVELOPMENT_MANUAL_V4.md 2.2: makes .pmejbs a file type the
         # application knows (File > Import, the command line, and drops).
         "register_file_opener",
+        # PLUGIN_DEVELOPMENT_MANUAL_V4.md: a drop on the main window. Answers
+        # for .pmejbs and declines everything else.
+        "register_drop_handler",
     }
 
     def test_only_documented_context_methods_are_called(self):
@@ -214,3 +217,38 @@ class TestSubmitFilePublicAPI(PluginEntryTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheDropHandler(PluginEntryTestCase):
+    """A job list dropped on the main window opens in the monitor."""
+
+    def test_it_is_registered(self):
+        job_manager.initialize(self.context)
+        self.context.register_drop_handler.assert_called_once()
+        callback, priority = self.context.register_drop_handler.call_args.args
+        self.assertIs(callback, job_manager.handle_dropped_file)
+        self.assertEqual(priority, 0)
+
+    def test_a_job_list_is_taken(self):
+        with patch.object(job_manager, "open_job_file") as opened:
+            self.assertTrue(job_manager.handle_dropped_file("/tmp/jobs.pmejbs"))
+        opened.assert_called_once_with("/tmp/jobs.pmejbs")
+
+    def test_the_extension_is_matched_whatever_its_case(self):
+        with patch.object(job_manager, "open_job_file"):
+            self.assertTrue(job_manager.handle_dropped_file("/tmp/JOBS.PMEJBS"))
+
+    def test_an_input_file_is_left_to_the_application(self):
+        # Claiming .inp and .xyz would stop a drop on the main window doing the
+        # obvious thing, which is opening the molecule. The monitor and the
+        # wizard accept those themselves.
+        for path in ("/tmp/mol.inp", "/tmp/mol.xyz", "/tmp/notes.txt", ""):
+            with patch.object(job_manager, "open_job_file") as opened:
+                self.assertFalse(job_manager.handle_dropped_file(path), path)
+            opened.assert_not_called()
+
+    def test_a_file_that_will_not_open_is_declined_rather_than_raising(self):
+        # Returning True for a file it could not open would have the host stop
+        # offering it to anything else.
+        with patch.object(job_manager, "open_job_file", side_effect=RuntimeError("bad file")):
+            self.assertFalse(job_manager.handle_dropped_file("/tmp/broken.pmejbs"))

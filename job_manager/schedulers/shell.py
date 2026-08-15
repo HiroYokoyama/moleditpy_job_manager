@@ -26,6 +26,7 @@ class ShellScheduler(Scheduler):
     name = "shell"
     label = "Built-in (background process)"
     order = 10
+    queue_directives = False
     # Nothing else serialises work on a machine with no queue, so this is the
     # one scheduler where "run after that job" has to be arranged by hand.
     supports_chaining = True

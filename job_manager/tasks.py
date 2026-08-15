@@ -27,6 +27,11 @@ class BackgroundTask(QRunnable):
         self.fn = fn
         self.args = args
         self.kwargs = kwargs
+        #: Log a failure at debug rather than warning. For work whose failure
+        #: is an ordinary outcome the caller already shows -- a host that did
+        #: not answer this tick -- where a warning with a traceback would fill
+        #: the application log with something nobody has to act on.
+        self.quiet = bool(kwargs.pop("_quiet", False))
         self.signals = _TaskSignals()
 
     def run(self) -> None:  # pragma: no cover - thread entry; body tested via run_sync
@@ -37,7 +42,10 @@ class BackgroundTask(QRunnable):
         try:
             result = self.fn(*self.args, **self.kwargs)
         except Exception as exc:
-            logging.warning("Job Manager: background task failed: %s", exc, exc_info=True)
+            if self.quiet:
+                logging.debug("Job Manager: background task failed: %s", exc, exc_info=True)
+            else:
+                logging.warning("Job Manager: background task failed: %s", exc, exc_info=True)
             self.signals.failed.emit(str(exc))
             self.signals.finished.emit()
             return None
@@ -53,10 +61,16 @@ def run_async(
     on_error: Optional[Callable[[str], None]] = None,
     on_finished: Optional[Callable[[], None]] = None,
     *args: Any,
+    quiet: bool = False,
     **kwargs: Any,
 ) -> BackgroundTask:
-    """Queue ``fn`` and wire its callbacks. Returns the task (kept by the pool)."""
-    task = BackgroundTask(fn, *args, **kwargs)
+    """Queue ``fn`` and wire its callbacks. Returns the task (kept by the pool).
+
+    ``quiet`` is for work whose failure the caller reports itself: it is logged
+    at debug rather than warning, so an unreachable host does not write a
+    traceback into the application log every time it is asked.
+    """
+    task = BackgroundTask(fn, *args, _quiet=quiet, **kwargs)
     if on_success is not None:
         task.signals.succeeded.connect(on_success)
     if on_error is not None:

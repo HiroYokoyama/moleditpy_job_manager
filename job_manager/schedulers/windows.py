@@ -76,6 +76,7 @@ class WindowsScheduler(Scheduler):
     name = "windows"
     label = "Built-in (Windows, PowerShell)"
     order = 20
+    queue_directives = False
     script_name = SCRIPT_NAME
     supports_chaining = True
     # Liveness is a process check, so a predecessor that failed is simply gone

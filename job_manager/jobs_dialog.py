@@ -396,6 +396,26 @@ class JobsDialog(QDialog):
         self.btn_resubmit.clicked.connect(self._resubmit_selected)
         self.btn_remove = QPushButton("Remove")
         self.btn_remove.clicked.connect(self._remove_selected)
+        # The counterparts to Save As..., at the head of the row that is about
+        # the list rather than about one job. Opening a list was reachable only
+        # through Load Archive... or a banner that appears once you are already
+        # somewhere else.
+        self.btn_open_default = QPushButton("Open")
+        self.btn_open_default.setToolTip(
+            "Go back to the job list this plugin keeps for you, in "
+            "~/.moleditpy/job_manager/.\n\n"
+            "That is the one being polled and added to; a list opened from a "
+            "file is used until you come back here."
+        )
+        self.btn_open_default.clicked.connect(self._use_default_job_list)
+        self.btn_open_list = QPushButton("Open...")
+        self.btn_open_list.setToolTip(
+            f"Open a saved job list ({JOB_EXTENSION}).\n\n"
+            "A list written by Clear List... opens read-only, because it is "
+            "history. Anything else -- an export, a backup, a colleague's "
+            "file -- becomes the list in use for this session."
+        )
+        self.btn_open_list.clicked.connect(self._open_job_list_file)
         self.btn_save_as = QPushButton("Save As...")
         self.btn_save_as.setToolTip(
             f"Save the job list to a {JOB_EXTENSION} file: the same records the "
@@ -432,6 +452,8 @@ class JobsDialog(QDialog):
 
         list_actions = QHBoxLayout()
         for button in (
+            self.btn_open_default,
+            self.btn_open_list,
             self.btn_save_as,
             self.btn_export_csv,
             self.btn_archive,
@@ -942,6 +964,13 @@ class JobsDialog(QDialog):
             QMessageBox.warning(self, "Export", f"Could not write {path}:\n{exc}")
             return
         self._append_message(f"Exported {len(store.jobs)} job(s) to {path}")
+
+    def _open_job_list_file(self) -> None:
+        """Open a job list from anywhere, not only from the archive folder."""
+        start = self.service.store.directory
+        path, _ = QFileDialog.getOpenFileName(self, "Open a job list", start, JOB_LIST_FILTER)
+        if path:
+            self.open_job_list(path)
 
     def _load_archive(self) -> None:
         """Show a previously cleared list, read only."""

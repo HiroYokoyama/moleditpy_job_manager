@@ -32,6 +32,7 @@ HAS_MAIN_APP = _MAIN_APP_SRC is not None
 #: Every PluginContext member this plugin touches, anywhere in its source.
 USED_CONTEXT_MEMBERS = (
     "add_menu_action",
+    "register_drop_handler",
     "get_window",
     "register_window",
     "get_main_window",
@@ -44,12 +45,16 @@ class StubPluginContext:
 
     def __init__(self):
         self.menu_actions = []
+        self.drop_handlers = []
         self.windows = {}
         self.status_messages = []
         self.main_window = MagicMock()
 
     def add_menu_action(self, path, callback, text=None, icon=None, shortcut=None):
         self.menu_actions.append((path, callback))
+
+    def register_drop_handler(self, callback, priority=0):
+        self.drop_handlers.append((callback, priority))
 
     def add_plugin_menu(self, path, callback, text=None, icon=None, shortcut=None):
         # Present because the host has it, and asserted against: these entries

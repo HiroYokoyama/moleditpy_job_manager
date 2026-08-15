@@ -575,3 +575,25 @@ class TestAJumpHostIsRefused(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestParamikoIsNotChatty(unittest.TestCase):
+    """It announced every connection and login at INFO, into the app's log."""
+
+    def test_the_library_logger_is_quietened(self):
+        import logging
+
+        from job_manager.transport import paramiko_backend
+
+        if not paramiko_backend.PARAMIKO_AVAILABLE:
+            self.skipTest("paramiko is not installed")
+        self.assertGreaterEqual(logging.getLogger("paramiko").level, logging.WARNING)
+
+    def test_warnings_still_get_through(self):
+        import logging
+
+        from job_manager.transport import paramiko_backend
+
+        if not paramiko_backend.PARAMIKO_AVAILABLE:
+            self.skipTest("paramiko is not installed")
+        self.assertLessEqual(logging.getLogger("paramiko").level, logging.WARNING)

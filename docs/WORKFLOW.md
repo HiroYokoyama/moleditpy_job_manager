@@ -507,7 +507,15 @@ host with its load average, its memory, and a graph of each over the last
 couple of minutes. The load graph is full when the load equals the core count,
 which is what a full machine means — not some arbitrary hundred.
 
-It asks each host one small command every **2 seconds** (adjustable, 1–60), and
+Each card shows two bars by default -- load against the core count, memory
+against the machine -- because the question the panel is opened for is "is
+there room on that machine?", and a bar answers it from across the room. Green
+while there is room, amber near full, red at full. **Double-click a card** for
+the last two minutes as a graph: green for load, blue for memory. Cards stack
+into as many columns as the window is wide enough for, and **Dark** recolours
+this window alone, for a panel left up on a second screen.
+
+It asks each host one small command every **2 seconds** (adjustable, 1-60), and
 **only while that window is open**. Closing it stops the timer and hands every
 connection back, so a Job Manager left open overnight costs a login node
 nothing on its account. The connection is held while the window is up rather
@@ -677,6 +685,42 @@ helper is running — it only ever reads what is under `.moleditpy_runner/`.
 | The helper is not running between batches | By design: it exits as soon as its queue is empty and the next submission starts it again |
 | The wizard filled in a memory figure you did not expect | It was read from the input. ORCA's `%maxcore` is **per core**, so it is multiplied by `%pal nprocs`. Overwrite the field and it is left alone |
 | `command not found` for something that works when you ssh in | See below — it is almost always the guard at the top of `~/.bashrc` |
+| "SSH authentication failed" on a host that needs a password | The OpenSSH backend cannot answer a prompt. Switch that host to paramiko — see below |
+| Hosts at Work times out, or the host drops in and out | OpenSSH opens a new connection per sample and the far end throttles them. Raise the interval or use paramiko — see below |
+
+### OpenSSH or paramiko?
+
+Both are real SSH. The difference that matters is what happens between two
+commands.
+
+| | **OpenSSH** (default) | **paramiko** (optional) |
+|---|---|---|
+| Needs installing | No — uses the `ssh` already on your machine | Yes: `pip install paramiko` |
+| Key / agent authentication | Yes, and your whole `~/.ssh/config` | Yes — keys, agent, `IdentityFile` from `ssh_config` |
+| Password authentication | **No.** It runs in batch mode, so it cannot answer a prompt | Yes, held in memory for the session and never written to disk |
+| `ProxyJump` / jump host | Yes | No — use OpenSSH for those hosts |
+| Between commands | A new `ssh` process, TCP connection, handshake and authentication **every time** | One session, kept open and reused |
+
+That last row is the one people meet. Every command this plugin runs over
+OpenSSH is a fresh login, which is fine at a two-minute polling interval and
+expensive at a two-second one — so **Hosts at Work** defaults to sampling an
+OpenSSH host every 10 s and a paramiko host every 2 s. If a host there reports
+`remote command timed out` or drops in and out, that is usually the far end's
+`sshd` rate-limiting a burst of connections (`MaxStartups`), not a broken host.
+
+The usual remedy elsewhere is OpenSSH's `ControlMaster`, which multiplexes many
+commands over one connection — but **Windows' OpenSSH does not implement it**,
+so on a Windows client it is not available at all.
+
+So:
+
+- **A key and no live monitoring**: OpenSSH. Nothing to install, `ssh_config`
+  and `ProxyJump` work.
+- **Watching hosts live, or a password-only host**: paramiko. One kept session
+  makes fast sampling cheap.
+- **Timeouts in the host panel**: raise the interval, or switch that host to
+  paramiko. The panel already backs off a failing host rather than retrying
+  every tick.
 
 ### A saved command template does not appear
 

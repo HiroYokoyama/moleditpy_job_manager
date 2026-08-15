@@ -1549,3 +1549,150 @@ class TestTailWindow(DialogTestCase):
         # The window can be closed while the read is in flight.
         self.dialog._show_log("orphaned output")
         self.assertIn("orphaned output", self.dialog.txt_log.toPlainText())
+
+
+class TestSwitchingHostsWithEdits(DialogTestCase):
+    """Saving must answer the question once, not ask it again."""
+
+    def setUp(self):
+        super().setUp()
+        self.store.add_host(make_host(id="second", name="workstation"))
+        self.dialog = HostsDialog(self.service)
+        self.addCleanup(self.dialog.deleteLater)
+        self.dialog.show()
+        self.addCleanup(self.dialog.hide)
+
+    def select(self, host_id):
+        from PyQt6.QtCore import Qt
+
+        for row in range(self.dialog.list.count()):
+            if self.dialog.list.item(row).data(Qt.ItemDataRole.UserRole) == host_id:
+                self.dialog.list.setCurrentRow(row)
+                return
+        self.fail(host_id)
+
+    def test_saving_asks_once(self):
+        from unittest.mock import patch
+
+        from PyQt6.QtWidgets import QMessageBox
+
+        self.dialog.txt_hostname.setText("edited.example.org")
+
+        with patch.object(
+            QMessageBox, "question", return_value=QMessageBox.StandardButton.Save
+        ) as asked:
+            self.select("second")
+
+        asked.assert_called_once()
+        self.assertEqual(JobStore(self.tmp).hosts[self.host.id].hostname, "edited.example.org")
+
+    def test_and_the_host_you_clicked_is_the_one_you_get(self):
+        from unittest.mock import patch
+
+        from PyQt6.QtWidgets import QMessageBox
+
+        self.dialog.txt_hostname.setText("edited.example.org")
+
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Save):
+            self.select("second")
+
+        self.assertEqual(self.dialog._current.id, "second")
+
+    def test_discarding_asks_once_too(self):
+        from unittest.mock import patch
+
+        from PyQt6.QtWidgets import QMessageBox
+
+        self.dialog.txt_hostname.setText("thrown.away")
+
+        with patch.object(
+            QMessageBox, "question", return_value=QMessageBox.StandardButton.Discard
+        ) as asked:
+            self.select("second")
+
+        asked.assert_called_once()
+        self.assertNotEqual(JobStore(self.tmp).hosts[self.host.id].hostname, "thrown.away")
+
+    def test_saving_twice_over_asks_nothing_the_second_time(self):
+        from unittest.mock import patch
+
+        from PyQt6.QtWidgets import QMessageBox
+
+        self.dialog.txt_hostname.setText("edited.example.org")
+        self.dialog._save_current()
+
+        with patch.object(QMessageBox, "question") as asked:
+            self.select("second")
+
+        asked.assert_not_called()
+
+
+class TestTheSaveButtonIsQuiet(DialogTestCase):
+    """Pressing Save must not then ask whether to save."""
+
+    def setUp(self):
+        super().setUp()
+        self.dialog = HostsDialog(self.service)
+        self.addCleanup(self.dialog.deleteLater)
+        self.dialog.show()
+        self.addCleanup(self.dialog.hide)
+
+    def test_pressing_it_asks_nothing(self):
+        from unittest.mock import patch
+
+        from PyQt6.QtWidgets import QMessageBox
+
+        self.dialog.txt_hostname.setText("edited.example.org")
+
+        with patch.object(QMessageBox, "question") as asked:
+            self.dialog.btn_save.click()
+
+        asked.assert_not_called()
+        self.assertEqual(JobStore(self.tmp).hosts[self.host.id].hostname, "edited.example.org")
+
+    def test_the_list_still_refreshes_after_the_button(self):
+        # clicked() carries a bool, which would land in the reload argument.
+        self.dialog.txt_name.setText("renamed")
+
+        self.dialog.btn_save.click()
+
+        labels = [self.dialog.list.item(row).text() for row in range(self.dialog.list.count())]
+        self.assertTrue(any("renamed" in label for label in labels), labels)
+
+    def test_closing_straight_after_a_save_asks_nothing(self):
+        from unittest.mock import patch
+
+        from PyQt6.QtWidgets import QMessageBox
+
+        self.dialog.txt_hostname.setText("edited.example.org")
+        self.dialog.btn_save.click()
+
+        with patch.object(QMessageBox, "question") as asked:
+            self.dialog.close()
+
+        asked.assert_not_called()
+
+
+class TestTheHostsDialogOpensBigEnough(DialogTestCase):
+    def test_it_asks_for_room_but_never_more_than_the_screen(self):
+        # 900 where there is space for it; less on a small screen, where the
+        # editing column scrolls anyway.
+        from PyQt6.QtWidgets import QApplication
+
+        dialog = HostsDialog(self.service)
+        self.addCleanup(dialog.deleteLater)
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            return
+        room = screen.availableGeometry().width()
+        self.assertEqual(dialog.width(), min(900, room - 80))
+        self.assertLessEqual(dialog.width(), room)
+
+    def test_it_never_opens_taller_than_the_screen(self):
+        from PyQt6.QtWidgets import QApplication
+
+        dialog = HostsDialog(self.service)
+        self.addCleanup(dialog.deleteLater)
+        screen = QApplication.primaryScreen()
+        if screen is not None:
+            self.assertLessEqual(dialog.height(), screen.availableGeometry().height())

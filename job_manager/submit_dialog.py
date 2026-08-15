@@ -32,7 +32,7 @@ from PyQt6.QtWidgets import (
 )
 
 from . import PLUGIN_VERSION, input_scan
-from .command_templates import CommandTemplate, suggest, templates_for
+from .command_templates import CommandTemplate, extension_of, suggest, templates_for
 from .credentials import ensure_password
 from .models import HostProfile, Job, SubmitPreset
 from .runner import make_remote_dir
@@ -58,6 +58,7 @@ INPUT_FILTER = ";;".join(INPUT_FILTERS)
 #: Dropdown entries that are actions rather than templates.
 _SAVE_TEMPLATE = object()
 _DELETE_TEMPLATE = object()
+_SET_DEFAULT = object()
 
 
 class SubmitDialog(QDialog):
@@ -545,11 +546,43 @@ class SubmitDialog(QDialog):
         if self.cmb_preset.count() > 1:
             self.cmb_preset.setCurrentIndex(1)
         self._on_preset_changed()
+        self._update_queue_fields()
         if host is not None and self.cmb_preset.currentIndex() == 0:
             # Only where no named preset took the form: a preset the user chose
             # is a decision, and last time's settings must not overwrite it.
             self._apply_remembered(host)
         self._update_chain_row()
+
+    def _update_queue_fields(self) -> None:
+        """Grey the fields this host's scheduler has no queue to read.
+
+        A walltime typed for a machine with no queue is not enforced by
+        anything, and an account for a machine with no accounting is a line in
+        a script nobody reads. Cores and memory stay live: the helper queue
+        schedules on them, and the command template can spell them.
+        """
+        host = self.current_host()
+        try:
+            scheduler = get_scheduler(host.scheduler) if host else None
+        except ValueError:
+            scheduler = None
+        live = scheduler is None or scheduler.queue_directives
+        for widget in (
+            self.txt_queue,
+            self.txt_account,
+            self.txt_walltime,
+            self.spin_nodes,
+            self.txt_extra,
+        ):
+            widget.setEnabled(live)
+            if not live:
+                widget.setToolTip(
+                    f"{scheduler.label if scheduler else 'This host'} has no queue to read it: "
+                    "there is no partition to pick, no account to charge and no "
+                    "walltime anything will enforce.\n\n"
+                    "Cores and memory still matter -- the helper queue schedules "
+                    "on them."
+                )
 
     #: How each scheduler is told to wait, for the hint under the checkbox.
     _CHAIN_MECHANISM = {
@@ -746,6 +779,12 @@ class SubmitDialog(QDialog):
                 )
 
         self.cmb_template.insertSeparator(self.cmb_template.count())
+        extension = extension_of(os.path.basename(files[0])) if files else ""
+        if extension:
+            # The answer to an ambiguous extension. ORCA, CP2K and GAMESS all
+            # write .inp, so the wizard will not guess -- but it will remember
+            # which one this user means.
+            self.cmb_template.addItem(f"Use this command for every {extension}", _SET_DEFAULT)
         self.cmb_template.addItem("Save current command as...", _SAVE_TEMPLATE)
         if saved:
             self.cmb_template.addItem("Delete a saved template...", _DELETE_TEMPLATE)
@@ -756,6 +795,8 @@ class SubmitDialog(QDialog):
         self.cmb_template.setCurrentIndex(0)
         if choice is _SAVE_TEMPLATE:
             self._save_user_template()
+        elif choice is _SET_DEFAULT:
+            self._set_default_for_extension()
         elif choice is _DELETE_TEMPLATE:
             self._delete_user_template()
         elif choice is not None:
@@ -780,6 +821,26 @@ class SubmitDialog(QDialog):
             return
         self.txt_globs.setText(", ".join(template.fetch_globs))
         self._globs_before_template = list(template.fetch_globs)
+
+    def _set_default_for_extension(self) -> None:
+        """Make this command what an input of that extension gets from now on."""
+        files = self.selected_files()
+        extension = extension_of(os.path.basename(files[0])) if files else ""
+        command = self.txt_command.text().strip()
+        if not extension:
+            return
+        if not command:
+            QMessageBox.information(self, "Default command", "Enter a command first.")
+            return
+        globs = [g.strip() for g in self.txt_globs.text().split(",") if g.strip()]
+        self.store.set_default_command(extension, command, globs)
+        QMessageBox.information(
+            self,
+            "Default command",
+            f"Every {extension} added from now on starts with this command"
+            + (" and these fetch patterns." if globs else "."),
+        )
+        self._reload_templates()
 
     def _save_user_template(self) -> None:
         command = self.txt_command.text().strip()
@@ -813,6 +874,17 @@ class SubmitDialog(QDialog):
         """Fill an empty command from the input's extension; never overwrite."""
         files = self.selected_files()
         if not files or self.txt_command.text().strip():
+            return
+        # The user's own answer first: they have said which program writes
+        # this extension, which is more than the built-in list can know.
+        stored = self.store.default_command_for(extension_of(os.path.basename(files[0])))
+        if stored.get("command"):
+            self.txt_command.setText(stored["command"])
+            self._apply_template_globs(
+                CommandTemplate(
+                    "", stored["command"], fetch_globs=tuple(stored.get("fetch_globs") or ())
+                )
+            )
             return
         template = suggest(os.path.basename(files[0]))
         if template is not None and template.command:
@@ -1040,6 +1112,8 @@ class SubmitDialog(QDialog):
             )
             if confirm != QMessageBox.StandardButton.Yes:
                 return
+        if not self._confirm_duplicate(files):
+            return
         if not ensure_password(self.service, host, self):
             return
         name = self.txt_job_name.text().strip() or self._default_job_name(files, remote_dir)
@@ -1082,6 +1156,43 @@ class SubmitDialog(QDialog):
             # numbers are exactly what was wanted.
             self.spin_cpus.setValue(1)
             self.txt_memory.setText("")
+
+    def _confirm_duplicate(self, files: List[str]) -> bool:
+        """Warn when this input has been submitted before. False cancels.
+
+        Not for Resubmit, which is somebody asking for exactly that. This is
+        the accident: the same file sent twice from the wizard, which on a
+        no-queue host means two copies of one calculation fighting over the
+        same cores, and on a cluster means paying twice for one answer.
+        """
+        wanted = {os.path.abspath(path) for path in files if path}
+        if not wanted:
+            return True
+        clashes = [
+            job
+            for job in self.store.job_list()
+            if wanted & {os.path.abspath(p) for p in (job.input_files or []) if p}
+        ]
+        if not clashes:
+            return True
+        first = clashes[0]
+        running = [job for job in clashes if job.is_active]
+        detail = (
+            f"'{first.name}' is {first.state.lower()} on {first.host_name or 'a host'}"
+            if running
+            else f"'{first.name}' was submitted before ({first.state.lower()})"
+        )
+        if len(clashes) > 1:
+            detail += f", and {len(clashes) - 1} more"
+        answer = QMessageBox.question(
+            self,
+            "Already submitted",
+            f"{os.path.basename(files[0])} has been submitted from here before.\n\n"
+            f"{detail}.\n\nSubmit it again?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        return answer == QMessageBox.StandardButton.Yes
 
     def _default_job_name(self, files: List[str], remote_dir: str) -> str:
         """What the job is called when the user did not name it."""

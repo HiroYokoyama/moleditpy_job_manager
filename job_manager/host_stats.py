@@ -15,11 +15,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+from .remote_runner import CORE_COUNT_SH
+
 #: POSIX. /proc first because it is exact, then the portable fallbacks: uptime
 #: prints a load average on every Unix, and sysctl answers on macOS and BSD.
 #: Each is guarded so a missing source prints nothing rather than an error.
 POSIX_COMMAND = (
-    "echo cores=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null); "
+    # Physical cores, not hardware threads, and by the same means the helper
+    # queue counts them with -- `nproc` reports logical processors, so a
+    # six-core machine calls itself twelve and a load of 6 then reads as half
+    # a machine when it is a full one.
+    f"{CORE_COUNT_SH}; echo cores=$c; "
+    "echo threads=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null); "
     "if [ -r /proc/loadavg ]; then "
     "echo load=$(cut -d' ' -f1-3 /proc/loadavg); "
     "else "
@@ -54,6 +61,9 @@ class HostStats:
     """One sample. Every field is optional because every source can be absent."""
 
     cores: int = 0
+    #: Hardware threads, which is what `nproc` counts. Reported separately so a
+    #: user who knows the machine as "12 threads" sees why the bar says 6.
+    threads: int = 0
     #: One, five and fifteen minute load averages, as the host reported them.
     load: tuple = ()
     mem_total_mb: int = 0
@@ -99,7 +109,10 @@ class HostStats:
         if self.load:
             parts.append("load " + " ".join(f"{value:.2f}" for value in self.load))
         if self.cores:
-            parts.append(f"{self.cores} cores")
+            cores = f"{self.cores} cores"
+            if self.threads > self.cores:
+                cores += f" ({self.threads} threads)"
+            parts.append(cores)
         if self.mem_total_mb and self.mem_free_mb:
             parts.append(f"{self.mem_used_mb / 1024:.1f}/{self.mem_total_mb / 1024:.1f} GB")
         elif self.mem_total_mb:
@@ -140,6 +153,9 @@ def parse(text: str) -> HostStats:
         elif key == "load":
             numbers = [_first_number(part) for part in value.replace(",", " ").split()]
             stats.load = tuple(n for n in numbers if n is not None)[:3]
+        elif key == "threads":
+            number = _first_number(value)
+            stats.threads = int(number) if number else 0
         elif key == "mem_total":
             number = _first_number(value)
             stats.mem_total_mb = int(number) if number else 0

@@ -116,6 +116,14 @@ DEFAULT_PREFS: Dict[str, Any] = {
     "scan_resources": True,
     #: The user's own command templates: [{"label": ..., "command": ...}].
     "command_templates": [],
+    #: The command to use for an input extension, when the user has said which
+    #: one they mean: {".inp": {"command": ..., "fetch_globs": [...]}}. This is
+    #: how .inp stops being ambiguous -- ORCA, CP2K and GAMESS all write it, so
+    #: the wizard will not guess, but it will remember an answer.
+    "default_commands": {},
+    #: Seconds between host-monitor samples, once the user has chosen. 0 means
+    #: "not chosen", and the per-backend default applies.
+    "host_monitor_interval": 0,
 }
 
 
@@ -684,6 +692,28 @@ class JobStore:
             for item in raw
             if isinstance(item, dict) and item.get("label")
         ]
+
+    def default_command_for(self, extension: str) -> Dict[str, Any]:
+        """What this user runs for that input extension, or an empty dict."""
+        stored = self.get_pref("default_commands", {}) or {}
+        return dict(stored.get((extension or "").lower(), {}))
+
+    def set_default_command(
+        self, extension: str, command: str, fetch_globs: Optional[List[str]] = None
+    ) -> None:
+        """Remember a command for an extension; empty command forgets it."""
+        extension = (extension or "").lower()
+        if not extension:
+            return
+        stored = dict(self.get_pref("default_commands", {}) or {})
+        if not (command or "").strip():
+            stored.pop(extension, None)
+        else:
+            entry: Dict[str, Any] = {"command": command}
+            if fetch_globs:
+                entry["fetch_globs"] = list(fetch_globs)
+            stored[extension] = entry
+        self.set_pref("default_commands", stored)
 
     def add_user_template(
         self, label: str, command: str, fetch_globs: Optional[List[str]] = None

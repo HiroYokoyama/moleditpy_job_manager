@@ -16,7 +16,7 @@ import logging
 from typing import Any, Optional
 
 PLUGIN_NAME = "Job Manager"
-PLUGIN_VERSION = "0.14.0"
+PLUGIN_VERSION = "0.15.0"
 PLUGIN_AUTHOR = "HiroYokoyama"
 PLUGIN_DESCRIPTION = (
     "Submit calculations to remote HPC clusters over SSH, track queue status, "
@@ -27,7 +27,10 @@ PLUGIN_DESCRIPTION = (
     "staged on the cluster is submitted where it sits, with no input file to "
     "upload at all. Runs on this "
     "machine too, with no SSH -- natively on Windows through PowerShell, with "
-    "nothing to install. On a machine with no scheduler it keeps a small queue "
+    "nothing to install. Installing paramiko adds a backend that keeps one SSH "
+    "session open -- which the live host panel samples through -- and that can "
+    "log in with a password where a key is not an option. On a machine with no "
+    "scheduler it keeps a small queue "
     "of its own that schedules on physical cores and memory, so two large jobs "
     "never share a machine that cannot hold both, chains jobs with each "
     "scheduler's own dependency flag, holds a job until a chosen time, and "
@@ -35,9 +38,17 @@ PLUGIN_DESCRIPTION = (
 )
 PLUGIN_CATEGORY = "Utility"
 PLUGIN_TAGS = ["hpc", "ssh", "job", "Utility"]
-# The default OpenSSH backend needs nothing beyond the host app; paramiko is an
-# opt-in backend and is deliberately not forced on every user.
+# The default OpenSSH backend needs nothing beyond the host app, so nothing
+# here is required to submit a job.
 PLUGIN_DEPENDENCIES = []
+#: Unlocks the paramiko backend. It authenticates with a key, an agent or a
+#: password -- not passwords only -- and it is the one backend that keeps a
+#: single SSH session open rather than starting a new ssh process per command,
+#: which is what makes the live host panel cheap to sample.
+#: Optional rather than required because the default OpenSSH backend covers
+#: key and agent authentication with nothing installed, and the Plugin
+#: Installer lists an optional dependency without ever blocking an install.
+PLUGIN_OPTIONAL_DEPENDENCIES = ["paramiko"]
 PLUGIN_SUPPORTED_MOLEDITPY_VERSION = ">=4.0.0, <5.0.0"
 PLUGIN_SUPPORTED_OS = ["Windows", "macOS", "Linux", "WSL"]
 
@@ -176,6 +187,27 @@ def open_job_file(path: str) -> None:
         window.open_job_list(path)
 
 
+def handle_dropped_file(path: str) -> bool:
+    """Open a job list dropped onto the main window. True when it was ours.
+
+    Only ``.pmejbs``. Input extensions are deliberately *not* claimed
+    application-wide: taking ``.inp`` and ``.xyz`` would stop a drop on the
+    main window doing the obvious thing, which is opening the molecule. The
+    monitor and the wizard accept those themselves, where the meaning of a drop
+    is unambiguous.
+    """
+    from .store import JOB_EXTENSION
+
+    if not path or not path.lower().endswith(JOB_EXTENSION):
+        return False
+    try:
+        open_job_file(path)
+    except Exception:
+        logging.exception("Job Manager: could not open the dropped job list %s", path)
+        return False
+    return True
+
+
 def initialize(context) -> None:
     """Entry point called by the host at plugin load."""
     global _context
@@ -194,6 +226,14 @@ def initialize(context) -> None:
     except AttributeError:
         # Host older than the file-opener API; the menu entries still work.
         logging.debug("Job Manager: this host has no register_file_opener")
+
+    try:
+        # Priority 0: this handler answers for one extension and declines
+        # everything else, so it has no reason to get in front of a plugin
+        # that wants a say in the file types it does claim.
+        context.register_drop_handler(handle_dropped_file, 0)
+    except AttributeError:
+        logging.debug("Job Manager: this host has no register_drop_handler")
 
     _resume_tracking()
 

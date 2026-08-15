@@ -53,6 +53,17 @@ class TestMetadata(unittest.TestCase):
         # everyone would be gratuitous.
         self.assertEqual(job_manager.PLUGIN_DEPENDENCIES, [])
 
+    def test_paramiko_is_declared_optional(self):
+        # The registry carries this through to the Plugin Installer, which
+        # lists an optional dependency and offers the pip command without ever
+        # blocking an install on it.
+        self.assertEqual(job_manager.PLUGIN_OPTIONAL_DEPENDENCIES, ["paramiko"])
+
+    def test_the_description_says_what_the_optional_one_buys(self):
+        # The Installer's optional section points at the description for what
+        # the package is for, so the description has to answer that.
+        self.assertIn("paramiko", job_manager.PLUGIN_DESCRIPTION)
+
     def test_supported_app_version_range(self):
         self.assertIn(">=4.0.0", job_manager.PLUGIN_SUPPORTED_MOLEDITPY_VERSION)
 

@@ -484,3 +484,133 @@ class TestTheWizardRemembersTheLastSubmission(DialogTestCase):
         again.cmb_host.setCurrentIndex(again.cmb_host.findData("other"))
 
         self.assertNotEqual(again.txt_walltime.text(), "99:00:00")
+
+
+class TestSubmittingTheSameInputTwice(DialogTestCase):
+    """The accident, not the Resubmit button."""
+
+    def setUp(self):
+        super().setUp()
+        from job_manager.submit_dialog import SubmitDialog
+
+        self.path = self.make_input("mol.inp")
+        self.dialog = SubmitDialog(self.service)
+        self.addCleanup(self.dialog.deleteLater)
+        self.dialog.add_files([self.path])
+        self.dialog.txt_command.setText("orca {input}")
+
+    def submit(self, answer):
+        from unittest.mock import patch
+
+        from PyQt6.QtWidgets import QMessageBox
+
+        with patch.object(QMessageBox, "question", return_value=answer) as asked:
+            self.dialog._submit()
+        return asked
+
+    def test_a_first_submission_asks_nothing(self):
+        from PyQt6.QtWidgets import QMessageBox
+
+        asked = self.submit(QMessageBox.StandardButton.Yes)
+        asked.assert_not_called()
+        self.assertEqual(len(self.store.jobs), 1)
+
+    def test_the_second_one_warns(self):
+        from PyQt6.QtWidgets import QMessageBox
+
+        self.submit(QMessageBox.StandardButton.Yes)
+        again = SubmitDialogFactory(self)
+        again.add_files([self.path])
+        again.txt_command.setText("orca {input}")
+
+        from unittest.mock import patch
+
+        with patch.object(
+            QMessageBox, "question", return_value=QMessageBox.StandardButton.Cancel
+        ) as asked:
+            again._submit()
+
+        asked.assert_called_once()
+        self.assertIn("submitted from here before", asked.call_args.args[2])
+        # Cancelled, so nothing new was queued.
+        self.assertEqual(len(self.store.jobs), 1)
+
+    def test_saying_yes_submits_anyway(self):
+        from unittest.mock import patch
+
+        from PyQt6.QtWidgets import QMessageBox
+
+        self.submit(QMessageBox.StandardButton.Yes)
+        again = SubmitDialogFactory(self)
+        again.add_files([self.path])
+        again.txt_command.setText("orca {input}")
+
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
+            again._submit()
+
+        self.assertEqual(len(self.store.jobs), 2)
+
+    def test_a_different_input_is_not_a_duplicate(self):
+        from unittest.mock import patch
+
+        from PyQt6.QtWidgets import QMessageBox
+
+        self.submit(QMessageBox.StandardButton.Yes)
+        other = self.make_input("other.inp")
+        again = SubmitDialogFactory(self)
+        again.add_files([other])
+        again.txt_command.setText("orca {input}")
+
+        with patch.object(QMessageBox, "question") as asked:
+            again._submit()
+
+        asked.assert_not_called()
+
+
+def SubmitDialogFactory(case):
+    from job_manager.submit_dialog import SubmitDialog
+
+    dialog = SubmitDialog(case.service)
+    case.addCleanup(dialog.deleteLater)
+    return dialog
+
+
+class TestQueueFieldsFollowTheScheduler(DialogTestCase):
+    def dialog(self):
+        from job_manager.submit_dialog import SubmitDialog
+
+        dialog = SubmitDialog(self.service)
+        self.addCleanup(dialog.deleteLater)
+        return dialog
+
+    def test_a_cluster_keeps_them(self):
+        dialog = self.dialog()
+        self.assertTrue(dialog.txt_walltime.isEnabled())
+        self.assertTrue(dialog.txt_account.isEnabled())
+
+    def test_the_built_in_mode_greys_them(self):
+        # There is no partition to pick, no account to charge and no walltime
+        # anything will enforce.
+        self.store.hosts.clear()
+        self.store.add_host(make_host(id="local", name="workstation", scheduler=SCHEDULER_SHELL))
+        dialog = self.dialog()
+
+        self.assertFalse(dialog.txt_walltime.isEnabled())
+        self.assertFalse(dialog.txt_account.isEnabled())
+        self.assertFalse(dialog.txt_queue.isEnabled())
+        self.assertFalse(dialog.txt_extra.isEnabled())
+
+    def test_cores_and_memory_stay_live(self):
+        # The helper queue schedules on them, and the command can spell them.
+        self.store.hosts.clear()
+        self.store.add_host(make_host(id="local", name="workstation", scheduler=SCHEDULER_SHELL))
+        dialog = self.dialog()
+
+        self.assertTrue(dialog.spin_cpus.isEnabled())
+        self.assertTrue(dialog.txt_memory.isEnabled())
+
+    def test_the_greyed_field_says_why(self):
+        self.store.hosts.clear()
+        self.store.add_host(make_host(id="local", name="workstation", scheduler=SCHEDULER_SHELL))
+        dialog = self.dialog()
+        self.assertIn("no queue to read it", dialog.txt_walltime.toolTip())

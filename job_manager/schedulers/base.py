@@ -177,6 +177,11 @@ class Scheduler(ABC):
     order: int = 100
     #: File name of the generated submit script.
     script_name: str = "moleditpy_run.sh"
+    #: True where a queue reads directives: partition, account, walltime,
+    #: nodes and the extra #SBATCH lines. The built-in modes have no queue to
+    #: ask, so those fields do nothing on them and the wizard greys them out
+    #: rather than letting a user type a walltime nothing will enforce.
+    queue_directives: bool = True
 
     # --- script -------------------------------------------------------------
 

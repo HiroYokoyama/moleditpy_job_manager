@@ -129,3 +129,42 @@ class TestTheProbeRunsForReal(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCoresAreNotThreads(unittest.TestCase):
+    """`nproc` counts logical processors, which is not what a core is."""
+
+    def test_both_are_reported(self):
+        stats = host_stats.parse("cores=8\nthreads=16\nload=8.0 8.0 8.0\n")
+        self.assertEqual(stats.cores, 8)
+        self.assertEqual(stats.threads, 16)
+
+    def test_the_bar_is_scaled_to_cores(self):
+        # A load of 8 on eight cores is a full machine, whatever the thread
+        # count says; scaling to 16 would call it half full.
+        stats = host_stats.parse("cores=8\nthreads=16\nload=8.0 8.0 8.0\n")
+        self.assertEqual(stats.load_fraction, 1.0)
+
+    def test_the_summary_names_threads_separately(self):
+        stats = host_stats.parse("cores=6\nthreads=12\nload=1.0 1.0 1.0\n")
+        self.assertIn("6 cores", stats.summary)
+        self.assertIn("12 threads", stats.summary)
+
+    def test_a_machine_without_hyperthreading_says_cores_only(self):
+        stats = host_stats.parse("cores=4\nthreads=4\nload=1.0 1.0 1.0\n")
+        self.assertIn("4 cores", stats.summary)
+        self.assertNotIn("threads", stats.summary)
+
+    def test_the_probe_asks_for_physical_cores(self):
+        # The same detection the helper queue uses, not a bare nproc.
+        self.assertIn("lscpu", host_stats.POSIX_COMMAND)
+        self.assertIn("hw.physicalcpu", host_stats.POSIX_COMMAND)
+
+    @unittest.skipUnless(BASH, "needs a bash")
+    def test_the_real_probe_separates_them(self):
+        result = subprocess.run(
+            [BASH, "-c", host_stats.POSIX_COMMAND], capture_output=True, text=True, timeout=60
+        )
+        stats = host_stats.parse(result.stdout)
+        self.assertGreaterEqual(stats.cores, 1)
+        self.assertGreaterEqual(stats.threads, stats.cores)

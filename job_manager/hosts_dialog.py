@@ -7,6 +7,7 @@ from typing import Optional
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -74,7 +75,15 @@ class HostsDialog(QDialog):
         self.store = service.store
         self.setWindowTitle(f"Job Manager {PLUGIN_VERSION} - Hosts")
         make_independent(self)
-        self.resize(720, 560)
+        # Wide enough for the list and a form that is not squeezed, tall enough
+        # that Connection and Advanced are both on screen -- but never taller
+        # than the screen, since the column scrolls anyway.
+        screen = QApplication.primaryScreen()
+        available = screen.availableGeometry() if screen is not None else None
+        self.resize(
+            min(900, available.width() - 80) if available else 900,
+            min(720, int(available.height() * 0.9)) if available else 720,
+        )
         self._current: Optional[HostProfile] = None
         #: True while the pause box is being set to match the host, so that
         #: showing a state does not ask the host to change to it.
@@ -85,6 +94,10 @@ class HostsDialog(QDialog):
         #: The selected profile as it was when it was loaded or last saved.
         #: Anything else in the form is an unsaved edit.
         self._loaded: dict = {}
+        #: True while the list is being rebuilt. Saving reloads the list, which
+        #: re-selects, which lands back in _load_selected -- so without this the
+        #: answer to "save your changes?" asked the question again, and again.
+        self._reloading = False
         self._build_ui()
         self._reload_list()
 
@@ -125,7 +138,7 @@ class HostsDialog(QDialog):
 
         self.cmb_backend = QComboBox()
         self.cmb_backend.addItem("OpenSSH (system ssh, keys/agent)", BACKEND_OPENSSH)
-        self.cmb_backend.addItem("paramiko (password supported)", BACKEND_PARAMIKO)
+        self.cmb_backend.addItem("paramiko (keeps one session; passwords too)", BACKEND_PARAMIKO)
         self.cmb_backend.addItem("This machine (no SSH)", BACKEND_LOCAL)
         self.cmb_backend.currentIndexChanged.connect(self._update_backend_hint)
 
@@ -342,7 +355,10 @@ class HostsDialog(QDialog):
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Close
         )
         self.btn_save = box.button(QDialogButtonBox.StandardButton.Save)
-        self.btn_save.clicked.connect(self._save_current)
+        # Through a lambda: clicked carries a `checked` bool, which would
+        # arrive as the first positional argument -- reload=False -- and the
+        # list would silently stop refreshing after a save.
+        self.btn_save.clicked.connect(lambda: self._save_current())
         box.rejected.connect(self.reject)
         box.button(QDialogButtonBox.StandardButton.Close).clicked.connect(self.accept)
 
@@ -363,6 +379,13 @@ class HostsDialog(QDialog):
     # --- list handling ------------------------------------------------------
 
     def _reload_list(self, select_id: str = "") -> None:
+        self._reloading = True
+        try:
+            self._reload_list_now(select_id)
+        finally:
+            self._reloading = False
+
+    def _reload_list_now(self, select_id: str = "") -> None:
         self.list.blockSignals(True)
         self.list.clear()
         for host in self.store.host_list():
@@ -432,7 +455,7 @@ class HostsDialog(QDialog):
         self.lbl_test.setText("No host selected - press Add to create one.")
 
     def _load_selected(self) -> None:
-        if not self._confirm_discard():
+        if not self._reloading and not self._confirm_discard():
             # Put the selection back on the host whose edits were kept, without
             # reloading the form over the top of them.
             self._reselect_current()
@@ -511,7 +534,9 @@ class HostsDialog(QDialog):
             | QMessageBox.StandardButton.Cancel,
         )
         if answer == QMessageBox.StandardButton.Save:
-            self._save_current()
+            # Without reloading: the list has already moved to the host the
+            # user clicked, and re-selecting the saved one would take it back.
+            self._save_current(reload=False)
             return True
         return answer == QMessageBox.StandardButton.Discard
 
@@ -642,7 +667,10 @@ class HostsDialog(QDialog):
             )
         elif backend == BACKEND_PARAMIKO:
             self.lbl_backend_hint.setText(
-                "Passwords are held in memory for this session only and never written to disk."
+                "Keys, an agent or a password -- and one SSH session kept open "
+                "for the whole session, which is what the live host panel "
+                "samples through. A password is held in memory for this session "
+                "only and never written to disk."
             )
         else:
             self.lbl_backend_hint.setText(
@@ -693,18 +721,28 @@ class HostsDialog(QDialog):
         host.command_timeout = int(self.spin_command_timeout.value())
         return host
 
-    def _save_current(self) -> Optional[HostProfile]:
+    def _save_current(self, reload: bool = True) -> Optional[HostProfile]:
+        """Write the form to the selected profile.
+
+        ``reload`` rebuilds the list and re-selects the saved host, which is
+        right for the Save button and wrong when the save is happening because
+        the user is on their way to a *different* host: re-selecting would
+        undo the click that started it.
+        """
         host = self._current or self._selected_host()
         if host is None:
             return None
         self._collect(host)
         self.store.add_host(host)
-        self._reload_list(select_id=host.id)
+        # Before the reload, not after: reloading re-selects, and a stale
+        # snapshot at that moment is what made Save ask to save again.
+        self._loaded = self._snapshot()
+        if reload:
+            self._reload_list(select_id=host.id)
         # After the reload, which re-selects and so clears this label. Saving
         # was silent before, which is indistinguishable from a Save that did
         # nothing at all.
         self.lbl_test.setText(f"Saved '{host.name}'.")
-        self._loaded = self._snapshot()
         return host
 
     def _persist_current(self) -> Optional[HostProfile]:
