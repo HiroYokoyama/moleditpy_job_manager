@@ -685,13 +685,23 @@ class JobStore:
             if isinstance(item, dict) and item.get("label")
         ]
 
-    def add_user_template(self, label: str, command: str) -> None:
-        """Save (or replace) one template. Persisted in settings.json."""
+    def add_user_template(
+        self, label: str, command: str, fetch_globs: Optional[List[str]] = None
+    ) -> None:
+        """Save (or replace) one template. Persisted in settings.json.
+
+        The fetch patterns travel with the command: they describe the same
+        program, and a saved template that brings back the wrong files is not
+        much of a saving.
+        """
         label = (label or "").strip()
         if not label:
             return
         templates = [t for t in self.user_templates() if t["label"] != label]
-        templates.append({"label": label, "command": command or ""})
+        entry = {"label": label, "command": command or ""}
+        if fetch_globs:
+            entry["fetch_globs"] = list(fetch_globs)
+        templates.append(entry)
         self.set_pref("command_templates", sorted(templates, key=lambda t: t["label"].lower()))
 
     def remove_user_template(self, label: str) -> None:

@@ -28,7 +28,7 @@ class TestAnInterruptedDownload(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self.job = make_job(fetch_globs=[])
         self.transport = FakeTransport()
-        self.transport.when("ls -p -1", stdout="mol.out\njob.log\n")
+        self.transport.when("ls -p -1", stdout="mol.out\nmol.gbw\njob.log\n")
 
     def test_a_completed_download_ends_up_under_its_real_name(self):
         paths = fetch_results(self.transport, self.job, self.tmp)
@@ -75,8 +75,7 @@ class TestAnInterruptedDownload(unittest.TestCase):
 
         paths = fetch_results(self.transport, self.job, self.tmp)
 
-        # No patterns at all means everything, the wrapper's log included.
-        self.assertIn(os.path.join(self.tmp, "job.log"), paths)
+        self.assertIn(os.path.join(self.tmp, "mol.gbw"), paths)
 
     def test_a_rename_that_fails_is_not_reported_as_a_download(self):
         # os.replace can fail on its own (a directory in the way, a permission

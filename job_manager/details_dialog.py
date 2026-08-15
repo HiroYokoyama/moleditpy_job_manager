@@ -16,6 +16,8 @@ from __future__ import annotations
 from typing import Optional
 
 from PyQt6.QtGui import QFontDatabase
+
+from .window_utils import make_independent
 from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -50,6 +52,7 @@ class JobDetailsDialog(QDialog):
         self.service = service
         self.job = job
         self.setWindowTitle(title)
+        make_independent(self)
         self.resize(820, 620)
 
         layout = QVBoxLayout(self)

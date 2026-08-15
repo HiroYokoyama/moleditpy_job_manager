@@ -212,7 +212,9 @@ class TestRoundTrip(ServiceTestCase):
         self.assertEqual(job.state, STATE_DONE)
         self.assertFalse(job.downloaded)
 
-    def test_a_failed_job_still_fetches_its_log(self):
+    def test_a_failed_job_leaves_the_wrapper_log_on_the_host(self):
+        # It is this plugin's file, not a result. Tail Log reads it where it
+        # lives, and the download chooser lists it for anyone who wants it.
         job = self.submit()
         self.transport.clear_rules()
         self.transport.when("squeue", stdout="")
@@ -220,7 +222,7 @@ class TestRoundTrip(ServiceTestCase):
         self.transport.when("ls -p", stdout="job.log\n")
         self.service.poller.tick(force=True)
         self.assertEqual(job.state, STATE_FAILED)
-        self.assertTrue(job.downloaded_files)
+        self.assertEqual(job.downloaded_files, [])
 
     def test_download_restores_the_previous_state(self):
         job = self.submit()

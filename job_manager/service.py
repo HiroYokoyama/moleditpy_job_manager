@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 from PyQt6.QtCore import QObject, QThreadPool, pyqtSignal
 
@@ -31,6 +31,7 @@ from .runner import (
     cancel_in_runner,
     cancel_job,
     fetch_results,
+    MAX_FETCH_DEPTH,
     list_remote_files,
     require_remote_path,
     submit_job,
@@ -327,14 +328,44 @@ class JobService(QObject):
 
     # --- results ------------------------------------------------------------
 
-    def download(self, job: Job) -> None:
-        """Fetch the job's outputs; emits ``results_ready`` when they land."""
+    def list_remote_results(self, job: Job, on_ok, on_error) -> None:
+        """What is in the job directory, for the download chooser."""
+        host = self.store.hosts.get(job.host_id)
+        if host is None:
+            on_error(f"Host profile for {job.name} no longer exists")
+            return
+
+        def work() -> List[str]:
+            transport = self.transport_for(host)
+            try:
+                # As deep as a pattern could ever reach, not as deep as this
+                # job's patterns happen to go: the point of the tree is to
+                # show what is there, including the scratch directory nobody
+                # wrote a pattern for.
+                names = list_remote_files(transport, job.remote_dir, MAX_FETCH_DEPTH)
+            finally:
+                transport.close()
+            # The wrapper's log is listed, so it can be taken deliberately --
+            # it is never fetched by a pattern, and asking for it should not
+            # mean editing the patterns.
+            return names
+
+        run_async(self.pool, work, on_success=on_ok, on_error=on_error)
+
+    def download(self, job: Job, into: str = "", names: Optional[Sequence[str]] = None) -> None:
+        """Fetch the job's outputs; emits ``results_ready`` when they land.
+
+        ``into`` is the folder the user picked for this download. Without it,
+        the automatic choice applies: beside the input, or the shared download
+        folder. A chosen folder is remembered on the job, so Open Result and a
+        second download go to the same place.
+        """
         host = self.store.hosts.get(job.host_id)
         if host is None:
             self.error.emit(f"Host profile for {job.name} no longer exists")
             return
         previous_state = job.state
-        local_dir = job.local_dir or self._local_dir_for(job.name, job.input_files)
+        local_dir = into or job.local_dir or self._local_dir_for(job.name, job.input_files)
         job.local_dir = local_dir
         job.touch(STATE_DOWNLOADING)
         self.job_updated.emit(job.id)
@@ -342,7 +373,9 @@ class JobService(QObject):
         def work() -> List[str]:
             transport = self.transport_for(host)
             try:
-                return fetch_results(transport, job, local_dir)
+                # An explicit set of names is exactly what the user ticked, so
+                # it is passed as the patterns: each name matches only itself.
+                return fetch_results(transport, job, local_dir, globs=names)
             finally:
                 transport.close()
 

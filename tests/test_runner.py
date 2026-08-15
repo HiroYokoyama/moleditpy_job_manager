@@ -338,19 +338,19 @@ class TestFetchResults(unittest.TestCase):
         job = make_job(fetch_globs=["*.nothing"], log_file="")
         self.assertEqual(runner.fetch_results(self.transport, job, self.tmp), [])
 
-    def test_no_patterns_at_all_means_fetch_everything(self):
-        # Clearing the Fetch patterns field is "no filter", not "the log only".
-        # Appending the log to an empty list turned it into the latter.
+    def test_no_patterns_at_all_means_everything_the_job_produced(self):
+        # Clearing the Fetch patterns field is "no filter" -- of the job's own
+        # output. The wrapper's log is not that, and is never automatic.
         job = make_job(fetch_globs=[])
         names = sorted(
             os.path.basename(p) for p in runner.fetch_results(self.transport, job, self.tmp)
         )
-        self.assertEqual(names, ["job.log", "mol.gbw", "mol.out"])
+        self.assertEqual(names, ["mol.gbw", "mol.out"])
 
     def test_blank_patterns_count_as_no_patterns(self):
         job = make_job(fetch_globs=["", "  "])
         paths = runner.fetch_results(self.transport, job, self.tmp)
-        self.assertEqual(len(paths), 3)
+        self.assertEqual(len(paths), 2)
 
 
 class TestCancel(unittest.TestCase):

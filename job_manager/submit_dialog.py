@@ -37,6 +37,7 @@ from .credentials import ensure_password
 from .models import HostProfile, Job, SubmitPreset
 from .runner import make_remote_dir
 from .schedulers import get_scheduler, references_input
+from .window_utils import make_independent
 from .service import JobService
 
 #: Offered by the file picker, in order. The first is the default until the
@@ -67,6 +68,7 @@ class SubmitDialog(QDialog):
         self.service = service
         self.store = service.store
         self.setWindowTitle(f"Job Manager {PLUGIN_VERSION} - Submit Job")
+        make_independent(self)
         self.resize(760, self._preferred_height(640))
         # Input files can be dropped straight onto the wizard.
         self.setAcceptDrops(True)
@@ -383,6 +385,21 @@ class SubmitDialog(QDialog):
         self.cmb_template.activated.connect(self._on_template_chosen)
         self._reload_templates()
         self.txt_globs = QLineEdit("*.out, *.log, *.xyz, *.hess, *.fchk")
+        self.txt_globs.setToolTip(
+            "Which files come back when the job ends. Comma separated.\n\n"
+            "Picking a program from the Template dropdown fills these in for "
+            "that program -- ORCA writes .gbw and .hess, Gaussian .chk and "
+            ".fchk, VASP files with no extension at all -- and saving your own "
+            "template keeps whatever you set here with it.\n\n"
+            "A pattern may name a subdirectory: 'scratch/*.out' or '*/*.molden' "
+            "fetch from one level down.\n\n"
+            "The wrapper's own job.log is never downloaded whatever the "
+            "patterns say; Tail Log reads it on the host."
+        )
+        #: What the last applied template put in the patterns field. An edit
+        #: away from it means the user has an opinion, and the next template
+        #: leaves the field alone.
+        self._globs_before_template: list = []
         self.chk_auto_download = QCheckBox("Download results automatically when the job ends")
         self.chk_auto_download.setChecked(True)
         self.chk_beside_input = QCheckBox("...next to the input file")
@@ -715,7 +732,12 @@ class SubmitDialog(QDialog):
             self.cmb_template.insertSeparator(self.cmb_template.count())
             for entry in saved:
                 self.cmb_template.addItem(
-                    entry["label"], CommandTemplate(entry["label"], entry["command"])
+                    entry["label"],
+                    CommandTemplate(
+                        entry["label"],
+                        entry["command"],
+                        fetch_globs=tuple(entry.get("fetch_globs") or ()),
+                    ),
                 )
                 self.cmb_template.setItemData(
                     self.cmb_template.count() - 1,
@@ -738,6 +760,26 @@ class SubmitDialog(QDialog):
             self._delete_user_template()
         elif choice is not None:
             self.txt_command.setText(choice.command)
+            self._apply_template_globs(choice)
+
+    def _apply_template_globs(self, template: CommandTemplate) -> None:
+        """Take the fetch patterns from the program that was just chosen.
+
+        A pattern list is about the program, not the molecule: ORCA writes
+        .gbw and .hess, Gaussian .chk and .fchk, VASP files with no extension
+        at all. The wizard's one-size list quietly downloaded nothing for half
+        of them.
+
+        Never over a list the user has edited away from what it was, for the
+        same reason the command is not: a filled field is a decision.
+        """
+        if not template.fetch_globs:
+            return
+        current = [g.strip() for g in self.txt_globs.text().split(",") if g.strip()]
+        if current and current != self._globs_before_template:
+            return
+        self.txt_globs.setText(", ".join(template.fetch_globs))
+        self._globs_before_template = list(template.fetch_globs)
 
     def _save_user_template(self) -> None:
         command = self.txt_command.text().strip()
@@ -749,7 +791,11 @@ class SubmitDialog(QDialog):
         )
         if not accepted or not label.strip():
             return
-        self.store.add_user_template(label.strip(), command)
+        globs = [g.strip() for g in self.txt_globs.text().split(",") if g.strip()]
+        # The patterns are part of what makes a template useful: a saved
+        # command for a program whose results you then have to re-list by hand
+        # is half a template.
+        self.store.add_user_template(label.strip(), command, globs)
         self._reload_templates()
 
     def _delete_user_template(self) -> None:
@@ -771,6 +817,7 @@ class SubmitDialog(QDialog):
         template = suggest(os.path.basename(files[0]))
         if template is not None and template.command:
             self.txt_command.setText(template.command)
+            self._apply_template_globs(template)
 
     # --- files --------------------------------------------------------------
 

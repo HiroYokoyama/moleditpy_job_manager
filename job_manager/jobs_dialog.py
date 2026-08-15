@@ -11,7 +11,7 @@ import os
 import time
 from typing import List, Optional
 
-from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, QVariant
+from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer, QVariant
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
@@ -44,6 +45,7 @@ from .models import (
     Job,
 )
 from .service import JobService
+from .window_utils import make_independent
 from .store import (
     JOB_EXTENSION,
     MAX_POLL_INTERVAL,
@@ -55,6 +57,15 @@ from .store import (
 #: written before the extension existed.
 JOB_LIST_EXTENSIONS = (JOB_EXTENSION, ".json")
 JOB_LIST_FILTER = f"Job lists (*{JOB_EXTENSION} *.json);;All files (*)"
+
+#: Used for the two banners above the table. Palette roles rather than fixed
+#: pastels: the old pair were light-theme colours, so a dark-theme user read
+#: navy on near-white inside an otherwise dark window.
+BANNER_STYLE = (
+    "background: palette(alternate-base); color: palette(text); "
+    "border: 1px solid palette(mid); padding: 6px; border-radius: 4px;"
+)
+
 
 COLUMNS = ("Name", "Host", "Queue ID", "State", "After", "Elapsed", "Updated")
 
@@ -227,12 +238,15 @@ class JobsDialog(QDialog):
         # The version is in the title of every window: a bug report that names
         # it is worth several rounds of asking.
         self.setWindowTitle(f"Job Manager {PLUGIN_VERSION} - Job Monitor")
+        make_independent(self)
         self.resize(940, 560)
         #: Non-empty while a cleared list is being viewed read-only.
         self._archive_path = ""
         #: The open log window, if any; the tail goes there rather than into
         #: the four-line strip at the bottom.
         self._tail_dialog: Optional[QDialog] = None
+        #: The live host panel, if open. One is enough, and it polls.
+        self._host_monitor: Optional[QDialog] = None
         #: Detail windows stay open until closed, so they have to be held.
         self._detail_dialogs: List[QDialog] = []
         # Dropping a job list opens it: read-only when the file says it is
@@ -243,22 +257,42 @@ class JobsDialog(QDialog):
         self._connect_service()
         self._update_buttons()
         self._update_interval_warning()
+        # Elapsed is computed from the clock every time the cell is drawn, but
+        # a cell is only drawn when the model says it changed -- which happened
+        # on a poll result, so the column advanced in two-minute jumps. This
+        # repaints one column, reads nothing, and contacts nobody.
+        self._ticker = QTimer(self)
+        self._ticker.setInterval(1000)
+        self._ticker.timeout.connect(self._tick_elapsed)
+        self._ticker.start()
 
     # --- construction -------------------------------------------------------
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
 
         toolbar = QHBoxLayout()
+        toolbar.setSpacing(6)
         self.btn_new = QPushButton("New Job...")
         self.btn_new.clicked.connect(self.open_submit_dialog)
         self.btn_hosts = QPushButton("Hosts...")
         self.btn_hosts.clicked.connect(self.open_hosts_dialog)
         self.btn_refresh = QPushButton("Refresh Now")
         self.btn_refresh.clicked.connect(self._refresh_now)
+        self.btn_host_monitor = QPushButton("Hosts at Work...")
+        self.btn_host_monitor.setToolTip(
+            "Live load and memory for every host, with a graph each.\n\n"
+            "Asks each host once every couple of seconds -- but only while that "
+            "window is open, so a monitor left up overnight costs a login node "
+            "nothing."
+        )
+        self.btn_host_monitor.clicked.connect(self.open_host_monitor)
         toolbar.addWidget(self.btn_new)
         toolbar.addWidget(self.btn_hosts)
         toolbar.addWidget(self.btn_refresh)
+        toolbar.addWidget(self.btn_host_monitor)
         toolbar.addStretch(1)
         toolbar.addWidget(QLabel("Poll every"))
         self.spin_interval = QSpinBox()
@@ -281,15 +315,11 @@ class JobsDialog(QDialog):
         self.lbl_archive = QLabel("")
         self.lbl_archive.setWordWrap(True)
         self.lbl_archive.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
-        self.lbl_archive.setStyleSheet(
-            "background: #fff3cd; color: #664d03; padding: 6px; border-radius: 4px;"
-        )
+        self.lbl_archive.setStyleSheet(BANNER_STYLE)
         self.lbl_archive.setVisible(False)
         self.lbl_active_file = QLabel("")
         self.lbl_active_file.setWordWrap(True)
-        self.lbl_active_file.setStyleSheet(
-            "background: #e7f1ff; color: #084298; padding: 6px; border-radius: 4px;"
-        )
+        self.lbl_active_file.setStyleSheet(BANNER_STYLE)
         self.lbl_active_file.setVisible(False)
         active_row = QHBoxLayout()
         active_row.addWidget(self.lbl_active_file, 1)
@@ -315,13 +345,20 @@ class JobsDialog(QDialog):
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setShowGrid(False)
+        self.table.setWordWrap(False)
+        self.table.verticalHeader().setDefaultSectionSize(24)
         header = self.table.horizontalHeader()
+        header.setHighlightSections(False)
         header.setStretchLastSection(True)
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.table.selectionModel().selectionChanged.connect(lambda *_: self._update_buttons())
         # The log is what a double click is for: it is the thing you want when
         # a job has been running for an hour and you are wondering how far it is.
         self.table.doubleClicked.connect(lambda *_: self._tail_selected())
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_row_menu)
         splitter.addWidget(self.table)
 
         self.txt_log = QPlainTextEdit()
@@ -510,6 +547,50 @@ class JobsDialog(QDialog):
         # window was closed while the read was in flight.
         self.txt_log.setPlainText(text)
 
+    def _show_row_menu(self, position) -> None:
+        """Everything that can be done to the row under the cursor.
+
+        The same actions as the buttons, and disabled on the same conditions --
+        driven from the buttons themselves so the two can never disagree about
+        what is possible for a job.
+        """
+        index = self.table.indexAt(position)
+        if index.isValid():
+            self.table.selectRow(index.row())
+        self._update_buttons()
+        if self.selected_job() is None:
+            return
+
+        menu = QMenu(self)
+        for button in (
+            self.btn_tail,
+            self.btn_details,
+            self.btn_open,
+            self.btn_download,
+            self.btn_resubmit,
+            self.btn_cancel,
+            self.btn_remove,
+        ):
+            if button is self.btn_resubmit or button is self.btn_cancel:
+                menu.addSeparator()
+            action = menu.addAction(button.text())
+            action.setEnabled(button.isEnabled())
+            action.setToolTip(button.toolTip())
+            action.triggered.connect(button.click)
+        menu.exec(self.table.viewport().mapToGlobal(position))
+
+    def _tick_elapsed(self) -> None:
+        """Repaint the Elapsed cell of every job that is still going."""
+        if not self.isVisible():
+            # A hidden window paints nothing; waking Qt up for it is waste.
+            return
+        column = COLUMNS.index("Elapsed")
+        for row in range(self.model.rowCount()):
+            job = self.model.job_at(row)
+            if job is not None and job.is_active:
+                index = self.model.index(row, column)
+                self.model.dataChanged.emit(index, index)
+
     def _update_buttons(self) -> None:
         if self.viewing_archive():
             # An archived job's queue id is stale and its remote directory may
@@ -607,6 +688,19 @@ class JobsDialog(QDialog):
             remote_input=job.remote_input,
         )
 
+    def open_host_monitor(self) -> None:
+        """Open the live host panel, or raise the one already up."""
+        from .host_monitor import HostMonitorDialog
+
+        if self._host_monitor is not None:
+            self._host_monitor.raise_()
+            self._host_monitor.activateWindow()
+            return
+        dialog = HostMonitorDialog(self.service, self)
+        self._host_monitor = dialog
+        dialog.finished.connect(lambda *_: setattr(self, "_host_monitor", None))
+        dialog.show()
+
     def open_hosts_dialog(self) -> None:
         from .hosts_dialog import HostsDialog
 
@@ -654,9 +748,57 @@ class JobsDialog(QDialog):
         return ensure_password(self.service, host, self)
 
     def _download_selected(self) -> None:
+        """Show what is on the host and let the user pick. Nothing is fetched
+        until they say so.
+
+        The automatic download follows the fetch patterns and says nothing when
+        they match nothing, which is the usual way a finished job appears to
+        have produced no results. Pressing the button is a deliberate act, so
+        it asks: which files, and into which folder.
+        """
         job = self.selected_job()
-        if job is not None and self._has_credentials(job):
-            self.service.download(job)
+        if job is None or not self._has_credentials(job):
+            return
+        self.btn_download.setEnabled(False)
+        self._append_message(f"Listing {job.remote_dir}...")
+
+        def listed(names: list) -> None:
+            self.btn_download.setEnabled(True)
+            self._offer_download(job, names)
+
+        def failed(message: str) -> None:
+            self.btn_download.setEnabled(True)
+            self._append_message(message)
+
+        self.service.list_remote_results(job, listed, failed)
+
+    def _offer_download(self, job: Job, names: list) -> None:
+        from .download_dialog import DownloadDialog
+        from .runner import select_files
+
+        matched = [
+            name
+            for name in select_files(names, job.fetch_globs or [])
+            # Offered, never pre-ticked: `*.log` is in the default patterns for
+            # Gaussian's output, and ticking the wrapper's log on its account
+            # would be the automatic download this is meant to replace.
+            if name != job.log_file
+        ]
+        dialog = DownloadDialog(
+            job.name,
+            names,
+            matched,
+            job.local_dir or self.service.store.download_root(),
+            f"Job Manager {PLUGIN_VERSION} - Download {job.name}",
+            self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        chosen = dialog.chosen()
+        folder = dialog.folder()
+        if not chosen or not folder:
+            return
+        self.service.download(job, into=folder, names=chosen)
 
     def _tail_selected(self) -> None:
         job = self.selected_job()

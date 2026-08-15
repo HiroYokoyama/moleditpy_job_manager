@@ -44,6 +44,7 @@ from .runner import apply_queue_limits, probe_resources, queue_paused, set_queue
 from .schedulers import available_schedulers
 from .service import JobService
 from .tasks import run_async
+from .window_utils import make_independent
 from .transport import local_shell_available, paramiko_available
 from .transport.local import INSTALL_HINT as LOCAL_INSTALL_HINT
 from .transport.local import POWERSHELL_HINT, SHELL_POSIX, SHELL_POWERSHELL
@@ -72,6 +73,7 @@ class HostsDialog(QDialog):
         self.service = service
         self.store = service.store
         self.setWindowTitle(f"Job Manager {PLUGIN_VERSION} - Hosts")
+        make_independent(self)
         self.resize(720, 560)
         self._current: Optional[HostProfile] = None
         #: True while the pause box is being set to match the host, so that
@@ -80,6 +82,9 @@ class HostsDialog(QDialog):
         #: The host whose queue state has already been read, so that a save --
         #: which reloads and re-selects -- does not ask the host again.
         self._queue_state_for = ""
+        #: The selected profile as it was when it was loaded or last saved.
+        #: Anything else in the form is an unsaved edit.
+        self._loaded: dict = {}
         self._build_ui()
         self._reload_list()
 
@@ -427,6 +432,11 @@ class HostsDialog(QDialog):
         self.lbl_test.setText("No host selected - press Add to create one.")
 
     def _load_selected(self) -> None:
+        if not self._confirm_discard():
+            # Put the selection back on the host whose edits were kept, without
+            # reloading the form over the top of them.
+            self._reselect_current()
+            return
         host = self._selected_host()
         self._current = host
         if host is None:
@@ -465,7 +475,75 @@ class HostsDialog(QDialog):
         # would keep the state the previous host left it in.
         self._update_backend_hint()
         self.lbl_test.setText("")
+        self._loaded = self._snapshot()
         self._refresh_queue_state()
+
+    def _snapshot(self) -> dict:
+        """What the form holds now, as the profile it would save."""
+        if self._current is None:
+            return {}
+        # Collected onto a copy: _collect writes into the profile it is given,
+        # and asking "has this changed?" must not be what changes it.
+        from copy import deepcopy
+
+        return self._collect(deepcopy(self._current)).to_dict()
+
+    def _is_dirty(self) -> bool:
+        if self._current is None or not self.form_box.isEnabled():
+            return False
+        return self._snapshot() != self._loaded
+
+    def _confirm_discard(self) -> bool:
+        """Ask before losing edits. False means the user wants to keep them.
+
+        Only for a window on screen. A dialog that was never shown cannot have
+        been closed by anybody, and a modal question raised from tear-down --
+        or from a test -- is one nobody is there to answer.
+        """
+        if not self.isVisible() or not self._is_dirty():
+            return True
+        answer = QMessageBox.question(
+            self,
+            "Unsaved changes",
+            f"'{self._current.name}' has changes that are not saved.\n\nSave them?",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel,
+        )
+        if answer == QMessageBox.StandardButton.Save:
+            self._save_current()
+            return True
+        return answer == QMessageBox.StandardButton.Discard
+
+    def _reselect_current(self) -> None:
+        """Move the list selection back without reloading the form."""
+        if self._current is None:
+            return
+        self.list.blockSignals(True)
+        for row in range(self.list.count()):
+            if self.list.item(row).data(Qt.ItemDataRole.UserRole) == self._current.id:
+                self.list.setCurrentRow(row)
+                break
+        self.list.blockSignals(False)
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt's spelling
+        """A window closed by its own button, or by the window manager."""
+        if not self._confirm_discard():
+            event.ignore()
+            return
+        super().closeEvent(event)
+
+    def accept(self) -> None:
+        if not self._confirm_discard():
+            return
+        super().accept()
+
+    def reject(self) -> None:
+        # Esc closes a dialog without a closeEvent, which is exactly the way a
+        # profile gets typed in and lost.
+        if not self._confirm_discard():
+            return
+        super().reject()
 
     def _add_host(self) -> None:
         host = HostProfile(name="new host", remote_root="~/moleditpy_jobs")
@@ -626,6 +704,7 @@ class HostsDialog(QDialog):
         # was silent before, which is indistinguishable from a Save that did
         # nothing at all.
         self.lbl_test.setText(f"Saved '{host.name}'.")
+        self._loaded = self._snapshot()
         return host
 
     def _persist_current(self) -> Optional[HostProfile]:

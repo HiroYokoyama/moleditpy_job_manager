@@ -103,6 +103,13 @@ class JobStatusWidget(QLabel):
             )
         )
 
+    def mouseDoubleClickEvent(self, event) -> None:
+        """Same as a single click: a counter that opens on one is expected to
+        open on two, and Qt sends press, release, then double-click."""
+        if self._on_click is not None and event.button() == Qt.MouseButton.LeftButton:
+            self._on_click()
+        super().mouseDoubleClickEvent(event)
+
     def mouseReleaseEvent(self, event) -> None:
         if self._on_click is not None and event.button() == Qt.MouseButton.LeftButton:
             self._on_click()

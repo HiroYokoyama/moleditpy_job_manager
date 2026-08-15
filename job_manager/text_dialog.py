@@ -11,6 +11,8 @@ from __future__ import annotations
 from typing import Callable, Optional
 
 from PyQt6.QtGui import QFontDatabase
+
+from .window_utils import make_independent
 from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -33,6 +35,7 @@ class TextDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(title)
+        make_independent(self)
         self.resize(820, 520)
         layout = QVBoxLayout(self)
         self.view = QPlainTextEdit()

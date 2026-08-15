@@ -558,24 +558,38 @@ def _classify_sentinel(raw: str, job: Job) -> str:
     return STATE_DONE if code == 0 else STATE_FAILED
 
 
-def list_remote_files(transport: Transport, remote_dir: str) -> List[str]:
-    """File names directly inside ``remote_dir`` (no recursion).
+#: How deep a fetch pattern may reach. A pattern is allowed to name a
+#: sub-directory, but not to turn a download into a walk of a scratch tree.
+MAX_FETCH_DEPTH = 4
 
-    Only plain names are returned. The listing comes from the remote machine,
-    and every name is later joined onto a local directory to download into --
-    so anything with a path separator in it (``../../.bashrc``) would write
+
+def list_remote_files(transport: Transport, remote_dir: str, depth: int = 1) -> List[str]:
+    """File names inside ``remote_dir``, ``depth`` levels down.
+
+    Depth 1 is the plain listing and stays the default: recursion is a more
+    expensive command, and it is only worth it when a fetch pattern names a
+    sub-directory.
+
+    Whatever the depth, every name is validated before it is returned. The
+    listing comes from the remote machine and is later joined onto a local
+    directory to download into, so a name like ``../../.bashrc`` would write
     outside the download folder.
     """
-    result = transport.run(dialect.for_host(transport.host).list_dir(remote_dir))
+    speaker = dialect.for_host(transport.host)
+    if depth > 1:
+        result = transport.run(speaker.list_tree(remote_dir, depth))
+    else:
+        result = transport.run(speaker.list_dir(remote_dir))
     names = []
     for line in (result.stdout or "").splitlines():
         name = line.strip()
         if not name or name.endswith("/"):
             continue
-        if name != safe_download_name(name):
+        safe = safe_relative_name(name) if depth > 1 else safe_download_name(name)
+        if name.replace("\\", "/") != safe:
             logging.warning("Job Manager: skipping suspicious remote file name %r", name)
             continue
-        names.append(name)
+        names.append(safe)
     return names
 
 
@@ -589,13 +603,81 @@ def safe_download_name(name: str) -> str:
     return cleaned
 
 
+def safe_relative_name(name: str) -> str:
+    """The same, but allowing sub-directories: ``scratch/mol.out``.
+
+    Every name here comes from the remote machine and is then joined onto a
+    local directory to write into, so the rules are the ones that keep it
+    inside: nothing absolute, no drive letter, and no ``..`` in any segment.
+    The result is always spelled with forward slashes.
+    """
+    cleaned = (name or "").replace("\\", "/").strip()
+    if not cleaned or cleaned.startswith("/") or os.path.splitdrive(cleaned)[0]:
+        return ""
+    segments = [part for part in cleaned.split("/") if part not in ("", ".")]
+    if not segments or any(part == ".." for part in segments):
+        return ""
+    return "/".join(segments)
+
+
+def matches_pattern(name: str, pattern: str) -> bool:
+    """fnmatch, but a ``*`` stops at a directory boundary.
+
+    ``fnmatch`` alone treats the whole string as one word, so ``*.out`` would
+    match ``scratch/mol.out`` the moment the listing went one level deep --
+    quietly changing what every existing pattern means. Matching segment by
+    segment keeps ``*.out`` meaning "in the job directory", and makes
+    ``scratch/*.out`` and ``*/*.out`` say what they look like they say.
+
+    ``**`` stands for any number of directories, as it does everywhere else.
+    """
+    name_parts = [p for p in (name or "").split("/") if p]
+    pattern_parts = [p for p in (pattern or "").split("/") if p]
+
+    def match_from(name_index: int, pattern_index: int) -> bool:
+        while pattern_index < len(pattern_parts):
+            part = pattern_parts[pattern_index]
+            if part == "**":
+                # Try consuming nothing, then one segment, then two...
+                for skip in range(name_index, len(name_parts) + 1):
+                    if match_from(skip, pattern_index + 1):
+                        return True
+                return False
+            if name_index >= len(name_parts):
+                return False
+            if not fnmatch.fnmatch(name_parts[name_index], part):
+                return False
+            name_index += 1
+            pattern_index += 1
+        return name_index == len(name_parts)
+
+    return match_from(0, 0)
+
+
+def pattern_depth(globs: Sequence[str]) -> int:
+    """How deep the listing has to go for these patterns. 1 is no recursion.
+
+    Depth costs a recursive listing on the far end, so it is taken from what
+    was actually asked for rather than applied always. ``**`` is capped: a
+    pattern that means "anywhere" must not turn a fetch into a walk of a
+    scratch directory with a hundred thousand files in it.
+    """
+    depth = 1
+    for pattern in globs or []:
+        parts = [p for p in (pattern or "").strip().split("/") if p]
+        if any(part == "**" for part in parts):
+            return MAX_FETCH_DEPTH
+        depth = max(depth, len(parts))
+    return min(depth, MAX_FETCH_DEPTH)
+
+
 def select_files(names: Iterable[str], globs: Sequence[str]) -> List[str]:
     patterns = [g.strip() for g in (globs or []) if g and g.strip()]
     if not patterns:
         return list(names)
     selected = []
     for name in names:
-        if any(fnmatch.fnmatch(name, pattern) for pattern in patterns):
+        if any(matches_pattern(name, pattern) for pattern in patterns):
             selected.append(name)
     return selected
 
@@ -606,7 +688,10 @@ def fetch_results(
     """Download everything in the job directory matching the fetch globs."""
     patterns = [p for p in (globs if globs is not None else (job.fetch_globs or [])) if p.strip()]
 
-    names = select_files(list_remote_files(transport, job.remote_dir), patterns)
+    # Only as deep as the patterns actually reach: recursion is a more
+    # expensive command on the far end, and most fetches want one directory.
+    depth = pattern_depth(patterns)
+    names = select_files(list_remote_files(transport, job.remote_dir, depth), patterns)
     # The wrapper's own log is not a result: it holds whatever the command
     # wrote to stdout and stderr, while the calculation's real output is the
     # file the command was told to write. It used to be forced into every
@@ -614,17 +699,14 @@ def fetch_results(
     # directory of results carried a job.log next to the .out nobody wanted to
     # tell apart. It stays on the host, where Tail Log reads it live.
     #
-    # Named exactly, it is still fetched: that is an explicit request, unlike a
-    # wildcard that happens to cover it. So is an empty pattern list, which
-    # means "everything in the directory" and is asked for on purpose.
+    # Never automatically: it is this plugin's file rather than the
+    # calculation's output, and a results directory should hold only what the
+    # job produced. No wildcard reaches it -- not `*.log`, which is there for
+    # Gaussian's output, and not an empty pattern list either.
     #
-    # And only for a job that succeeded. When one fails, that log is usually
-    # the only evidence there is -- it holds the stderr nothing else recorded --
-    # so leaving it on the host would answer "why did this fail?" with an empty
-    # directory. rc is None for a job fetched while it is still running, which
-    # is another moment the log is exactly what was wanted.
-    succeeded = job.rc == 0
-    if succeeded and patterns and job.log_file and job.log_file not in patterns:
+    # Named exactly it is fetched, because that is somebody asking for it: the
+    # download chooser lists it and passes back what was ticked.
+    if job.log_file and job.log_file not in patterns:
         names = [name for name in names if name != job.log_file]
     os.makedirs(local_dir, exist_ok=True)
     # Results are downloaded next to the input by default, so the job's own
@@ -637,9 +719,19 @@ def fetch_results(
     for name in names:
         # Belt and braces: the listing is already filtered, but this is the
         # line that turns a remote string into a local path to write.
-        if not safe_download_name(name):
+        safe = safe_relative_name(name)
+        if not safe:
             continue
-        target = os.path.join(local_dir, name)
+        target = os.path.join(local_dir, *safe.split("/"))
+        # And the check that actually holds: whatever the name looked like, the
+        # file has to land inside the directory we were asked to write into.
+        root = os.path.abspath(local_dir)
+        if os.path.commonpath([root, os.path.abspath(target)]) != root:
+            logging.warning("Job Manager: refusing to write outside %s: %r", local_dir, name)
+            continue
+        parent = os.path.dirname(target)
+        if parent and not os.path.isdir(parent):
+            os.makedirs(parent, exist_ok=True)
         if os.path.abspath(target) in protected:
             logging.debug("Job Manager: not overwriting the input file %s", name)
             continue

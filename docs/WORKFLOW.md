@@ -500,6 +500,24 @@ to how MoleditPy looks. Untick **Notify me when a job ends** in the monitor to
 stop it. A desktop with no notification service simply shows nothing; the job
 is tracked either way.
 
+### Hosts at work
+
+**Hosts at Work...**, beside *Refresh Now*, opens a live panel: one card per
+host with its load average, its memory, and a graph of each over the last
+couple of minutes. The load graph is full when the load equals the core count,
+which is what a full machine means — not some arbitrary hundred.
+
+It asks each host one small command every **2 seconds** (adjustable, 1–60), and
+**only while that window is open**. Closing it stops the timer and hands every
+connection back, so a Job Manager left open overnight costs a login node
+nothing on its account. The connection is held while the window is up rather
+than rebuilt per sample: at that cadence, reconnecting would cost more than the
+measurement.
+
+A host that does not answer says so on its own card and the others carry on. A
+host set to prompt for a password is skipped entirely — a panel that opens
+should not raise a password dialog.
+
 ## 5. Results
 
 When a job reaches DONE or FAILED, matching files come back automatically (the
@@ -648,7 +666,10 @@ helper is running — it only ever reads what is under `.moleditpy_runner/`.
 | "Host key verification failed" | Unknown host. Accept the fingerprint when offered, or `ssh` in once by hand |
 | Submitted, but no queue id | The submit command printed something unexpected. The job may really be queued — check with `squeue` before resubmitting |
 | Everything `LOST` right after submitting | The scheduler on the host profile does not match reality (e.g. SLURM selected on a PBS site) |
-| Nothing downloads | The fetch patterns match nothing. `*.out` is not `*.log` |
+| Nothing downloads | The fetch patterns match nothing. Press **Download**: it lists what is actually in the job directory and ticks what matched, so a wrong pattern is visible rather than silent |
+| `job.log` is not among the results | Deliberate: it is the wrapper's own log, not the calculation's output, and is never downloaded. **Tail Log** reads it on the host |
+| A custom command you saved is not in the dropdown | See below |
+| Results in a sub-directory are not fetched | A pattern only reaches as deep as it is written. `*.out` means the job directory; use `scratch/*.out`, `*/*.out`, or `**/*.out` for any depth |
 | Poll errors, then silence | Per-host backoff, up to 15 minutes. **Refresh Now** clears it |
 | Jobs sit at `PENDING` on the helper and nothing starts | The queue is held (**Hold the queue** in Hosts…), or the job in front needs more cores or memory than are free. The helper is strict FIFO, so a small job behind a large one waits with it |
 | Only one job runs at a time on the helper | **Run at most** is set to 1, or the budgets are smaller than two jobs need. **Detect** shows what the machine actually has |
@@ -656,6 +677,47 @@ helper is running — it only ever reads what is under `.moleditpy_runner/`.
 | The helper is not running between batches | By design: it exits as soon as its queue is empty and the next submission starts it again |
 | The wizard filled in a memory figure you did not expect | It was read from the input. ORCA's `%maxcore` is **per core**, so it is multiplied by `%pal nprocs`. Overwrite the field and it is left alone |
 | `command not found` for something that works when you ssh in | See below — it is almost always the guard at the top of `~/.bashrc` |
+
+### A saved command template does not appear
+
+The **Template...** dropdown is rebuilt from three sources, in this order: the
+built-in list, then a separator, then your own saved templates, then the two
+actions at the bottom. A template you saved and cannot see is almost always one
+of these:
+
+- **You saved it under a name that already existed.** Saving replaces a
+  template of the same name rather than adding a second one with it, so the
+  list gets no longer.
+- **The command field was empty when you pressed "Save current command as...".**
+  Nothing is saved without a command, and the dialog says so rather than
+  writing an empty entry.
+- **You are looking at a different MoleditPy installation.** Templates live in
+  `~/.moleditpy/job_manager/settings.json` under `command_templates`, outside
+  the plugin folder, so they survive plugin updates — but they are per user
+  account, not per project.
+- **The list is long and yours is below the fold.** Saved templates come after
+  every built-in one; the dropdown scrolls.
+
+To check what is actually stored:
+
+```bash
+python -c "import json,os;print(json.load(open(os.path.expanduser('~/.moleditpy/job_manager/settings.json')))['prefs'].get('command_templates'))"
+```
+
+Saving a template keeps the **fetch patterns** with the command, so a template
+saved for a program brings back that program's files. A template saved before
+this was true has no patterns of its own and leaves the field alone.
+
+### The wizard did not fill in the fetch patterns
+
+Choosing a program from **Template...** fills them in for that program — ORCA
+writes `.gbw` and `.hess`, Gaussian `.chk` and `.fchk`, VASP files with no
+extension at all. It leaves the field alone once you have edited it, because a
+field you have changed is a decision.
+
+For an unambiguous extension the template is applied automatically when the
+file is added. `.inp` is not one of them: ORCA, CP2K and GAMESS all use it, so
+the wizard offers the three rather than guessing.
 
 ### "command not found", but it works when I ssh in
 

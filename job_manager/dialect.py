@@ -72,6 +72,18 @@ class Dialect:
         """List a directory, marking sub-directories with a trailing slash."""
         return f"ls -p -1 {self.quote(path)} 2>/dev/null || true"
 
+    def list_tree(self, path: str, depth: int) -> str:
+        """Files up to ``depth`` levels down, named relative to ``path``.
+
+        Run from inside the directory so the names come back relative with no
+        printf extension: -printf is GNU find only, and a cluster login node is
+        as likely to be BSD or macOS.
+        """
+        return (
+            f"cd {self.quote(path)} 2>/dev/null && "
+            f"find . -maxdepth {int(depth)} -type f 2>/dev/null | sed 's|^\\./||' || true"
+        )
+
     def tail(self, path: str, lines: int) -> str:
         return f"tail -n {int(lines)} {self.quote(path)} 2>&1 || true"
 
@@ -127,6 +139,23 @@ class PowerShellDialect(Dialect):
             f"if (Test-Path -LiteralPath {quoted}) {{ "
             f"Get-ChildItem -LiteralPath {quoted} -Force | ForEach-Object {{ "
             "if ($_.PSIsContainer) { $_.Name + '/' } else { $_.Name } } }"
+        )
+
+    def list_tree(self, path: str, depth: int) -> str:
+        """The same, recursively, named relative to ``path``.
+
+        Reported with forward slashes, so one matcher serves both dialects and
+        a pattern written for a cluster means the same thing on Windows.
+        """
+        quoted = self.quote(path)
+        separator = "'\\'"
+        return (
+            f"if (Test-Path -LiteralPath {quoted}) {{ "
+            f"$root = (Resolve-Path -LiteralPath {quoted}).Path.TrimEnd({separator}) "
+            f"+ {separator}; "
+            f"Get-ChildItem -LiteralPath {quoted} -Force -Recurse -Depth {int(depth) - 1} "
+            "-File | ForEach-Object { "
+            f"$_.FullName.Substring($root.Length).Replace({separator}, '/') }} }}"
         )
 
     def tail(self, path: str, lines: int) -> str:
