@@ -90,6 +90,11 @@ def make_host(**overrides) -> HostProfile:
         username="tester",
         scheduler="slurm",
         remote_root="~/moleditpy_jobs",
+        # Off here, on for a real new host: nearly every test asserts the exact
+        # command sent, and four lines of profile sourcing in front of each one
+        # tests nothing about the subject. The tests that *are* about it pass
+        # load_profile=True themselves -- see test_command_only.
+        load_profile=False,
     )
     defaults.update(overrides)
     return HostProfile(**defaults)

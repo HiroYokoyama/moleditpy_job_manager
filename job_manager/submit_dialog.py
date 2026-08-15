@@ -888,6 +888,9 @@ class SubmitDialog(QDialog):
             # Built the same way submitting will build it, so the preview shows
             # the directory the script really cds into (bar the timestamp).
             remote_dir=self.remote_dir() or make_remote_dir(host, name),
+            # The preview is worth having only if it is the script that runs,
+            # and the host's environment setup is part of that script.
+            preamble=host.environment_commands(),
         )
         self.txt_preview.setPlainText(script)
 

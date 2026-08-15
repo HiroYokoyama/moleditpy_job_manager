@@ -125,7 +125,7 @@ class OpenSSHTransport(Transport):
         return CommandResult(proc.returncode, proc.stdout or "", stderr)
 
     def run(self, cmd: str, timeout: Optional[int] = None) -> CommandResult:
-        wrapped = remote_paths.wrap_login(cmd, self.host.login_commands)
+        wrapped = remote_paths.wrap_login(cmd, self.host.environment_commands())
         limit = int(timeout or self.host.command_timeout or 60)
         return self._spawn(self._ssh_argv(wrapped), limit, "remote command")
 

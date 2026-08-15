@@ -176,6 +176,7 @@ def submit_job(
         remote_dir=job.remote_dir,
         run_after_any=run_after_any or job.chain_any,
         sentinel=sentinel_for(job),
+        preamble=host.environment_commands(),
     )
     job.command = script
     script_name = script_name_for(job, scheduler)
@@ -269,6 +270,7 @@ def submit_to_runner(
         start_after=job.start_after,
         remote_dir=job.remote_dir,
         sentinel=sentinel_for(job),
+        preamble=host.environment_commands(),
     )
     job.command = script
     # Not `script_name`: that name belongs to the runner's own script below.

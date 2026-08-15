@@ -156,7 +156,7 @@ class LocalTransport(Transport):
         from .. import remote_paths
 
         self._require_shell()
-        wrapped = remote_paths.wrap_login(cmd, self.host.login_commands)
+        wrapped = remote_paths.wrap_login(cmd, self.host.environment_commands())
         limit = int(timeout or self.host.command_timeout or 60)
         argv: List[str] = self._argv(wrapped)
         try:

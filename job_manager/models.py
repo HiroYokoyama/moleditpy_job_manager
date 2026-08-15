@@ -76,6 +76,22 @@ SCHEDULER_SHELL = "shell"
 #: Native Windows: PowerShell wrapper, no POSIX shell needed.
 SCHEDULER_WINDOWS = "windows"
 
+#: Read before every command on a host with ``load_profile`` set, in the order a
+#: login shell reads them. Each is tested first so a missing file is not an
+#: error, and each is allowed to fail: a dotfile that ends non-zero (a `module`
+#: that warns, an `stty` on a shell with no terminal) must not become the
+#: job's exit code.
+#:
+#: Debian's stock ~/.bashrc returns immediately for a non-interactive shell, so
+#: this is not a complete substitute for a login shell -- but anything the user
+#: put *above* that guard, which is where module loads usually end up, does run.
+PROFILE_COMMANDS = (
+    "[ -f /etc/profile ] && . /etc/profile || true",
+    "[ -f ~/.bash_profile ] && . ~/.bash_profile || true",
+    "[ -f ~/.profile ] && . ~/.profile || true",
+    "[ -f ~/.bashrc ] && . ~/.bashrc || true",
+)
+
 #: How a host keeps its concurrency limit. See ``HostProfile.concurrency_mode``.
 MODE_LANES = "lanes"
 MODE_RUNNER = "runner"
@@ -147,12 +163,18 @@ class HostProfile:
     #: there is no scheduler already (see :attr:`uses_remote_runner`), and it
     #: exits by itself the moment its queue is empty.
     concurrency_mode: str = MODE_RUNNER
-    #: Cores the remote runner may hand out. 0 asks the machine (``nproc``).
+    #: Cores the remote runner may hand out. 0 asks the machine (``nproc``),
+    #: which only happens when :attr:`runner_detect` is set.
     runner_cores: int = 0
     #: Megabytes of memory the remote runner may hand out. 0 asks the machine.
     #: A second budget beside the cores, because two jobs of 90 GB on a 120 GB
     #: machine must not both start just because the cores happened to be free.
     runner_memory_mb: int = 0
+    #: Let the helper read the machine's own cores and memory instead of using
+    #: the two numbers above. Off for a new profile: what a shared login node
+    #: reports is the whole machine, not the share you are entitled to, so the
+    #: honest default is the number the user actually knows.
+    runner_detect: bool = False
     ssh_options: List[str] = field(default_factory=list)
     #: paramiko backend only: prompt for a password (never stored on disk).
     ask_password: bool = False
@@ -160,10 +182,32 @@ class HostProfile:
     command_timeout: int = 60
     #: Prepended to every remote command (e.g. "source /etc/profile").
     login_commands: List[str] = field(default_factory=list)
+    #: Read the login files before anything else runs. ``ssh host 'cmd'`` gets a
+    #: shell that is neither login nor interactive, so none of /etc/profile,
+    #: ~/.bash_profile or ~/.bashrc is read -- and those are exactly where a
+    #: module system, a conda hook or a hand-installed program puts its PATH.
+    #: Without this, a program that runs when you ssh in by hand is simply not
+    #: found by the job, which is the single most common way a submission fails.
+    load_profile: bool = True
 
     @property
     def is_local(self) -> bool:
         return self.backend == BACKEND_LOCAL
+
+    def environment_commands(self) -> List[str]:
+        """The login files to read, then whatever the user added.
+
+        Order matters and follows what a login shell does: the system file, then
+        the per-user login file, then the interactive one. Each is guarded, so a
+        host missing any of them is not an error, and ``|| true`` keeps a
+        dotfile that exits non-zero from taking the job down with it.
+
+        Nothing is emitted for a Windows host: its commands are PowerShell, and
+        it is driven with -NoProfile deliberately.
+        """
+        if not self.load_profile or self.scheduler == SCHEDULER_WINDOWS:
+            return list(self.login_commands or [])
+        return list(PROFILE_COMMANDS) + list(self.login_commands or [])
 
     @property
     def uses_remote_runner(self) -> bool:
@@ -196,6 +240,16 @@ class HostProfile:
             # but an upgrade must not quietly move someone's jobs onto a
             # different scheduler while they are not looking.
             host.concurrency_mode = MODE_LANES
+        if "runner_detect" not in (data or {}):
+            # Saved when 0 meant "ask the machine". Keep that host detecting
+            # rather than silently handing its queue a budget of nothing.
+            host.runner_detect = not (host.runner_cores or host.runner_memory_mb)
+        if "load_profile" not in (data or {}):
+            # An existing host has been running without the login files read,
+            # and whatever it runs today works that way. Reading them now could
+            # change which build of a program a running batch resolves to, so
+            # the new behaviour is for new profiles only.
+            host.load_profile = False
         return host
 
 

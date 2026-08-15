@@ -22,6 +22,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -101,7 +102,11 @@ class HostsDialog(QDialog):
         left.addLayout(buttons)
         outer.addLayout(left, 1)
 
-        right = QVBoxLayout()
+        # The editing column scrolls: Connection, Advanced and the queue row
+        # together are taller than a laptop screen, and Save must stay reachable.
+        right_panel = QWidget()
+        right = QVBoxLayout(right_panel)
+        right.setContentsMargins(0, 0, 0, 0)
         self.form_box = QGroupBox("Connection")
         form = QFormLayout(self.form_box)
 
@@ -185,20 +190,29 @@ class HostsDialog(QDialog):
         )
         self.cmb_concurrency.currentIndexChanged.connect(self._update_concurrency_row)
 
+        self.chk_detect_resources = QCheckBox("Ask the host instead")
+        self.chk_detect_resources.setToolTip(
+            "Let the helper read the machine's own core count and memory "
+            "(nproc, /proc/meminfo) instead of the two numbers below.\n\n"
+            "Off by default, because what the machine reports is the whole "
+            "machine: on anything shared, that is not the share you are "
+            "entitled to. The number you know beats the number it reports.\n\n"
+            "The Detect button fills the fields in without handing the budget "
+            "over, which is usually what you want: see what it has, then decide."
+        )
+        self.chk_detect_resources.toggled.connect(self._on_detect_toggled)
+
         self.spin_runner_cores = QSpinBox()
-        self.spin_runner_cores.setRange(0, 4096)
-        self.spin_runner_cores.setSpecialValueText("detect")
+        self.spin_runner_cores.setRange(1, 4096)
         self.spin_runner_cores.setToolTip(
             "How many cores the helper may hand out. Each job asks for as many "
             "as its preset's 'CPUs per task', and starts when that many are "
-            "free.\n\n"
-            "'detect' asks the machine itself (nproc)."
+            "free."
         )
 
         self.spin_runner_memory = QSpinBox()
-        self.spin_runner_memory.setRange(0, 8192)
+        self.spin_runner_memory.setRange(1, 8192)
         self.spin_runner_memory.setSuffix(" GB")
-        self.spin_runner_memory.setSpecialValueText("detect")
         self.spin_runner_memory.setToolTip(
             "How much memory the helper may hand out, in total.\n\n"
             "A second budget beside the cores, and the one that matters most: "
@@ -207,8 +221,7 @@ class HostsDialog(QDialog):
             "does not slow a calculation down, it gets it killed hours in.\n\n"
             "Each job asks for its preset's Memory field, which the wizard "
             "fills in from the input file where it can. A job that asks for "
-            "nothing waits for nothing.\n\n"
-            "'detect' asks the machine itself."
+            "nothing waits for nothing."
         )
 
         form.addRow("Remote root", self.txt_remote_root)
@@ -216,6 +229,7 @@ class HostsDialog(QDialog):
         form.addRow("Queueing", self.cmb_concurrency)
         form.addRow("Cores available", self.spin_runner_cores)
         form.addRow("Memory available", self.spin_runner_memory)
+        form.addRow("", self.chk_detect_resources)
         right.addWidget(self.form_box)
 
         self.adv_box = QGroupBox("Advanced")
@@ -232,6 +246,21 @@ class HostsDialog(QDialog):
         self.spin_command_timeout = QSpinBox()
         self.spin_command_timeout.setRange(10, 3600)
         self.spin_command_timeout.setSuffix(" s")
+        self.chk_load_profile = QCheckBox("Read the login files first")
+        self.chk_load_profile.setToolTip(
+            "Run /etc/profile, ~/.bash_profile, ~/.profile and ~/.bashrc before "
+            "anything else -- for every command sent to the host, and at the top "
+            "of every job script.\n\n"
+            "'ssh host command' gets a shell that is neither login nor "
+            "interactive, so none of those files is read, while logging in by "
+            "hand reads all of them. That is why a program you can run over SSH "
+            "yourself is 'command not found' in the job.\n\n"
+            "Each file is optional and allowed to fail, so a host missing one "
+            "is not an error. Note that Debian's stock ~/.bashrc stops early "
+            "for a non-interactive shell: keep module loads above that guard, "
+            "or name them in Login commands below."
+        )
+        adv.addRow("Environment", self.chk_load_profile)
         adv.addRow("Login commands", self.txt_login)
         adv.addRow("ssh -o options", self.txt_options)
         adv.addRow("Connect timeout", self.spin_connect_timeout)
@@ -308,9 +337,16 @@ class HostsDialog(QDialog):
         self.btn_save.clicked.connect(self._save_current)
         box.rejected.connect(self.reject)
         box.button(QDialogButtonBox.StandardButton.Close).clicked.connect(self.accept)
-        right.addWidget(box)
 
-        outer.addLayout(right, 2)
+        column = QVBoxLayout()
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setWidget(right_panel)
+        column.addWidget(scroll, 1)
+        # Outside the scroll area: Save and Close stay put however far it scrolls.
+        column.addWidget(box)
+        outer.addLayout(column, 2)
         # After every widget exists: this one now also shows or hides the queue
         # controls, which are built further down than the rows that drive it.
         self._update_concurrency_row()
@@ -373,8 +409,10 @@ class HostsDialog(QDialog):
         self.txt_remote_root.setText("~/moleditpy_jobs")
         self.spin_max_concurrent.setValue(0)
         self.cmb_concurrency.setCurrentIndex(max(0, self.cmb_concurrency.findData(MODE_RUNNER)))
-        self.spin_runner_cores.setValue(0)
-        self.spin_runner_memory.setValue(0)
+        self.spin_runner_cores.setValue(self.spin_runner_cores.minimum())
+        self.spin_runner_memory.setValue(self.spin_runner_memory.minimum())
+        self.chk_detect_resources.setChecked(False)
+        self.chk_load_profile.setChecked(True)
         self.txt_login.setPlainText("")
         self.txt_options.setPlainText("")
         self.spin_connect_timeout.setValue(10)
@@ -406,15 +444,23 @@ class HostsDialog(QDialog):
         self.spin_max_concurrent.setValue(max(0, int(host.max_concurrent or 0)))
         index = self.cmb_concurrency.findData(host.concurrency_mode or MODE_LANES)
         self.cmb_concurrency.setCurrentIndex(max(0, index))
-        self.spin_runner_cores.setValue(max(0, int(host.runner_cores or 0)))
+        self.chk_detect_resources.setChecked(bool(host.runner_detect))
+        # A detecting host stores 0 for both, so the boxes show their minimum
+        # rather than a budget it never had.
+        self.spin_runner_cores.setValue(max(1, int(host.runner_cores or 0)))
         # Stored in MB, shown in GB: nobody sizes a machine in megabytes.
-        self.spin_runner_memory.setValue(max(0, int(host.runner_memory_mb or 0)) // 1024)
+        self.spin_runner_memory.setValue(max(1, int(host.runner_memory_mb or 0) // 1024))
+        self.chk_load_profile.setChecked(bool(host.load_profile))
         self._update_concurrency_row()
         self.txt_login.setPlainText("\n".join(host.login_commands or []))
         self.txt_options.setPlainText("\n".join(host.ssh_options or []))
         self.spin_connect_timeout.setValue(int(host.connect_timeout or 10))
         self.spin_command_timeout.setValue(int(host.command_timeout or 60))
         self.chk_ask_password.setChecked(bool(host.ask_password))
+        # Explicitly, not only from the combo's signal: selecting a host whose
+        # backend matches the one already shown changes no index, and the box
+        # would keep the state the previous host left it in.
+        self._update_backend_hint()
         self.lbl_test.setText("")
         self._refresh_queue_state()
 
@@ -456,10 +502,20 @@ class HostsDialog(QDialog):
         if not shell and self.cmb_concurrency.currentData() == MODE_RUNNER:
             self.cmb_concurrency.setCurrentIndex(self.cmb_concurrency.findData(MODE_LANES))
         runner = shell and self.cmb_concurrency.currentData() == MODE_RUNNER
-        self.spin_runner_cores.setEnabled(runner)
-        self.spin_runner_memory.setEnabled(runner)
+        detect = self.chk_detect_resources.isChecked()
+        self.chk_detect_resources.setEnabled(runner)
+        # Grey rather than hidden while detecting: the numbers are still worth
+        # seeing, and pressing Detect fills them in without handing over.
+        self.spin_runner_cores.setEnabled(runner and not detect)
+        self.spin_runner_memory.setEnabled(runner and not detect)
         # Nothing to hold or to send limits to unless there is a helper.
         self.queue_box.setVisible(runner)
+
+    def _on_detect_toggled(self, checked: bool) -> None:
+        """Detection is opt-in, so it only greys the fields it takes over."""
+        self._update_concurrency_row()
+        if checked:
+            self.lbl_queue.setText("The helper will read the machine's own cores and memory.")
 
     def _update_backend_hint(self) -> None:
         backend = self.cmb_backend.currentData()
@@ -467,6 +523,10 @@ class HostsDialog(QDialog):
         # Only where a password is actually on offer; the other backends never
         # ask for one, so the advice would be noise.
         self.lbl_key_tip.setVisible(backend == BACKEND_PARAMIKO)
+        # And the box itself is live only there: OpenSSH runs in batch mode and
+        # cannot do password authentication at all, so ticking it there looked
+        # like a choice and did nothing.
+        self.chk_ask_password.setEnabled(backend == BACKEND_PARAMIKO)
         if backend == BACKEND_LOCAL:
             # Which shell has to be there follows the scheduler: a Windows host
             # is driven entirely through PowerShell and needs no bash at all.
@@ -517,7 +577,6 @@ class HostsDialog(QDialog):
             self.spin_port,
             self.txt_key,
             self.txt_jump,
-            self.chk_ask_password,
             self.spin_connect_timeout,
         ):
             widget.setEnabled(enabled)
@@ -534,8 +593,14 @@ class HostsDialog(QDialog):
         host.remote_root = self.txt_remote_root.text().strip() or "~/moleditpy_jobs"
         host.max_concurrent = int(self.spin_max_concurrent.value())
         host.concurrency_mode = self.cmb_concurrency.currentData() or MODE_LANES
-        host.runner_cores = int(self.spin_runner_cores.value())
-        host.runner_memory_mb = int(self.spin_runner_memory.value()) * 1024
+        host.runner_detect = bool(self.chk_detect_resources.isChecked())
+        # 0 is what tells the helper to read the machine itself, so a detecting
+        # host stores nothing rather than a number the user never chose.
+        host.runner_cores = 0 if host.runner_detect else int(self.spin_runner_cores.value())
+        host.runner_memory_mb = (
+            0 if host.runner_detect else int(self.spin_runner_memory.value()) * 1024
+        )
+        host.load_profile = bool(self.chk_load_profile.isChecked())
         host.login_commands = [
             line.strip() for line in self.txt_login.toPlainText().splitlines() if line.strip()
         ]
@@ -699,6 +764,10 @@ class HostsDialog(QDialog):
             if not cores and not memory_mb:
                 self.lbl_queue.setText("The host did not say what it has.")
                 return
+            if cores or memory_mb:
+                # Filling the fields is the opposite of handing the budget over:
+                # the point of the button is to see the numbers and then decide.
+                self.chk_detect_resources.setChecked(False)
             if cores:
                 self.spin_runner_cores.setValue(min(cores, self.spin_runner_cores.maximum()))
             if memory_mb:

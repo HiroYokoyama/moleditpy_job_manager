@@ -153,7 +153,7 @@ class ParamikoTransport(Transport):
     # --- operations ---------------------------------------------------------
 
     def run(self, cmd: str, timeout: Optional[int] = None) -> CommandResult:
-        wrapped = remote_paths.wrap_login(cmd, self.host.login_commands)
+        wrapped = remote_paths.wrap_login(cmd, self.host.environment_commands())
         limit = int(timeout or self.host.command_timeout or 60)
         with self._lock:
             client = self._ensure_client()

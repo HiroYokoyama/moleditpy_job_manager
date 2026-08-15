@@ -247,7 +247,8 @@ class TestSendingTheLimits(QueueControlTestCase):
         self.assertIn("16", text)
 
     def test_detect_is_described_rather_than_printed_as_zero(self):
-        self.dlg.spin_runner_cores.setValue(0)
+        # "Ask the host" is the checkbox now; the fields cannot be 0 by hand.
+        self.dlg.chk_detect_resources.setChecked(True)
         self.dlg._apply_queue_limits()
         self.assertIn("every core", self.dlg.lbl_queue.text())
 

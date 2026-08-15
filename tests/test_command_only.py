@@ -396,3 +396,55 @@ class TestTwoRealScriptsInOneDirectory(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheHostEnvironmentReachesTheScript(unittest.TestCase):
+    """The login files, in the script rather than only around the submission.
+
+    `ssh host cmd` is neither a login nor an interactive shell, so none of
+    /etc/profile, ~/.bash_profile or ~/.bashrc is read -- while logging in by
+    hand reads all of them. A program that runs when the user tries it over SSH
+    was therefore "command not found" in the job, and on SLURM or PBS wrapping
+    the *submitting* command could not have helped either: the queue runs the
+    script later, on another node.
+    """
+
+    def preamble_of(self, host, scheduler="slurm"):
+        return get_scheduler(scheduler).build_script(
+            "j",
+            SubmitPreset(command_template="orca {input} > {stem}.out", modules=["orca/5"]),
+            "mol.inp",
+            "job.log",
+            preamble=host.environment_commands(),
+        )
+
+    def test_the_login_files_are_read_in_the_script(self):
+        script = self.preamble_of(make_host(load_profile=True))
+        self.assertIn(". /etc/profile", script)
+        self.assertIn(". ~/.bashrc", script)
+
+    def test_they_come_before_the_modules(self):
+        # `module` is itself defined by a login file, so a module load above
+        # them is a command not found.
+        script = self.preamble_of(make_host(load_profile=True))
+        self.assertLess(script.index(".bashrc"), script.index("module load orca/5"))
+
+    def test_a_dotfile_that_fails_does_not_fail_the_job(self):
+        # An stty in a .bashrc on a shell with no terminal exits non-zero, and
+        # that must not become the job's exit code.
+        for line in make_host(load_profile=True).environment_commands():
+            self.assertTrue(line.endswith("|| true"), line)
+
+    def test_nothing_is_added_when_the_box_is_unticked(self):
+        host = make_host(load_profile=False, login_commands=["module load orca"])
+        self.assertEqual(host.environment_commands(), ["module load orca"])
+
+    def test_the_users_own_commands_come_last(self):
+        host = make_host(load_profile=True, login_commands=["module load orca"])
+        self.assertEqual(host.environment_commands()[-1], "module load orca")
+
+    def test_a_windows_host_gets_no_posix_sourcing(self):
+        from job_manager.models import SCHEDULER_WINDOWS
+
+        host = make_host(load_profile=True, scheduler=SCHEDULER_WINDOWS)
+        self.assertEqual(host.environment_commands(), [])

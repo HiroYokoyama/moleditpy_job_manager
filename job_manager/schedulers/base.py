@@ -18,7 +18,7 @@ import posixpath
 import re
 import time
 from abc import ABC, abstractmethod
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Sequence
 
 from ..models import (
     SENTINEL_NAME,
@@ -208,8 +208,14 @@ class Scheduler(ABC):
         remote_dir: str = "",
         run_after_any: bool = False,
         sentinel: str = SENTINEL_NAME,
+        preamble: Sequence[str] = (),
     ) -> str:
         """Assemble the complete run script, sentinel included.
+
+        ``preamble`` is the host's environment setup -- the login files and its
+        own login commands. It has to be *in* the script, not merely wrapped
+        around the submitting command, because a queue runs the script later on
+        a compute node where nothing of the submitting shell survives.
 
         ``sentinel`` is a parameter because a job running in a directory the
         user prepared shares it: with one fixed name, two such jobs overwrite
@@ -261,6 +267,11 @@ class Scheduler(ABC):
             lines += self._start_time_block(start_after)
         if not dependency:
             lines += self._predecessor_wait_block(run_after)
+        # Before the modules: `module` itself usually comes from a login file,
+        # so a module load above this line is a command not found.
+        for command in preamble or []:
+            if command.strip():
+                lines.append(command.strip())
         for module in preset.modules or []:
             if module.strip():
                 lines.append(f"module load {module.strip()}")

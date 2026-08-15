@@ -416,6 +416,50 @@ class TestHostsDialog(DialogTestCase):
         host = self.dialog._save_current()
         self.assertEqual(host.login_commands, ["source /etc/profile", "module purge"])
 
+    def test_the_resource_budgets_are_typed_not_detected(self):
+        # What a shared login node reports is the whole machine, so the number
+        # the user knows is the honest default.
+        self.dialog._add_host()
+        self.assertFalse(self.dialog.chk_detect_resources.isChecked())
+        self.assertEqual(self.dialog.spin_runner_cores.minimum(), 1)
+        self.dialog.spin_runner_cores.setValue(16)
+        self.dialog.spin_runner_memory.setValue(64)
+        host = self.dialog._save_current()
+        self.assertEqual((host.runner_cores, host.runner_memory_mb), (16, 64 * 1024))
+        self.assertFalse(host.runner_detect)
+
+    def test_ticking_detect_hands_the_budget_to_the_host(self):
+        self.dialog.chk_detect_resources.setChecked(True)
+        host = self.dialog._save_current()
+        # 0 is the protocol's own "read the machine", so nothing is invented.
+        self.assertEqual((host.runner_cores, host.runner_memory_mb), (0, 0))
+        self.assertTrue(host.runner_detect)
+        self.assertFalse(self.dialog.spin_runner_cores.isEnabled())
+
+    def test_a_new_host_reads_the_login_files(self):
+        self.dialog._add_host()
+        self.assertTrue(self.dialog.chk_load_profile.isChecked())
+        self.assertTrue(self.dialog._save_current().load_profile)
+
+    def test_the_password_box_is_dead_outside_paramiko(self):
+        from job_manager.models import BACKEND_OPENSSH
+
+        # OpenSSH runs in batch mode and cannot do password authentication.
+        self.dialog.cmb_backend.setCurrentIndex(self.dialog.cmb_backend.findData(BACKEND_OPENSSH))
+        self.assertFalse(self.dialog.chk_ask_password.isEnabled())
+        self.dialog.cmb_backend.setCurrentIndex(self.dialog.cmb_backend.findData(BACKEND_PARAMIKO))
+        self.assertTrue(self.dialog.chk_ask_password.isEnabled())
+
+    def test_the_editing_column_scrolls(self):
+        from PyQt6.QtWidgets import QDialogButtonBox, QScrollArea
+
+        scroll = self.dialog.findChild(QScrollArea)
+        self.assertIsNotNone(scroll)
+        self.assertTrue(scroll.widgetResizable())
+        # Save and Close must not scroll away with the form.
+        box = self.dialog.findChild(QDialogButtonBox)
+        self.assertNotIn(box, scroll.widget().findChildren(QDialogButtonBox))
+
     def test_saving_says_so(self):
         self.dialog._save_current()
         self.assertIn("Saved", self.dialog.lbl_test.text())

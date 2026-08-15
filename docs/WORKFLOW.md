@@ -14,7 +14,25 @@ The normal path, end to end, plus what to do when a job goes wrong.
 | Private key | Optional. Leave empty to use your agent and `ssh_config` |
 | Jump host | `user@bastion` — OpenSSH backend only |
 | Remote root | Where job directories are created, default `~/moleditpy_jobs` |
-| Login commands | Run before every remote command, e.g. `module purge` |
+| Environment | Read `/etc/profile` and your `~/.bash_profile`, `~/.profile`, `~/.bashrc` first. On for a new host |
+| Login commands | Run after those, e.g. `module load orca` |
+
+> **"But it works when I ssh in myself."** `ssh host command` gets a shell that
+> is neither a login shell nor an interactive one, so **none of your dotfiles is
+> read** — while logging in by hand reads all of them. A program installed under
+> your home directory, or provided by `module`, is therefore simply not on
+> `PATH` for the job. That is what **Environment** is for, and it applies both to
+> the commands sent to the host and to the top of every job script, because
+> SLURM and PBS run that script later on a compute node where nothing of the
+> submitting shell survives.
+>
+> Two things it cannot fix. Debian's stock `~/.bashrc` returns immediately for a
+> non-interactive shell, so keep module loads *above* that guard or name them in
+> **Login commands**. And a bare program name is still resolved by whatever is on
+> `PATH`: on most Linux desktops `orca` is the GNOME **screen reader**, not the
+> quantum chemistry package, and a job calling it prints "Cannot start the screen
+> reader because it cannot connect to the Desktop" and exits 1. Give the full
+> path — `/opt/orca6/orca` — which ORCA requires anyway for `%pal nprocs > 1`.
 
 > **Set up a key rather than a password.** It is less work, not more:
 > `ssh-keygen -t ed25519` then `ssh-copy-id user@cluster`, once, on this
@@ -306,7 +324,9 @@ Three dials, and they are not the same one:
 - **Memory available** is the second budget, and usually the one that matters.
   Each job asks for its preset's *Memory*, and starts when that much is free.
 
-Both budgets left at **detect** mean the machine's own capacity.
+Both are numbers you type. **Ask the host instead** hands the decision to the
+helper, which reads the machine's own capacity — off by default, because what a
+shared machine reports is all of it, not the share you are entitled to.
 
 So an eight-core workstation with the defaults runs eight single-core jobs
 together, or two four-core jobs, and queues the rest. The queue is strict FIFO:
@@ -320,12 +340,12 @@ CPU makes a calculation slow, overcommitting memory gets it killed hours in.
 With a memory budget the second waits. A job that asks for no memory waits for
 no memory, so nothing is held back by a field you left blank.
 
-**Detect** fills both in from the host itself, so you can see the numbers and
-then lower them to leave room for other users. It counts **physical cores, not
-hardware threads**: `nproc` reports twelve on a six-core machine, and a budget
-of twelve would let two six-core jobs thrash the same six cores. The helper
-uses the same count when a budget is left at *detect*, so the dialog and the
-queue never disagree about the machine.
+**Detect** fills both fields in from the host itself without handing the budget
+over, so you can see the numbers and then lower them to leave room for other
+users. It counts **physical cores, not hardware threads**: `nproc` reports
+twelve on a six-core machine, and a budget of twelve would let two six-core jobs
+thrash the same six cores. The helper uses the same count when you tick *Ask the
+host instead*, so the dialog and the queue never disagree about the machine.
 
 ### The helper's life
 

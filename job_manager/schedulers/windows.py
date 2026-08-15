@@ -33,7 +33,7 @@ this workspace.
 from __future__ import annotations
 
 import time
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Sequence
 
 from ..models import SubmitPreset, sanitize_name
 from .base import (
@@ -103,6 +103,7 @@ class WindowsScheduler(Scheduler):
         remote_dir: str = "",
         run_after_any: bool = False,
         sentinel: str = "",
+        preamble: Sequence[str] = (),
     ) -> str:
         """The whole wrapper, in PowerShell rather than bash."""
         from ..models import SENTINEL_NAME
@@ -148,6 +149,9 @@ class WindowsScheduler(Scheduler):
             "$__moleditpy_done = $false",
             "try {",
         ]
+        for command in preamble or []:
+            if command.strip():
+                lines.append(f"    {command.strip()}")
         for module in preset.modules or []:
             if module.strip():
                 lines.append(f"    # module: {module.strip()}")
