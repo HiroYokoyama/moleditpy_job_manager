@@ -7,6 +7,7 @@ from typing import List, Optional, Sequence
 
 from PyQt6.QtCore import QDateTime, Qt
 from PyQt6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDateTimeEdit,
@@ -23,6 +24,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QTabWidget,
     QVBoxLayout,
@@ -52,7 +54,7 @@ class SubmitDialog(QDialog):
         self.service = service
         self.store = service.store
         self.setWindowTitle("Job Manager - Submit Job")
-        self.resize(760, 640)
+        self.resize(760, self._preferred_height(640))
         # Input files can be dropped straight onto the wizard.
         self.setAcceptDrops(True)
         self._build_ui()
@@ -104,8 +106,32 @@ class SubmitDialog(QDialog):
 
     # --- construction -------------------------------------------------------
 
+    @staticmethod
+    def _preferred_height(wanted: int) -> int:
+        """``wanted``, or as much of the screen as there is.
+
+        A laptop at 1366x768 has less usable height than this dialog wants, and
+        a window taller than the screen puts Submit somewhere the mouse cannot
+        reach. The body scrolls, so a short window loses nothing.
+        """
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            return wanted
+        return max(400, min(wanted, int(screen.availableGeometry().height() * 0.9)))
+
     def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        # Everything except the buttons scrolls: the resources tab alone is
+        # taller than some screens, and the Submit button must stay reachable.
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        body = QWidget()
+        scroll.setWidget(body)
+        outer.addWidget(scroll, 1)
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(0, 0, 0, 0)
 
         top = QFormLayout()
         self.cmb_host = QComboBox()
@@ -152,7 +178,8 @@ class SubmitDialog(QDialog):
         box.button(QDialogButtonBox.StandardButton.Ok).setText("Submit")
         box.accepted.connect(self._submit)
         box.rejected.connect(self.reject)
-        layout.addWidget(box)
+        # Outside the scroll area, so it stays put however far the body scrolls.
+        outer.addWidget(box)
 
     def _build_remote_box(self) -> QWidget:
         """Point the job at work that is already on the host.
