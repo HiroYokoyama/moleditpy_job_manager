@@ -17,12 +17,12 @@ from PyQt6.QtCore import Qt
 def make_independent(dialog) -> None:
     """Own task bar entry, own minimise and maximise, own life on screen."""
     dialog.setWindowFlags(
-        dialog.windowFlags()
-        | Qt.WindowType.Window
+        Qt.WindowType.Window
         | Qt.WindowType.WindowMinimizeButtonHint
         | Qt.WindowType.WindowMaximizeButtonHint
         | Qt.WindowType.WindowCloseButtonHint
     )
+    dialog.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
 
 
 __all__ = ["make_independent"]

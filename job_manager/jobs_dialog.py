@@ -729,10 +729,11 @@ class JobsDialog(QDialog):
         from .host_monitor import HostMonitorDialog
 
         if self._host_monitor is not None:
+            self._host_monitor.show()
             self._host_monitor.raise_()
             self._host_monitor.activateWindow()
             return
-        dialog = HostMonitorDialog(self.service, self)
+        dialog = HostMonitorDialog(self.service, parent=None)
         self._host_monitor = dialog
         dialog.finished.connect(lambda *_: setattr(self, "_host_monitor", None))
         dialog.show()
