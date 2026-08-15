@@ -80,14 +80,14 @@ class TestInitializeContract(unittest.TestCase):
         job_manager.initialize(self.context)
         self.addCleanup(setattr, job_manager, "_context", None)
 
-    def test_two_menu_actions_are_registered(self):
-        self.assertEqual(len(self.context.menu_actions), 2)
+    def test_menu_actions_are_registered(self):
+        self.assertEqual(len(self.context.menu_actions), 3)
 
     def test_actions_live_under_the_extensions_menu(self):
         # A top-level menu of its own, which the host creates on demand --
         # see plugin_menu_manager.add_registered_plugin_actions.
         for path, _callback in self.context.menu_actions:
-            self.assertTrue(path.startswith("Extensions/Job Manager/"), path)
+            self.assertTrue(path.startswith("Extensions/"), path)
 
     def test_callbacks_are_callable(self):
         for _path, callback in self.context.menu_actions:

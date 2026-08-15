@@ -28,7 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 from .models import Job
-from .theme import DIALOG_STYLESHEET
+from .theme import apply_theme
 
 PATH_ROLE = Qt.ItemDataRole.UserRole
 IS_REMOTE_ROLE = Qt.ItemDataRole.UserRole + 1
@@ -86,7 +86,7 @@ class OutputFileSelectorDialog(QDialog):
         self._all_items: List[QTreeWidgetItem] = []
 
         self.setWindowTitle(f"Open Output File — {job.name}")
-        self.setStyleSheet(DIALOG_STYLESHEET)
+        apply_theme(self)
         self.resize(650, 480)
 
         self._build_ui()

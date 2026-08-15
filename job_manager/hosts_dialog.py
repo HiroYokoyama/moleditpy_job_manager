@@ -45,7 +45,7 @@ from .runner import apply_queue_limits, probe_resources, queue_paused, set_queue
 from .schedulers import available_schedulers
 from .service import JobService
 from .tasks import run_async
-from .theme import DIALOG_STYLESHEET
+from .theme import apply_theme
 from .window_utils import make_independent
 from .transport import local_shell_available, paramiko_available
 from .transport.local import INSTALL_HINT as LOCAL_INSTALL_HINT
@@ -76,7 +76,7 @@ class HostsDialog(QDialog):
         self.store = service.store
         self.setWindowTitle(f"Job Manager {PLUGIN_VERSION} - Hosts")
         make_independent(self)
-        self.setStyleSheet(DIALOG_STYLESHEET)
+        apply_theme(self)
         # Wide enough for the list and a form that is not squeezed, tall enough
         # that Connection and Advanced are both on screen -- but never taller
         # than the screen, since the column scrolls anyway.

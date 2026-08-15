@@ -53,6 +53,7 @@ from .theme import (
     CY_RED,
     CY_TEAL,
     DIALOG_STYLESHEET,
+    apply_theme,
 )
 from .window_utils import make_independent
 from .store import (
@@ -252,7 +253,7 @@ class JobsDialog(QDialog):
         # it is worth several rounds of asking.
         self.setWindowTitle(f"Job Manager {PLUGIN_VERSION} - Job Monitor")
         make_independent(self)
-        self.setStyleSheet(DIALOG_STYLESHEET)
+        apply_theme(self)
         self.resize(940, 560)
         #: Non-empty while a cleared list is being viewed read-only.
         self._archive_path = ""
@@ -390,8 +391,7 @@ class JobsDialog(QDialog):
         self.btn_open = QPushButton("Open Result")
         self.btn_open.setToolTip(
             "Select and open calculation outputs in MoleditPy.\n\n"
-            "If outputs have not been downloaded yet, chosen files are cached into "
-            "the temporary folder on demand."
+            "Files must be downloaded locally before they can be opened."
         )
         self.btn_open.clicked.connect(self._open_selected_result)
         self.btn_tail = QPushButton("Tail Log")

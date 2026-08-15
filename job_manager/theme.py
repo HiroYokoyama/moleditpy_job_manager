@@ -59,8 +59,6 @@ QPushButton {{
     color: palette(button-text);
     border: 1px solid palette(mid);
     border-radius: 5px;
-    padding: 4px 14px;
-    min-height: 22px;
 }}
 
 QPushButton:hover {{
@@ -317,4 +315,23 @@ __all__ = [
     "CY_ACCENT",
     "CY_ACCENT2",
     "DIALOG_STYLESHEET",
+    "apply_theme",
 ]
+
+from PyQt6.QtCore import QObject, QEvent
+
+class ThemeWatcher(QObject):
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.PaletteChange:
+            obj.setStyleSheet(DIALOG_STYLESHEET)
+        return False
+
+_theme_watcher = None
+
+def apply_theme(widget) -> None:
+    """Apply DIALOG_STYLESHEET and re-apply it on system theme changes."""
+    global _theme_watcher
+    if _theme_watcher is None:
+        _theme_watcher = ThemeWatcher()
+    widget.setStyleSheet(DIALOG_STYLESHEET)
+    widget.installEventFilter(_theme_watcher)

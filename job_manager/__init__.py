@@ -217,6 +217,7 @@ def initialize(context) -> None:
     # add_menu_action, not add_plugin_menu: the latter is hard-wired to
     # "Plugin/<path>". Both have existed since v3, so no fallback is needed.
     context.add_menu_action("Extensions/Job Manager/Job Monitor", lambda: show_monitor(context))
+    context.add_menu_action("Extensions/Host Monitor", lambda: show_host_monitor(context))
     context.add_menu_action("Extensions/Job Manager/Submit Job...", lambda: show_submit(context))
 
     from .store import JOB_EXTENSION
@@ -275,6 +276,17 @@ def show_submit(context=None) -> None:
     window = context.get_window(WINDOW_KEY)
     if window is not None:
         window.open_submit_dialog()
+
+
+def show_host_monitor(context=None) -> None:
+    """Open the host monitor, creating the main monitor behind it."""
+    context = context or _context
+    if context is None:
+        return
+    show_monitor(context)
+    window = context.get_window(WINDOW_KEY)
+    if window is not None:
+        window.open_host_monitor()
 
 
 def submit_file(paths, name: str = "") -> bool:
