@@ -7,6 +7,9 @@ import tempfile
 import unittest
 from unittest.mock import MagicMock
 
+import pytest
+pytest.importorskip("PyQt6")
+
 from PyQt6.QtWidgets import QApplication
 
 from job_manager.models import Job, new_id
