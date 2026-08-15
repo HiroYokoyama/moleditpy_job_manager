@@ -52,8 +52,8 @@ ON_WINDOWS = os.name == "nt" and POWERSHELL is not None
 
 #: PowerShell starts processes far more slowly than bash, so "busy" has to
 #: outlast a couple of launches for the intermediate states to be seen.
-POLL = 0.2
-BUSY = 2
+POLL = 0.15
+BUSY = 1.2
 
 
 class RunnerHarness(unittest.TestCase):

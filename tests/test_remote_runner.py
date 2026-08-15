@@ -44,8 +44,8 @@ BASH = find_bash()
 #: How briskly the runner under test dispatches, and how long a "busy" job
 #: stays busy. Fast enough to keep the suite short, slow enough that a
 #: loaded machine still observes the intermediate states.
-POLL = 0.2
-BUSY = 1.5
+POLL = 0.1
+BUSY = 0.9
 needs_bash = pytest.mark.skipif(BASH is None, reason="no bash on this machine")
 
 

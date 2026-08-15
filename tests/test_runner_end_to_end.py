@@ -25,8 +25,9 @@ import shutil
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
-from job_manager import remote_runner
+from job_manager import remote_runner, remote_runner_ps
 from job_manager.models import (
     MODE_RUNNER,
     SCHEDULER_SHELL,
@@ -45,6 +46,9 @@ BASH = find_bash()
 POWERSHELL = shutil.which("pwsh") or shutil.which("powershell")
 ON_WINDOWS = os.name == "nt" and POWERSHELL is not None
 
+#: Seconds between the helper's dispatch rounds, in place of production's 5.
+DISPATCH_POLL = 0.5
+
 
 class EndToEndCase(unittest.TestCase):
     """One host, one real shell, no fake transport."""
@@ -52,6 +56,7 @@ class EndToEndCase(unittest.TestCase):
     scheduler = SCHEDULER_SHELL
 
     def setUp(self):
+        self._speed_up_the_dispatch_loop()
         self.root = tempfile.mkdtemp(prefix="e2e_")
         self.addCleanup(self._cleanup)
         self.input = os.path.join(self.root, "mol.inp")
@@ -66,10 +71,29 @@ class EndToEndCase(unittest.TestCase):
         )
         self.directory = remote_runner.runner_dir(self.host.remote_root)
 
+    def _speed_up_the_dispatch_loop(self):
+        """Poll faster than production, and nothing else.
+
+        These tests go through the real submit path, so the helper they start
+        sleeps ``RUNNER_POLL_SECONDS`` (5) between dispatches -- every job here
+        waited out a five-second tick it had nothing to do with, and the two-job
+        tests waited out two. The interval is a parameter of the script, not any
+        of the behaviour under test.
+        """
+        for module in (remote_runner, remote_runner_ps):
+            original = module.build_runner_script
+            patcher = patch.object(
+                module,
+                "build_runner_script",
+                lambda directory, _build=original: _build(directory, poll_seconds=DISPATCH_POLL),
+            )
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     def _cleanup(self):
         # The runner exits when its queue empties; give it a moment, then take
         # the directory away regardless.
-        time.sleep(0.2)
+        time.sleep(0.05)
         shutil.rmtree(self.root, ignore_errors=True)
 
     def marker(self, name: str = "IT_RAN") -> str:

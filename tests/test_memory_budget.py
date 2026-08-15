@@ -204,7 +204,7 @@ class TestTheRunnerReallyHoldsBackOnMemory(unittest.TestCase):
         os.makedirs(self.jobs, exist_ok=True)
         self.script = os.path.join(self.dir, remote_runner.RUNNER_SCRIPT_NAME)
         with open(self.script, "w", encoding="utf-8", newline="\n") as handle:
-            handle.write(remote_runner.build_runner_script(self.dir, poll_seconds=0.2))
+            handle.write(remote_runner.build_runner_script(self.dir, poll_seconds=0.1))
         self.processes = []
 
     def _cleanup(self):
@@ -249,7 +249,7 @@ class TestTheRunnerReallyHoldsBackOnMemory(unittest.TestCase):
         os.makedirs(os.path.join(self.dir, "lock"), exist_ok=True)
         return process
 
-    def peak_running(self, timeout=40.0):
+    def peak_running(self, timeout=20.0):
         peak = 0
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -267,7 +267,7 @@ class TestTheRunnerReallyHoldsBackOnMemory(unittest.TestCase):
         # "detect" is the default for both, so this is the branch every fresh
         # host profile takes -- and reading it wrong means either a stalled
         # queue or no limit at all.
-        body = build_runner_script(self.dir, poll_seconds=0.2).split("while :; do")[0]
+        body = build_runner_script(self.dir, poll_seconds=0.1).split("while :; do")[0]
         probe = os.path.join(self.tmp, "probe.sh").replace("\\", "/")
         with open(probe, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(body + '\necho "cores=$(total_cores) mem=$(total_memory)"\n')
@@ -287,8 +287,8 @@ class TestTheRunnerReallyHoldsBackOnMemory(unittest.TestCase):
         self.limit(remote_runner.SLOTS_NAME, remote_runner.UNLIMITED_SLOTS)
         self.limit(remote_runner.CORES_NAME, 64)
         self.limit(remote_runner.MEMORY_NAME, 120 * 1024)
-        self.enqueue("a", 2, cores=1, memory_mb=90 * 1024)
-        self.enqueue("b", 2, cores=1, memory_mb=90 * 1024)
+        self.enqueue("a", 1, cores=1, memory_mb=90 * 1024)
+        self.enqueue("b", 1, cores=1, memory_mb=90 * 1024)
 
         self.start()
 
@@ -300,8 +300,8 @@ class TestTheRunnerReallyHoldsBackOnMemory(unittest.TestCase):
         self.limit(remote_runner.SLOTS_NAME, remote_runner.UNLIMITED_SLOTS)
         self.limit(remote_runner.CORES_NAME, 64)
         self.limit(remote_runner.MEMORY_NAME, 120 * 1024)
-        self.enqueue("a", 2, cores=1, memory_mb=50 * 1024)
-        self.enqueue("b", 2, cores=1, memory_mb=50 * 1024)
+        self.enqueue("a", 1, cores=1, memory_mb=50 * 1024)
+        self.enqueue("b", 1, cores=1, memory_mb=50 * 1024)
 
         self.start()
 
@@ -322,8 +322,8 @@ class TestTheRunnerReallyHoldsBackOnMemory(unittest.TestCase):
         self.limit(remote_runner.SLOTS_NAME, remote_runner.UNLIMITED_SLOTS)
         self.limit(remote_runner.CORES_NAME, 64)
         self.limit(remote_runner.MEMORY_NAME, 1024)
-        self.enqueue("a", 2, cores=1, memory_mb=0)
-        self.enqueue("b", 2, cores=1, memory_mb=0)
+        self.enqueue("a", 1, cores=1, memory_mb=0)
+        self.enqueue("b", 1, cores=1, memory_mb=0)
 
         self.start()
 
@@ -402,7 +402,7 @@ class TestDetectingWhatTheHostHas(unittest.TestCase):
         tmp = tempfile.mkdtemp(prefix="agree_")
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
         directory = tmp.replace("\\", "/")
-        body = build_runner_script(directory, poll_seconds=0.2).split("while :; do")[0]
+        body = build_runner_script(directory, poll_seconds=0.1).split("while :; do")[0]
         script = os.path.join(tmp, "probe.sh")
         with open(script, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(body + '\necho "cores=$(total_cores)"\n')
