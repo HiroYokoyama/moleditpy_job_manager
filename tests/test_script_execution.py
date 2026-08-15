@@ -10,7 +10,6 @@ that does have one, so this actually runs there).
 """
 
 import os
-import shutil
 import subprocess
 import tempfile
 import time
@@ -19,7 +18,9 @@ import unittest
 from job_manager.models import SENTINEL_NAME, SubmitPreset
 from job_manager.schedulers import get_scheduler
 
-BASH = shutil.which("bash")
+from .bash_support import find_bash
+
+BASH = find_bash()
 
 
 @unittest.skipUnless(BASH, "no bash available")

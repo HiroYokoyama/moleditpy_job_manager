@@ -7,7 +7,6 @@ real bash, which is the only way to know the pieces fit.
 """
 
 import os
-import shutil
 import tempfile
 import time
 import unittest
@@ -25,7 +24,9 @@ from job_manager.transport import create_transport
 from job_manager.transport.base import TransportError
 from job_manager.transport.local import LocalTransport, find_shell, shell_available
 
-BASH = shutil.which("bash") or find_shell()
+from .bash_support import find_bash
+
+BASH = find_bash() or find_shell()
 
 
 def local_host(**kwargs):
@@ -204,6 +205,18 @@ class TestShellDetection(unittest.TestCase):
     def test_path_is_preferred(self):
         with patch("shutil.which", return_value="/usr/bin/bash"):
             self.assertEqual(find_shell(), "/usr/bin/bash")
+
+    def test_the_wsl_launcher_is_not_a_posix_shell(self):
+        # C:\Windows\System32\bash.exe comes first on PATH on any machine with
+        # WSL enabled, and it cannot see G:\... at all: taking it would report a
+        # working shell and then fail every job with "Failed to translate".
+        launcher = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "bash.exe")
+        git_bash = r"C:\Program Files\Git\bin\bash.exe"
+        with (
+            patch("shutil.which", return_value=launcher),
+            patch("os.path.isfile", lambda path: path == git_bash),
+        ):
+            self.assertEqual(find_shell(), git_bash)
 
     def test_nothing_found_is_empty_not_an_error(self):
         with patch("shutil.which", return_value=None), patch("os.path.isfile", return_value=False):

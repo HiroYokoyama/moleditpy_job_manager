@@ -39,7 +39,9 @@ from job_manager.transport.local import LocalTransport
 
 from .fakes import make_preset
 
-BASH = shutil.which("bash")
+from .bash_support import find_bash
+
+BASH = find_bash()
 POWERSHELL = shutil.which("pwsh") or shutil.which("powershell")
 ON_WINDOWS = os.name == "nt" and POWERSHELL is not None
 

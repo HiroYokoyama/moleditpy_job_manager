@@ -21,7 +21,9 @@ from job_manager.transport.base import TransportError
 
 from .fakes import FakeTransport, make_host, make_job, make_preset
 
-BASH = shutil.which("bash")
+from .bash_support import find_bash
+
+BASH = find_bash()
 
 
 def runner_host(**overrides):

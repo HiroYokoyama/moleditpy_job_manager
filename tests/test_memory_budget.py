@@ -27,7 +27,9 @@ from job_manager.schedulers import (
 
 from .fakes import make_host
 
-BASH = shutil.which("bash")
+from .bash_support import find_bash
+
+BASH = find_bash()
 
 
 class TestParsingASizeRequest(unittest.TestCase):

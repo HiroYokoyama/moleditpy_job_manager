@@ -33,6 +33,15 @@ _WINDOWS_BASH_CANDIDATES = (
     r"C:\Program Files (x86)\Git\bin\bash.exe",
 )
 
+#: Windows ships ``System32\bash.exe`` as the WSL launcher rather than as a
+#: POSIX shell, and it is ahead of Git's bash on PATH. It cannot see a Windows
+#: path at all -- every job directory handed to it comes back as "wsl: Failed to
+#: translate 'G:\\...'" -- so a host that picked it up would report a working
+#: shell and then fail every single job.
+_WSL_LAUNCHER = os.path.normcase(
+    os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "bash.exe")
+)
+
 #: Where PowerShell lives when it is not on PATH. Windows PowerShell 5.1 ships
 #: with the OS, so on Windows this practically always resolves.
 _POWERSHELL_CANDIDATES = (r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",)
@@ -46,7 +55,7 @@ SHELL_POWERSHELL = "powershell"
 INSTALL_HINT = (
     "This host needs a POSIX shell. Install Git for Windows (which provides "
     "bash) or use WSL; macOS and Linux already have one. To stay on Windows "
-    "with nothing to install, set the host's scheduler to \"None (Windows, "
+    "with nothing to install, set the host's scheduler to \"Built-in (Windows, "
     'PowerShell)" instead.'
 )
 
@@ -70,12 +79,21 @@ def find_powershell() -> str:
     return ""
 
 
+def is_wsl_launcher(path: str) -> bool:
+    """True for Windows' own ``bash.exe``, which is WSL's front door."""
+    if not path:
+        return False
+    # Compared as written rather than through abspath, so the answer does not
+    # depend on the platform the check happens to run on.
+    return os.path.normcase(path.replace("/", "\\")) == _WSL_LAUNCHER
+
+
 def find_shell(kind: str = SHELL_POSIX) -> str:
     """Path to a usable shell of this kind, or "" when there is none."""
     if kind == SHELL_POWERSHELL:
         return find_powershell()
     found = shutil.which("bash")
-    if found:
+    if found and not is_wsl_launcher(found):
         return found
     for candidate in _WINDOWS_BASH_CANDIDATES:
         if os.path.isfile(candidate):

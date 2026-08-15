@@ -32,7 +32,9 @@ from job_manager.store import JobStore
 from job_manager.models import MODE_LANES
 from .fakes import FakeTransport, make_host
 
-BASH = shutil.which("bash")
+from .bash_support import find_bash
+
+BASH = find_bash()
 
 
 class TestEverySchedulerCanRunOneJobAfterAnother(unittest.TestCase):

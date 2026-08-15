@@ -21,7 +21,9 @@ from job_manager.transport.base import TransportError
 
 from .fakes import FakeTransport, make_host, make_preset
 
-BASH = shutil.which("bash")
+from .bash_support import find_bash
+
+BASH = find_bash()
 
 #: A fake host answers "not there" to every existence check by default, which
 #: is what an unprepared directory looks like; tests that want a directory to

@@ -558,11 +558,11 @@ class TestTheProbeAgreesWithBash(unittest.TestCase):
         # The bash and PowerShell backends can both drive a Windows box (Git
         # Bash, WSL), and a host that reports 8 cores to one and 12 to the
         # other would schedule differently depending on which was chosen.
-        import shutil as _shutil
-
         from job_manager import remote_runner, remote_runner_ps
 
-        bash = _shutil.which("bash")
+        from .bash_support import find_bash
+
+        bash = find_bash()
         if not bash:
             self.skipTest("no bash to compare against")
         from_bash = subprocess.run(

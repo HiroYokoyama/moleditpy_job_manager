@@ -37,7 +37,9 @@ from job_manager.remote_runner import (
     prepare_command,
 )
 
-BASH = shutil.which("bash")
+from .bash_support import find_bash
+
+BASH = find_bash()
 
 #: How briskly the runner under test dispatches, and how long a "busy" job
 #: stays busy. Fast enough to keep the suite short, slow enough that a
