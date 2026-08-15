@@ -1482,6 +1482,18 @@ class TestJobDetails(DialogTestCase):
         dialog._save()
         self.assertEqual(self.job.name, "opt")
 
+    def test_closing_it_twice_does_not_raise(self):
+        # QDialogButtonBox emits rejected for a Close button, so wiring its
+        # clicked as well called reject() twice and finished fired twice. The
+        # second cleanup then raised ValueError out of a Qt slot, which the
+        # host reports to the user as a plugin crash.
+        dialog = self.details()
+
+        dialog.reject()
+        dialog.finished.emit(0)
+
+        self.assertNotIn(dialog, self.dialog._detail_dialogs)
+
     def test_details_works_for_an_archived_job(self):
         # It reads only what is recorded, so it needs no host and no network.
         self.dialog._archive_path = "/somewhere/jobs_2026.pmejbs"

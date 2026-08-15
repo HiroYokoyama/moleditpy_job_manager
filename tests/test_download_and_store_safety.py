@@ -75,6 +75,7 @@ class TestAnInterruptedDownload(unittest.TestCase):
 
         paths = fetch_results(self.transport, self.job, self.tmp)
 
+        # No patterns at all means everything, the wrapper's log included.
         self.assertIn(os.path.join(self.tmp, "job.log"), paths)
 
     def test_a_rename_that_fails_is_not_reported_as_a_download(self):

@@ -109,7 +109,8 @@ class JobDetailsDialog(QDialog):
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Close
         )
         buttons.button(QDialogButtonBox.StandardButton.Save).clicked.connect(self._save)
-        buttons.button(QDialogButtonBox.StandardButton.Close).clicked.connect(self.reject)
+        # Only through rejected: a Close button already emits it, and wiring
+        # its clicked as well called reject() twice, so finished fired twice.
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 

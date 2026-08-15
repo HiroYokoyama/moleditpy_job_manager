@@ -605,13 +605,27 @@ def fetch_results(
 ) -> List[str]:
     """Download everything in the job directory matching the fetch globs."""
     patterns = [p for p in (globs if globs is not None else (job.fetch_globs or [])) if p.strip()]
-    # The log is what the user reads first; always bring it back -- but adding
-    # it to an empty pattern list would turn "no filter, fetch everything" into
-    # "fetch the log and nothing else".
-    if patterns and job.log_file and job.log_file not in patterns:
-        patterns.append(job.log_file)
 
     names = select_files(list_remote_files(transport, job.remote_dir), patterns)
+    # The wrapper's own log is not a result: it holds whatever the command
+    # wrote to stdout and stderr, while the calculation's real output is the
+    # file the command was told to write. It used to be forced into every
+    # download, and `*.log` in the default patterns fetched it besides -- so a
+    # directory of results carried a job.log next to the .out nobody wanted to
+    # tell apart. It stays on the host, where Tail Log reads it live.
+    #
+    # Named exactly, it is still fetched: that is an explicit request, unlike a
+    # wildcard that happens to cover it. So is an empty pattern list, which
+    # means "everything in the directory" and is asked for on purpose.
+    #
+    # And only for a job that succeeded. When one fails, that log is usually
+    # the only evidence there is -- it holds the stderr nothing else recorded --
+    # so leaving it on the host would answer "why did this fail?" with an empty
+    # directory. rc is None for a job fetched while it is still running, which
+    # is another moment the log is exactly what was wanted.
+    succeeded = job.rc == 0
+    if succeeded and patterns and job.log_file and job.log_file not in patterns:
+        names = [name for name in names if name != job.log_file]
     os.makedirs(local_dir, exist_ok=True)
     # Results are downloaded next to the input by default, so the job's own
     # inputs are sitting in the target directory -- and a fetch glob of *.xyz

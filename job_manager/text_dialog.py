@@ -48,8 +48,9 @@ class TextDialog(QDialog):
             self.btn_refresh = QPushButton("Refresh")
             self.btn_refresh.clicked.connect(lambda: on_refresh())
             box.addButton(self.btn_refresh, QDialogButtonBox.ButtonRole.ActionRole)
+        # Close has RejectRole, so the box emits rejected for it. Connecting
+        # its clicked as well would call reject() twice and emit finished twice.
         box.rejected.connect(self.reject)
-        box.button(QDialogButtonBox.StandardButton.Close).clicked.connect(self.reject)
         layout.addWidget(box)
 
     def set_text(self, text: str) -> None:

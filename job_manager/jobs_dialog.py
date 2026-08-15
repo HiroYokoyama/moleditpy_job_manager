@@ -700,7 +700,15 @@ class JobsDialog(QDialog):
         dialog.show()
         # Held so Python does not collect the window the moment this returns.
         self._detail_dialogs.append(dialog)
-        dialog.finished.connect(lambda *_: self._detail_dialogs.remove(dialog))
+        # Discarded rather than removed: finished can arrive more than once for
+        # one window, and the second remove() raised ValueError out of a Qt
+        # slot -- which the host reports to the user as a plugin crash.
+        dialog.finished.connect(lambda *_: self._forget_detail(dialog))
+
+    def _forget_detail(self, dialog) -> None:
+        """Drop a closed details window, however many times we are told."""
+        if dialog in self._detail_dialogs:
+            self._detail_dialogs.remove(dialog)
 
     def _describe(self, job: Job) -> str:
         """The job record as text: what was asked for, and what happened."""

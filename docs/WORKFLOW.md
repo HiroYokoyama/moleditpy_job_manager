@@ -120,6 +120,18 @@ An input file is never overwritten by a downloaded result of the same name, so
 a fetch pattern of `*.xyz` against an input called `mol.xyz` leaves your file
 alone.
 
+**The wrapper's own `job.log` is not downloaded.** It holds whatever the command
+wrote to stdout and stderr, while the calculation's real output is the file the
+command was told to write — and `*.log` in the default patterns is there for
+Gaussian's output, which is a different file. It stays on the host, where **Tail
+Log** reads it live. Name it exactly in the fetch patterns, or clear the patterns
+altogether, and it comes back like anything else.
+
+**A job that failed keeps its log**, because then it is usually the only
+evidence there is — it holds the stderr nothing else recorded. So does a
+download asked for while the job is still running, which is normally asked for
+to read exactly that.
+
 ### Placeholders
 
 Both spellings work, so you never have to fight the shell:

@@ -290,17 +290,34 @@ class TestFileSelection(unittest.TestCase):
 class TestFetchResults(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="fetch_")
-        self.job = make_job(fetch_globs=["*.out"])
+        # rc=0: a job that finished cleanly, which is the only case where the
+        # wrapper's own log is dropped. A failure keeps it.
+        self.job = make_job(fetch_globs=["*.out"], rc=0)
         self.transport = FakeTransport().when("ls -p", stdout="mol.out\nmol.gbw\njob.log\n")
 
     def test_downloads_matching_files(self):
         paths = runner.fetch_results(self.transport, self.job, self.tmp)
         names = sorted(os.path.basename(p) for p in paths)
-        self.assertEqual(names, ["job.log", "mol.out"])
+        self.assertEqual(names, ["mol.out"])
 
-    def test_log_is_always_fetched_even_if_not_in_the_globs(self):
+    def test_the_wrappers_own_log_is_not_a_result(self):
+        # job.log holds whatever the command wrote to stdout and stderr; the
+        # calculation's real output is the file the command was told to write.
+        # It used to be forced into every download, so a directory of results
+        # carried a job.log next to the .out nobody wanted to tell apart.
         paths = runner.fetch_results(self.transport, self.job, self.tmp, globs=["*.out"])
-        self.assertTrue(any(p.endswith("job.log") for p in paths))
+        self.assertFalse(any(p.endswith("job.log") for p in paths))
+
+    def test_a_wildcard_that_covers_it_does_not_bring_it_back(self):
+        # *.log is in the default patterns for Gaussian's output, which is a
+        # different file entirely.
+        paths = runner.fetch_results(self.transport, self.job, self.tmp, globs=["*.log"])
+        self.assertEqual([os.path.basename(p) for p in paths], [])
+
+    def test_naming_it_exactly_still_fetches_it(self):
+        # An explicit request, unlike a wildcard that happens to cover it.
+        paths = runner.fetch_results(self.transport, self.job, self.tmp, globs=["job.log"])
+        self.assertEqual([os.path.basename(p) for p in paths], ["job.log"])
 
     def test_files_land_in_the_target_directory(self):
         paths = runner.fetch_results(self.transport, self.job, self.tmp)
@@ -314,8 +331,8 @@ class TestFetchResults(unittest.TestCase):
 
     def test_one_failed_download_does_not_abort_the_rest(self):
         self.transport.fail_downloads = ("mol.out",)
-        paths = runner.fetch_results(self.transport, self.job, self.tmp)
-        self.assertEqual([os.path.basename(p) for p in paths], ["job.log"])
+        paths = runner.fetch_results(self.transport, self.job, self.tmp, globs=["*.out", "*.gbw"])
+        self.assertEqual([os.path.basename(p) for p in paths], ["mol.gbw"])
 
     def test_nothing_matching_returns_empty(self):
         job = make_job(fetch_globs=["*.nothing"], log_file="")
@@ -408,7 +425,9 @@ class TestRoundTrip(unittest.TestCase):
         transport.clear_rules()
         transport.when("ls -p", stdout="mol.out\njob.log\nmol.tmp\n")
         downloaded = runner.fetch_results(transport, job, os.path.join(tmp, "results"))
-        self.assertEqual(sorted(os.path.basename(p) for p in downloaded), ["job.log", "mol.out"])
+        # The wrapper's own log stays on the host; the calculation's output is
+        # what comes back.
+        self.assertEqual(sorted(os.path.basename(p) for p in downloaded), ["mol.out"])
 
 
 class TestAnInputIsNeverOverwritten(unittest.TestCase):
