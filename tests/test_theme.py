@@ -129,9 +129,9 @@ class TestHostMonitorDialogTheme(HostMonitorTestCase):
         self.assertIn("#f6f8fa", dialog.styleSheet())
         self.assertNotIn("#16181a", dialog.styleSheet())
 
-    def test_window_title_says_hosts_monitor(self):
+    def test_window_title_says_host_monitor(self):
         dialog = self.monitor()
-        self.assertIn("Hosts Monitor", dialog.windowTitle())
+        self.assertIn("Host Monitor", dialog.windowTitle())
 
 
 # ---------------------------------------------------------------------------
@@ -168,10 +168,10 @@ class TestStateColours(DialogTestCase):
         self.addCleanup(dialog.deleteLater)
         self.assertIn(theme.CY_AMBER, dialog.lbl_interval_warning.styleSheet())
 
-    def test_hosts_monitor_button_renamed(self):
+    def test_host_monitor_button_renamed(self):
         dialog = JobsDialog(self.service)
         self.addCleanup(dialog.deleteLater)
-        self.assertIn("Hosts Monitor", dialog.btn_host_monitor.text())
+        self.assertIn("Host Monitor", dialog.btn_host_monitor.text())
         self.assertNotIn("Hosts at Work", dialog.btn_host_monitor.text())
 
 
@@ -306,7 +306,7 @@ class TestStatusWidgetDarkModeFix(DialogTestCase):
 
 
 class TestActiveJobsBar(HostMonitorTestCase):
-    """The running-jobs strip at the bottom of the Hosts Monitor."""
+    """The running-jobs strip at the bottom of the Host Monitor."""
 
     def _bar(self):
         bar = _ActiveJobsBar(self.service)

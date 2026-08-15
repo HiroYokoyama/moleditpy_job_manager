@@ -316,7 +316,7 @@ class JobsDialog(QDialog):
         self.btn_hosts.clicked.connect(self.open_hosts_dialog)
         self.btn_refresh = QPushButton("Refresh Now")
         self.btn_refresh.clicked.connect(self._refresh_now)
-        self.btn_host_monitor = QPushButton("Hosts Monitor...")
+        self.btn_host_monitor = QPushButton("Host Monitor...")
         self.btn_host_monitor.setToolTip(
             "Live load and memory for every host, with a graph each.\n\n"
             "Asks each host once every couple of seconds -- but only while that "

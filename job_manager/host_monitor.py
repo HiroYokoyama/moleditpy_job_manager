@@ -677,7 +677,7 @@ class HostMonitorDialog(QDialog):
     def __init__(self, service, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.service = service
-        self.setWindowTitle(f"Job Manager {PLUGIN_VERSION} - Hosts Monitor")
+        self.setWindowTitle(f"Job Manager {PLUGIN_VERSION} - Host Monitor")
         make_independent(self)
         # Wide enough for two columns of cards from the start: one column looks
         # like a list of three things, and two is where the layout reads as a
