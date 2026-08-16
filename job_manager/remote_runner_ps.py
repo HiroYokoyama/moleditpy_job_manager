@@ -55,6 +55,13 @@ ENTRY_SUFFIX = ".ps1"
 
 #: How the runner starts a job, and how the plugin starts the runner.
 _PS_ARGS = "'-NoProfile','-ExecutionPolicy','Bypass','-File'"
+#: PowerShell 7 must launch its children with pwsh; Windows PowerShell uses
+#: powershell.exe. Resolve from the current interpreter so a host that selects
+#: one never silently starts the other.
+_PS_SHELL = (
+    "if ($PSEdition -eq 'Core') { Join-Path $PSHOME 'pwsh.exe' } "
+    "else { Join-Path $PSHOME 'powershell.exe' }"
+)
 
 
 def _join(*parts: str) -> str:
@@ -101,7 +108,8 @@ def build_job_script(
         # Windows PowerShell 5.1 is Out-File, which writes UTF-16 with a BOM --
         # the job's log would come back in an encoding nothing downstream can
         # read. Start-Process copies the child's bytes through untouched.
-        "$__moleditpy_p = Start-Process -FilePath powershell -ArgumentList "
+        f"$__moleditpy_shell = {_PS_SHELL}",
+        "$__moleditpy_p = Start-Process -FilePath $__moleditpy_shell -ArgumentList "
         f"{_PS_ARGS},{ps_quote(_join(job_dir, script_name))} "
         f"-WorkingDirectory {ps_quote(job_dir)} "
         f"-RedirectStandardOutput {ps_quote(_join(job_dir, log_name))} "
@@ -133,6 +141,7 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
             # pwsh 7. Everything handed to Start-Process is therefore absolute,
             # so neither reading is wrong.
             f"$__moleditpy_dir = {quoted}",
+            f"$__moleditpy_shell = {_PS_SHELL}",
             "",
             "function Get-DirCount($name) {",
             "    return @(Get-ChildItem -LiteralPath $name -File "
@@ -308,7 +317,7 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
             "            Move-Item -LiteralPath ('queue\\' + $entry) "
             "-Destination ('running\\' + $entry) -ErrorAction Stop",
             "        } catch { continue }",
-            "        $proc = Start-Process -FilePath powershell -ArgumentList "
+            "        $proc = Start-Process -FilePath $__moleditpy_shell -ArgumentList "
             f"{_PS_ARGS},(Join-Path $__moleditpy_dir ('running\\' + $entry)) "
             "-WorkingDirectory $__moleditpy_dir -WindowStyle Hidden -PassThru",
             "        Set-Content -Path ('pids\\' + $entry) -Value $proc.Id -Encoding ascii",
@@ -462,7 +471,8 @@ def ensure_runner_command(directory: str, script_name: str) -> str:
         # Absolute, and with an explicit working directory: Start-Process
         # resolves relative paths against PowerShell's location in pwsh 7 and
         # against the process's working directory in 5.1.
-        f"$proc = Start-Process -FilePath powershell -ArgumentList {_PS_ARGS},"
+        f"$__moleditpy_shell = {_PS_SHELL}; "
+        f"$proc = Start-Process -FilePath $__moleditpy_shell -ArgumentList {_PS_ARGS},"
         f"{ps_quote(_join(directory, script_name))} "
         f"-WorkingDirectory {quoted} -WindowStyle Hidden -PassThru "
         f"-RedirectStandardOutput {ps_quote(_join(directory, RUNNER_LOG_NAME))} "

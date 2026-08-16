@@ -40,14 +40,25 @@ from job_manager.transport.local import LocalTransport
 
 from .fakes import make_preset
 
-from .bash_support import find_bash
+from .bash_support import bash_path, find_bash
 
 BASH = find_bash()
 POWERSHELL = shutil.which("pwsh") or shutil.which("powershell")
+
+
+class E2ELocalTransport(LocalTransport):
+    """Use native paths for file copies and Git Bash paths for commands."""
+
+    def run(self, command: str, timeout=None):
+        if self.kind == "posix":
+            command = command.replace(self.host.remote_root, bash_path(self.host.remote_root))
+        return super().run(command, timeout=timeout)
+
+
 ON_WINDOWS = os.name == "nt" and POWERSHELL is not None
 
 #: Seconds between the helper's dispatch rounds, in place of production's 5.
-DISPATCH_POLL = 0.5
+DISPATCH_POLL = 0.1
 
 
 class EndToEndCase(unittest.TestCase):
@@ -68,27 +79,31 @@ class EndToEndCase(unittest.TestCase):
             scheduler=self.scheduler,
             concurrency_mode=MODE_RUNNER,
             remote_root=os.path.join(self.root, "jobs").replace("\\", "/"),
+            load_profile=False,
         )
         self.directory = remote_runner.runner_dir(self.host.remote_root)
 
     def _speed_up_the_dispatch_loop(self):
-        """Poll faster than production, and nothing else.
+        """Poll faster than production, without changing runner behaviour."""
+        # Keep native paths for LocalTransport's file copies, but give the
+        # generated Bash script the /d/... spelling Git Bash can resolve.
+        bash_build = remote_runner.build_runner_script
+        bash_patcher = patch.object(
+            remote_runner,
+            "build_runner_script",
+            lambda directory: bash_build(bash_path(directory), poll_seconds=DISPATCH_POLL),
+        )
+        bash_patcher.start()
+        self.addCleanup(bash_patcher.stop)
 
-        These tests go through the real submit path, so the helper they start
-        sleeps ``RUNNER_POLL_SECONDS`` (5) between dispatches -- every job here
-        waited out a five-second tick it had nothing to do with, and the two-job
-        tests waited out two. The interval is a parameter of the script, not any
-        of the behaviour under test.
-        """
-        for module in (remote_runner, remote_runner_ps):
-            original = module.build_runner_script
-            patcher = patch.object(
-                module,
-                "build_runner_script",
-                lambda directory, _build=original: _build(directory, poll_seconds=DISPATCH_POLL),
-            )
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        powershell_build = remote_runner_ps.build_runner_script
+        powershell_patcher = patch.object(
+            remote_runner_ps,
+            "build_runner_script",
+            lambda directory: powershell_build(directory, poll_seconds=DISPATCH_POLL),
+        )
+        powershell_patcher.start()
+        self.addCleanup(powershell_patcher.stop)
 
     def _cleanup(self):
         # The runner exits when its queue empties; give it a moment, then take
@@ -100,20 +115,38 @@ class EndToEndCase(unittest.TestCase):
         return os.path.join(self.root, name).replace("\\", "/")
 
     def command_that_touches(self, path: str) -> str:
-        return f"touch {path}"
+        return f"touch {bash_path(path)}"
+
+    def transport(self):
+        return E2ELocalTransport(self.host)
 
     def submit(self, name="opt", command=None) -> Job:
         job = Job(name=name, host_id="h", scheduler=self.scheduler)
         preset = make_preset(command_template=command or self.command_that_touches(self.marker()))
-        return submit_to_runner(LocalTransport(self.host), self.host, preset, job, [self.input])
+        return submit_to_runner(self.transport(), self.host, preset, job, [self.input])
 
-    def wait_for(self, predicate, timeout=60.0, what="condition"):
+    def wait_for(self, predicate, timeout=15.0, what="condition"):
         deadline = time.time() + timeout
         while time.time() < deadline:
             if predicate():
                 return True
-            time.sleep(0.1)
-        queue = os.listdir(os.path.join(self.directory, "queue"))
+            queue = self.listed("queue")
+            running = self.listed("running")
+            # The local helper is detached by design, so its process cannot be
+            # polled here. Once both directories are empty it has exited;
+            # waiting longer would only hide a shell/path failure.
+            if not queue and not running:
+                log = os.path.join(self.directory, remote_runner.RUNNER_LOG_NAME)
+                detail = ""
+                if os.path.exists(log):
+                    with open(log, encoding="utf-8", errors="replace") as handle:
+                        detail = handle.read().strip()[:300]
+                self.fail(
+                    f"runner stopped before {what}; queue={queue}; "
+                    f"runner.log={detail!r}"
+                )
+            time.sleep(0.05)
+        queue = self.listed("queue")
         log = os.path.join(self.directory, remote_runner.RUNNER_LOG_NAME)
         detail = ""
         if os.path.exists(log):
@@ -162,11 +195,11 @@ class TestBashEndToEnd(EndToEndCase):
         self.wait_for(lambda: os.path.exists(self.marker()), what="the job to run")
 
         self.wait_for(
-            lambda: poll_runner(LocalTransport(self.host), self.host, [job]).get(job.id)
+            lambda: poll_runner(self.transport(), self.host, [job]).get(job.id)
             in ("DONE", "FAILED"),
             what="the poll to see it finish",
         )
-        self.assertEqual(poll_runner(LocalTransport(self.host), self.host, [job])[job.id], "DONE")
+        self.assertEqual(poll_runner(self.transport(), self.host, [job])[job.id], "DONE")
 
     def test_a_second_job_runs_too(self):
         # The runner may have exited after the first; the next submission has
@@ -184,7 +217,7 @@ class TestBashEndToEnd(EndToEndCase):
         command = remote_runner.flavour_for(self.host).ensure_runner_command(
             self.directory, "moleditpy_runner_deadbeef.sh"
         )
-        transport = LocalTransport(self.host)
+        transport = self.transport()
         transport.run(remote_runner.prepare_command(self.directory))
 
         self.assertIn("missing", transport.run(command).stdout)
@@ -203,7 +236,7 @@ class TestPowerShellEndToEnd(TestBashEndToEnd):
         command = remote_runner.flavour_for(self.host).ensure_runner_command(
             self.directory, "moleditpy_runner_deadbeef.ps1"
         )
-        transport = LocalTransport(self.host)
+        transport = self.transport()
         transport.run(remote_runner.flavour_for(self.host).prepare_command(self.directory))
 
         self.assertIn("missing", transport.run(command).stdout)

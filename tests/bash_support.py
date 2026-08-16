@@ -17,6 +17,7 @@ interpreter.
 
 from __future__ import annotations
 
+import ntpath
 import os
 import shutil
 import subprocess
@@ -51,7 +52,7 @@ def _runs_a_script(path: str) -> bool:
     with handle:
         handle.write(f"echo {TOKEN}\n")
     try:
-        result = subprocess.run([path, handle.name], capture_output=True, text=True, timeout=30)
+        result = subprocess.run([path, handle.name], capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.SubprocessError):
         return False
     finally:
@@ -60,6 +61,15 @@ def _runs_a_script(path: str) -> bool:
         except OSError:
             pass
     return TOKEN in (result.stdout or "")
+
+
+def bash_path(path: str) -> str:
+    """Convert a local absolute path to the spelling Git Bash can access."""
+    text = os.path.expanduser(str(path)).replace("\\", "/")
+    drive, tail = ntpath.splitdrive(text)
+    if os.name == "nt" and len(drive) == 2 and drive[1] == ":":
+        return f"/{drive[0].lower()}{tail}"
+    return text
 
 
 def find_bash() -> Optional[str]:
@@ -78,4 +88,4 @@ def find_bash() -> Optional[str]:
 #: Probed once per process; the probe is a single sub-second subprocess.
 BASH = find_bash()
 
-__all__ = ["BASH", "find_bash"]
+__all__ = ["BASH", "bash_path", "find_bash"]

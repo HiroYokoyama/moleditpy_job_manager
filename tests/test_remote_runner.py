@@ -11,6 +11,7 @@ between "the queue is empty" and "the lock is gone" must not be dropped.
 """
 
 import os
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -37,7 +38,7 @@ from job_manager.remote_runner import (
     prepare_command,
 )
 
-from .bash_support import find_bash
+from .bash_support import bash_path, find_bash
 
 BASH = find_bash()
 
@@ -45,7 +46,7 @@ BASH = find_bash()
 #: stays busy. Fast enough to keep the suite short, slow enough that a
 #: loaded machine still observes the intermediate states.
 POLL = 0.1
-BUSY = 0.9
+BUSY = 0.5
 needs_bash = pytest.mark.skipif(BASH is None, reason="no bash on this machine")
 
 
@@ -57,8 +58,8 @@ class RunnerHarness(unittest.TestCase):
             self.skipTest("no bash on this machine")
         self.tmp = tempfile.mkdtemp(prefix="remote_runner_")
         self.addCleanup(self._cleanup)
-        self.dir = os.path.join(self.tmp, "runner").replace("\\", "/")
-        self.jobs = os.path.join(self.tmp, "jobs").replace("\\", "/")
+        self.dir = os.path.join(self.tmp, "runner")
+        self.jobs = os.path.join(self.tmp, "jobs")
         for name in SUBDIRS:
             os.makedirs(os.path.join(self.dir, name), exist_ok=True)
         os.makedirs(self.jobs, exist_ok=True)
@@ -66,13 +67,19 @@ class RunnerHarness(unittest.TestCase):
         # Sub-second, so a test does not spend its life waiting for a poll;
         # production passes RUNNER_POLL_SECONDS (5).
         with open(self.script_path, "w", encoding="utf-8", newline="\n") as handle:
-            handle.write(build_runner_script(self.dir, poll_seconds=POLL))
+            handle.write(build_runner_script(bash_path(self.dir), poll_seconds=POLL))
         self.processes = []
 
     def _cleanup(self):
         for process in self.processes:
             if process.poll() is None:
                 process.kill()
+            try:
+                process.wait(timeout=2)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+            if process.stderr:
+                process.stderr.close()
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     # --- driving it ---------------------------------------------------------
@@ -85,10 +92,10 @@ class RunnerHarness(unittest.TestCase):
         self, job_id: str, body: str, cores: int = 1, after: str = "", require_success: bool = True
     ) -> str:
         """Write a job's wrapper and queue a script for it, as the plugin does."""
-        job_dir = os.path.join(self.jobs, job_id).replace("\\", "/")
+        job_dir = os.path.join(self.jobs, job_id)
         os.makedirs(job_dir, exist_ok=True)
         with open(os.path.join(job_dir, "run.sh"), "w", encoding="utf-8", newline="\n") as handle:
-            handle.write("#!/bin/bash\n" + body + "\n")
+            handle.write("#!/bin/bash\n" + body.replace(self.tmp, bash_path(self.tmp)).replace("\\", "/") + "\n")
 
         existing = []
         for name in ("queue", "running", "done"):
@@ -96,11 +103,11 @@ class RunnerHarness(unittest.TestCase):
         entry = entry_name(next_sequence(existing), job_id)
 
         script = build_job_script(
-            job_dir,
+            bash_path(job_dir),
             "run.sh",
             "job.log",
             entry=entry,
-            directory=self.dir,
+            directory=bash_path(self.dir),
             job_name=job_id,
             after_job_id=after,
             require_success=require_success,
@@ -116,19 +123,30 @@ class RunnerHarness(unittest.TestCase):
 
     def start_runner(self):
         process = subprocess.Popen(
-            [BASH, self.script_path],
+            [BASH, "-lc", f"exec bash {shlex.quote(bash_path(self.script_path))}"],
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
         )
         self.processes.append(process)
         os.makedirs(os.path.join(self.dir, "lock"), exist_ok=True)
         return process
 
-    def wait_for(self, predicate, timeout: float = 25.0, what: str = "condition"):
+    def wait_for(self, predicate, timeout: float = 10.0, what: str = "condition"):
         deadline = time.time() + timeout
         while time.time() < deadline:
             if predicate():
                 return True
+            # A runner that has already exited cannot satisfy a filesystem
+            # condition. Report its stderr immediately instead of spending
+            # the whole timeout waiting for a marker that will never appear.
+            process = self.processes[-1] if self.processes else None
+            if process is not None and process.poll() is not None:
+                stderr = (process.stderr.read() if process.stderr else "").strip()
+                self.fail(
+                    f"runner exited with rc={process.returncode} while waiting for {what}; "
+                    f"queue={self.listing()}; stderr={stderr!r}"
+                )
             time.sleep(0.05)
         self.fail(f"timed out waiting for {what}; queue={self.listing()}")
 
@@ -149,7 +167,7 @@ class RunnerHarness(unittest.TestCase):
     def marker(self, name: str) -> str:
         # Forward slashes: this path is pasted into a shell script, and a
         # Windows backslash there is an escape, not a separator.
-        return os.path.join(self.tmp, name).replace("\\", "/")
+        return os.path.join(self.tmp, name)
 
 
 @needs_bash
@@ -344,7 +362,7 @@ class TestPause(RunnerHarness):
 
         self.start_runner()
 
-        time.sleep(1.5)
+        time.sleep(BUSY)
         self.assertFalse(os.path.exists(self.marker("ran")))
         self.assertEqual(self.listing().get("aaa"), "queue")
 
@@ -353,7 +371,7 @@ class TestPause(RunnerHarness):
         open(paused, "w").close()
         self.enqueue("aaa", f"touch {self.marker('ran')}")
         self.start_runner()
-        time.sleep(1.2)
+        time.sleep(BUSY)
 
         os.remove(paused)
 
@@ -361,7 +379,8 @@ class TestPause(RunnerHarness):
 
     def run_command(self, command: str) -> int:
         """Run one of the plugin's own commands, as the transport would."""
-        return subprocess.run([BASH, "-c", command], timeout=60).returncode
+        command = command.replace(self.tmp, bash_path(self.tmp))
+        return subprocess.run([BASH, "-lc", command], timeout=10).returncode
 
     def test_the_plugins_own_pause_command_holds_the_queue(self):
         # The tests above make the flag by hand, which proves the runner reads
@@ -372,7 +391,7 @@ class TestPause(RunnerHarness):
         self.assertEqual(self.run_command(pause_command(self.dir, True)), 0)
         self.start_runner()
 
-        time.sleep(1.5)
+        time.sleep(BUSY)
         self.assertFalse(os.path.exists(self.marker("ran")))
         self.assertEqual(self.listing().get("aaa"), "queue")
 
@@ -380,7 +399,7 @@ class TestPause(RunnerHarness):
         self.enqueue("aaa", f"touch {self.marker('ran')}")
         self.run_command(pause_command(self.dir, True))
         self.start_runner()
-        time.sleep(1.0)
+        time.sleep(BUSY)
 
         self.assertEqual(self.run_command(pause_command(self.dir, False)), 0)
 
@@ -391,11 +410,17 @@ class TestPause(RunnerHarness):
         # checkbox shows the opposite of what the host is doing.
         self.run_command(pause_command(self.dir, True))
         held = subprocess.run(
-            [BASH, "-c", is_paused_command(self.dir)], capture_output=True, text=True, timeout=60
+            [BASH, "-lc", is_paused_command(self.dir).replace(self.tmp, bash_path(self.tmp))],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         self.run_command(pause_command(self.dir, False))
         moving = subprocess.run(
-            [BASH, "-c", is_paused_command(self.dir)], capture_output=True, text=True, timeout=60
+            [BASH, "-lc", is_paused_command(self.dir).replace(self.tmp, bash_path(self.tmp))],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
 
         self.assertEqual(held.stdout.strip(), PAUSED_NAME)
@@ -404,7 +429,7 @@ class TestPause(RunnerHarness):
     def test_pausing_a_host_that_has_never_run_a_queue_works(self):
         # The controls are reachable before the first submission, so the flag
         # has to be settable on a directory that does not exist yet.
-        fresh = os.path.join(self.tmp, "never_used").replace("\\", "/")
+        fresh = os.path.join(self.tmp, "never_used")
 
         self.run_command(prepare_command(fresh))
         self.assertEqual(self.run_command(pause_command(fresh, True)), 0)
