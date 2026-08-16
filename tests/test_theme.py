@@ -495,7 +495,6 @@ class TestHostCardJobsStrip(HostMonitorTestCase):
         self.assertIn("job2", text)
         self.assertIn("task 1/3 done", text)
 
-
     def test_card_updates_on_jobs_changed(self):
         dialog = self.monitor()
         card = dialog.cards[self.host.id]

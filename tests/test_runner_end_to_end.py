@@ -141,10 +141,7 @@ class EndToEndCase(unittest.TestCase):
                 if os.path.exists(log):
                     with open(log, encoding="utf-8", errors="replace") as handle:
                         detail = handle.read().strip()[:300]
-                self.fail(
-                    f"runner stopped before {what}; queue={queue}; "
-                    f"runner.log={detail!r}"
-                )
+                self.fail(f"runner stopped before {what}; queue={queue}; runner.log={detail!r}")
             time.sleep(0.05)
         queue = self.listed("queue")
         log = os.path.join(self.directory, remote_runner.RUNNER_LOG_NAME)

@@ -134,9 +134,7 @@ def prepare_remote_dir(transport: Transport, host: HostProfile, job: Job) -> Non
                     "Remote input must be a relative file name inside the remote directory"
                 )
             job.remote_input = safe_input
-            require_remote_path(
-                transport, host, remote_paths.join(job.remote_dir, safe_input)
-            )
+            require_remote_path(transport, host, remote_paths.join(job.remote_dir, safe_input))
         return
     job.remote_dir = job.remote_dir or make_remote_dir(host, job.name, job_id=job.id)
     transport.mkdirs(job.remote_dir)
@@ -825,4 +823,3 @@ __all__ = [
     "tail_log",
     "tail_remote_file",
 ]
-

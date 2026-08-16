@@ -550,16 +550,11 @@ class HostCard(QFrame):
             return
 
         total = len(jobs)
-        done = sum(
-            1
-            for j in jobs
-            if getattr(j, "state", "").upper() in ("DONE", "COMPLETED")
-        )
+        done = sum(1 for j in jobs if getattr(j, "state", "").upper() in ("DONE", "COMPLETED"))
         running = [
             j
             for j in jobs
-            if getattr(j, "is_active", False)
-            and getattr(j, "state", "").upper() == "RUNNING"
+            if getattr(j, "is_active", False) and getattr(j, "state", "").upper() == "RUNNING"
         ]
         queued = sum(
             1
@@ -586,11 +581,7 @@ class HostCard(QFrame):
 
         line2 = f"<span style='color:#8b949e;font-size:11px'>task {done}/{total} done</span>"
 
-        self.lbl_jobs.setText(
-            f"<div style='line-height:1.2'>{line1}<br>{line2}</div>"
-        )
-
-
+        self.lbl_jobs.setText(f"<div style='line-height:1.2'>{line1}<br>{line2}</div>")
 
     # --- what a sample changes ----------------------------------------------
 
@@ -815,7 +806,6 @@ class HostMonitorDialog(QDialog):
         if hasattr(self, "_jobs_bar") and self._jobs_bar is not None:
             self._jobs_bar.teardown()
 
-
     def _on_job_updated(self, _job_id: str = "") -> None:
         self._refresh_card_jobs()
 
@@ -874,7 +864,6 @@ class HostMonitorDialog(QDialog):
         pal = dark_palette(self._light_palette) if dark else self._light_palette
         self.setPalette(pal)
 
-
         # Both branches set an explicit stylesheet -- an empty one for "light"
         # left buttons and fields on whatever native chrome the platform style
         # drew, which is a different size than the dark-mode style's own
@@ -915,7 +904,6 @@ class HostMonitorDialog(QDialog):
         if hasattr(self, "_jobs_bar") and self._jobs_bar is not None:
             self._jobs_bar.refresh()
         self.update()
-
 
     # --- sampling -----------------------------------------------------------
 
@@ -1072,8 +1060,6 @@ class HostMonitorDialog(QDialog):
         for host_id in list(self._transports):
             self._close_transport(host_id)
         super().done(r)
-
-
 
 
 class _ActiveJobsBar(QWidget):

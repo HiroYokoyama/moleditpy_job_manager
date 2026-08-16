@@ -136,10 +136,6 @@ class SubmitDialog(QDialog):
                 self._apply_suggested_template(force=False)
         self._refresh_preview()
 
-
-
-
-
     # --- construction -------------------------------------------------------
 
     @staticmethod
@@ -380,8 +376,6 @@ class SubmitDialog(QDialog):
         self.txt_memory.setEnabled(not self.chk_scan_resources.isChecked())
         self.lbl_scanned = QLabel("")
 
-
-
         self.lbl_scanned.setWordWrap(True)
         self.lbl_scanned.setStyleSheet("color: palette(mid);")
         self.lbl_scanned.setVisible(False)
@@ -472,7 +466,6 @@ class SubmitDialog(QDialog):
         dl_root_layout.setContentsMargins(0, 0, 0, 0)
         dl_root_layout.addWidget(self.txt_download_root, 1)
         dl_root_layout.addWidget(self.btn_browse_download_root)
-
 
         self.chk_chain = QCheckBox("Run after the job already queued on this host")
         self.chk_chain.setToolTip(
@@ -581,8 +574,6 @@ class SubmitDialog(QDialog):
         self.chk_beside_input.setEnabled(checked)
         self.txt_download_root.setEnabled(checked)
         self.btn_browse_download_root.setEnabled(checked)
-
-
 
     def _build_preview_tab(self) -> QWidget:
         page = QWidget()
@@ -826,7 +817,6 @@ class SubmitDialog(QDialog):
         )
         return preset
 
-
     # --- command templates --------------------------------------------------
 
     def _reload_templates(self) -> None:
@@ -1066,7 +1056,6 @@ class SubmitDialog(QDialog):
             )
             self.lbl_scanned.setVisible(True)
 
-
     def _on_scan_resources_toggled(self, checked: bool) -> None:
         """Remember the choice, disable/enable inputs, and act on it for the file already chosen."""
         self.store.set_pref("scan_resources", bool(checked))
@@ -1078,7 +1067,6 @@ class SubmitDialog(QDialog):
         files = self.selected_files()
         if files:
             self._apply_scanned_resources(files[0])
-
 
     # --- drops ---------------------------------------------------------------
 

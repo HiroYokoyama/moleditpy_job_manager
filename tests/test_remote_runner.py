@@ -95,7 +95,11 @@ class RunnerHarness(unittest.TestCase):
         job_dir = os.path.join(self.jobs, job_id)
         os.makedirs(job_dir, exist_ok=True)
         with open(os.path.join(job_dir, "run.sh"), "w", encoding="utf-8", newline="\n") as handle:
-            handle.write("#!/bin/bash\n" + body.replace(self.tmp, bash_path(self.tmp)).replace("\\", "/") + "\n")
+            handle.write(
+                "#!/bin/bash\n"
+                + body.replace(self.tmp, bash_path(self.tmp)).replace("\\", "/")
+                + "\n"
+            )
 
         existing = []
         for name in ("queue", "running", "done"):

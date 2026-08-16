@@ -123,7 +123,10 @@ class TailFileDialog(QDialog):
             self.tree.setCurrentItem(default_item)
             self._selected_path = default_item.data(0, PATH_ROLE) or ""
         elif names:
-            def find_first_file(parent_item: Optional[QTreeWidgetItem] = None) -> Optional[QTreeWidgetItem]:
+
+            def find_first_file(
+                parent_item: Optional[QTreeWidgetItem] = None,
+            ) -> Optional[QTreeWidgetItem]:
                 count = parent_item.childCount() if parent_item else self.tree.topLevelItemCount()
                 for i in range(count):
                     item = parent_item.child(i) if parent_item else self.tree.topLevelItem(i)
@@ -168,4 +171,3 @@ class TailFileDialog(QDialog):
             if path:
                 return str(path)
         return ""
-

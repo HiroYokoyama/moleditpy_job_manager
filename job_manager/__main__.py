@@ -17,6 +17,8 @@ from PyQt6.QtWidgets import QApplication
 from . import PLUGIN_VERSION
 from .jobs_dialog import JobsDialog
 from .service import JobService
+
+
 def main() -> int:
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName(f"Job Manager {PLUGIN_VERSION}")
@@ -35,7 +37,6 @@ def main() -> int:
         return app.exec()
     finally:
         service.shutdown()
-
 
 
 if __name__ == "__main__":

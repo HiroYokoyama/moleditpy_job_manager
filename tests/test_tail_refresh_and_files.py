@@ -64,7 +64,6 @@ def test_text_dialog_auto_refresh(qapp):
     assert not dlg._timer.isActive()
 
 
-
 def test_tail_remote_file_runner():
     mock_transport = MagicMock()
     mock_transport.host.scheduler = "none"
@@ -93,4 +92,3 @@ def test_service_tail_file(service, temp_store, qapp):
         service.pool.waitForDone(2000)
         qapp.processEvents()
         assert results == ["specific tail contents"]
-

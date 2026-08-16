@@ -95,7 +95,6 @@ DEFAULT_PREFS: Dict[str, Any] = {
     "auto_download": True,
     "download_all_outputs": True,
     "open_result_after_download": True,
-
     #: Off by default: the application icon belongs to the host, not to a
     #: plugin, and a badge is a change to how MoleditPy looks in the user's
     #: task bar. The status bar counter is always there and costs nobody
@@ -603,11 +602,7 @@ class JobStore:
         payload = read_json(path, {}) or {}
         if not isinstance(payload, dict):
             return [], False
-        jobs = [
-            Job.from_dict(raw)
-            for raw in payload.get("jobs") or []
-            if isinstance(raw, dict)
-        ]
+        jobs = [Job.from_dict(raw) for raw in payload.get("jobs") or [] if isinstance(raw, dict)]
         return jobs, bool(payload.get("archived", False))
 
     def use_jobs_file(self, path: str) -> int:

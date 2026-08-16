@@ -1406,7 +1406,6 @@ class TestCommandTemplateDropdown(DialogTestCase):
         self.assertEqual(templates[0]["label"], "Mine")
         self.assertEqual(templates[0]["command"], "orca [input] > [output]")
 
-
     def test_saving_an_empty_command_is_refused(self):
         self.dialog.txt_command.setText("   ")
         with patch("job_manager.submit_dialog.QMessageBox.information") as warned:

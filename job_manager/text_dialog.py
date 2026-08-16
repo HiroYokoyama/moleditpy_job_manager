@@ -63,7 +63,9 @@ class TextDialog(QDialog):
 
         if on_refresh is not None:
             self.chk_auto_refresh = QCheckBox("Auto-refresh")
-            self.chk_auto_refresh.setToolTip("Periodically refresh the log tail while this window is open.")
+            self.chk_auto_refresh.setToolTip(
+                "Periodically refresh the log tail while this window is open."
+            )
             self.spin_interval = QSpinBox()
             self.spin_interval.setRange(1, 120)
             self.spin_interval.setValue(max(1, auto_interval))
@@ -79,7 +81,6 @@ class TextDialog(QDialog):
             bottom_row.addWidget(self.lbl_interval)
             bottom_row.addWidget(self.spin_interval)
             bottom_row.addSpacing(12)
-
 
         bottom_row.addStretch(1)
 
@@ -127,7 +128,6 @@ class TextDialog(QDialog):
         self._timer.stop()
         super().hideEvent(event)
 
-
     def set_text(self, text: str) -> None:
         """Replace the contents, keeping the view scrolled to the end.
 
@@ -151,4 +151,3 @@ class TextDialog(QDialog):
 
 
 __all__ = ["TextDialog"]
-

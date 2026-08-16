@@ -162,5 +162,4 @@ def suggest(filename: str) -> Optional[CommandTemplate]:
     return None
 
 
-
 __all__ = ["CommandTemplate", "TEMPLATES", "extension_of", "suggest", "templates_for"]

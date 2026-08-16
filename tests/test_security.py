@@ -127,7 +127,6 @@ class TestOpeningAJobListCannotLeakSecrets(unittest.TestCase):
             self.assertNotIn(f'"{field}"', written, field)
 
 
-
 class TestTailPathsStayInsideTheJobDirectory(unittest.TestCase):
     def test_unsafe_log_name_is_not_sent_to_the_host(self):
         transport = FakeTransport(make_host())

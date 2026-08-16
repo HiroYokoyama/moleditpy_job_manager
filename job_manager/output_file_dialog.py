@@ -57,7 +57,6 @@ def describe_file_type(filename: str) -> str:
     return _TYPE_MAP.get(ext, f"{ext.upper().lstrip('.')} File" if ext else "File")
 
 
-
 def _is_within(path: str, root: str) -> bool:
     """Return whether ``path`` is inside ``root`` on the current OS."""
     try:
@@ -275,7 +274,6 @@ class OutputFileSelectorDialog(QDialog):
 
         self.lbl_status.setText(f"{len(paths)} file(s) available locally.")
         self.btn_open_folder.setEnabled(True)
-
 
     def _fetch_remote_listing(self) -> None:
         """Query host for file list in the remote directory."""
@@ -555,7 +553,6 @@ class OutputFileSelectorDialog(QDialog):
                 "No local directory has been created for this job yet.\n"
                 "Open a file or download results first.",
             )
-
 
 
 __all__ = ["OutputFileSelectorDialog", "describe_file_type", "format_file_size"]

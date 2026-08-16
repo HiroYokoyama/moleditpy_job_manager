@@ -71,7 +71,6 @@ def test_submit_dialog_download_all_outputs(service, qapp):
     assert preset2.fetch_globs == ["*.out", "*.log"]
 
 
-
 def test_submit_dialog_prefill_evaluates_extensions(service, qapp, tmp_path):
     host = HostProfile(id="h1", name="Host1")
     service.store.add_host(host)

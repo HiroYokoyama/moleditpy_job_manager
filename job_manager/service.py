@@ -45,7 +45,6 @@ from .tasks import run_async
 from .transport import create_transport
 
 
-
 class JobService(QObject):
     """Owns all job state and every network operation."""
 
@@ -506,7 +505,6 @@ class JobService(QObject):
         success_handler = on_done or self.log_ready.emit
         error_handler = on_error or self.error.emit
         return run_async(self.pool, work, on_success=success_handler, on_error=error_handler)
-
 
     # --- housekeeping -------------------------------------------------------
 

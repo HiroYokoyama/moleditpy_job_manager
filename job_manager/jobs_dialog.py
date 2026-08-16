@@ -508,7 +508,6 @@ class JobsDialog(QDialog):
         actions.addStretch(1)
         layout.addLayout(actions)
 
-
         list_actions = QHBoxLayout()
         for button in (
             self.btn_open_default,
@@ -708,11 +707,7 @@ class JobsDialog(QDialog):
         self.btn_open.setEnabled(
             bool(
                 job
-                and (
-                    job.downloaded_files
-                    or (job.downloaded and job.remote_dir)
-                    or mirror_ready
-                )
+                and (job.downloaded_files or (job.downloaded and job.remote_dir) or mirror_ready)
             )
         )
         self.btn_tail.setEnabled(bool(job and job.remote_dir))
@@ -724,7 +719,6 @@ class JobsDialog(QDialog):
         # Details reads only what is already recorded, so it needs no host and
         # works for an archived job too -- which is when it is most useful.
         self.btn_details.setEnabled(has_job)
-
 
     # --- actions ------------------------------------------------------------
 
@@ -935,7 +929,6 @@ class JobsDialog(QDialog):
             self._tail_dialog.activateWindow()
         self.service.tail(job)
 
-
     def _tail_specific_file(self) -> None:
         job = self.selected_job()
         if job is None or not self._has_credentials(job):
@@ -976,9 +969,7 @@ class JobsDialog(QDialog):
             if ok and chosen.strip():
                 self._open_tail_for_file(job, chosen.strip())
 
-
         self.service.list_remote_results(job, on_files_listed, on_list_error)
-
 
     def _open_tail_for_file(self, job: Job, filename: str) -> None:
         from .models import BACKEND_OPENSSH
@@ -996,11 +987,12 @@ class JobsDialog(QDialog):
         )
         self._detail_dialogs.append(dialog)
         dialog.finished.connect(
-            lambda *_: self._detail_dialogs.remove(dialog) if dialog in self._detail_dialogs else None
+            lambda *_: self._detail_dialogs.remove(dialog)
+            if dialog in self._detail_dialogs
+            else None
         )
         dialog.show()
         self._refresh_tail_file(job, filename, dialog)
-
 
     def _refresh_tail_file(self, job: Job, filename: str, dialog: Any) -> None:
         def on_done(text: str) -> None:
@@ -1396,7 +1388,6 @@ class JobsDialog(QDialog):
             forget_window()
         except Exception:
             logging.debug("Job Manager: window deregistration failed", exc_info=True)
-
 
     def reject(self) -> None:
         # Esc closes a QDialog through reject(), which never reaches
