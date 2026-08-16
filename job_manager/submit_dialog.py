@@ -32,7 +32,7 @@ from PyQt6.QtWidgets import (
 )
 
 from . import PLUGIN_VERSION, input_scan
-from .command_templates import CommandTemplate, TEMPLATES, extension_of, suggest, templates_for
+from .command_templates import CommandTemplate, extension_of, suggest, templates_for
 from .credentials import ensure_password
 
 from .models import HostProfile, Job, SubmitPreset

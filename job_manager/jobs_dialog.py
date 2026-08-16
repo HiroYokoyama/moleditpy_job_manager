@@ -991,13 +991,16 @@ class JobsDialog(QDialog):
 
     def _refresh_tail_file(self, job: Job, filename: str, dialog: Any) -> None:
         def on_done(text: str) -> None:
-
-            if dialog.isVisible():
+            try:
                 dialog.set_text(text)
+            except RuntimeError:
+                pass
 
         def on_err(msg: str) -> None:
-            if dialog.isVisible():
+            try:
                 dialog.set_text(f"Could not tail {filename}: {msg}")
+            except RuntimeError:
+                pass
 
         self.service.tail_file(job, filename, on_done=on_done, on_error=on_err)
 
