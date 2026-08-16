@@ -781,6 +781,14 @@ def tail_log(transport: Transport, job: Job, lines: int = 200) -> str:
     return result.stdout or result.stderr or ""
 
 
+def tail_remote_file(transport: Transport, job: Job, filename: str, lines: int = 200) -> str:
+    if not job.remote_dir or not filename:
+        return ""
+    path = remote_paths.join(job.remote_dir, filename)
+    result = transport.run(dialect.for_host(transport.host).tail(path, lines))
+    return result.stdout or result.stderr or ""
+
+
 #: Re-exported so callers do not need the models module for the common states.
 __all__ = [
     "DEFAULT_LOG_NAME",
@@ -805,4 +813,6 @@ __all__ = [
     "short_id",
     "submit_job",
     "tail_log",
+    "tail_remote_file",
 ]
+

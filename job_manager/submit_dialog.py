@@ -32,8 +32,9 @@ from PyQt6.QtWidgets import (
 )
 
 from . import PLUGIN_VERSION, input_scan
-from .command_templates import CommandTemplate, extension_of, suggest, templates_for
+from .command_templates import CommandTemplate, TEMPLATES, extension_of, suggest, templates_for
 from .credentials import ensure_password
+
 from .models import HostProfile, Job, SubmitPreset
 from .runner import make_remote_dir
 from .schedulers import get_scheduler, references_input
@@ -117,7 +118,8 @@ class SubmitDialog(QDialog):
             # "Add files...", and every other way in -- a drop, the input
             # generators' Submit to Cluster, Resubmit -- silently asked the
             # queue for one core.
-            self._apply_scanned_resources(files[0])
+            if not preset:
+                self._apply_scanned_resources(files[0])
         if name:
             self.txt_job_name.setText(name)
         elif files:
@@ -125,8 +127,18 @@ class SubmitDialog(QDialog):
         elif remote_input:
             self.txt_job_name.setText(os.path.splitext(os.path.basename(remote_input))[0])
         self._reload_templates()
-        self._apply_suggested_template()
+        if files and not preset:
+            default_cmds = {"orca {input} > {stem}.out", "$(which orca) {input} > {stem}.out"}
+            current_cmd = self.txt_command.text().strip()
+            if not current_cmd or current_cmd in default_cmds:
+                self._apply_suggested_template(force=True)
+            else:
+                self._apply_suggested_template(force=False)
         self._refresh_preview()
+
+
+
+
 
     # --- construction -------------------------------------------------------
 
@@ -364,7 +376,12 @@ class SubmitDialog(QDialog):
         )
         self.chk_scan_resources.setChecked(bool(self.store.get_pref("scan_resources", True)))
         self.chk_scan_resources.toggled.connect(self._on_scan_resources_toggled)
+        self.spin_cpus.setEnabled(not self.chk_scan_resources.isChecked())
+        self.txt_memory.setEnabled(not self.chk_scan_resources.isChecked())
         self.lbl_scanned = QLabel("")
+
+
+
         self.lbl_scanned.setWordWrap(True)
         self.lbl_scanned.setStyleSheet("color: palette(mid);")
         self.lbl_scanned.setVisible(False)
@@ -406,7 +423,20 @@ class SubmitDialog(QDialog):
         #: leaves the field alone.
         self._globs_before_template: list = []
         self.chk_auto_download = QCheckBox("Download results automatically when the job ends")
-        self.chk_auto_download.setChecked(True)
+        self.chk_auto_download.setChecked(bool(self.store.get_pref("auto_download", True)))
+        self.chk_auto_download.toggled.connect(self._on_auto_download_toggled)
+
+        self.chk_download_all = QCheckBox("Download all output files")
+        self.chk_download_all.setToolTip(
+            "When checked, all output files produced by the job in its remote directory "
+            "are downloaded upon completion without pattern filtering."
+        )
+        self.chk_download_all.setChecked(bool(self.store.get_pref("download_all_outputs", True)))
+        self.chk_download_all.toggled.connect(
+            lambda checked: self.store.set_pref("download_all_outputs", bool(checked))
+        )
+        self.chk_download_all.setEnabled(self.chk_auto_download.isChecked())
+
         self.chk_beside_input = QCheckBox("...next to the input file")
         self.chk_beside_input.setToolTip(
             "Put the results in the directory the input came from, which is "
@@ -420,6 +450,30 @@ class SubmitDialog(QDialog):
         self.chk_beside_input.toggled.connect(
             lambda checked: self.store.set_pref("download_beside_input", bool(checked))
         )
+        self.chk_beside_input.setEnabled(self.chk_auto_download.isChecked())
+
+        self.txt_download_root = QLineEdit(self.store.get_pref("download_root", "") or "")
+        self.txt_download_root.setPlaceholderText(self.store.download_root())
+        self.txt_download_root.setToolTip(
+            "Default download directory when results are not placed next to the input file."
+        )
+        self.txt_download_root.textChanged.connect(
+            lambda text: self.store.set_pref("download_root", text.strip())
+        )
+        self.txt_download_root.setEnabled(self.chk_auto_download.isChecked())
+
+        self.btn_browse_download_root = QPushButton("...")
+        self.btn_browse_download_root.setMaximumWidth(32)
+        self.btn_browse_download_root.setToolTip("Choose default download directory")
+        self.btn_browse_download_root.clicked.connect(self._browse_download_root)
+        self.btn_browse_download_root.setEnabled(self.chk_auto_download.isChecked())
+        dl_root_row = QWidget()
+        dl_root_layout = QHBoxLayout(dl_root_row)
+        dl_root_layout.setContentsMargins(0, 0, 0, 0)
+        dl_root_layout.addWidget(self.txt_download_root, 1)
+        dl_root_layout.addWidget(self.btn_browse_download_root)
+
+
         self.chk_chain = QCheckBox("Run after the job already queued on this host")
         self.chk_chain.setToolTip(
             "Hold this job until the one already queued on this host has finished.\n\n"
@@ -504,12 +558,31 @@ class SubmitDialog(QDialog):
         command_layout.addWidget(self.cmb_template)
         form.addRow("Fetch patterns", self.txt_globs)
         form.addRow("", self.chk_auto_download)
+        form.addRow("", self.chk_download_all)
         form.addRow("", self.chk_beside_input)
+        form.addRow("Default download dir", dl_root_row)
         form.addRow("", self.chk_chain)
         form.addRow("", self.chk_chain_any)
         form.addRow("", self.lbl_chain)
         form.addRow("", start_row)
         return page
+
+    def _browse_download_root(self) -> None:
+        start = self.store.download_root()
+        path = QFileDialog.getExistingDirectory(self, "Default Download Directory", start)
+        if path:
+            self.txt_download_root.setText(path)
+            self.store.set_pref("download_root", path)
+
+    def _on_auto_download_toggled(self, checked: bool) -> None:
+        """Remember the choice and enable/disable all dependent download controls."""
+        self.store.set_pref("auto_download", bool(checked))
+        self.chk_download_all.setEnabled(checked)
+        self.chk_beside_input.setEnabled(checked)
+        self.txt_download_root.setEnabled(checked)
+        self.btn_browse_download_root.setEnabled(checked)
+
+
 
     def _build_preview_tab(self) -> QWidget:
         page = QWidget()
@@ -723,10 +796,15 @@ class SubmitDialog(QDialog):
         self.txt_extra.setPlainText("\n".join(preset.extra_directives or []))
         self.txt_command.setText(preset.command_template)
         self.txt_globs.setText(", ".join(preset.fetch_globs or []))
-        self.chk_auto_download.setChecked(bool(preset.auto_download))
+        if preset.name in ("default", ""):
+            self.chk_auto_download.setChecked(bool(self.store.get_pref("auto_download", True)))
+        else:
+            self.chk_auto_download.setChecked(bool(preset.auto_download))
 
     def collect_preset(self) -> SubmitPreset:
         host = self.current_host()
+        globs = [g.strip() for g in self.txt_globs.text().split(",") if g.strip()]
+
         preset = SubmitPreset(
             host_id=host.id if host else "",
             name=self.cmb_preset.currentText() or "default",
@@ -743,10 +821,11 @@ class SubmitDialog(QDialog):
                 d.strip() for d in self.txt_extra.toPlainText().splitlines() if d.strip()
             ],
             command_template=self.txt_command.text(),
-            fetch_globs=[g.strip() for g in self.txt_globs.text().split(",") if g.strip()],
+            fetch_globs=globs,
             auto_download=bool(self.chk_auto_download.isChecked()),
         )
         return preset
+
 
     # --- command templates --------------------------------------------------
 
@@ -885,14 +964,18 @@ class SubmitDialog(QDialog):
         TemplateEditorDialog(self.store, self).exec()
         self._reload_templates()
 
-    def _apply_suggested_template(self) -> None:
-        """Fill an empty command from the input's extension; never overwrite."""
+    def _apply_suggested_template(self, force: bool = False) -> None:
+        """Fill an empty command from the input's extension; if force=True, overwrites."""
         files = self.selected_files()
-        if not files or self.txt_command.text().strip():
+        if not files:
             return
+        if not force and self.txt_command.text().strip():
+            return
+        filename = os.path.basename(files[0])
+        ext = extension_of(filename)
         # The user's own answer first: they have said which program writes
         # this extension, which is more than the built-in list can know.
-        stored = self.store.default_command_for(extension_of(os.path.basename(files[0])))
+        stored = self.store.default_command_for(ext)
         if stored.get("command"):
             self.txt_command.setText(stored["command"])
             self._apply_template_globs(
@@ -901,10 +984,32 @@ class SubmitDialog(QDialog):
                 )
             )
             return
-        template = suggest(os.path.basename(files[0]))
+        template = suggest(filename)
+        if template is None:
+            try:
+                scanned = input_scan.scan(files[0])
+                if scanned.found and scanned.program:
+                    for t in templates_for(filename):
+                        if scanned.program.lower() in t.label.lower():
+                            template = t
+                            break
+                elif ext == ".inp" and os.path.isfile(files[0]):
+                    with open(files[0], "r", encoding="utf-8", errors="ignore") as f:
+                        head = f.read(500)
+                        if "!" in head or "* xyz" in head:
+                            template = TEMPLATES[0]  # ORCA
+            except Exception:
+                pass
+
+
+
         if template is not None and template.command:
             self.txt_command.setText(template.command)
             self._apply_template_globs(template)
+            for i in range(self.cmb_template.count()):
+                if self.cmb_template.itemText(i) == template.label:
+                    self.cmb_template.setCurrentIndex(i)
+                    break
 
     # --- files --------------------------------------------------------------
 
@@ -969,26 +1074,29 @@ class SubmitDialog(QDialog):
         if found.memory_mb and not self.txt_memory.text().strip():
             self.txt_memory.setText(input_scan.format_memory(found.memory_mb))
             filled.append(f"memory {input_scan.format_memory(found.memory_mb)}")
-        # 1 is this field's default, so it means "not set" rather than "one".
-        if found.cores > 1 and self.spin_cpus.value() <= 1:
+        if found.cores > 0 and self.spin_cpus.value() <= 1:
             self.spin_cpus.setValue(found.cores)
             filled.append(f"{found.cores} CPUs")
         if filled:
             self.lbl_scanned.setText(
                 f"Read from the {found.program} input: {', '.join(filled)}. "
-                "Edit if wrong, or untick to enter them by hand."
+                "Untick to enter them by hand."
             )
             self.lbl_scanned.setVisible(True)
 
+
     def _on_scan_resources_toggled(self, checked: bool) -> None:
-        """Remember the choice, and act on it for the file already chosen."""
+        """Remember the choice, disable/enable inputs, and act on it for the file already chosen."""
         self.store.set_pref("scan_resources", bool(checked))
+        self.spin_cpus.setEnabled(not checked)
+        self.txt_memory.setEnabled(not checked)
         if not checked:
             self.lbl_scanned.setVisible(False)
             return
         files = self.selected_files()
         if files:
             self._apply_scanned_resources(files[0])
+
 
     # --- drops ---------------------------------------------------------------
 

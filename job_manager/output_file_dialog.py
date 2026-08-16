@@ -169,11 +169,23 @@ class OutputFileSelectorDialog(QDialog):
             self.lbl_status.setText("No local files or remote directory recorded for this job.")
 
     def _get_existing_local_files(self) -> List[str]:
-        """Find all local output files associated with this job."""
+        """Find all local (or locally mirrored) output files associated with this job."""
         files: List[str] = []
         for path in self.job.downloaded_files or []:
             if path and os.path.isfile(path) and path not in files:
                 files.append(os.path.normpath(path))
+
+        mirror_dir = self._mirrored_job_dir()
+        if mirror_dir and os.path.isdir(mirror_dir):
+            try:
+                for root, _, entries in os.walk(mirror_dir):
+                    for entry in entries:
+                        if not entry.startswith("."):
+                            full = os.path.normpath(os.path.join(root, entry))
+                            if os.path.isfile(full) and full not in files:
+                                files.append(full)
+            except OSError:
+                pass
 
         if self.job.local_dir and os.path.isdir(self.job.local_dir):
             try:
@@ -197,7 +209,7 @@ class OutputFileSelectorDialog(QDialog):
         return files
 
     def _populate_tree_local(self, paths: Sequence[str]) -> None:
-        """Fill tree with local files."""
+        """Fill tree with local and mirrored files."""
         self.tree.clear()
         self._all_items.clear()
 
@@ -205,6 +217,8 @@ class OutputFileSelectorDialog(QDialog):
 
         primary_path = pick_primary_result(list(paths))
         selected_item: Optional[QTreeWidgetItem] = None
+        mirror_dir = self._mirrored_job_dir()
+        norm_mirror = os.path.normpath(mirror_dir) if mirror_dir else ""
 
         for path in paths:
             name = os.path.basename(path)
@@ -213,12 +227,17 @@ class OutputFileSelectorDialog(QDialog):
             except OSError:
                 size_str = "-"
             type_str = describe_file_type(name)
-            location = "Local"
+            if norm_mirror and path.startswith(norm_mirror):
+                location = "Mirror (no download needed)"
+                tooltip = f"Opened directly from the host's local mirror:\n{path}"
+            else:
+                location = "Local"
+                tooltip = path
 
             item = QTreeWidgetItem([name, size_str, type_str, location])
             item.setData(0, PATH_ROLE, path)
             item.setData(0, IS_REMOTE_ROLE, False)
-            item.setToolTip(0, path)
+            item.setToolTip(0, tooltip)
 
             self.tree.addTopLevelItem(item)
             self._all_items.append(item)
@@ -233,6 +252,7 @@ class OutputFileSelectorDialog(QDialog):
 
         self.lbl_status.setText(f"{len(paths)} file(s) available locally.")
         self.btn_open_folder.setEnabled(True)
+
 
     def _fetch_remote_listing(self) -> None:
         """Query host for file list in the remote directory."""
@@ -258,11 +278,9 @@ class OutputFileSelectorDialog(QDialog):
         'equal path' setting -- or "" if the host has none configured.
 
         Best-effort: the host's remote root is stripped as a prefix of the
-        job's remote directory to get the part underneath it; a job whose
-        directory was not derived from the root (one the user pointed the
-        wizard at directly) falls back to its last path segment, which is
-        usually still right since the mirror and the host describe the same
-        tree by construction.
+        job's remote directory to get the part underneath it; candidate paths
+        are checked against disk to seamlessly support mapped network drives,
+        Samba shares, and expanded tilde paths.
         """
         from .models import HostProfile
 
@@ -274,15 +292,34 @@ class OutputFileSelectorDialog(QDialog):
             remote_root = str(host.remote_root or "").replace("\\", "/").rstrip("/")
             if not remote_dir:
                 return ""
+
+            candidates = []
             if remote_root and remote_dir.startswith(remote_root):
-                rel = remote_dir[len(remote_root) :].lstrip("/")
-            else:
-                rel = remote_dir.rsplit("/", 1)[-1]
-            return host.mirrored_path(rel)
+                rel1 = remote_dir[len(remote_root) :].lstrip("/")
+                candidates.append(host.mirrored_path(rel1))
+
+            root_parts = [p for p in remote_root.split("/") if p and p != "~"]
+            if root_parts:
+                root_name = root_parts[-1]
+                dir_parts = [p for p in remote_dir.split("/") if p]
+                if root_name in dir_parts:
+                    idx = dir_parts.index(root_name)
+                    rel2 = "/".join(dir_parts[idx + 1 :])
+                    if rel2:
+                        candidates.append(host.mirrored_path(rel2))
+
+            rel3 = remote_dir.rsplit("/", 1)[-1]
+            if rel3:
+                candidates.append(host.mirrored_path(rel3))
+
+            for cand in candidates:
+                if cand and os.path.exists(cand):
+                    return cand
+
+            return candidates[0] if candidates else host.mirrored_path(rel3)
         except Exception:
-            # Best-effort: a malformed path here must never break the dialog
-            # that lists what a job produced.
             return ""
+
 
     def _folder_item(self, cache: dict, parts: Sequence[str]) -> Optional[QTreeWidgetItem]:
         """The QTreeWidgetItem for a folder path, creating it (and its
@@ -484,7 +521,10 @@ class OutputFileSelectorDialog(QDialog):
     def _open_containing_folder(self) -> None:
         """Open the folder in system file manager."""
         target_dir = ""
-        if self.job.local_dir and os.path.isdir(self.job.local_dir):
+        mirror_dir = self._mirrored_job_dir()
+        if mirror_dir and os.path.isdir(mirror_dir):
+            target_dir = mirror_dir
+        elif self.job.local_dir and os.path.isdir(self.job.local_dir):
             target_dir = self.job.local_dir
         else:
             cache_dir = os.path.join(
@@ -502,6 +542,7 @@ class OutputFileSelectorDialog(QDialog):
                 "No local directory has been created for this job yet.\n"
                 "Open a file or download results first.",
             )
+
 
 
 __all__ = ["OutputFileSelectorDialog", "describe_file_type", "format_file_size"]

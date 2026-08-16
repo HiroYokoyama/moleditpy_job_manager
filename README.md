@@ -80,11 +80,16 @@ fetch, open.
   by default, so results sit where you are already working — then hand them to
   whichever plugin already claims that file type — a finished ORCA run opens in
   the ORCA Result Analyzer with no extra configuration.
-- **Tail** the remote log, or cancel a job, from the same window.
+- **Tail Remote Logs & Outputs with Tree Picker** — choose any remote file across
+  the calculation directory via an interactive tree browser with instant filtering,
+  featuring auto-refresh (5s for Paramiko/Local, 10s for OpenSSH) enabled by default.
+- **Host Monitor Dashboard** — live visual load/memory gauges, CPU sparklines, running
+  job names and overall progress indicators (`task X/Y done`) with persistent preferences.
 - **Resubmit** a job with one click: same host, same inputs, same resources.
 - **Save** the list as a `.pmejbs` file or **export** it as CSV, **clear** it (the old list
   is archived, never deleted), and **reopen** any saved list — from the button,
   from File ▸ Import, or by dropping it on the window.
+
 
 ### Submitting straight from an input generator
 
@@ -115,12 +120,42 @@ directives* — Job Manager passes them through and tracks the jobs normally.
 
 ## Requirements
 
-- MoleditPy 4.x
+- MoleditPy 4.x (or Python 3.9+ with PyQt6 for standalone mode)
 - An SSH client. `ssh` and `scp` ship with Windows 10+, macOS and Linux, and the
   default backend uses them directly — **no pip packages required**.
 - Optional: `pip install paramiko`, only if a host needs password authentication.
 
+## Standalone Mode
+
+Job Manager can be launched directly as a standalone desktop application without running MoleditPy:
+
+```bash
+# Run as a module from your Python environment / plugins path:
+python -m job_manager
+
+# Or run directly inside the plugin folder:
+python __main__.py
+```
+
+### Launch via Batch File (.bat) & Desktop Shortcut
+
+If you want to launch Job Manager with a single double-click from your desktop, create a `.bat` file (e.g. `launch_job_manager.bat`):
+
+```bat
+@echo off
+start "" pythonw -m job_manager
+```
+
+*(Tip: Using `pythonw` launches the GUI cleanly without a persistent black console window).*
+
+**To create a Desktop Shortcut:**
+1. Save the command above into `launch_job_manager.bat`.
+2. Right-click the `.bat` file and choose **Send to ➔ Desktop (create shortcut)**.
+3. *(Optional)* Right-click the new shortcut ➔ **Properties** ➔ **Change Icon...** to assign a custom icon.
+
+
 ## Two SSH backends
+
 
 | | OpenSSH (default) | paramiko (optional) | This machine |
 |---|---|---|---|

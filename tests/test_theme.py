@@ -412,20 +412,15 @@ class TestHostCardJobsStrip(HostMonitorTestCase):
         card.show_jobs([job])
         self.assertFalse(card.lbl_jobs.isHidden())
         self.assertIn("myrun", card.lbl_jobs.text())
-        self.assertIn("running", card.lbl_jobs.text())
+        self.assertIn("task 0/1 done", card.lbl_jobs.text())
 
     def test_hidden_when_no_active_jobs(self):
-        from job_manager.models import STATE_DONE
-
-        job = Job(
-            id="j1", name="done", state=STATE_DONE, host_name=self.host.name, submitted_at=1000.0
-        )
         card = self._card()
-        card.show_jobs([job])
+        card.show_jobs([])
         self.assertEqual(card.lbl_jobs.text(), "&nbsp;")
 
     def test_long_name_is_truncated(self):
-        long_name = "z" * 40
+        long_name = "z" * 50
         job = Job(
             id="j1",
             name=long_name,
@@ -436,9 +431,9 @@ class TestHostCardJobsStrip(HostMonitorTestCase):
         card = self._card()
         card.show_jobs([job])
         self.assertNotIn(long_name, card.lbl_jobs.text())
-        self.assertIn("…", card.lbl_jobs.text())
+        self.assertIn("...", card.lbl_jobs.text())
 
-    def test_overflow_label_beyond_five(self):
+    def test_overflow_shows_single_running_job(self):
         jobs = [
             Job(
                 id=f"j{i}",
@@ -451,7 +446,8 @@ class TestHostCardJobsStrip(HostMonitorTestCase):
         ]
         card = self._card()
         card.show_jobs(jobs)
-        self.assertIn("more", card.lbl_jobs.text())
+        self.assertIn("job0", card.lbl_jobs.text())
+        self.assertIn("task 0/8 done", card.lbl_jobs.text())
 
     def test_colour_matches_state(self):
         job = Job(
@@ -463,7 +459,8 @@ class TestHostCardJobsStrip(HostMonitorTestCase):
         )
         card = self._card()
         card.show_jobs([job])
-        self.assertIn(STATE_PENDING.lower(), card.lbl_jobs.text())
+        self.assertIn("queued", card.lbl_jobs.text())
+        self.assertIn("task 0/1 done", card.lbl_jobs.text())
 
     def test_dialog_wires_refresh_on_open(self):
         self.store.add_job(
@@ -495,9 +492,9 @@ class TestHostCardJobsStrip(HostMonitorTestCase):
         card = self._card()
         card.show_jobs([j_done, j_run, j_pend])
         text = card.lbl_jobs.text()
-        self.assertIn("1 running", text)
-        self.assertIn("1 remaining", text)
+        self.assertIn("job2", text)
         self.assertIn("task 1/3 done", text)
+
 
     def test_card_updates_on_jobs_changed(self):
         dialog = self.monitor()

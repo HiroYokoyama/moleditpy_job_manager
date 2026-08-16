@@ -10,7 +10,8 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import Dict, List, Optional, Sequence
+from typing import Callable, Dict, List, Optional, Sequence
+
 
 from PyQt6.QtCore import QObject, QThreadPool, pyqtSignal
 
@@ -28,19 +29,21 @@ from .models import (
 )
 from .poller import JobPoller
 from .runner import (
+    MAX_FETCH_DEPTH,
     cancel_in_runner,
     cancel_job,
     fetch_results,
-    MAX_FETCH_DEPTH,
     list_remote_files,
     require_remote_path,
     submit_job,
     submit_to_runner,
     tail_log,
+    tail_remote_file,
 )
 from .store import JobStore
 from .tasks import run_async
 from .transport import create_transport
+
 
 
 class JobService(QObject):
@@ -465,6 +468,33 @@ class JobService(QObject):
                 transport.close()
 
         return run_async(self.pool, work, on_success=self.log_ready.emit, on_error=self.error.emit)
+
+    def tail_file(
+        self,
+        job: Job,
+        filename: str,
+        lines: int = 200,
+        on_done: Optional[Callable[[str], None]] = None,
+        on_error: Optional[Callable[[str], None]] = None,
+    ) -> None:
+        """Asynchronously read the tail of any remote file in the job's directory."""
+        host = self.store.hosts.get(job.host_id)
+        if host is None:
+            err = "Host profile no longer exists"
+            (on_error or self.error.emit)(err)
+            return
+
+        def work() -> str:
+            transport = self.transport_for(host)
+            try:
+                return tail_remote_file(transport, job, filename, lines)
+            finally:
+                transport.close()
+
+        success_handler = on_done or self.log_ready.emit
+        error_handler = on_error or self.error.emit
+        return run_async(self.pool, work, on_success=success_handler, on_error=error_handler)
+
 
     # --- housekeeping -------------------------------------------------------
 

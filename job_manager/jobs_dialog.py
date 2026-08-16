@@ -9,7 +9,8 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import List, Optional
+from typing import Any, List, Optional
+
 
 from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer, QVariant
 from PyQt6.QtGui import QColor
@@ -20,6 +21,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QLabel,
     QMenu,
     QMessageBox,
@@ -32,6 +34,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
 
 from . import PLUGIN_VERSION
 from .credentials import ensure_password
@@ -422,6 +425,11 @@ class JobsDialog(QDialog):
             "Double-clicking a row does the same."
         )
         self.btn_tail.clicked.connect(self._tail_selected)
+        self.btn_tail_file = QPushButton("Tail File...")
+        self.btn_tail_file.setToolTip(
+            "Read the tail of a chosen remote output/log file in the job's directory."
+        )
+        self.btn_tail_file.clicked.connect(self._tail_specific_file)
         self.btn_details = QPushButton("Details")
         self.btn_details.setToolTip(
             "Everything recorded about this job -- host, scheduler, queue id, "
@@ -482,6 +490,7 @@ class JobsDialog(QDialog):
             self.btn_download,
             self.btn_open,
             self.btn_tail,
+            self.btn_tail_file,
             self.btn_details,
             self.btn_resubmit,
             self.btn_remove,
@@ -489,6 +498,7 @@ class JobsDialog(QDialog):
             actions.addWidget(button)
         actions.addStretch(1)
         layout.addLayout(actions)
+
 
         list_actions = QHBoxLayout()
         for button in (
@@ -626,6 +636,7 @@ class JobsDialog(QDialog):
         menu = QMenu(self)
         for button in (
             self.btn_tail,
+            self.btn_tail_file,
             self.btn_details,
             self.btn_open,
             self.btn_download,
@@ -662,6 +673,7 @@ class JobsDialog(QDialog):
                 self.btn_download,
                 self.btn_open,
                 self.btn_tail,
+                self.btn_tail_file,
                 self.btn_resubmit,
                 self.btn_remove,
                 self.btn_save_as,
@@ -682,6 +694,7 @@ class JobsDialog(QDialog):
             bool(job and (job.downloaded_files or (job.downloaded and job.remote_dir)))
         )
         self.btn_tail.setEnabled(bool(job and job.remote_dir))
+        self.btn_tail_file.setEnabled(bool(job and job.remote_dir))
         # A command-only job has no input files to check for; what makes it
         # resubmittable is the command, which the preset snapshot carries.
         self.btn_resubmit.setEnabled(bool(job and (job.input_files or job.preset)))
@@ -689,6 +702,7 @@ class JobsDialog(QDialog):
         # Details reads only what is already recorded, so it needs no host and
         # works for an archived job too -- which is when it is most useful.
         self.btn_details.setEnabled(has_job)
+
 
     # --- actions ------------------------------------------------------------
 
@@ -869,15 +883,21 @@ class JobsDialog(QDialog):
         job = self.selected_job()
         if job is None or not self._has_credentials(job):
             return
+        from .models import BACKEND_OPENSSH
         from .text_dialog import TextDialog
+
+        host = self.service.store.hosts.get(job.host_id)
+        auto_interval = 10 if (host and host.backend == BACKEND_OPENSSH) else 5
 
         if self._tail_dialog is None:
             self._tail_dialog = TextDialog(
                 f"Job Manager {PLUGIN_VERSION} - {job.name}: {job.log_file}",
                 "Reading...",
                 self,
-                on_refresh=self._tail_selected,
+                on_refresh=lambda: self.service.tail(job),
+                auto_interval=auto_interval,
             )
+
             # Cleared on close so the next tail builds a live window rather
             # than writing into a destroyed one.
             self._tail_dialog.finished.connect(lambda *_: setattr(self, "_tail_dialog", None))
@@ -890,11 +910,85 @@ class JobsDialog(QDialog):
             self._tail_dialog.activateWindow()
         self.service.tail(job)
 
+    def _tail_specific_file(self) -> None:
+        job = self.selected_job()
+        if job is None or not self._has_credentials(job):
+            return
+
+        self._append_message(f"Listing remote files for {job.name}...")
+
+        def on_files_listed(names: list) -> None:
+            filtered = [n for n in names if n and not n.startswith(".")]
+            if not filtered:
+                filtered = [job.log_file or "job.log"]
+
+            from .tail_file_dialog import TailFileDialog
+
+            dialog = TailFileDialog(
+                job.name,
+                filtered,
+                default_file=job.log_file or "",
+                title=f"Job Manager {PLUGIN_VERSION} - Tail Specific File: {job.name}",
+                parent=self,
+            )
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                chosen = dialog.chosen()
+                if chosen:
+                    self._open_tail_for_file(job, chosen)
+
+        def on_list_error(msg: str) -> None:
+            chosen, ok = QInputDialog.getText(
+                self,
+                "Tail Specific File",
+                f"Enter filename to tail in {job.remote_dir}:",
+                text=job.log_file or "",
+            )
+            if ok and chosen.strip():
+                self._open_tail_for_file(job, chosen.strip())
+
+        self.service.list_remote_results(job, on_files_listed, on_list_error)
+
+
+    def _open_tail_for_file(self, job: Job, filename: str) -> None:
+        from .models import BACKEND_OPENSSH
+        from .text_dialog import TextDialog
+
+        host = self.service.store.hosts.get(job.host_id)
+        auto_interval = 10 if (host and host.backend == BACKEND_OPENSSH) else 5
+
+        dialog = TextDialog(
+            f"Job Manager {PLUGIN_VERSION} - {job.name}: {filename}",
+            "Reading...",
+            self,
+            on_refresh=lambda: self._refresh_tail_file(job, filename, dialog),
+            auto_interval=auto_interval,
+        )
+        self._detail_dialogs.append(dialog)
+        dialog.finished.connect(
+            lambda *_: self._detail_dialogs.remove(dialog) if dialog in self._detail_dialogs else None
+        )
+        dialog.show()
+        self._refresh_tail_file(job, filename, dialog)
+
+
+    def _refresh_tail_file(self, job: Job, filename: str, dialog: Any) -> None:
+        def on_done(text: str) -> None:
+
+            if dialog.isVisible():
+                dialog.set_text(text)
+
+        def on_err(msg: str) -> None:
+            if dialog.isVisible():
+                dialog.set_text(f"Could not tail {filename}: {msg}")
+
+        self.service.tail_file(job, filename, on_done=on_done, on_error=on_err)
+
     def _show_details(self) -> None:
         """Everything recorded about this job, including the script that ran."""
         job = self.selected_job()
         if job is None:
             return
+
         from .details_dialog import JobDetailsDialog
 
         dialog = JobDetailsDialog(
@@ -1157,6 +1251,30 @@ class JobsDialog(QDialog):
         for path in job.downloaded_files or []:
             if path and os.path.isfile(path) and path not in existing_local:
                 existing_local.append(os.path.normpath(path))
+
+        host = self.service.store.hosts.get(job.host_id)
+        if host and host.equal_path and job.remote_dir:
+            try:
+                remote_dir = str(job.remote_dir).replace("\\", "/").rstrip("/")
+                remote_root = str(host.remote_root or "").replace("\\", "/").rstrip("/")
+                rel = (
+                    remote_dir[len(remote_root) :].lstrip("/")
+                    if remote_root and remote_dir.startswith(remote_root)
+                    else remote_dir.rsplit("/", 1)[-1]
+                )
+                mirror_dir = host.mirrored_path(rel)
+                if mirror_dir and os.path.isdir(mirror_dir):
+                    for entry in os.listdir(mirror_dir):
+                        full = os.path.normpath(os.path.join(mirror_dir, entry))
+                        if (
+                            os.path.isfile(full)
+                            and full not in existing_local
+                            and not entry.startswith(".")
+                        ):
+                            existing_local.append(full)
+            except Exception:
+                pass
+
         if job.local_dir and os.path.isdir(job.local_dir):
             try:
                 for entry in os.listdir(job.local_dir):
@@ -1169,6 +1287,7 @@ class JobsDialog(QDialog):
                         existing_local.append(full)
             except OSError:
                 pass
+
 
         # If exactly 1 local file and no remote directory, open directly
         if len(existing_local) == 1 and not job.remote_dir:

@@ -604,9 +604,11 @@ class TestQueueFieldsFollowTheScheduler(DialogTestCase):
         self.store.hosts.clear()
         self.store.add_host(make_host(id="local", name="workstation", scheduler=SCHEDULER_SHELL))
         dialog = self.dialog()
+        dialog.chk_scan_resources.setChecked(False)
 
         self.assertTrue(dialog.spin_cpus.isEnabled())
         self.assertTrue(dialog.txt_memory.isEnabled())
+
 
     def test_the_greyed_field_says_why(self):
         self.store.hosts.clear()

@@ -44,10 +44,8 @@ from .theme import (
     CY_AMBER,
     CY_GREEN,
     CY_GREY,
-    CY_PURPLE,
-    CY_RED,
-    CY_TEAL,
 )
+
 from .window_utils import make_independent
 from .tasks import run_async
 
@@ -483,10 +481,12 @@ class HostCard(QFrame):
             widget.setVisible(False)
             outer.addWidget(widget)
 
-        # Jobs running on this host -- kept visible with space to prevent layout jump.
+        # Jobs running on this host -- locked to fixed 2-line height to prevent any layout jump.
         self.lbl_jobs = QLabel("&nbsp;")
         self.lbl_jobs.setTextFormat(Qt.TextFormat.RichText)
         self.lbl_jobs.setWordWrap(True)
+        self.lbl_jobs.setFixedHeight(36)
+        self.lbl_jobs.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
         outer.addWidget(self.lbl_jobs)
 
         self.restyle()
@@ -542,62 +542,55 @@ class HostCard(QFrame):
         self.meter_memory.setVisible(not expanded)
 
     def show_jobs(self, jobs: list) -> None:
-        """Update the compact jobs line for this host's active jobs."""
+        """Update the running job display: shows running job on line 1, and task progress on line 2."""
         import html as _html
-        from .models import STATE_DONE, STATE_FAILED
 
-        active = [j for j in jobs if j.is_active]
-        if not active:
+        if not jobs:
             self.lbl_jobs.setText("&nbsp;")
             return
 
-        _COLORS = {
-            "running": CY_GREEN,
-            "pending": CY_AMBER,
-            "queued": CY_GREY,
-            "done": CY_TEAL,
-            "failed": CY_RED,
-            "lost": CY_PURPLE,
-            "blocked": CY_RED,
-        }
-        total_active = len(active)
-        total_all = len(jobs)
-        done_count = sum(1 for j in jobs if j.state in (STATE_DONE, STATE_FAILED))
-        running = sum(1 for j in active if j.state.upper() == "RUNNING")
-        remaining = total_active - running
+        total = len(jobs)
+        done = sum(
+            1
+            for j in jobs
+            if getattr(j, "state", "").upper() in ("DONE", "COMPLETED")
+        )
+        running = [
+            j
+            for j in jobs
+            if getattr(j, "is_active", False)
+            and getattr(j, "state", "").upper() == "RUNNING"
+        ]
+        queued = sum(
+            1
+            for j in jobs
+            if getattr(j, "is_active", False)
+            and getattr(j, "state", "").upper() in ("QUEUED", "PENDING", "SUBMITTED")
+        )
 
-        count_parts = []
+        if not running and queued == 0 and done == 0:
+            self.lbl_jobs.setText("&nbsp;")
+            return
+
+        line1 = "&nbsp;"
         if running:
-            count_parts.append(
-                f"<span style='color:{CY_GREEN};font-weight:bold'>▶ {running} running</span>"
-            )
-        if remaining:
-            count_parts.append(f"<span style='color:{CY_AMBER};'>⧖ {remaining} remaining</span>")
-        if total_all > 0:
-            count_parts.append(
-                f"<span style='color:{CY_GREY};'>(task {done_count}/{total_all} done)</span>"
-            )
-        counts_html = "  ".join(count_parts)
+            name = running[0].name or "Job"
+            if len(name) > 38:
+                name = name[:35] + "..."
+            name_html = _html.escape(name)
+            line1 = f"<span style='color:{CY_GREEN};font-weight:bold'>▶ {name_html}</span>"
+        elif queued > 0:
+            line1 = f"<span style='color:#8b949e'>⏳ {queued} queued</span>"
+        elif done == total and total > 0:
+            line1 = f"<span style='color:#8b949e'>✔ {total}/{total} completed</span>"
 
-        chips = []
-        for job in active[:4]:
-            state = job.state.lower()
-            color = _COLORS.get(state, CY_GREY)
-            name = _html.escape(job.name[:20] + ("…" if len(job.name) > 20 else ""))
-            chips.append(
-                f"<span style='color:{color}'>{name} "
-                f"<span style='color:{CY_GREY}'>[{state}]</span></span>"
-            )
-        overflow = total_active - len(chips)
-        suffix = f" <span style='color:{CY_GREY}'>+{overflow} more</span>" if overflow else ""
-        chips_html = "&nbsp; ".join(chips) + suffix
+        line2 = f"<span style='color:#8b949e;font-size:11px'>task {done}/{total} done</span>"
 
-        if counts_html and chips_html:
-            full_html = f"{counts_html} &nbsp;│&nbsp; {chips_html}"
-        else:
-            full_html = counts_html or chips_html
+        self.lbl_jobs.setText(
+            f"<div style='line-height:1.2'>{line1}<br>{line2}</div>"
+        )
 
-        self.lbl_jobs.setText(full_html)
+
 
     # --- what a sample changes ----------------------------------------------
 
@@ -847,20 +840,23 @@ class HostMonitorDialog(QDialog):
         self._relayout()
 
     def _set_interval(self, seconds: int) -> None:
-        """Apply the cadence and remember it."""
-        self._timer.setInterval(int(seconds) * 1000)
+        """Apply the cadence and save setting."""
         self.service.store.set_pref("host_monitor_interval", int(seconds))
+        self._timer.setInterval(int(seconds) * 1000)
 
     def _set_history(self, shown: bool) -> None:
-        """Open or close the graphs on every card at once."""
+        """Open or close the graphs on every card at once and save setting."""
+        self.service.store.set_pref("host_monitor_history", bool(shown))
         for card in self.cards.values():
             card.set_expanded(shown)
-        self.service.store.set_pref("host_monitor_history", bool(shown))
 
     def _set_dark(self, dark: bool) -> None:
-        """Repaint this window in dark or light mode, and remember the choice."""
+        """Repaint this window in dark or light mode and save setting."""
+        self.service.store.set_pref("host_monitor_dark", bool(dark))
         pal = dark_palette(self._light_palette) if dark else self._light_palette
         self.setPalette(pal)
+
+
         # Both branches set an explicit stylesheet -- an empty one for "light"
         # left buttons and fields on whatever native chrome the platform style
         # drew, which is a different size than the dark-mode style's own
@@ -901,7 +897,7 @@ class HostMonitorDialog(QDialog):
         if hasattr(self, "_jobs_bar") and self._jobs_bar is not None:
             self._jobs_bar.refresh()
         self.update()
-        self.service.store.set_pref("host_monitor_dark", bool(dark))
+
 
     # --- sampling -----------------------------------------------------------
 
@@ -1012,23 +1008,45 @@ class HostMonitorDialog(QDialog):
 
         run_async(self.service.pool, close, quiet=True)
 
-    def closeEvent(self, event) -> None:  # noqa: N802 - Qt's spelling
-        """Stop the timer and hand every connection back.
+    def _save_settings(self) -> None:
+        """Save user preferences for Host Monitor only upon closing."""
+        try:
+            self.service.store.set_pref("host_monitor_interval", int(self.spin_interval.value()))
+            self.service.store.set_pref("host_monitor_history", bool(self.btn_history.isChecked()))
+            self.service.store.set_pref("host_monitor_dark", bool(self.btn_dark.isChecked()))
+        except Exception:
+            pass
 
-        Closing itself must not wait on the network: see _close_transport.
-        """
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt's spelling
+        """Stop the timer, save settings, and hand every connection back."""
         self._timer.stop()
+        self._save_settings()
         for host_id in list(self._transports):
             self._close_transport(host_id)
         super().closeEvent(event)
 
     def reject(self) -> None:
-        # Esc closes a dialog without a closeEvent, which would leave the timer
-        # running and every connection open for the life of the session.
+        # Esc / Close button closes dialog without a closeEvent.
         self._timer.stop()
+        self._save_settings()
         for host_id in list(self._transports):
             self._close_transport(host_id)
         super().reject()
+
+    def accept(self) -> None:
+        self._timer.stop()
+        self._save_settings()
+        for host_id in list(self._transports):
+            self._close_transport(host_id)
+        super().accept()
+
+    def done(self, r: int) -> None:
+        self._timer.stop()
+        self._save_settings()
+        for host_id in list(self._transports):
+            self._close_transport(host_id)
+        super().done(r)
+
 
 
 class _ActiveJobsBar(QWidget):

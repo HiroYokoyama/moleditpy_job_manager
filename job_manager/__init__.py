@@ -16,8 +16,9 @@ import logging
 from typing import Any, Optional
 
 PLUGIN_NAME = "Job Manager"
-PLUGIN_VERSION = "0.16.3"
+PLUGIN_VERSION = "0.17.0"
 PLUGIN_AUTHOR = "HiroYokoyama"
+
 PLUGIN_DESCRIPTION = (
     "Submit calculations to remote HPC clusters over SSH, track queue status, "
     "and fetch results back into MoleditPy. Drop an input file on the monitor "

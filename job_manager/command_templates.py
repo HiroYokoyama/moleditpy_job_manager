@@ -155,7 +155,12 @@ def suggest(filename: str) -> Optional[CommandTemplate]:
     if not extension:
         return None
     matching = [t for t in TEMPLATES if extension in t.extensions]
-    return matching[0] if len(matching) == 1 else None
+    if len(matching) == 1:
+        return matching[0]
+    if extension in (".gjf", ".com"):
+        return TEMPLATES[1]  # Gaussian 16 is default for .gjf / .com
+    return None
+
 
 
 __all__ = ["CommandTemplate", "TEMPLATES", "extension_of", "suggest", "templates_for"]

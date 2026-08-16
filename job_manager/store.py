@@ -92,7 +92,10 @@ DEFAULT_PREFS: Dict[str, Any] = {
     #: fallback -- for a job with no local input to sit beside, and for
     #: anyone who would rather keep results out of their project folders.
     "download_beside_input": True,
+    "auto_download": True,
+    "download_all_outputs": True,
     "open_result_after_download": True,
+
     #: Off by default: the application icon belongs to the host, not to a
     #: plugin, and a badge is a change to how MoleditPy looks in the user's
     #: task bar. The status bar counter is always there and costs nobody
