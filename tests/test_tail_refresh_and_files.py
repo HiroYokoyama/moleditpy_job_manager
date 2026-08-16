@@ -16,6 +16,8 @@ from job_manager.service import JobService
 from job_manager.store import JobStore
 from job_manager.text_dialog import TextDialog
 
+from .test_poller import SyncPool
+
 
 @pytest.fixture(scope="session")
 def qapp():
@@ -29,7 +31,11 @@ def temp_store(tmp_path):
 
 @pytest.fixture
 def service(temp_store):
-    return JobService(temp_store)
+    svc = JobService(temp_store)
+    svc.pool = SyncPool()
+    svc.poller.pool = SyncPool()
+    yield svc
+    svc.shutdown()
 
 
 def test_text_dialog_auto_refresh(qapp):
@@ -61,6 +67,7 @@ def test_text_dialog_auto_refresh(qapp):
 
     # Closing stops timer
     dlg.close()
+    dlg.deleteLater()
     assert not dlg._timer.isActive()
 
 
@@ -89,6 +96,5 @@ def test_service_tail_file(service, temp_store, qapp):
     with patch.object(service, "transport_for", return_value=mock_transport):
         results = []
         service.tail_file(job, "calc.out", lines=100, on_done=lambda txt: results.append(txt))
-        service.pool.waitForDone(2000)
         qapp.processEvents()
         assert results == ["specific tail contents"]
