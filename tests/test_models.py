@@ -131,12 +131,21 @@ class TestJob(unittest.TestCase):
         job = Job(submitted_at=1000.0, finished_at=1090.0)
         self.assertEqual(job.elapsed(now=99999.0), 90.0)
 
-    def test_elapsed_counts_up_while_running(self):
+    def test_elapsed_counts_from_started_at_when_set(self):
+        job = Job(submitted_at=1000.0, started_at=1020.0)
+        self.assertEqual(job.elapsed(now=1050.0), 30.0)
+        self.assertEqual(job.waiting(now=1050.0), 20.0)
+
+    def test_waiting_counts_up_before_start(self):
         job = Job(submitted_at=1000.0)
+        self.assertEqual(job.waiting(now=1030.0), 30.0)
+
+    def test_elapsed_counts_up_while_running(self):
+        job = Job(submitted_at=1000.0, state=STATE_RUNNING)
         self.assertEqual(job.elapsed(now=1030.0), 30.0)
 
     def test_elapsed_never_negative(self):
-        job = Job(submitted_at=2000.0)
+        job = Job(submitted_at=2000.0, started_at=2000.0)
         self.assertEqual(job.elapsed(now=1000.0), 0.0)
 
     def test_touch_sets_state_and_timestamp(self):

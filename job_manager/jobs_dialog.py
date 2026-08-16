@@ -243,7 +243,12 @@ class JobTableModel(QAbstractTableModel):
                     return "-"
                 return predecessor.name + ("" if job.chain_any else " (on success)")
             if column == 5:
-                return format_duration(job.elapsed())
+                if job.state == STATE_RUNNING or (job.started_at and not job.is_terminal):
+                    return format_duration(job.elapsed())
+                elif job.is_terminal:
+                    return format_duration(job.elapsed())
+                else:
+                    return f"wait {format_duration(job.waiting())}"
             if column == 6:
                 return format_stamp(job.updated_at)
         elif role == Qt.ItemDataRole.ForegroundRole and index.column() == 3:
@@ -254,6 +259,10 @@ class JobTableModel(QAbstractTableModel):
             lines = [f"Remote: {job.remote_dir or '-'}"]
             if job.local_dir:
                 lines.append(f"Local: {job.local_dir}")
+            if job.submitted_at:
+                lines.append(f"Queue wait: {format_duration(job.waiting())}")
+            if job.started_at or job.is_terminal:
+                lines.append(f"Run time: {format_duration(job.elapsed())}")
             blocker = self.service.store.chain_blocker(job)
             if blocker is not None:
                 lines.append(
@@ -903,12 +912,16 @@ class JobsDialog(QDialog):
             self._tail_dialog.finished.connect(lambda *_: setattr(self, "_tail_dialog", None))
             self._tail_dialog.show()
         else:
+            # Update the window title AND the refresh callback so the
+            # auto-refresh pulls from the newly selected job, not the old one.
             self._tail_dialog.setWindowTitle(
                 f"Job Manager {PLUGIN_VERSION} - {job.name}: {job.log_file}"
             )
+            self._tail_dialog._on_refresh_callback = lambda: self.service.tail(job)
             self._tail_dialog.raise_()
             self._tail_dialog.activateWindow()
         self.service.tail(job)
+
 
     def _tail_specific_file(self) -> None:
         job = self.selected_job()
@@ -918,6 +931,8 @@ class JobsDialog(QDialog):
         self._append_message(f"Listing remote files for {job.name}...")
 
         def on_files_listed(names: list) -> None:
+            if not self.isVisible():
+                return
             filtered = [n for n in names if n and not n.startswith(".")]
             if not filtered:
                 filtered = [job.log_file or "job.log"]
@@ -937,6 +952,8 @@ class JobsDialog(QDialog):
                     self._open_tail_for_file(job, chosen)
 
         def on_list_error(msg: str) -> None:
+            if not self.isVisible():
+                return
             chosen, ok = QInputDialog.getText(
                 self,
                 "Tail Specific File",
@@ -945,6 +962,7 @@ class JobsDialog(QDialog):
             )
             if ok and chosen.strip():
                 self._open_tail_for_file(job, chosen.strip())
+
 
         self.service.list_remote_results(job, on_files_listed, on_list_error)
 
@@ -1389,6 +1407,9 @@ class JobsDialog(QDialog):
         Deregisters too, so a reopened window is a fresh, live instance;
         polling continues in the service, which outlives this dialog.
         """
+        # Stop the elapsed ticker so it doesn't fire after the dialog is gone.
+        if hasattr(self, "_ticker"):
+            self._ticker.stop()
         self._disconnect_service()
         try:
             from . import forget_window
@@ -1396,6 +1417,7 @@ class JobsDialog(QDialog):
             forget_window()
         except Exception:
             logging.debug("Job Manager: window deregistration failed", exc_info=True)
+
 
     def reject(self) -> None:
         # Esc closes a QDialog through reject(), which never reaches

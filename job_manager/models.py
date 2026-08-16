@@ -369,15 +369,43 @@ class Job:
         return self.state in TERMINAL_STATES
 
     def elapsed(self, now: Optional[float] = None) -> float:
-        """Seconds between submission and finish (or now, while running)."""
-        if not self.submitted_at:
+        """Wall-clock seconds the job has been *running* (since it actually started).
+
+        If :attr:`started_at` is set, counts from ``started_at`` to
+        ``finished_at`` (or ``now``). If ``started_at`` is not set but the job
+        is running or finished, falls back to ``submitted_at``.
+        """
+        start = self.started_at
+        if not start:
+            if (
+                self.finished_at
+                or self.state in (STATE_RUNNING, STATE_COMPLETING, STATE_DOWNLOADING)
+                or self.is_terminal
+            ):
+                start = self.submitted_at
+            else:
+                return 0.0
+        if not start:
             return 0.0
         end = self.finished_at or (now if now is not None else time.time())
+        return max(0.0, end - start)
+
+    def waiting(self, now: Optional[float] = None) -> float:
+        """Wall-clock seconds the job spent waiting in the queue before starting.
+
+        While the job is pending/queued, counts from ``submitted_at`` to ``now``.
+        Once the job starts running (or finishes), freezes at the queue duration.
+        """
+        if not self.submitted_at:
+            return 0.0
+        end = self.started_at or self.finished_at or (now if now is not None else time.time())
         return max(0.0, end - self.submitted_at)
 
     def touch(self, state: Optional[str] = None) -> None:
         if state is not None:
             self.state = state
+            if state == STATE_RUNNING and not self.started_at:
+                self.started_at = time.time()
             if state in TERMINAL_STATES and not self.finished_at:
                 self.finished_at = time.time()
         self.updated_at = time.time()
