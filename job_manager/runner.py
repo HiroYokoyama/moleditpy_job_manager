@@ -87,22 +87,24 @@ def name_job_files(job: Job, scheduler) -> None:
     written there carries the job id.
     """
     if not job.remote_dir_provided:
-        job.log_file = job.log_file or DEFAULT_LOG_NAME
+        job.log_file = safe_relative_name(job.log_file) or DEFAULT_LOG_NAME
+        job.script_name = safe_relative_name(job.script_name)
+        job.sentinel_name = safe_relative_name(job.sentinel_name)
         return
     tag = sanitize_name(job.id, fallback="job")
     stem, extension = os.path.splitext(scheduler.script_name)
-    job.script_name = job.script_name or f"{stem}_{tag}{extension}"
-    job.log_file = job.log_file or f"moleditpy_{tag}.log"
-    job.sentinel_name = job.sentinel_name or f"{SENTINEL_NAME}_{tag}"
+    job.script_name = safe_relative_name(job.script_name) or f"{stem}_{tag}{extension}"
+    job.log_file = safe_relative_name(job.log_file) or f"moleditpy_{tag}.log"
+    job.sentinel_name = safe_relative_name(job.sentinel_name) or f"{SENTINEL_NAME}_{tag}"
 
 
 def sentinel_for(job: Job) -> str:
     """The completion file this job writes; the shared name for older jobs."""
-    return job.sentinel_name or SENTINEL_NAME
+    return safe_relative_name(job.sentinel_name) or SENTINEL_NAME
 
 
 def script_name_for(job: Job, scheduler) -> str:
-    return job.script_name or scheduler.script_name
+    return safe_relative_name(job.script_name) or scheduler.script_name
 
 
 def require_remote_path(
