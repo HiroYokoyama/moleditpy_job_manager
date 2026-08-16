@@ -7,6 +7,7 @@ installs only pytest) can exercise it directly.
 
 from __future__ import annotations
 
+import ntpath
 import os
 import posixpath
 import re
@@ -256,7 +257,16 @@ class HostProfile:
             return ""
         parts = [p for p in relative_path.replace("\\", "/").split("/") if p]
         expanded_root = os.path.expanduser(self.equal_path)
-        mirror_root = expanded_root if os.path.isabs(expanded_root) else os.path.abspath(expanded_root)
+        # ``equal_path`` is local, but it may use POSIX spelling while the
+        # plugin runs on Windows (for example ``/mnt/cluster``).  Resolving
+        # that through ``abspath`` would silently turn it into ``G:\mnt\cluster``.
+        # Preserve all absolute spellings and resolve only relative roots.
+        is_absolute = (
+            os.path.isabs(expanded_root)
+            or posixpath.isabs(expanded_root)
+            or ntpath.isabs(expanded_root)
+        )
+        mirror_root = expanded_root if is_absolute else os.path.abspath(expanded_root)
         return os.path.join(mirror_root, *parts) if parts else mirror_root
 
     def mirrored_job_dir(self, remote_dir: str) -> str:
