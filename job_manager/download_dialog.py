@@ -138,7 +138,9 @@ class DownloadDialog(QDialog):
         def checkable_folder(
             name: str, parts: Sequence[str], parent: Optional[QTreeWidgetItem]
         ) -> QTreeWidgetItem:
-            item = QTreeWidgetItem(parent) if parent is not None else QTreeWidgetItem(self.tree)
+            # ensure_folder_item owns insertion into the tree. Returning an
+            # unattached item avoids inserting the same folder twice.
+            item = QTreeWidgetItem()
             item.setText(0, name)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(0, Qt.CheckState.Unchecked)

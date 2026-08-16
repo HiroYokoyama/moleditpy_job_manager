@@ -98,7 +98,9 @@ class TailFileDialog(QDialog):
         def styled_folder(
             name: str, parts: Sequence[str], parent: Optional[QTreeWidgetItem]
         ) -> QTreeWidgetItem:
-            item = QTreeWidgetItem(parent) if parent is not None else QTreeWidgetItem(self.tree)
+            # ensure_folder_item owns insertion into the tree. Returning an
+            # unattached item avoids inserting the same folder twice.
+            item = QTreeWidgetItem()
             item.setText(0, f"📁 {name}")
             item.setData(0, PATH_ROLE, None)
             return item
