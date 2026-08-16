@@ -235,3 +235,7 @@ __marimo__/
 /store_*/
 /submit_*/
 /user_templates_*/
+# Temporary directories created by direct runner integration tests.
+/e2e_*/
+/remote_runner_*/
+/tmp*/
