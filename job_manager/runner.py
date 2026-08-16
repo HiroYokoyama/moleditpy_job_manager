@@ -774,17 +774,19 @@ def cancel_job(transport: Transport, host: HostProfile, job: Job) -> None:
 
 
 def tail_log(transport: Transport, job: Job, lines: int = 200) -> str:
-    if not job.remote_dir or not job.log_file:
+    safe_log = safe_relative_name(job.log_file)
+    if not job.remote_dir or not safe_log:
         return ""
-    path = remote_paths.join(job.remote_dir, job.log_file)
+    path = remote_paths.join(job.remote_dir, safe_log)
     result = transport.run(dialect.for_host(transport.host).tail(path, lines))
     return result.stdout or result.stderr or ""
 
 
 def tail_remote_file(transport: Transport, job: Job, filename: str, lines: int = 200) -> str:
-    if not job.remote_dir or not filename:
+    safe_name = safe_relative_name(filename)
+    if not job.remote_dir or not safe_name:
         return ""
-    path = remote_paths.join(job.remote_dir, filename)
+    path = remote_paths.join(job.remote_dir, safe_name)
     result = transport.run(dialect.for_host(transport.host).tail(path, lines))
     return result.stdout or result.stderr or ""
 

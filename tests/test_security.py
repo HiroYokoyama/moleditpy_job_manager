@@ -127,5 +127,22 @@ class TestOpeningAJobListCannotLeakSecrets(unittest.TestCase):
             self.assertNotIn(f'"{field}"', written, field)
 
 
+
+class TestTailPathsStayInsideTheJobDirectory(unittest.TestCase):
+    def test_unsafe_log_name_is_not_sent_to_the_host(self):
+        transport = FakeTransport(make_host())
+        job = Job(remote_dir="~/jobs/1", log_file="../../secret")
+
+        self.assertEqual(runner.tail_log(transport, job), "")
+        self.assertEqual(transport.commands, [])
+
+    def test_unsafe_selected_name_is_not_sent_to_the_host(self):
+        transport = FakeTransport(make_host())
+        job = Job(remote_dir="~/jobs/1")
+
+        self.assertEqual(runner.tail_remote_file(transport, job, "/etc/passwd"), "")
+        self.assertEqual(transport.commands, [])
+
+
 if __name__ == "__main__":
     unittest.main()

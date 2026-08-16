@@ -413,12 +413,17 @@ class JobService(QObject):
         os.makedirs(cache_dir, exist_ok=True)
 
         def work() -> str:
+            from .runner import safe_relative_name
+
+            safe_name = safe_relative_name(filename)
+            if not safe_name:
+                raise ValueError(f"Unsafe remote filename: {filename}")
             transport = self.transport_for(host)
             try:
-                paths = fetch_results(transport, job, cache_dir, globs=[filename])
+                paths = fetch_results(transport, job, cache_dir, globs=[safe_name])
                 if paths and os.path.isfile(paths[0]):
                     return paths[0]
-                local_path = os.path.join(cache_dir, filename)
+                local_path = os.path.join(cache_dir, *safe_name.split("/"))
                 if os.path.isfile(local_path):
                     return local_path
                 raise FileNotFoundError(
