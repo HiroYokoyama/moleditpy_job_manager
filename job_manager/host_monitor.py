@@ -707,8 +707,12 @@ class HostMonitorDialog(QDialog):
         self._timer.start(self.spin_interval.value() * 1000)
         if self.btn_history.isChecked():
             self._set_history(True)
-        if self.btn_dark.isChecked():
-            self._set_dark(True)
+        # `setChecked` above happens before the signal connection, so the
+        # stored choice does not emit `toggled` during construction. Apply
+        # the complete window style explicitly for both modes; otherwise a
+        # freshly launched monitor has native/light chrome until the user
+        # toggles Dark once.
+        self._set_dark(bool(self.btn_dark.isChecked()))
         self._sample_all()
 
     def _build_ui(self) -> None:
