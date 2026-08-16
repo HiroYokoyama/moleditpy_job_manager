@@ -54,8 +54,8 @@ class ShellScheduler(Scheduler):
         # three streams all go elsewhere, lets the shell exit at once.
         # It also makes $! the wrapper's own pid rather than a subshell's.
         return (
-            f"chmod +x {script_name} && "
-            f"{{ nohup bash {script_name} > {log_file} 2>&1 < /dev/null & }} && echo $!"
+            f"chmod +x {quote(script_name)} && "
+            f"{{ nohup bash {quote(script_name)} > {quote(log_file)} 2>&1 < /dev/null & }} && echo $!"
         )
 
     def parse_submit_output(self, stdout: str, stderr: str) -> str:

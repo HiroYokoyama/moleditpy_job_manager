@@ -124,13 +124,16 @@ def sanitize_name(name: str, fallback: str = "job") -> str:
 
 
 def _from_dict(cls: type, data: Dict[str, Any]) -> Any:
-    """Build a dataclass from a dict, ignoring unknown keys.
+    """Build a dataclass from a dict, ignoring unknown or malformed values.
 
     Forward compatibility: a jobs.json written by a newer version of the plugin
-    must not crash an older one.
+    must not crash an older one. A damaged record is treated like an empty one;
+    the store decides whether to retain or skip that record.
     """
+    if not isinstance(data, dict):
+        data = {}
     known = {f.name for f in fields(cls)}
-    return cls(**{k: v for k, v in (data or {}).items() if k in known})
+    return cls(**{k: v for k, v in data.items() if k in known})
 
 
 @dataclass

@@ -72,7 +72,7 @@ def input_name_for(job: Job, local_files: Sequence[str]) -> str:
     that do not mention one run perfectly well without.
     """
     if job.remote_input:
-        return job.remote_input
+        return safe_relative_name(job.remote_input)
     return os.path.basename(local_files[0]) if local_files else ""
 
 
@@ -126,8 +126,14 @@ def prepare_remote_dir(transport: Transport, host: HostProfile, job: Job) -> Non
     if job.remote_dir_provided and job.remote_dir:
         require_remote_path(transport, host, job.remote_dir, directory=True)
         if job.remote_input:
+            safe_input = safe_relative_name(job.remote_input)
+            if not safe_input:
+                raise ValueError(
+                    "Remote input must be a relative file name inside the remote directory"
+                )
+            job.remote_input = safe_input
             require_remote_path(
-                transport, host, remote_paths.join(job.remote_dir, job.remote_input)
+                transport, host, remote_paths.join(job.remote_dir, safe_input)
             )
         return
     job.remote_dir = job.remote_dir or make_remote_dir(host, job.name, job_id=job.id)

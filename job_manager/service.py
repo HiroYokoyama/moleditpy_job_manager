@@ -67,6 +67,7 @@ class JobService(QObject):
         self.pool.setMaxThreadCount(3)
         #: host_id -> password, session lifetime only. Never persisted.
         self._passwords: Dict[str, str] = {}
+        self._downloads_in_flight: set = set()
         # Late-bound on purpose: passing the bound method would freeze the
         # factory at construction time and ignore any later override.
         self.poller = JobPoller(self.store, lambda host: self.transport_for(host), parent=self)
@@ -367,6 +368,10 @@ class JobService(QObject):
         if host is None:
             self.error.emit(f"Host profile for {job.name} no longer exists")
             return
+        if job.id in self._downloads_in_flight:
+            self.message.emit(f"Download already in progress for {job.name}")
+            return
+        self._downloads_in_flight.add(job.id)
         previous_state = job.state
         local_dir = into or job.local_dir or self._local_dir_for(job.name, job.input_files)
         job.local_dir = local_dir
@@ -383,7 +388,8 @@ class JobService(QObject):
                 transport.close()
 
         def done(paths: List[str]) -> None:
-            job.downloaded = True
+            self._downloads_in_flight.discard(job.id)
+            job.downloaded = bool(paths)
             job.downloaded_files = list(paths or [])
             job.touch(previous_state)
             self.store.save_jobs()
@@ -392,6 +398,7 @@ class JobService(QObject):
             self.results_ready.emit(job.id, job.downloaded_files)
 
         def failed(message: str) -> None:
+            self._downloads_in_flight.discard(job.id)
             job.last_error = message
             job.touch(previous_state)
             self.store.save_jobs()

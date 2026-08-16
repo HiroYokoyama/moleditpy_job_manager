@@ -1,7 +1,7 @@
 """Output file selector dialog.
 
 Allows users to choose which output file from a job to open in MoleditPy.
-Files must be downloaded locally before they can be opened.
+Downloaded files and verified equal-path mirror files can be opened directly.
 """
 
 from __future__ import annotations
@@ -55,6 +55,25 @@ def describe_file_type(filename: str) -> str:
     """Return a human-readable file category for the given filename."""
     ext = os.path.splitext(filename)[1].lower()
     return _TYPE_MAP.get(ext, f"{ext.upper().lstrip('.')} File" if ext else "File")
+
+
+
+def _is_within(path: str, root: str) -> bool:
+    """Return whether ``path`` is inside ``root`` on the current OS."""
+    try:
+        return os.path.commonpath(
+            [os.path.normpath(path), os.path.normpath(root)]
+        ) == os.path.normpath(root)
+    except ValueError:
+        return False
+
+
+def _relative_name(path: str, root: str) -> str:
+    """Return a normalized relative path, or an empty value across drives."""
+    try:
+        return os.path.relpath(path, root).replace("\\", "/")
+    except (OSError, ValueError):
+        return ""
 
 
 def format_file_size(num_bytes: int) -> str:
@@ -189,20 +208,24 @@ class OutputFileSelectorDialog(QDialog):
 
         if self.job.local_dir and os.path.isdir(self.job.local_dir):
             try:
-                for entry in os.listdir(self.job.local_dir):
-                    full = os.path.normpath(os.path.join(self.job.local_dir, entry))
-                    if os.path.isfile(full) and full not in files and not entry.startswith("."):
-                        files.append(full)
+                for root, _, entries in os.walk(self.job.local_dir):
+                    for entry in entries:
+                        if not entry.startswith("."):
+                            full = os.path.normpath(os.path.join(root, entry))
+                            if os.path.isfile(full) and full not in files:
+                                files.append(full)
             except OSError:
                 pass
 
         cache_dir = os.path.join(tempfile.gettempdir(), "moleditpy_job_manager_cache", self.job.id)
         if os.path.isdir(cache_dir):
             try:
-                for entry in os.listdir(cache_dir):
-                    full = os.path.normpath(os.path.join(cache_dir, entry))
-                    if os.path.isfile(full) and full not in files and not entry.startswith("."):
-                        files.append(full)
+                for root, _, entries in os.walk(cache_dir):
+                    for entry in entries:
+                        if not entry.startswith("."):
+                            full = os.path.normpath(os.path.join(root, entry))
+                            if os.path.isfile(full) and full not in files:
+                                files.append(full)
             except OSError:
                 pass
 
@@ -227,7 +250,7 @@ class OutputFileSelectorDialog(QDialog):
             except OSError:
                 size_str = "-"
             type_str = describe_file_type(name)
-            if norm_mirror and path.startswith(norm_mirror):
+            if norm_mirror and _is_within(path, norm_mirror):
                 location = "Mirror (no download needed)"
                 tooltip = f"Opened directly from the host's local mirror:\n{path}"
             else:
@@ -315,7 +338,14 @@ class OutputFileSelectorDialog(QDialog):
         self._all_items.clear()
 
         local_files = self._get_existing_local_files()
-        local_map = {os.path.basename(p): p for p in local_files}
+        local_map = {}
+        for path in local_files:
+            if self.job.local_dir and _is_within(path, self.job.local_dir):
+                relative = _relative_name(path, self.job.local_dir)
+            else:
+                relative = os.path.basename(path)
+            if relative:
+                local_map[relative] = path
         mirror_dir = self._mirrored_job_dir()
 
         from .jobs_dialog import pick_primary_result
@@ -335,8 +365,11 @@ class OutputFileSelectorDialog(QDialog):
             parent = self._folder_item(folders, parts[:-1])
 
             mirrored_path = os.path.join(mirror_dir, *parts) if mirror_dir else ""
-            if filename in local_map:
-                local_path = local_map[filename]
+            local_key = "/".join(parts)
+            local_path = local_map.get(local_key)
+            if local_path is None and len(parts) == 1:
+                local_path = local_map.get(filename)
+            if local_path is not None:
                 try:
                     size_str = format_file_size(os.path.getsize(local_path))
                 except OSError:
@@ -445,15 +478,17 @@ class OutputFileSelectorDialog(QDialog):
             self.service.error.disconnect(on_error)
             self.btn_open.setEnabled(True)
             wanted = remote_name.replace("\\", "/").strip("/")
+            local_root = self.job.local_dir or ""
             match = next(
                 (
                     p
                     for p in paths or []
                     if (
-                        os.path.relpath(
-                            p, self.job.local_dir or os.path.dirname(p)
-                        ).replace("\\", "/")
-                        == wanted
+                        (
+                            _relative_name(p, local_root) == wanted
+                            if local_root
+                            else os.path.basename(p) == wanted
+                        )
                         or ("/" not in wanted and os.path.basename(p) == wanted)
                     )
                 ),

@@ -241,14 +241,20 @@ class JobStore:
 
     def load(self) -> None:
         settings = read_json(self.settings_path, {}) or {}
+        if not isinstance(settings, dict):
+            settings = {}
         self.prefs = dict(DEFAULT_PREFS)
         self.prefs.update(settings.get("prefs") or {})
         self.hosts = {}
         for raw in settings.get("hosts") or []:
+            if not isinstance(raw, dict):
+                continue
             host = HostProfile.from_dict(raw)
             self.hosts[host.id] = host
         self.presets = {}
         for raw in settings.get("presets") or []:
+            if not isinstance(raw, dict):
+                continue
             preset = SubmitPreset.from_dict(raw)
             self.presets[preset.id] = preset
 
@@ -258,8 +264,12 @@ class JobStore:
             # the new name, and the old file is left alone as a fallback copy.
             source = self.legacy_jobs_path
         jobs_doc = read_json(source, {}) or {}
+        if not isinstance(jobs_doc, dict):
+            jobs_doc = {}
         self.jobs = {}
         for raw in jobs_doc.get("jobs") or []:
+            if not isinstance(raw, dict):
+                continue
             job = Job.from_dict(raw)
             self.jobs[job.id] = job
         self._resolve_interrupted()
@@ -303,11 +313,16 @@ class JobStore:
         removed; that is what ``_forgotten`` is for.
         """
         disk = read_json(self.jobs_path, {}) or {}
-        known = {raw.get("id") for raw in mine}
+        if not isinstance(disk, dict):
+            disk = {}
+        known = {raw.get("id") for raw in mine if isinstance(raw, dict)}
         extra = [
             raw
             for raw in (disk.get("jobs") or [])
-            if raw.get("id") and raw["id"] not in known and raw["id"] not in self._forgotten
+            if isinstance(raw, dict)
+            and raw.get("id")
+            and raw["id"] not in known
+            and raw["id"] not in self._forgotten
         ]
         return mine + extra if extra else mine
 
@@ -586,7 +601,13 @@ class JobStore:
         work. Anything else is working data and is merged into the live list.
         """
         payload = read_json(path, {}) or {}
-        jobs = [Job.from_dict(raw) for raw in payload.get("jobs") or []]
+        if not isinstance(payload, dict):
+            return [], False
+        jobs = [
+            Job.from_dict(raw)
+            for raw in payload.get("jobs") or []
+            if isinstance(raw, dict)
+        ]
         return jobs, bool(payload.get("archived", False))
 
     def use_jobs_file(self, path: str) -> int:
