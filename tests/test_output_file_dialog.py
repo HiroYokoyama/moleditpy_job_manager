@@ -235,3 +235,53 @@ class TestOutputFileSelectorDialog(unittest.TestCase):
 
         item = dialog.tree.topLevelItem(0)
         self.assertTrue(item.data(0, IS_REMOTE_ROLE))
+
+    def test_local_files_build_tree_hierarchy(self):
+        file1 = os.path.join(self.temp_dir, "benzene.out")
+        sub_dir = os.path.join(self.temp_dir, "scratch")
+        os.makedirs(sub_dir, exist_ok=True)
+        file2 = os.path.join(sub_dir, "temp.xyz")
+
+        with open(file1, "w") as f:
+            f.write("output")
+        with open(file2, "w") as f:
+            f.write("xyz")
+
+        self.job.downloaded_files = [file1, file2]
+        dialog = OutputFileSelectorDialog(self.service, self.job)
+        self.addCleanup(dialog.deleteLater)
+
+        # 1 top-level file ("benzene.out") and 1 top-level folder ("scratch")
+        self.assertEqual(dialog.tree.topLevelItemCount(), 2)
+        names = {dialog.tree.topLevelItem(i).text(0) for i in range(2)}
+        self.assertEqual(names, {"benzene.out", "scratch"})
+
+        folder = next(
+            dialog.tree.topLevelItem(i)
+            for i in range(2)
+            if dialog.tree.topLevelItem(i).text(0) == "scratch"
+        )
+        self.assertEqual(folder.childCount(), 1)
+        self.assertEqual(folder.child(0).text(0), "temp.xyz")
+
+    def test_job_folder_only_does_not_leak_unrelated_workspace_files(self):
+        # A shared working directory with multiple unrelated files
+        shared_dir = tempfile.mkdtemp()
+        self.addCleanup(lambda: __import__("shutil").rmtree(shared_dir, ignore_errors=True))
+
+        my_output = os.path.join(shared_dir, "my_job.out")
+        other_file = os.path.join(shared_dir, "other_job.out")
+        with open(my_output, "w") as f:
+            f.write("my calc")
+        with open(other_file, "w") as f:
+            f.write("other calc")
+
+        self.job.local_dir = shared_dir
+        self.job.downloaded_files = [my_output]
+
+        dialog = OutputFileSelectorDialog(self.service, self.job)
+        self.addCleanup(dialog.deleteLater)
+
+        existing = dialog._get_existing_local_files()
+        self.assertIn(os.path.normpath(my_output), [os.path.normpath(p) for p in existing])
+        self.assertNotIn(os.path.normpath(other_file), [os.path.normpath(p) for p in existing])

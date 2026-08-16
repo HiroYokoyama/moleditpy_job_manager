@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from typing import Dict, Optional, Sequence
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -25,8 +24,12 @@ from PyQt6.QtWidgets import (
 
 
 from .theme import apply_theme
-
-PATH_ROLE = Qt.ItemDataRole.UserRole
+from .tree_utils import (
+    PATH_ROLE,
+    ensure_folder_item,
+    find_first_leaf_item,
+    split_path,
+)
 
 
 class TailFileDialog(QDialog):
@@ -89,30 +92,29 @@ class TailFileDialog(QDialog):
     def _build_tree(self, names: Sequence[str], default_file: str = "") -> None:
         """One item per path segment; files carry their full relative path."""
         self.tree.clear()
-        folders: Dict[str, QTreeWidgetItem] = {}
+        folders: Dict[tuple, QTreeWidgetItem] = {}
         default_item: Optional[QTreeWidgetItem] = None
 
-        def folder_for(path: str) -> Optional[QTreeWidgetItem]:
-            if not path:
-                return None
-            if path in folders:
-                return folders[path]
-            head, _, tail = path.rpartition("/")
-            parent = folder_for(head)
+        def styled_folder(
+            name: str, parts: Sequence[str], parent: Optional[QTreeWidgetItem]
+        ) -> QTreeWidgetItem:
             item = QTreeWidgetItem(parent) if parent is not None else QTreeWidgetItem(self.tree)
-            item.setText(0, f"📁 {tail or path}")
+            item.setText(0, f"📁 {name}")
             item.setData(0, PATH_ROLE, None)
-            item.setExpanded(True)
-            folders[path] = item
             return item
 
         for name in names:
             if not name:
                 continue
-            head, _, leaf = name.rpartition("/")
-            parent = folder_for(head)
+            parts = split_path(name)
+            if not parts:
+                continue
+            parent = ensure_folder_item(
+                self.tree, folders, parts[:-1], folder_factory=styled_folder
+            )
+            leaf = parts[-1]
             item = QTreeWidgetItem(parent) if parent is not None else QTreeWidgetItem(self.tree)
-            item.setText(0, f"📄 {leaf or name}")
+            item.setText(0, f"📄 {leaf}")
             item.setData(0, PATH_ROLE, name)
             if default_file and (name == default_file or leaf == default_file):
                 default_item = item
@@ -123,21 +125,7 @@ class TailFileDialog(QDialog):
             self.tree.setCurrentItem(default_item)
             self._selected_path = default_item.data(0, PATH_ROLE) or ""
         elif names:
-
-            def find_first_file(
-                parent_item: Optional[QTreeWidgetItem] = None,
-            ) -> Optional[QTreeWidgetItem]:
-                count = parent_item.childCount() if parent_item else self.tree.topLevelItemCount()
-                for i in range(count):
-                    item = parent_item.child(i) if parent_item else self.tree.topLevelItem(i)
-                    if item.data(0, PATH_ROLE):
-                        return item
-                    sub = find_first_file(item)
-                    if sub:
-                        return sub
-                return None
-
-            first = find_first_file()
+            first = find_first_leaf_item(self.tree)
             if first is not None:
                 self.tree.setCurrentItem(first)
                 self._selected_path = first.data(0, PATH_ROLE) or ""

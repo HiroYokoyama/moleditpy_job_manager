@@ -2,6 +2,7 @@
 
 Allows users to choose which output file from a job to open in MoleditPy.
 Downloaded files and verified equal-path mirror files can be opened directly.
+Displays all results in a hierarchical folder tree scoped strictly to the job.
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ import os
 import tempfile
 from typing import Callable, List, Optional, Sequence
 
-from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtCore import QUrl
 from PyQt6.QtGui import QColor, QDesktopServices
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -29,9 +30,13 @@ from PyQt6.QtWidgets import (
 
 from .models import Job
 from .theme import apply_theme
-
-PATH_ROLE = Qt.ItemDataRole.UserRole
-IS_REMOTE_ROLE = Qt.ItemDataRole.UserRole + 1
+from .tree_utils import (
+    IS_REMOTE_ROLE,
+    PATH_ROLE,
+    ensure_folder_item,
+    filter_tree_items,
+    split_path,
+)
 
 _TYPE_MAP = {
     ".out": "Output File (ORCA / Q-Chem / GAMESS)",
@@ -187,7 +192,7 @@ class OutputFileSelectorDialog(QDialog):
             self.lbl_status.setText("No local files or remote directory recorded for this job.")
 
     def _get_existing_local_files(self) -> List[str]:
-        """Find all local (or locally mirrored) output files associated with this job."""
+        """Find all local (or locally mirrored) output files associated strictly with this job."""
         files: List[str] = []
         for path in self.job.downloaded_files or []:
             if path and os.path.isfile(path) and path not in files:
@@ -197,17 +202,6 @@ class OutputFileSelectorDialog(QDialog):
         if mirror_dir and os.path.isdir(mirror_dir):
             try:
                 for root, _, entries in os.walk(mirror_dir):
-                    for entry in entries:
-                        if not entry.startswith("."):
-                            full = os.path.normpath(os.path.join(root, entry))
-                            if os.path.isfile(full) and full not in files:
-                                files.append(full)
-            except OSError:
-                pass
-
-        if self.job.local_dir and os.path.isdir(self.job.local_dir):
-            try:
-                for root, _, entries in os.walk(self.job.local_dir):
                     for entry in entries:
                         if not entry.startswith("."):
                             full = os.path.normpath(os.path.join(root, entry))
@@ -228,10 +222,46 @@ class OutputFileSelectorDialog(QDialog):
             except OSError:
                 pass
 
+        # If job.local_dir is a dedicated job directory (under store.download_root), include its files.
+        # If it's a shared working directory (download_beside_input), only downloaded_files are included.
+        if self.job.local_dir and os.path.isdir(self.job.local_dir):
+            dl_root = ""
+            if hasattr(self.service, "store") and hasattr(self.service.store, "download_root"):
+                try:
+                    dl_root = self.service.store.download_root()
+                except Exception:
+                    dl_root = ""
+            if dl_root and _is_within(self.job.local_dir, dl_root):
+                try:
+                    for root, _, entries in os.walk(self.job.local_dir):
+                        for entry in entries:
+                            if not entry.startswith("."):
+                                full = os.path.normpath(os.path.join(root, entry))
+                                if os.path.isfile(full) and full not in files:
+                                    files.append(full)
+                except OSError:
+                    pass
+
         return files
 
+    def _relative_local_path(self, path: str, mirror_dir: str, cache_dir: str) -> str:
+        """Return a relative path suited for displaying in the tree hierarchy."""
+        if mirror_dir and _is_within(path, mirror_dir):
+            rel = _relative_name(path, mirror_dir)
+            if rel:
+                return rel
+        if self.job.local_dir and _is_within(path, self.job.local_dir):
+            rel = _relative_name(path, self.job.local_dir)
+            if rel:
+                return rel
+        if cache_dir and _is_within(path, cache_dir):
+            rel = _relative_name(path, cache_dir)
+            if rel:
+                return rel
+        return os.path.basename(path)
+
     def _populate_tree_local(self, paths: Sequence[str]) -> None:
-        """Fill tree with local and mirrored files."""
+        """Fill tree with local and mirrored files structured as a folder hierarchy."""
         self.tree.clear()
         self._all_items.clear()
 
@@ -241,14 +271,23 @@ class OutputFileSelectorDialog(QDialog):
         selected_item: Optional[QTreeWidgetItem] = None
         mirror_dir = self._mirrored_job_dir()
         norm_mirror = os.path.normpath(mirror_dir) if mirror_dir else ""
+        cache_dir = os.path.join(tempfile.gettempdir(), "moleditpy_job_manager_cache", self.job.id)
+        folders: dict = {}
 
         for path in paths:
-            name = os.path.basename(path)
+            rel_name = self._relative_local_path(path, norm_mirror, cache_dir)
+            parts = split_path(rel_name)
+            if not parts:
+                continue
+
+            parent = ensure_folder_item(self.tree, folders, parts[:-1])
+            filename = parts[-1]
+
             try:
                 size_str = format_file_size(os.path.getsize(path))
             except OSError:
                 size_str = "-"
-            type_str = describe_file_type(name)
+            type_str = describe_file_type(filename)
             if norm_mirror and _is_within(path, norm_mirror):
                 location = "Mirror (no download needed)"
                 tooltip = f"Opened directly from the host's local mirror:\n{path}"
@@ -256,12 +295,15 @@ class OutputFileSelectorDialog(QDialog):
                 location = "Local"
                 tooltip = path
 
-            item = QTreeWidgetItem([name, size_str, type_str, location])
+            item = QTreeWidgetItem([filename, size_str, type_str, location])
             item.setData(0, PATH_ROLE, path)
             item.setData(0, IS_REMOTE_ROLE, False)
             item.setToolTip(0, tooltip)
 
-            self.tree.addTopLevelItem(item)
+            if parent is None:
+                self.tree.addTopLevelItem(item)
+            else:
+                parent.addChild(item)
             self._all_items.append(item)
 
             if path == primary_path:
@@ -269,8 +311,8 @@ class OutputFileSelectorDialog(QDialog):
 
         if selected_item is not None:
             self.tree.setCurrentItem(selected_item)
-        elif self.tree.topLevelItemCount() > 0:
-            self.tree.setCurrentItem(self.tree.topLevelItem(0))
+        elif self._all_items:
+            self.tree.setCurrentItem(self._all_items[0])
 
         self.lbl_status.setText(f"{len(paths)} file(s) available locally.")
         self.btn_open_folder.setEnabled(True)
@@ -306,32 +348,9 @@ class OutputFileSelectorDialog(QDialog):
         except (OSError, TypeError, ValueError):
             return ""
 
-    def _folder_item(self, cache: dict, parts: Sequence[str]) -> Optional[QTreeWidgetItem]:
-        """The QTreeWidgetItem for a folder path, creating it (and its
-        ancestors) on first use so files land under the same subfolders the
-        host has them in."""
-        if not parts:
-            return None
-        key = tuple(parts)
-        if key in cache:
-            return cache[key]
-        parent = self._folder_item(cache, parts[:-1])
-        item = QTreeWidgetItem([parts[-1], "", "Folder", ""])
-        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
-        font = item.font(0)
-        font.setBold(True)
-        item.setFont(0, font)
-        if parent is None:
-            self.tree.addTopLevelItem(item)
-        else:
-            parent.addChild(item)
-        item.setExpanded(True)
-        cache[key] = item
-        return item
-
     def _populate_tree_remote(self, names: Sequence[str]) -> None:
-        """Populate the tree with remote files under the host's own folder
-        structure, merging in any already-downloaded local files."""
+        """Populate the tree with remote files under the host's folder structure,
+        merging in any already-downloaded local files."""
         self.tree.clear()
         self._all_items.clear()
 
@@ -356,11 +375,11 @@ class OutputFileSelectorDialog(QDialog):
         for name in names:
             if not name or name.startswith("."):
                 continue
-            parts = [p for p in name.replace("\\", "/").split("/") if p]
+            parts = split_path(name)
             if not parts:
                 continue
             filename = parts[-1]
-            parent = self._folder_item(folders, parts[:-1])
+            parent = ensure_folder_item(self.tree, folders, parts[:-1])
 
             mirrored_path = os.path.join(mirror_dir, *parts) if mirror_dir else ""
             local_key = "/".join(parts)
@@ -422,13 +441,8 @@ class OutputFileSelectorDialog(QDialog):
         self.lbl_status.setText(f"{len(names)} remote file(s) found on host.")
 
     def _apply_filter(self, text: str) -> None:
-        """Filter tree rows based on search input."""
-        query = (text or "").strip().lower()
-        for item in self._all_items:
-            name = item.text(0).lower()
-            file_type = item.text(2).lower()
-            visible = not query or (query in name) or (query in file_type)
-            item.setHidden(not visible)
+        """Filter tree rows based on search input while preserving folder hierarchy."""
+        filter_tree_items(self.tree, text)
 
     def _open_selected(self) -> None:
         item = self.tree.currentItem()

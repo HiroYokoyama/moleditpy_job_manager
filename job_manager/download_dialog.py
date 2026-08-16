@@ -36,10 +36,13 @@ from PyQt6.QtWidgets import (
 )
 
 from .theme import apply_theme
-
-#: Where a tree item keeps its path relative to the job directory. Only files
-#: carry one; a folder item has None, which is how the two are told apart.
-PATH_ROLE = Qt.ItemDataRole.UserRole
+from .tree_utils import (
+    PATH_ROLE,
+    collect_tree_leaves,
+    ensure_folder_item,
+    set_tree_checked_recursive,
+    split_path,
+)
 
 
 class DownloadDialog(QDialog):
@@ -130,27 +133,29 @@ class DownloadDialog(QDialog):
 
     def _build_tree(self, names: Sequence[str], matched: set) -> None:
         """One item per path segment; files carry their full relative path."""
-        folders: Dict[str, QTreeWidgetItem] = {}
+        folders: Dict[tuple, QTreeWidgetItem] = {}
 
-        def folder_for(path: str) -> Optional[QTreeWidgetItem]:
-            if not path:
-                return None
-            if path in folders:
-                return folders[path]
-            head, _, tail = path.rpartition("/")
-            parent = folder_for(head)
+        def checkable_folder(
+            name: str, parts: Sequence[str], parent: Optional[QTreeWidgetItem]
+        ) -> QTreeWidgetItem:
             item = QTreeWidgetItem(parent) if parent is not None else QTreeWidgetItem(self.tree)
-            item.setText(0, tail or path)
+            item.setText(0, name)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(0, Qt.CheckState.Unchecked)
-            folders[path] = item
+            item.setData(0, PATH_ROLE, None)
             return item
 
         for name in names:
-            head, _, leaf = name.rpartition("/")
-            parent = folder_for(head)
+            if not name:
+                continue
+            parts = split_path(name)
+            if not parts:
+                continue
+            parent = ensure_folder_item(
+                self.tree, folders, parts[:-1], folder_factory=checkable_folder
+            )
             item = QTreeWidgetItem(parent) if parent is not None else QTreeWidgetItem(self.tree)
-            item.setText(0, leaf)
+            item.setText(0, parts[-1])
             item.setData(0, PATH_ROLE, name)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(
@@ -159,17 +164,7 @@ class DownloadDialog(QDialog):
         self.tree.expandAll()
 
     def _leaves(self) -> List[QTreeWidgetItem]:
-        found: List[QTreeWidgetItem] = []
-
-        def walk(item: QTreeWidgetItem) -> None:
-            if item.data(0, PATH_ROLE):
-                found.append(item)
-            for row in range(item.childCount()):
-                walk(item.child(row))
-
-        for row in range(self.tree.topLevelItemCount()):
-            walk(self.tree.topLevelItem(row))
-        return found
+        return collect_tree_leaves(self.tree)
 
     def _on_item_changed(self, item: QTreeWidgetItem, column: int = 0) -> None:
         """Ticking a folder takes everything under it."""
@@ -179,16 +174,13 @@ class DownloadDialog(QDialog):
         try:
             if not item.data(0, PATH_ROLE):
                 state = item.checkState(0)
-                for row in range(item.childCount()):
-                    self._set_recursive(item.child(row), state)
+                set_tree_checked_recursive(item, state)
         finally:
             self._syncing = False
         self._update_count()
 
     def _set_recursive(self, item: QTreeWidgetItem, state: Qt.CheckState) -> None:
-        item.setCheckState(0, state)
-        for row in range(item.childCount()):
-            self._set_recursive(item.child(row), state)
+        set_tree_checked_recursive(item, state)
 
     def _toggle(self, item: QTreeWidgetItem, column: int = 0) -> None:
         item.setCheckState(
@@ -206,7 +198,7 @@ class DownloadDialog(QDialog):
         self._syncing = True
         try:
             for item in items:
-                self._set_recursive(item, state)
+                set_tree_checked_recursive(item, state)
         finally:
             self._syncing = False
         self._update_count()
