@@ -8,6 +8,8 @@
 
 Repository: <https://github.com/HiroYokoyama/moleditpy_job_manager>
 
+Repo: [https://github.com/HiroYokoyama/moleditpy_job_manager/](https://github.com/HiroYokoyama/moleditpy_job_manager/)
+
 A [MoleditPy](https://github.com/HiroYokoyama/python_molecular_editor) plugin that
 runs your calculations on a remote cluster without leaving the editor.
 
