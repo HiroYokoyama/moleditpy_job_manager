@@ -985,24 +985,6 @@ class SubmitDialog(QDialog):
             )
             return
         template = suggest(filename)
-        if template is None:
-            try:
-                scanned = input_scan.scan(files[0])
-                if scanned.found and scanned.program:
-                    for t in templates_for(filename):
-                        if scanned.program.lower() in t.label.lower():
-                            template = t
-                            break
-                elif ext == ".inp" and os.path.isfile(files[0]):
-                    with open(files[0], "r", encoding="utf-8", errors="ignore") as f:
-                        head = f.read(500)
-                        if "!" in head or "* xyz" in head:
-                            template = TEMPLATES[0]  # ORCA
-            except Exception:
-                pass
-
-
-
         if template is not None and template.command:
             self.txt_command.setText(template.command)
             self._apply_template_globs(template)

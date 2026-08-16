@@ -798,6 +798,20 @@ class HostMonitorDialog(QDialog):
         layout.addWidget(self._jobs_bar)
         layout.addWidget(box)
 
+    def _disconnect_signals(self) -> None:
+        """Disconnect service signals to prevent memory leaks on re-open."""
+        try:
+            self.service.jobs_changed.disconnect(self._refresh_card_jobs)
+        except Exception:
+            pass
+        try:
+            self.service.job_updated.disconnect(self._on_job_updated)
+        except Exception:
+            pass
+        if hasattr(self, "_jobs_bar") and self._jobs_bar is not None:
+            self._jobs_bar.teardown()
+
+
     def _on_job_updated(self, _job_id: str = "") -> None:
         self._refresh_card_jobs()
 
@@ -949,12 +963,19 @@ class HostMonitorDialog(QDialog):
         self._busy.add(host.id)
         command = host_stats.command_for(host.scheduler == SCHEDULER_WINDOWS)
         host_id = host.id
+        # Resolve the transport on the GUI thread before handing off to a
+        # worker. Reading/writing self._transports from multiple background
+        # threads concurrently (one per host) without a lock is a data race;
+        # resolving here means each worker gets a stable object to call into.
+        try:
+            transport = self._transport_for(host)
+        except Exception as exc:
+            self._busy.discard(host_id)
+            if host_id in self.cards:
+                self.cards[host_id].show_error(str(exc))
+            return
 
         def work() -> str:
-            transport = self._transport_for(host)
-            # A floor of 15 s: connect_timeout is how long to wait for a
-            # connection, and the probe also has to get through the login
-            # files on a loaded machine before it can answer.
             result = transport.run(command, timeout=max(15, int(host.connect_timeout or 10)))
             return result.stdout
 
@@ -977,9 +998,6 @@ class HostMonitorDialog(QDialog):
                 seconds = waited * max(1, self.spin_interval.value())
                 self.cards[host_id].show_error(f"{message} - retrying in {seconds}s")
 
-        # Quiet: a host that does not answer this tick is an ordinary outcome
-        # here. It is shown on the card and backed off from, and a warning with
-        # a traceback every few seconds would bury everything else in the log.
         run_async(self.service.pool, work, on_success=ok, on_error=failed, quiet=True)
 
     # --- teardown -----------------------------------------------------------
@@ -1021,6 +1039,7 @@ class HostMonitorDialog(QDialog):
         """Stop the timer, save settings, and hand every connection back."""
         self._timer.stop()
         self._save_settings()
+        self._disconnect_signals()
         for host_id in list(self._transports):
             self._close_transport(host_id)
         super().closeEvent(event)
@@ -1029,6 +1048,7 @@ class HostMonitorDialog(QDialog):
         # Esc / Close button closes dialog without a closeEvent.
         self._timer.stop()
         self._save_settings()
+        self._disconnect_signals()
         for host_id in list(self._transports):
             self._close_transport(host_id)
         super().reject()
@@ -1036,6 +1056,7 @@ class HostMonitorDialog(QDialog):
     def accept(self) -> None:
         self._timer.stop()
         self._save_settings()
+        self._disconnect_signals()
         for host_id in list(self._transports):
             self._close_transport(host_id)
         super().accept()
@@ -1043,9 +1064,11 @@ class HostMonitorDialog(QDialog):
     def done(self, r: int) -> None:
         self._timer.stop()
         self._save_settings()
+        self._disconnect_signals()
         for host_id in list(self._transports):
             self._close_transport(host_id)
         super().done(r)
+
 
 
 
@@ -1071,6 +1094,17 @@ class _ActiveJobsBar(QWidget):
         service.jobs_changed.connect(self.refresh)
         service.job_updated.connect(self._on_updated)
         self.refresh()
+
+    def teardown(self) -> None:
+        """Disconnect service signals; call when the parent dialog closes."""
+        try:
+            self.service.jobs_changed.disconnect(self.refresh)
+        except Exception:
+            pass
+        try:
+            self.service.job_updated.disconnect(self._on_updated)
+        except Exception:
+            pass
 
     def _on_updated(self, _job_id: str = "") -> None:
         self.refresh()

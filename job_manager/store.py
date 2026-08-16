@@ -653,8 +653,8 @@ class JobStore:
                         job.remote_dir,
                         job.local_dir,
                         "yes" if job.downloaded else "no",
-                        job.command.replace("\n", " ").strip(),
-                        job.last_error.replace("\n", " ").strip(),
+                        (job.command or "").replace("\n", " ").strip(),
+                        (job.last_error or "").replace("\n", " ").strip(),
                     ]
                 )
 
@@ -687,14 +687,26 @@ class JobStore:
 
     # --- user command templates ---------------------------------------------
 
-    def user_templates(self) -> List[Dict[str, str]]:
-        """The user's own command templates, as ``{"label", "command"}`` dicts."""
+    def user_templates(self) -> List[Dict[str, Any]]:
+        """The user's own command templates, preserving all stored fields.
+
+        Returns dicts with at least ``"label"`` and ``"command"``; additional
+        fields such as ``"fetch_globs"`` are passed through unchanged so that
+        :meth:`add_user_template` can re-save them without losing data.
+        """
         raw = self.get_pref("command_templates", []) or []
-        return [
-            {"label": str(item.get("label", "")), "command": str(item.get("command", ""))}
-            for item in raw
-            if isinstance(item, dict) and item.get("label")
-        ]
+        result = []
+        for item in raw:
+            if not isinstance(item, dict) or not item.get("label"):
+                continue
+            entry: Dict[str, Any] = {
+                "label": str(item.get("label", "")),
+                "command": str(item.get("command", "")),
+            }
+            if item.get("fetch_globs"):
+                entry["fetch_globs"] = list(item["fetch_globs"])
+            result.append(entry)
+        return result
 
     def default_command_for(self, extension: str) -> Dict[str, Any]:
         """What this user runs for that input extension, or an empty dict."""

@@ -101,8 +101,6 @@ class TextDialog(QDialog):
     def _trigger_auto_refresh(self) -> None:
         if self.isVisible() and self._on_refresh_callback is not None:
             self._on_refresh_callback()
-        else:
-            self._timer.stop()
 
     def _on_auto_refresh_toggled(self, checked: bool) -> None:
         if checked and self._on_refresh_callback is not None:
@@ -110,10 +108,25 @@ class TextDialog(QDialog):
         else:
             self._timer.stop()
 
-
     def _on_interval_changed(self, value: int) -> None:
         if hasattr(self, "chk_auto_refresh") and self.chk_auto_refresh.isChecked():
             self._timer.start(int(value * 1000))
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        """Start auto-refresh when the window becomes visible."""
+        super().showEvent(event)
+        if (
+            hasattr(self, "chk_auto_refresh")
+            and self.chk_auto_refresh.isChecked()
+            and self._on_refresh_callback is not None
+        ):
+            self._timer.start(int(self.spin_interval.value() * 1000))
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        """Pause auto-refresh while the window is hidden or minimized."""
+        self._timer.stop()
+        super().hideEvent(event)
+
 
     def set_text(self, text: str) -> None:
         """Replace the contents, keeping the view scrolled to the end.

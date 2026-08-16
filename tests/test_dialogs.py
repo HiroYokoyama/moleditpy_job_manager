@@ -1401,10 +1401,11 @@ class TestCommandTemplateDropdown(DialogTestCase):
         self.dialog.txt_command.setText("orca [input] > [output]")
         with patch("job_manager.submit_dialog.QInputDialog.getText", return_value=("Mine", True)):
             self.dialog._save_user_template()
-        self.assertEqual(
-            JobStore(self.tmp).user_templates(),
-            [{"label": "Mine", "command": "orca [input] > [output]"}],
-        )
+        templates = JobStore(self.tmp).user_templates()
+        self.assertEqual(len(templates), 1)
+        self.assertEqual(templates[0]["label"], "Mine")
+        self.assertEqual(templates[0]["command"], "orca [input] > [output]")
+
 
     def test_saving_an_empty_command_is_refused(self):
         self.dialog.txt_command.setText("   ")
