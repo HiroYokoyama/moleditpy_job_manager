@@ -252,6 +252,15 @@ your shell less:
 Unknown tags are left verbatim, and shell syntax that merely looks like one —
 `awk '{print $1}'`, `if [ -f x ]` — is passed through untouched.
 
+## Standalone Mode
+
+The Job Manager and Host Monitor can be launched directly without running MoleditPy:
+
+- **Job Manager**: `launch_job_manager.bat` or `python -m job_manager`
+- **Host Monitor**: `launch_host_monitor.bat` or `python -m job_manager --host-monitor`
+
+On Windows, create a shortcut to either `.bat` file for one-click desktop access in the background.
+
 ## Where your data lives
 
 `~/.moleditpy/job_manager/`

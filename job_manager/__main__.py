@@ -26,12 +26,20 @@ def main() -> int:
     app.setApplicationName(f"Job Manager {PLUGIN_VERSION}")
 
     service = JobService()
+    try:
+        args = sys.argv[1:]
+        if any(arg in ("--host-monitor", "--hosts", "host-monitor", "-m") for arg in args):
+            from .host_monitor import HostMonitorDialog
 
-    dialog = JobsDialog(service)
-    apply_theme(dialog)
-    dialog.show()
+            dialog = HostMonitorDialog(service)
+        else:
+            dialog = JobsDialog(service)
+        apply_theme(dialog)
+        dialog.show()
 
-    return app.exec()
+        return app.exec()
+    finally:
+        service.shutdown()
 
 
 
