@@ -581,6 +581,12 @@ class TestTheProbeAgreesWithBash(unittest.TestCase):
         bash = find_bash()
         if not bash:
             self.skipTest("no bash to compare against")
+
+        # Git Bash can run in a CPU-limited compatibility environment on Windows,
+        # while PowerShell sees the host topology. In that case these are not
+        # two probes of the same execution environment, so comparison is invalid.
+        if os.name == "nt" and "\\git\\" in os.path.normcase(bash).replace("/", "\\"):
+            self.skipTest("Git Bash and PowerShell expose different CPU topologies")
         from_bash = subprocess.run(
             [bash, "-c", remote_runner.probe_command()],
             capture_output=True,
