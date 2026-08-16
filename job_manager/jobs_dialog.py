@@ -424,7 +424,7 @@ class JobsDialog(QDialog):
         self.btn_open = QPushButton("Open Result")
         self.btn_open.setToolTip(
             "Select and open calculation outputs in MoleditPy.\n\n"
-            "Files must be downloaded locally before they can be opened."
+            "Downloaded files and verified equal-path mirror files can be opened directly."
         )
         self.btn_open.clicked.connect(self._open_selected_result)
         self.btn_tail = QPushButton("Tail Log")
@@ -457,7 +457,7 @@ class JobsDialog(QDialog):
         # the list rather than about one job. Opening a list was reachable only
         # through Load Archive... or a banner that appears once you are already
         # somewhere else.
-        self.btn_open_default = QPushButton("Open")
+        self.btn_open_default = QPushButton("Default")
         self.btn_open_default.setToolTip(
             "Go back to the job list this plugin keeps for you, in "
             "~/.moleditpy/job_manager/.\n\n"
@@ -699,8 +699,21 @@ class JobsDialog(QDialog):
         has_job = job is not None
         self.btn_cancel.setEnabled(bool(job and job.is_active))
         self.btn_download.setEnabled(bool(job and job.remote_dir))
+        mirror_ready = False
+        if job and job.remote_dir:
+            host = self.service.store.hosts.get(job.host_id)
+            if host is not None:
+                mirror_dir = host.mirrored_job_dir(job.remote_dir)
+                mirror_ready = bool(mirror_dir and os.path.isdir(mirror_dir))
         self.btn_open.setEnabled(
-            bool(job and (job.downloaded_files or (job.downloaded and job.remote_dir)))
+            bool(
+                job
+                and (
+                    job.downloaded_files
+                    or (job.downloaded and job.remote_dir)
+                    or mirror_ready
+                )
+            )
         )
         self.btn_tail.setEnabled(bool(job and job.remote_dir))
         self.btn_tail_file.setEnabled(bool(job and job.remote_dir))
@@ -1272,43 +1285,6 @@ class JobsDialog(QDialog):
         for path in job.downloaded_files or []:
             if path and os.path.isfile(path) and path not in existing_local:
                 existing_local.append(os.path.normpath(path))
-
-        host = self.service.store.hosts.get(job.host_id)
-        if host and host.equal_path and job.remote_dir:
-            try:
-                remote_dir = str(job.remote_dir).replace("\\", "/").rstrip("/")
-                remote_root = str(host.remote_root or "").replace("\\", "/").rstrip("/")
-                rel = (
-                    remote_dir[len(remote_root) :].lstrip("/")
-                    if remote_root and remote_dir.startswith(remote_root)
-                    else remote_dir.rsplit("/", 1)[-1]
-                )
-                mirror_dir = host.mirrored_path(rel)
-                if mirror_dir and os.path.isdir(mirror_dir):
-                    for entry in os.listdir(mirror_dir):
-                        full = os.path.normpath(os.path.join(mirror_dir, entry))
-                        if (
-                            os.path.isfile(full)
-                            and full not in existing_local
-                            and not entry.startswith(".")
-                        ):
-                            existing_local.append(full)
-            except Exception:
-                pass
-
-        if job.local_dir and os.path.isdir(job.local_dir):
-            try:
-                for entry in os.listdir(job.local_dir):
-                    full = os.path.normpath(os.path.join(job.local_dir, entry))
-                    if (
-                        os.path.isfile(full)
-                        and full not in existing_local
-                        and not entry.startswith(".")
-                    ):
-                        existing_local.append(full)
-            except OSError:
-                pass
-
 
         # If exactly 1 local file and no remote directory, open directly
         if len(existing_local) == 1 and not job.remote_dir:

@@ -590,7 +590,7 @@ class TestOpeningAJobList(DialogTestCase):
         self.addCleanup(self.dialog.deleteLater)
 
     def test_both_buttons_are_there(self):
-        self.assertEqual(self.dialog.btn_open_default.text(), "Open")
+        self.assertEqual(self.dialog.btn_open_default.text(), "Default")
         self.assertEqual(self.dialog.btn_open_list.text(), "Open...")
 
     def test_open_goes_back_to_the_plugins_own_list(self):

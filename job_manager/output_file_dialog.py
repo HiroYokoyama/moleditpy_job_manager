@@ -274,52 +274,16 @@ class OutputFileSelectorDialog(QDialog):
         self.service.list_remote_results(self.job, on_ok, on_error)
 
     def _mirrored_job_dir(self) -> str:
-        """Where this job's remote directory lives on disk, via the host's
-        'equal path' setting -- or "" if the host has none configured.
-
-        Best-effort: the host's remote root is stripped as a prefix of the
-        job's remote directory to get the part underneath it; candidate paths
-        are checked against disk to seamlessly support mapped network drives,
-        Samba shares, and expanded tilde paths.
-        """
+        """Return the verified equal-path directory for this job, if any."""
         from .models import HostProfile
 
         host = self.service.store.hosts.get(self.job.host_id)
-        if not isinstance(host, HostProfile) or not host.equal_path:
+        if not isinstance(host, HostProfile):
             return ""
         try:
-            remote_dir = str(self.job.remote_dir or "").replace("\\", "/").rstrip("/")
-            remote_root = str(host.remote_root or "").replace("\\", "/").rstrip("/")
-            if not remote_dir:
-                return ""
-
-            candidates = []
-            if remote_root and remote_dir.startswith(remote_root):
-                rel1 = remote_dir[len(remote_root) :].lstrip("/")
-                candidates.append(host.mirrored_path(rel1))
-
-            root_parts = [p for p in remote_root.split("/") if p and p != "~"]
-            if root_parts:
-                root_name = root_parts[-1]
-                dir_parts = [p for p in remote_dir.split("/") if p]
-                if root_name in dir_parts:
-                    idx = dir_parts.index(root_name)
-                    rel2 = "/".join(dir_parts[idx + 1 :])
-                    if rel2:
-                        candidates.append(host.mirrored_path(rel2))
-
-            rel3 = remote_dir.rsplit("/", 1)[-1]
-            if rel3:
-                candidates.append(host.mirrored_path(rel3))
-
-            for cand in candidates:
-                if cand and os.path.exists(cand):
-                    return cand
-
-            return candidates[0] if candidates else host.mirrored_path(rel3)
-        except Exception:
+            return host.mirrored_job_dir(self.job.remote_dir)
+        except (OSError, TypeError, ValueError):
             return ""
-
 
     def _folder_item(self, cache: dict, parts: Sequence[str]) -> Optional[QTreeWidgetItem]:
         """The QTreeWidgetItem for a folder path, creating it (and its
@@ -480,7 +444,21 @@ class OutputFileSelectorDialog(QDialog):
             self.service.results_ready.disconnect(on_ready)
             self.service.error.disconnect(on_error)
             self.btn_open.setEnabled(True)
-            match = next((p for p in paths or [] if os.path.basename(p) == remote_name), None)
+            wanted = remote_name.replace("\\", "/").strip("/")
+            match = next(
+                (
+                    p
+                    for p in paths or []
+                    if (
+                        os.path.relpath(
+                            p, self.job.local_dir or os.path.dirname(p)
+                        ).replace("\\", "/")
+                        == wanted
+                        or ("/" not in wanted and os.path.basename(p) == wanted)
+                    )
+                ),
+                None,
+            )
             if match is None:
                 self.lbl_status.setText(f"Download finished, but {remote_name} was not in it.")
                 return

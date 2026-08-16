@@ -8,6 +8,7 @@ installs only pytest) can exercise it directly.
 from __future__ import annotations
 
 import os
+import posixpath
 import re
 import time
 import uuid
@@ -251,7 +252,25 @@ class HostProfile:
         if not self.equal_path or not relative_path:
             return ""
         parts = [p for p in relative_path.replace("\\", "/").split("/") if p]
-        return os.path.join(self.equal_path, *parts) if parts else self.equal_path
+        expanded_root = os.path.expanduser(self.equal_path)
+        mirror_root = expanded_root if os.path.isabs(expanded_root) else os.path.abspath(expanded_root)
+        return os.path.join(mirror_root, *parts) if parts else mirror_root
+
+    def mirrored_job_dir(self, remote_dir: str) -> str:
+        """Map a remote job directory below ``remote_root`` to its mirror."""
+        if not self.equal_path or not remote_dir or not self.remote_root:
+            return ""
+        remote = str(remote_dir).replace("\\", "/").rstrip("/") or "/"
+        root = str(self.remote_root).replace("\\", "/").rstrip("/") or "/"
+        remote_norm = posixpath.normpath(remote)
+        root_norm = posixpath.normpath(root)
+        if remote_norm == root_norm:
+            relative = ""
+        elif remote_norm.startswith(root_norm.rstrip("/") + "/"):
+            relative = remote_norm[len(root_norm.rstrip("/")) :].lstrip("/")
+        else:
+            return ""
+        return self.mirrored_path(relative)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
