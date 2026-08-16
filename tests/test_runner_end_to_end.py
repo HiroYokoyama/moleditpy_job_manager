@@ -133,9 +133,10 @@ class EndToEndCase(unittest.TestCase):
             queue = self.listed("queue")
             running = self.listed("running")
             # The local helper is detached by design, so its process cannot be
-            # polled here. Once both directories are empty it has exited;
-            # waiting longer would only hide a shell/path failure.
-            if not queue and not running:
+            # polled here. Once all of queue, running, and done are empty, it
+            # has exited without processing the job; waiting longer would only
+            # hide a shell/path failure.
+            if not queue and not running and not self.listed("done"):
                 log = os.path.join(self.directory, remote_runner.RUNNER_LOG_NAME)
                 detail = ""
                 if os.path.exists(log):
