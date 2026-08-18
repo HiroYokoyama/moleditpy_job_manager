@@ -58,6 +58,7 @@ from .theme import (
     CY_TEAL,
     apply_theme,
 )
+from .tasks import run_async
 from .window_utils import make_independent
 from .store import (
     JOB_EXTENSION,
@@ -172,7 +173,10 @@ class JobTableModel(QAbstractTableModel):
         or waiting for something that already failed, and those two deserve
         very different reactions from the user.
         """
-        if self.service.store.chain_blocker(job) is not None:
+        # The cached set, not chain_blocker: this is asked twice per visible
+        # row per repaint -- once for the text, once for the colour -- and each
+        # call walked the job's whole chain through the scheduler registry.
+        if job.id in self.service.store.blocked_ids():
             return STATE_BLOCKED
         if self._is_waiting(job):
             return STATE_QUEUED
@@ -243,12 +247,10 @@ class JobTableModel(QAbstractTableModel):
                     return "-"
                 return predecessor.name + ("" if job.chain_any else " (on success)")
             if column == 5:
-                if job.state == STATE_RUNNING or (job.started_at and not job.is_terminal):
+                # Running time once it is running or over; queue wait before.
+                if job.is_terminal or job.state == STATE_RUNNING or job.started_at:
                     return format_duration(job.elapsed())
-                elif job.is_terminal:
-                    return format_duration(job.elapsed())
-                else:
-                    return f"wait {format_duration(job.waiting())}"
+                return f"wait {format_duration(job.waiting())}"
             if column == 6:
                 return format_stamp(job.updated_at)
         elif role == Qt.ItemDataRole.ForegroundRole and index.column() == 3:
@@ -330,10 +332,7 @@ class JobsDialog(QDialog):
         self.btn_refresh.clicked.connect(self._refresh_now)
         self.btn_host_monitor = QPushButton("Host Monitor...")
         self.btn_host_monitor.setToolTip(
-            "Live load and memory for every host, with a graph each.\n\n"
-            "Asks each host once every couple of seconds -- but only while that "
-            "window is open, so a monitor left up overnight costs a login node "
-            "nothing."
+            "Live load and memory per host, sampled only while that window is open."
         )
         self.btn_host_monitor.clicked.connect(self.open_host_monitor)
         toolbar.addWidget(self.btn_new)
@@ -348,9 +347,8 @@ class JobsDialog(QDialog):
         self.spin_interval.setSuffix(" s")
         self.spin_interval.setValue(self.service.store.poll_interval)
         self.spin_interval.setToolTip(
-            "One status query per host per cycle. Fast intervals are allowed, but a "
-            f"shared login node is not a status API -- {RECOMMENDED_MIN_POLL_INTERVAL} s "
-            "or slower is the courteous setting."
+            "One status query per host per cycle. "
+            f"{RECOMMENDED_MIN_POLL_INTERVAL} s or slower is the courteous setting."
         )
         self.spin_interval.valueChanged.connect(self._on_interval_changed)
         toolbar.addWidget(self.spin_interval)
@@ -402,9 +400,7 @@ class JobsDialog(QDialog):
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.table.setItemDelegateForColumn(3, _StateColorDelegate(self.table))
         self.table.selectionModel().selectionChanged.connect(lambda *_: self._update_buttons())
-        # The log is what a double click is for: it is the thing you want when
-        # a job has been running for an hour and you are wondering how far it is.
-        self.table.doubleClicked.connect(lambda *_: self._tail_selected())
+        self.table.doubleClicked.connect(lambda *_: self._open_double_clicked())
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_row_menu)
         splitter.addWidget(self.table)
@@ -422,17 +418,10 @@ class JobsDialog(QDialog):
         self.btn_download = QPushButton("Download")
         self.btn_download.clicked.connect(self._download_selected)
         self.btn_open = QPushButton("Open Result")
-        self.btn_open.setToolTip(
-            "Select and open calculation outputs in MoleditPy.\n\n"
-            "Downloaded files and verified equal-path mirror files can be opened directly."
-        )
+        self.btn_open.setToolTip("Open one of this job's output files in MoleditPy.")
         self.btn_open.clicked.connect(self._open_selected_result)
         self.btn_tail = QPushButton("Tail Log")
-        self.btn_tail.setToolTip(
-            "Read the end of the job's log into a window of its own, which can "
-            "be resized, kept open beside the table and refreshed.\n\n"
-            "Double-clicking a row does the same."
-        )
+        self.btn_tail.setToolTip("Read the end of the job's log in a window of its own.")
         self.btn_tail.clicked.connect(self._tail_selected)
         self.btn_tail_file = QPushButton("Tail File...")
         self.btn_tail_file.setToolTip(
@@ -440,10 +429,7 @@ class JobsDialog(QDialog):
         )
         self.btn_tail_file.clicked.connect(self._tail_specific_file)
         self.btn_details = QPushButton("Details")
-        self.btn_details.setToolTip(
-            "Everything recorded about this job -- host, scheduler, queue id, "
-            "timings, directories, exit code -- and the script that ran, in full."
-        )
+        self.btn_details.setToolTip("Everything recorded about this job, and the script that ran.")
         self.btn_details.clicked.connect(self._show_details)
         self.btn_resubmit = QPushButton("Resubmit")
         self.btn_resubmit.setToolTip(
@@ -459,36 +445,34 @@ class JobsDialog(QDialog):
         # somewhere else.
         self.btn_open_default = QPushButton("Default")
         self.btn_open_default.setToolTip(
-            "Go back to the job list this plugin keeps for you, in "
-            "~/.moleditpy/job_manager/.\n\n"
-            "That is the one being polled and added to; a list opened from a "
-            "file is used until you come back here."
+            "Back to the job list this plugin keeps in ~/.moleditpy/job_manager/."
         )
         self.btn_open_default.clicked.connect(self._use_default_job_list)
         self.btn_open_list = QPushButton("Open...")
         self.btn_open_list.setToolTip(
-            f"Open a saved job list ({JOB_EXTENSION}).\n\n"
-            "A list written by Clear List... opens read-only, because it is "
-            "history. Anything else -- an export, a backup, a colleague's "
-            "file -- becomes the list in use for this session."
+            f"Open a saved job list ({JOB_EXTENSION}). A cleared list opens read only."
         )
         self.btn_open_list.clicked.connect(self._open_job_list_file)
         self.btn_save_as = QPushButton("Save As...")
         self.btn_save_as.setToolTip(
-            f"Save the job list to a {JOB_EXTENSION} file: the same records the "
-            "plugin stores, and openable again from here or File > Import."
+            f"Save the job list to a {JOB_EXTENSION} file, openable again from here."
         )
         self.btn_save_as.clicked.connect(lambda: self._export(JOB_EXTENSION))
         self.btn_export_csv = QPushButton("Export CSV")
         self.btn_export_csv.setToolTip("Write one row per job: state, exit code, timings, paths.")
         self.btn_export_csv.clicked.connect(lambda: self._export(".csv"))
+        self.btn_rebuild = QPushButton("Rebuild from Folder...")
+        self.btn_rebuild.setToolTip(
+            "Build a job list from results already on disk. The list is read "
+            "only: nothing in it can be submitted or polled."
+        )
+        self.btn_rebuild.clicked.connect(self._rebuild_from_folder)
         self.btn_archive = QPushButton("Load Archive...")
         self.btn_archive.setToolTip("View a previously cleared job list, read only.")
         self.btn_archive.clicked.connect(self._load_archive)
         self.btn_clear = QPushButton("Clear List...")
         self.btn_clear.setToolTip(
-            "Empty the table. The current list is saved to the archived folder "
-            "first, with the date in its name -- nothing is deleted on the cluster."
+            "Empty the table, saving a dated copy first. Nothing on the host is deleted."
         )
         self.btn_clear.clicked.connect(self._clear_jobs)
         # Two rows, split by what they act on: the selected job above, the list
@@ -514,6 +498,7 @@ class JobsDialog(QDialog):
             self.btn_open_list,
             self.btn_save_as,
             self.btn_export_csv,
+            self.btn_rebuild,
             self.btn_archive,
             self.btn_clear,
         ):
@@ -533,24 +518,13 @@ class JobsDialog(QDialog):
         actions.addWidget(self.chk_auto_open)
 
         self.chk_taskbar_badge = QCheckBox("Show the count on the app icon")
-        self.chk_taskbar_badge.setToolTip(
-            "Put the number of active jobs on MoleditPy's icon in the task bar "
-            "(the Dock on macOS, the launcher entry on Linux).\n\n"
-            "Off by default: the application icon belongs to MoleditPy, not to "
-            "this plugin. The status bar counter is shown either way."
-        )
+        self.chk_taskbar_badge.setToolTip("Show the number of active jobs on MoleditPy's own icon.")
         self.chk_taskbar_badge.setChecked(bool(self.service.store.get_pref("taskbar_badge", False)))
         self.chk_taskbar_badge.toggled.connect(self._on_taskbar_badge_toggled)
         actions.addWidget(self.chk_taskbar_badge)
 
         self.chk_notify = QCheckBox("Notify me when a job ends")
-        self.chk_notify.setToolTip(
-            "Raise a desktop notification when a tracked job finishes, fails "
-            "or disappears from the queue.\n\n"
-            "The point of tracking a six-hour calculation is not having to "
-            "watch it, so this is on by default. It needs a desktop that shows "
-            "notifications; where there is none, nothing happens."
-        )
+        self.chk_notify.setToolTip("Raise a desktop notification when a tracked job ends.")
         self.chk_notify.setChecked(bool(self.service.store.get_pref("notify_on_finish", True)))
         self.chk_notify.toggled.connect(
             lambda checked: self.service.store.set_pref("notify_on_finish", bool(checked))
@@ -672,7 +646,34 @@ class JobsDialog(QDialog):
                 index = self.model.index(row, column)
                 self.model.dataChanged.emit(index, index)
 
+    def viewing_reconstructed(self) -> bool:
+        """True while the list in use was rebuilt from a folder."""
+        return bool(getattr(self.service.store, "reconstructed", False))
+
     def _update_buttons(self) -> None:
+        if self.viewing_reconstructed() and not self.viewing_archive():
+            # Everything that would talk to a host is off: these jobs were read
+            # off a disk and there is no host, no queue id and no remote
+            # directory behind any of them. Opening a result, reading the
+            # record and exporting the list all still work, and are the whole
+            # point of having rebuilt it.
+            job = self.selected_job()
+            for button in (
+                self.btn_new,
+                self.btn_cancel,
+                self.btn_download,
+                self.btn_tail,
+                self.btn_tail_file,
+                self.btn_resubmit,
+            ):
+                button.setEnabled(False)
+            self.btn_open.setEnabled(bool(job and job.downloaded_files))
+            self.btn_details.setEnabled(job is not None)
+            self.btn_remove.setEnabled(job is not None)
+            for button in (self.btn_save_as, self.btn_export_csv, self.btn_clear):
+                button.setEnabled(True)
+            return
+        self.btn_new.setEnabled(True)
         if self.viewing_archive():
             # An archived job's queue id is stale and its remote directory may
             # be long gone, so every action that would act on one is off.
@@ -733,6 +734,16 @@ class JobsDialog(QDialog):
     ) -> None:
         from .submit_dialog import SubmitDialog
 
+        if self.viewing_reconstructed():
+            # Including a drop onto the window, which lands here as well: a
+            # rebuilt list has nowhere to submit to and nothing to track with.
+            QMessageBox.information(
+                self,
+                "Job Manager",
+                "This job list was rebuilt from a folder, so it is read only.\n\n"
+                "Press Default to go back to your own list before submitting.",
+            )
+            return
         if not self.service.store.hosts:
             QMessageBox.information(self, "Job Manager", "Add a host profile first (Hosts...).")
             self.open_hosts_dialog()
@@ -813,12 +824,10 @@ class JobsDialog(QDialog):
             self.lbl_interval_warning.setText("")
             self.lbl_interval_warning.setToolTip("")
             return
-        self.lbl_interval_warning.setText("⚠ fast")
+        self.lbl_interval_warning.setText("fast polling")
         self.lbl_interval_warning.setToolTip(
-            f"Polling faster than {RECOMMENDED_MIN_POLL_INTERVAL} s hits the login node "
-            "with a queue query every few seconds, for every host you have jobs on. "
-            "Fine against your own machine or while debugging; on a shared cluster it "
-            "is the kind of thing admins complain about."
+            f"Faster than {RECOMMENDED_MIN_POLL_INTERVAL} s queries the login node every "
+            "few seconds, for every host you have jobs on."
         )
 
     def _refresh_now(self) -> None:
@@ -829,11 +838,40 @@ class JobsDialog(QDialog):
         job = self.selected_job()
         if job is None:
             return
-        confirm = QMessageBox.question(
-            self, "Cancel job", f"Cancel '{job.name}' ({job.remote_job_id}) on the cluster?"
+        dependents = [
+            j for j in self.service.store.dependents_of(job.id, recursive=True) if j.is_active
+        ]
+        if not dependents:
+            confirm = QMessageBox.question(
+                self, "Cancel job", f"Cancel '{job.name}' ({job.remote_job_id}) on the host?"
+            )
+            if confirm == QMessageBox.StandardButton.Yes and self._has_credentials(job):
+                self.service.cancel(job)
+            return
+        # A chain is the case where "cancel" is ambiguous: one job, or that job
+        # and everything queued behind it. Asked outright rather than decided
+        # here, because both answers are ones people really want.
+        box = QMessageBox(self)
+        box.setWindowTitle("Cancel job")
+        box.setText(
+            f"'{job.name}' has {len(dependents)} job(s) queued behind it.\n\n"
+            "Cancel this one and let the rest run, or cancel the whole chain?"
         )
-        if confirm == QMessageBox.StandardButton.Yes and self._has_credentials(job):
-            self.service.cancel(job)
+        this_one = box.addButton("Cancel this job", QMessageBox.ButtonRole.AcceptRole)
+        whole_chain = box.addButton("Cancel the chain", QMessageBox.ButtonRole.DestructiveRole)
+        box.addButton(QMessageBox.StandardButton.Cancel)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked not in (this_one, whole_chain) or not self._has_credentials(job):
+            return
+        if clicked is whole_chain:
+            # Behind first, so nothing is released by the cancel of the job in
+            # front of it and started while the chain is being taken down.
+            for dependent in reversed(dependents):
+                self.service.cancel(dependent, release_dependents=False)
+            self.service.cancel(job, release_dependents=False)
+            return
+        self.service.cancel(job)
 
     def _has_credentials(self, job: Job) -> bool:
         """Prompt for this job's host password before any worker is dispatched."""
@@ -869,7 +907,7 @@ class JobsDialog(QDialog):
 
     def _offer_download(self, job: Job, names: list) -> None:
         from .download_dialog import DownloadDialog
-        from .runner import select_files
+        from .runner import is_plugin_file, likely_outputs, select_files
 
         matched = [
             name
@@ -877,8 +915,14 @@ class JobsDialog(QDialog):
             # Offered, never pre-ticked: `*.log` is in the default patterns for
             # Gaussian's output, and ticking the wrapper's log on its account
             # would be the automatic download this is meant to replace.
-            if name != job.log_file
+            if not is_plugin_file(name, job.log_file)
         ]
+        # Nothing matched is the case this dialog exists for, and a list with
+        # nothing ticked leaves the user to find their own output among the
+        # scratch files. The names say which those are.
+        suggested = not matched
+        if suggested:
+            matched = likely_outputs(names, job.log_file)
         dialog = DownloadDialog(
             job.name,
             names,
@@ -886,6 +930,7 @@ class JobsDialog(QDialog):
             job.local_dir or self.service.store.download_root(),
             f"Job Manager {PLUGIN_VERSION} - Download {job.name}",
             self,
+            suggested=suggested,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
@@ -894,6 +939,23 @@ class JobsDialog(QDialog):
         if not chosen or not folder:
             return
         self.service.download(job, into=folder, names=chosen)
+
+    def _open_double_clicked(self) -> None:
+        """What a double click means depends on whether the job is still going.
+
+        While it runs, the question is "how far has it got", and the answer is
+        the log. Once it has finished, the log is the least interesting file in
+        the directory -- what was wanted is the result -- and opening it there
+        meant every finished job took a second click to get past.
+        """
+        job = self.selected_job()
+        if job is None:
+            return
+        if job.is_terminal and self.btn_open.isEnabled():
+            self._open_selected_result()
+            return
+        if self.btn_tail.isEnabled():
+            self._tail_selected()
 
     def _tail_selected(self) -> None:
         job = self.selected_job()
@@ -912,6 +974,7 @@ class JobsDialog(QDialog):
                 self,
                 on_refresh=lambda: self.service.tail(job),
                 auto_interval=auto_interval,
+                store=self.service.store,
             )
 
             # Cleared on close so the next tail builds a live window rather
@@ -984,6 +1047,7 @@ class JobsDialog(QDialog):
             self,
             on_refresh=lambda: self._refresh_tail_file(job, filename, dialog),
             auto_interval=auto_interval,
+            store=self.service.store,
         )
         self._detail_dialogs.append(dialog)
         dialog.finished.connect(
@@ -1135,6 +1199,98 @@ class JobsDialog(QDialog):
         if path:
             self.open_job_list(path)
 
+    def _rebuild_from_folder(self) -> None:
+        """Make a job list out of results that are already on disk.
+
+        For calculations this plugin never saw: fetched by hand, copied off a
+        cluster, run before it was installed, or left behind by a list that was
+        cleared. The records it writes are marked reconstructed, in the file
+        itself, and nothing in such a list can be submitted or polled -- there
+        is no host behind any of it.
+        """
+        start = (
+            self.service.store.get_pref("last_rebuild_dir", "")
+            or self.service.store.download_root()
+        )
+        folder = QFileDialog.getExistingDirectory(self, "Rebuild a job list from a folder", start)
+        if not folder:
+            return
+        self.service.store.set_pref("last_rebuild_dir", folder)
+        self.btn_rebuild.setEnabled(False)
+        self._append_message(f"Reading {folder}...")
+
+        from .folder_scan import scan_folder
+
+        def work():
+            # On a worker: a folder on a network share takes real time to walk,
+            # and doing it here would freeze the window mid-scan.
+            return scan_folder(folder)
+
+        def done(result) -> None:
+            self.btn_rebuild.setEnabled(True)
+            self._use_rebuilt_list(folder, result)
+
+        def failed(message: str) -> None:
+            self.btn_rebuild.setEnabled(True)
+            QMessageBox.warning(self, "Rebuild from folder", f"Could not read {folder}:\n{message}")
+
+        run_async(self.service.pool, work, on_success=done, on_error=failed)
+
+    def _use_rebuilt_list(self, folder: str, result) -> None:
+        """Write what the scan found and switch the table to it."""
+        from .folder_scan import summarise
+
+        if not result.jobs:
+            QMessageBox.information(
+                self,
+                "Rebuild from folder",
+                f"No calculation outputs were found under:\n{folder}",
+            )
+            return
+        counts = summarise(result)
+        store = self.service.store
+        # Saved in the folder that was scanned, beside the results it describes:
+        # the list belongs to that folder, so copying or moving the folder takes
+        # it along, and opening it again there needs no scan at all.
+        name = f"rebuilt_{time.strftime('%Y%m%d_%H%M%S')}{JOB_EXTENSION}"
+        path = os.path.join(folder, name)
+        try:
+            store.write_job_list(path, result.jobs, reconstructed=True)
+        except OSError as exc:
+            # A folder on a read-only share is a perfectly ordinary place to
+            # find results, so falling back beats refusing.
+            path = os.path.join(store.directory, name)
+            try:
+                store.write_job_list(path, result.jobs, reconstructed=True)
+            except OSError:
+                QMessageBox.warning(
+                    self, "Rebuild from folder", f"Could not write the job list:\n{exc}"
+                )
+                return
+        truncated = (
+            f"\n\nOnly the first {result.files_seen} files were read; narrow the folder for the rest."
+            if result.truncated
+            else ""
+        )
+        confirm = QMessageBox.question(
+            self,
+            "Rebuild from folder",
+            f"Found {counts['jobs']} calculation(s) and {counts['files']} output file(s), "
+            f"saved as {os.path.basename(path)} in that folder.\n\n"
+            "Open it now? It is read only: results can be opened from it, but "
+            "nothing in it can be submitted, cancelled or polled." + truncated,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            self._append_message(f"Rebuilt list saved to {path}")
+            return
+        self._exit_archive()
+        count = store.use_jobs_file(path)
+        self.service.jobs_changed.emit()
+        self.service.poller.start()
+        self._update_active_file()
+        self._update_buttons()
+        self._append_message(f"Rebuilt {count} job(s) from {folder}")
+
     def _load_archive(self) -> None:
         """Show a previously cleared list, read only."""
         store = self.service.store
@@ -1205,15 +1361,22 @@ class JobsDialog(QDialog):
         """Say which list is in use whenever it is not the usual one."""
         store = self.service.store
         if store.using_default_jobs_file():
-            self.setWindowTitle("Job Manager")
+            self.setWindowTitle(f"Job Manager {PLUGIN_VERSION} - Job Monitor")
             self.lbl_active_file.setVisible(False)
             self.btn_default_file.setVisible(False)
             return
-        self.setWindowTitle(f"Job Manager — {os.path.basename(store.jobs_path)}")
-        self.lbl_active_file.setText(
-            f"Working in <b>{store.jobs_path}</b> for this session. "
-            "Restarting comes back to the usual list."
-        )
+        self.setWindowTitle(f"Job Manager {PLUGIN_VERSION} - {os.path.basename(store.jobs_path)}")
+        if self.viewing_reconstructed():
+            self.lbl_active_file.setText(
+                f"<b>Rebuilt from a folder</b> — {store.jobs_path}. Read only: these "
+                "calculations were found on disk, not submitted from here, so nothing "
+                "in this list can be submitted, cancelled or polled."
+            )
+        else:
+            self.lbl_active_file.setText(
+                f"Working in <b>{store.jobs_path}</b> for this session. "
+                "Restarting comes back to the usual list."
+            )
         self.lbl_active_file.setVisible(True)
         self.btn_default_file.setVisible(True)
 
@@ -1297,9 +1460,17 @@ class JobsDialog(QDialog):
             return
         self.open_result_files(paths)
 
+    def _log_name_for(self, paths: List[str]) -> str:
+        """The wrapper log of whichever job these paths belong to, if known."""
+        wanted = {os.path.normpath(p) for p in paths or []}
+        for job in self.service.store.jobs.values():
+            if wanted & {os.path.normpath(p) for p in (job.downloaded_files or [])}:
+                return job.log_file
+        return ""
+
     def open_result_files(self, paths: List[str]) -> None:
         """Hand the most interesting downloaded file to the host application."""
-        target = pick_primary_result(paths)
+        target = pick_primary_result(paths, self._log_name_for(paths))
         if not target:
             return
         opened = open_in_host(target)
@@ -1405,16 +1576,16 @@ class JobsDialog(QDialog):
         event.accept()
 
 
-#: Extensions an analyzer plugin is most likely to claim, best first.
-_RESULT_PRIORITY = (".out", ".log", ".fchk", ".hess", ".xyz")
+def pick_primary_result(paths: List[str], log_file: str = "") -> str:
+    """The file to hand to the application, out of everything downloaded.
 
+    Ranked by what an analyzer plugin is most likely to claim, and never this
+    plugin's own wrapper log whatever else is there. Falls back to the first
+    path so a download of one unrecognised file still opens it.
+    """
+    from .runner import primary_output
 
-def pick_primary_result(paths: List[str]) -> str:
-    for extension in _RESULT_PRIORITY:
-        for path in paths or []:
-            if path.lower().endswith(extension):
-                return path
-    return (paths or [""])[0]
+    return primary_output(paths, log_file) or (paths or [""])[0]
 
 
 def open_in_host(path: str) -> bool:

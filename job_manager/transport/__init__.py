@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from ..models import BACKEND_LOCAL, BACKEND_PARAMIKO, HostProfile
+from ..models import BACKEND_LOCAL, BACKEND_PARAMIKO, BACKEND_WSL, HostProfile
 from .base import CommandResult, HostKeyRejected, Transport, TransportError
 from .openssh import OpenSSHTransport
 
@@ -17,6 +17,7 @@ __all__ = [
     "create_transport",
     "local_shell_available",
     "paramiko_available",
+    "wsl_available",
 ]
 
 
@@ -32,8 +33,18 @@ def local_shell_available(kind: str = "posix") -> bool:
     return shell_available(kind)
 
 
+def wsl_available() -> bool:
+    from .wsl import wsl_available as available
+
+    return available()
+
+
 def create_transport(host: HostProfile, password: Optional[str] = None) -> Transport:
     """Instantiate the backend named by ``host.backend``."""
+    if host.backend == BACKEND_WSL:
+        from .wsl import WSLTransport
+
+        return WSLTransport(host)
     if host.backend == BACKEND_LOCAL:
         from .local import LocalTransport
 

@@ -33,6 +33,12 @@ from .transport.base import TransportError
 MAX_BACKOFF = 900
 #: A manual refresh may not be spammed faster than this.
 MANUAL_REFRESH_COOLDOWN = 10.0
+#: How soon a host is asked after a job has just been handed to it. The full
+#: interval is the right cadence for watching a queue for hours; it is the
+#: wrong one for the thirty seconds after a submission, when the user is
+#: watching to see their job start and the table says SUBMITTED either way.
+#: One extra query per submission is a user action, not a poll loop.
+FIRST_POLL_SECONDS = 6.0
 
 
 class _WorkerSignals(QObject):
@@ -110,6 +116,12 @@ class JobPoller(QObject):
         self._backoff: Dict[str, float] = {}
         self._next_poll: Dict[str, float] = {}
         self._last_manual = 0.0
+        #: Fires once, soon after a submission; see :meth:`prime`. A member
+        #: rather than QTimer.singleShot so it can be stopped at shutdown and
+        #: cannot outlive this object.
+        self._kickoff = QTimer(self)
+        self._kickoff.setSingleShot(True)
+        self._kickoff.timeout.connect(self._on_kickoff)
         self.timer = QTimer(self)
         self.timer.setSingleShot(False)
         self.timer.timeout.connect(self.tick)
@@ -141,7 +153,28 @@ class JobPoller(QObject):
         else:
             self.start()
 
+    def prime(self, host_id: str = "") -> None:
+        """Ask this host again shortly, whatever the interval says.
+
+        Called when a job has just been submitted. Without it the first status
+        query after a submission is a whole poll interval away -- two minutes
+        by default -- so a job that started at once still read SUBMITTED for
+        two minutes, and an empty list that has just been given its first job
+        showed nothing happening at all.
+        """
+        if host_id:
+            self._next_poll.pop(host_id, None)
+            self._backoff.pop(host_id, None)
+        self.start()
+        if not self._kickoff.isActive():
+            self._kickoff.start(int(FIRST_POLL_SECONDS * 1000))
+
+    def _on_kickoff(self) -> None:
+        if self.store.active_jobs():
+            self.tick()
+
     def shutdown(self) -> None:
+        self._kickoff.stop()
         self.stop()
         self.pool.clear()
         self.pool.waitForDone(3000)

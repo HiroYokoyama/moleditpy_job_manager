@@ -14,12 +14,10 @@ from typing import Callable, List, Optional, Sequence
 from PyQt6.QtCore import QUrl
 from PyQt6.QtGui import QColor, QDesktopServices
 from PyQt6.QtWidgets import (
-    QAbstractItemView,
     QDialog,
-    QHBoxLayout,
+    QDialogButtonBox,
     QHeaderView,
     QLabel,
-    QLineEdit,
     QMessageBox,
     QPushButton,
     QTreeWidget,
@@ -28,6 +26,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from . import PLUGIN_VERSION
+from .file_tree import FULL_HEADERS, configure_tree, folder_factory, make_filter_row
 from .models import Job
 from .theme import apply_theme
 from .tree_utils import (
@@ -108,7 +108,7 @@ class OutputFileSelectorDialog(QDialog):
         self.on_open_callback = on_open_callback
         self._all_items: List[QTreeWidgetItem] = []
 
-        self.setWindowTitle(f"Open Output File — {job.name}")
+        self.setWindowTitle(f"Job Manager {PLUGIN_VERSION} - Open Result: {job.name}")
         apply_theme(self)
         self.resize(650, 480)
 
@@ -120,29 +120,16 @@ class OutputFileSelectorDialog(QDialog):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
 
-        header_layout = QVBoxLayout()
-        header_layout.setSpacing(2)
-        self.lbl_title = QLabel(f"<b>Job: {self.job.name}</b>")
-        self.lbl_subtitle = QLabel("Select an output file to open in MoleditPy:")
-        header_layout.addWidget(self.lbl_title)
-        header_layout.addWidget(self.lbl_subtitle)
-        layout.addLayout(header_layout)
+        # Headline, filter, tree, buttons -- the same order and the same
+        # pieces as the download and tail-file lists.
+        self.lbl_headline = QLabel(f"Select a file from <b>{self.job.name}</b> to open:")
+        self.lbl_headline.setWordWrap(True)
+        layout.addWidget(self.lbl_headline)
 
-        filter_row = QHBoxLayout()
-        filter_row.setSpacing(6)
-        filter_row.addWidget(QLabel("Filter:"))
-        self.txt_filter = QLineEdit()
-        self.txt_filter.setPlaceholderText("Type to filter files (e.g. .out, .xyz)...")
-        self.txt_filter.setClearButtonEnabled(True)
-        self.txt_filter.textChanged.connect(self._apply_filter)
-        filter_row.addWidget(self.txt_filter, 1)
+        filter_row, self.txt_filter = make_filter_row(self._apply_filter)
         layout.addLayout(filter_row)
 
-        self.tree = QTreeWidget()
-        self.tree.setHeaderLabels(["File Name", "Size", "Type", "Location"])
-        self.tree.setAlternatingRowColors(True)
-        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.tree.setUniformRowHeights(True)
+        self.tree = configure_tree(QTreeWidget(), FULL_HEADERS)
         self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.tree.header().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
@@ -155,31 +142,28 @@ class OutputFileSelectorDialog(QDialog):
         self.lbl_status.setStyleSheet("color: palette(mid); font-size: 11px;")
         layout.addWidget(self.lbl_status)
 
-        bottom_bar = QHBoxLayout()
-        bottom_bar.setSpacing(6)
-
-        self.btn_open_folder = QPushButton("Open Containing Folder")
-        self.btn_open_folder.setToolTip("Open the local directory holding downloaded outputs.")
-        self.btn_open_folder.clicked.connect(self._open_containing_folder)
-        bottom_bar.addWidget(self.btn_open_folder)
-
-        self.btn_browse_remote = QPushButton("Browse Host Files...")
-        self.btn_browse_remote.setToolTip("Query the remote host directory for all files.")
-        self.btn_browse_remote.clicked.connect(self._fetch_remote_listing)
-        bottom_bar.addWidget(self.btn_browse_remote)
-
-        bottom_bar.addStretch(1)
-
-        self.btn_open = QPushButton("Open")
+        box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Open | QDialogButtonBox.StandardButton.Close
+        )
+        self.btn_open = box.button(QDialogButtonBox.StandardButton.Open)
         self.btn_open.setDefault(True)
         self.btn_open.clicked.connect(self._open_selected)
-        bottom_bar.addWidget(self.btn_open)
+        self.btn_close = box.button(QDialogButtonBox.StandardButton.Close)
+        # The box emits rejected for a Close button; connecting clicked as well
+        # would reject twice and emit finished twice.
+        box.rejected.connect(self.reject)
 
-        self.btn_close = QPushButton("Close")
-        self.btn_close.clicked.connect(self.reject)
-        bottom_bar.addWidget(self.btn_close)
+        self.btn_open_folder = QPushButton("Open Containing Folder")
+        self.btn_open_folder.setToolTip("Show the downloaded files in the file manager.")
+        self.btn_open_folder.clicked.connect(self._open_containing_folder)
+        box.addButton(self.btn_open_folder, QDialogButtonBox.ButtonRole.ActionRole)
 
-        layout.addLayout(bottom_bar)
+        self.btn_browse_remote = QPushButton("Browse Host Files...")
+        self.btn_browse_remote.setToolTip("List everything in the job's directory on the host.")
+        self.btn_browse_remote.clicked.connect(self._fetch_remote_listing)
+        box.addButton(self.btn_browse_remote, QDialogButtonBox.ButtonRole.ActionRole)
+
+        layout.addWidget(box)
 
     def _load_files(self) -> None:
         """Scan local files first; if none exist, fetch remote listing."""
@@ -265,9 +249,11 @@ class OutputFileSelectorDialog(QDialog):
         self.tree.clear()
         self._all_items.clear()
 
-        from .jobs_dialog import pick_primary_result
+        from .runner import primary_output
 
-        primary_path = pick_primary_result(list(paths))
+        # Never the wrapper's own job.log: it is this plugin's file, and
+        # opening it is not what "open the result" means.
+        primary_path = primary_output(list(paths), self.job.log_file)
         selected_item: Optional[QTreeWidgetItem] = None
         mirror_dir = self._mirrored_job_dir()
         norm_mirror = os.path.normpath(mirror_dir) if mirror_dir else ""
@@ -280,7 +266,9 @@ class OutputFileSelectorDialog(QDialog):
             if not parts:
                 continue
 
-            parent = ensure_folder_item(self.tree, folders, parts[:-1])
+            parent = ensure_folder_item(
+                self.tree, folders, parts[:-1], folder_factory(columns=len(FULL_HEADERS))
+            )
             filename = parts[-1]
 
             try:
@@ -365,9 +353,9 @@ class OutputFileSelectorDialog(QDialog):
                 local_map[relative] = path
         mirror_dir = self._mirrored_job_dir()
 
-        from .jobs_dialog import pick_primary_result
+        from .runner import primary_output
 
-        primary_name = os.path.basename(pick_primary_result(list(names)))
+        primary_name = os.path.basename(primary_output(list(names), self.job.log_file))
         selected_item: Optional[QTreeWidgetItem] = None
         folders: dict = {}
         gray = QColor("#8b949e")
@@ -379,7 +367,9 @@ class OutputFileSelectorDialog(QDialog):
             if not parts:
                 continue
             filename = parts[-1]
-            parent = ensure_folder_item(self.tree, folders, parts[:-1])
+            parent = ensure_folder_item(
+                self.tree, folders, parts[:-1], folder_factory(columns=len(FULL_HEADERS))
+            )
 
             mirrored_path = os.path.join(mirror_dir, *parts) if mirror_dir else ""
             local_key = "/".join(parts)

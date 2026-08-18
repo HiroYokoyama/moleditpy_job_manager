@@ -229,11 +229,22 @@ class JobStore:
         self.hosts: Dict[str, HostProfile] = {}
         self.presets: Dict[str, SubmitPreset] = {}
         self.jobs: Dict[str, Job] = {}
+        #: True while the list in use was rebuilt from a folder rather than
+        #: submitted from here. See :meth:`_document`.
+        self.reconstructed = False
         self.prefs: Dict[str, Any] = dict(DEFAULT_PREFS)
         #: Ids removed on purpose in this session. Saving keeps jobs another
         #: instance wrote, and without this a removal would be undone by the
         #: very next save that read them back off disk.
         self._forgotten: set = set()
+        #: Memo for :meth:`blocked_ids`, keyed by the chain state it was
+        #: computed from.
+        self._revision = 0
+        self._blocked_key = -1
+        self._blocked: frozenset = frozenset()
+        #: What was last written to each file, so an unchanged document is not
+        #: written again. See :meth:`_write_if_changed`.
+        self._written: Dict[str, tuple] = {}
         self.load()
 
     # --- loading / saving ---------------------------------------------------
@@ -271,6 +282,7 @@ class JobStore:
                 continue
             job = Job.from_dict(raw)
             self.jobs[job.id] = job
+        self.invalidate_chains()
         self._resolve_interrupted()
 
     def _resolve_interrupted(self) -> int:
@@ -282,8 +294,40 @@ class JobStore:
             )
         return len(stranded)
 
+    @staticmethod
+    def _stat_key(path: str):
+        """Enough of a file's identity to notice somebody else rewriting it."""
+        try:
+            info = os.stat(path)
+        except OSError:
+            return None
+        return (info.st_mtime_ns, info.st_size)
+
+    def _write_if_changed(self, path: str, document: Dict[str, Any], slot: str) -> bool:
+        """Write ``document`` only when it differs from what is already there.
+
+        Every write here is a temp file, an ``fsync`` and a rename. That is the
+        right way to write a file that must never be found half-written, and
+        the wrong thing to do on every keystroke in a text field or every step
+        of a spin box -- which is what a preference saved on ``textChanged``
+        amounts to. Serialising and comparing costs microseconds and turns a
+        burst of identical saves into one.
+
+        The file's own timestamp and size are remembered alongside, so a file
+        that changed underneath us -- another window, or one truncated by
+        something else -- is rewritten rather than assumed to still hold what
+        we last put there.
+        """
+        serialised = json.dumps(document, indent=2, ensure_ascii=False, sort_keys=True)
+        previous = self._written.get(slot)
+        if previous is not None and previous == (serialised, self._stat_key(path)):
+            return False
+        atomic_write_json(path, document)
+        self._written[slot] = (serialised, self._stat_key(path))
+        return True
+
     def save_settings(self) -> None:
-        atomic_write_json(
+        self._write_if_changed(
             self.settings_path,
             {
                 "version": 1,
@@ -291,12 +335,14 @@ class JobStore:
                 "hosts": [h.to_dict() for h in self.hosts.values()],
                 "presets": [p.to_dict() for p in self.presets.values()],
             },
+            "settings",
         )
 
     def save_jobs(self) -> None:
+        self.invalidate_chains()
         document = self._document(archived=False)
         document["jobs"] = self._merged_jobs(document["jobs"])
-        atomic_write_json(self.jobs_path, document)
+        self._write_if_changed(self.jobs_path, document, "jobs:" + self.jobs_path)
 
     def _merged_jobs(self, mine: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Ours, plus any job on disk that this session has never heard of.
@@ -331,10 +377,15 @@ class JobStore:
         ``archived`` is what makes a list history rather than working data, and
         it travels *in the file* rather than being inferred from where the file
         sits -- a list stays archived after it is moved, copied or mailed on.
+        ``reconstructed`` travels the same way and for the same reason: a list
+        built by reading a folder describes calculations nobody here submitted,
+        so nothing in it may be cancelled, polled or resubmitted -- and that has
+        to stay true after the file is closed, moved or opened somewhere else.
         """
         document: Dict[str, Any] = {
             "version": 1,
             "archived": bool(archived),
+            "reconstructed": bool(self.reconstructed),
             "jobs": [j.to_dict() for j in self.job_list()],
         }
         if archived:
@@ -353,6 +404,24 @@ class JobStore:
         for preset_id in [p.id for p in self.presets.values() if p.host_id == host_id]:
             self.presets.pop(preset_id, None)
         self.save_settings()
+
+    def host_for_local_path(self, path: str) -> Optional[HostProfile]:
+        """The enabled host whose local mirror holds ``path``, if any.
+
+        The most specific wins: two hosts mirroring ``/mnt`` and ``/mnt/hpc``
+        are both right about a file under the second, and the second is the
+        useful answer.
+        """
+        matches = [
+            host
+            for host in self.host_list()
+            if getattr(host, "enabled", True) and host.owns_local_path(path)
+        ]
+        if not matches:
+            return None
+        return max(
+            matches, key=lambda host: len(os.path.abspath(os.path.expanduser(host.equal_path)))
+        )
 
     def host_list(self) -> List[HostProfile]:
         return sorted(self.hosts.values(), key=lambda h: h.name.lower())
@@ -378,11 +447,13 @@ class JobStore:
 
     def add_job(self, job: Job) -> Job:
         self.jobs[job.id] = job
+        self.invalidate_chains()
         self.save_jobs()
         return job
 
     def remove_job(self, job_id: str) -> None:
         self.jobs.pop(job_id, None)
+        self.invalidate_chains()
         self._forgotten.add(job_id)
         self.save_jobs()
 
@@ -519,6 +590,33 @@ class JobStore:
             return None if scheduler.chain_releases_on_failure else predecessor
         return None
 
+    def blocked_ids(self) -> frozenset:
+        """Ids of every active job that will never start. Cached.
+
+        :meth:`chain_blocker` walks a chain and asks the scheduler registry a
+        question for each link, and the table asks it twice per visible row per
+        repaint -- once for the text and once for the colour -- on top of the
+        status bar counter and the host monitor doing the same for every job in
+        the list. Answering once per actual change and handing out the set is
+        the same answer for a fraction of the work.
+
+        Invalidated by :meth:`invalidate_chains`, which every write goes
+        through. A caller that changes a job's state without saving must say so
+        -- but every path in the plugin that changes one saves it in the same
+        breath, which is what makes a counter enough here rather than a
+        signature over the whole list recomputed on each repaint.
+        """
+        if self._blocked_key != self._revision:
+            self._blocked_key = self._revision
+            self._blocked = frozenset(
+                job.id for job in self.jobs.values() if self.chain_blocker(job) is not None
+            )
+        return self._blocked
+
+    def invalidate_chains(self) -> None:
+        """Drop the cached chain analysis; the next reader recomputes it."""
+        self._revision += 1
+
     def dependents_of(self, job_id: str, recursive: bool = False) -> List[Job]:
         """Every job chained behind this one.
 
@@ -575,6 +673,7 @@ class JobStore:
         archived = self.archive_jobs(when)
         self._forgotten.update(self.jobs)
         self.jobs = {}
+        self.invalidate_chains()
         self.save_jobs()
         return archived, count
 
@@ -605,6 +704,29 @@ class JobStore:
         jobs = [Job.from_dict(raw) for raw in payload.get("jobs") or [] if isinstance(raw, dict)]
         return jobs, bool(payload.get("archived", False))
 
+    def write_job_list(self, path: str, jobs: List[Job], reconstructed: bool = False) -> str:
+        """Write ``jobs`` to ``path`` as a job list that can be opened again."""
+        atomic_write_json(
+            path,
+            {
+                "version": 1,
+                "archived": False,
+                "reconstructed": bool(reconstructed),
+                "jobs": [job.to_dict() for job in jobs],
+            },
+        )
+        return path
+
+    def read_job_flags(self, path: str) -> Dict[str, bool]:
+        """The two flags a job list carries about itself."""
+        payload = read_json(path, {}) or {}
+        if not isinstance(payload, dict):
+            return {"archived": False, "reconstructed": False}
+        return {
+            "archived": bool(payload.get("archived", False)),
+            "reconstructed": bool(payload.get("reconstructed", False)),
+        }
+
     def use_jobs_file(self, path: str) -> int:
         """Make ``path`` the live job list. Returns how many jobs it holds.
 
@@ -616,8 +738,14 @@ class JobStore:
         """
         target = os.path.abspath(os.path.expanduser(path)) if path else ""
         self.jobs_path = target or self.default_jobs_path
+        # Read before the jobs, and never assumed: going back to the default
+        # list has to clear the flag as surely as opening a rebuilt one sets it.
+        self.reconstructed = (
+            self.read_job_flags(self.jobs_path)["reconstructed"] if target else False
+        )
         jobs, _archived = self.read_job_list(self.jobs_path)
         self.jobs = {job.id: job for job in jobs}
+        self.invalidate_chains()
         # Removals applied to the list being left, not to this one: carrying
         # them over would silently drop a job from the file just opened.
         self._forgotten = set()
@@ -698,6 +826,9 @@ class JobStore:
         return self.prefs.get(key, DEFAULT_PREFS.get(key, default))
 
     def set_pref(self, key: str, value: Any) -> None:
+        """Remember a preference. Writing is skipped when nothing changed."""
+        if key in self.prefs and self.prefs[key] == value:
+            return
         self.prefs[key] = value
         self.save_settings()
 

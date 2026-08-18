@@ -97,6 +97,11 @@ Then **Submit**.
 
 ### What the wizard remembers
 
+The wizard opens on the host you submitted to last, unless the job it was
+opened for says otherwise -- Resubmit, an input generator's handoff, or an
+input file written into a host's *equal path* mirror, which is that host's
+filesystem seen from here.
+
 Everything that describes the *site* rather than the molecule comes back the
 next time you submit to the same host: queue, account, walltime, nodes, tasks,
 modules, pre-commands, extra directives, the command, the fetch patterns and
@@ -211,9 +216,26 @@ locally: no hostname, no keys, no network. *Remote root* becomes an ordinary
 directory here, and "upload" and "download" are file copies.
 
 The bash schedulers need a POSIX shell — free on macOS and Linux, and on
-Windows meaning Git Bash or WSL. The Hosts dialog says so if it cannot find
-one. On Windows you can instead pick the **Built-in (Windows, PowerShell)**
-scheduler and need nothing at all; see below.
+Windows meaning Git Bash. The Hosts dialog says so if it cannot find one. On
+Windows you can instead pick the **Built-in (Windows, PowerShell)** scheduler
+and need nothing at all; see below.
+
+### Running inside WSL
+
+Pick **This machine, inside WSL (no SSH)** to run the job in a WSL
+distribution — which is where a calculation program installed "on Windows"
+usually actually lives. Choose the distribution in the Hosts dialog, or leave
+it empty for the default one.
+
+Everything is Linux side: *Remote root* is a path in the distribution
+(`/home/you/moleditpy_jobs`), the wrapper is the same bash script a cluster is
+sent, and the helper queue works as it does anywhere else. Input files are
+translated with `wslpath` and copied in; results are copied back out. A file on
+a drive the distribution does not mount cannot be reached, and the dialog says
+so rather than failing later.
+
+The distribution needs a real `bash`. A container image (`docker-desktop`) does
+not have one, and Test Connection says which distribution is missing it.
 
 ### Running jobs one after another
 
@@ -281,11 +303,16 @@ plugin's own housekeeping. Windows PowerShell 5.1 ships with the operating
 system, so nothing needs installing; PowerShell 7 (`pwsh`) is used where both
 are present.
 
-The other schedulers all generate bash. On Windows that means Git Bash or WSL —
-still supported, and still the right choice if you are submitting to a Linux
-cluster from a Windows desktop, since the *cluster* is what runs the script.
-The Windows scheduler is for the case where the Windows machine itself is doing
-the computing.
+The same scheduler works over SSH to a Windows machine: every command is sent
+as base64 `powershell -EncodedCommand`, so it survives whatever the server's
+default SSH shell is — `cmd` unless somebody changed it — and nothing in the
+command can be mangled by a shell on the way.
+
+The other schedulers all generate bash. On Windows that means Git Bash or a WSL
+host — still supported, and still the right choice if you are submitting to a
+Linux cluster from a Windows desktop, since the *cluster* is what runs the
+script. The Windows scheduler is for the case where the Windows machine itself
+is doing the computing.
 
 Two differences worth knowing:
 
@@ -526,6 +553,19 @@ A host that does not answer says so on its own card and the others carry on. A
 host set to prompt for a password is skipped entirely — a panel that opens
 should not raise a password dialog.
 
+### Rebuilding a list from a folder
+
+**Rebuild from Folder...** makes a job list out of results that were never
+tracked here: fetched by hand, copied off a cluster, produced before this
+plugin was installed, or left behind by a list that was cleared.
+
+Every directory below the folder that holds calculation outputs becomes one
+record — named after the input file where there is one, dated from the files
+themselves, and carrying the exit code where this plugin's own sentinel is
+still there. The list is written into that folder as `rebuilt_<date>.pmejbs`,
+so it travels with the results, and it is marked reconstructed: read only,
+for the reasons above.
+
 ## 5. Results
 
 When a job reaches DONE or FAILED, matching files come back automatically (the
@@ -596,7 +636,12 @@ What happens next depends on the file, not on where it sits:
   action is disabled, because an archived job's queue id is stale and its remote
   directory may be long gone. **Back to current jobs** returns you to the live
   table.
-* **Not marked archived** (an export, a backup, a colleague's file) — offered as
+* **Marked reconstructed** (written by Rebuild from Folder) — shown read only
+  as well, and for a stronger reason: those records were read off a disk, so
+  there is no host, no queue id and no remote directory behind any of them.
+  Results can be opened from such a list; nothing in it can be submitted,
+  cancelled, resubmitted or polled.
+* **Not marked either** (an export, a backup, a colleague's file) — offered as
   the list to work in. Accept and it becomes the file every later change is
   written to, with a banner naming it. This lasts for the session only: a
   restart comes back to your usual list, and **Use the default list** switches
@@ -608,8 +653,9 @@ moved, copied or mailed on.
 ### The `.pmejbs` format
 
 MoleditPy's extension for a saved job list, alongside `.pmeprj` for a project.
-The contents are ordinary JSON — `version`, `archived`, `jobs`, and
-`archived_at` on an archived list — so anything that reads JSON can read it. A
+The contents are ordinary JSON — `version`, `archived`, `reconstructed`,
+`jobs`, and `archived_at` on an archived list — so anything that reads JSON can
+read it. A
 `jobs.json` written before the extension existed is still read, and the next
 save migrates it.
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from typing import List, Optional, Sequence
+from typing import ClassVar, List, Optional, Sequence
 
 from PyQt6.QtCore import QDateTime, Qt
 from PyQt6.QtWidgets import (
@@ -98,6 +98,13 @@ class SubmitDialog(QDialog):
             self.box_remote.setChecked(True)
             self.txt_remote_dir.setText(remote_dir)
             self.txt_remote_input.setText(remote_input)
+        if not host_id and files:
+            # An input written into the share that mirrors a host's filesystem
+            # is already on that host as far as the user is concerned, so that
+            # is the host to open on -- ahead of whichever one was used last.
+            owner = self.store.host_for_local_path(files[0])
+            if owner is not None:
+                host_id = owner.id
         if host_id:
             index = self.cmb_host.findData(host_id)
             if index >= 0:
@@ -180,11 +187,7 @@ class SubmitDialog(QDialog):
             "Input files to upload - optional (the first one is passed to the command)"
         )
         files_box.setToolTip(
-            "A job does not need one. Leave the list empty and the command runs "
-            "on its own, in a new directory on the host -- for a script already "
-            "installed there, or a command that makes its own input.\n\n"
-            "A command that names {input} does need a file, either uploaded "
-            "here or named under 'Work already on the host'."
+            "Optional. With none, the command runs on its own in a new directory on the host."
         )
         files_layout = QVBoxLayout(files_box)
         self.list_files = QListWidget()
@@ -242,11 +245,7 @@ class SubmitDialog(QDialog):
         box.setCheckable(True)
         box.setChecked(False)
         box.setToolTip(
-            "Run the job in a directory that is already on the host, instead "
-            "of in a new one made for it.\n\n"
-            "Input files stay optional: with none, this submits a command "
-            "over what is there. Any that are listed above are uploaded into "
-            "that directory alongside it."
+            "Run the job in a directory that is already on the host, instead of a new one."
         )
         self.box_remote = box
         form = QFormLayout(box)
@@ -254,17 +253,12 @@ class SubmitDialog(QDialog):
         self.txt_remote_dir = QLineEdit()
         self.txt_remote_dir.setPlaceholderText("~/runs/mol42")
         self.txt_remote_dir.setToolTip(
-            "An absolute path, or one relative to your home directory on the "
-            "host. It must exist: submitting checks, rather than creating it, "
-            "so a typo is caught here instead of producing a job that runs in "
-            "an empty directory."
+            "Absolute, or relative to your home on the host. It has to exist already."
         )
         self.txt_remote_input = QLineEdit()
         self.txt_remote_input.setPlaceholderText("mol.inp (optional)")
         self.txt_remote_input.setToolTip(
-            "A file already in that directory, which {input} and {stem} then "
-            "stand for -- so the usual command templates work unchanged.\n\n"
-            "Leave it empty for a command that names its own files."
+            "A file in that directory, which {input} and {stem} then stand for. Optional."
         )
         self.lbl_remote = QLabel("")
         self.lbl_remote.setWordWrap(True)
@@ -350,25 +344,11 @@ class SubmitDialog(QDialog):
         self.txt_memory = QLineEdit()
         self.txt_memory.setPlaceholderText("e.g. 8G")
         self.txt_memory.setToolTip(
-            "What this job needs, in total.\n\n"
-            "The helper queue on a host with no scheduler reserves it: the job "
-            "starts when that much memory is free, so two 90 GB jobs do not "
-            "both start on a 120 GB machine because the cores were free.\n\n"
-            "Filled in from the input file where it says. Note that ORCA's "
-            "%maxcore is per core, so it is multiplied by the core count."
+            "What the job needs in total. The built-in queue reserves it before starting."
         )
         self.chk_scan_resources = QCheckBox("Take these two from the input file")
         self.chk_scan_resources.setToolTip(
-            "Read the core count and the memory request out of the input itself "
-            "-- ORCA's %pal nprocs and %maxcore, Gaussian's %nprocshared and "
-            "%mem, and the equivalents for Psi4, NWChem, Q-Chem and GAMESS.\n\n"
-            "They are already written there, and the copy the queue schedules "
-            "on is the one that gets forgotten: that is how two 90 GB jobs end "
-            "up on a 120 GB machine.\n\n"
-            "Untick to keep whatever you type here. Nothing is read, and adding "
-            "another input file leaves both fields alone.\n\n"
-            "Either way the input file itself is never edited, and the command "
-            "line is not touched."
+            "Take the cores and memory from the input file. Untick to type them by hand."
         )
         self.chk_scan_resources.setChecked(bool(self.store.get_pref("scan_resources", True)))
         self.chk_scan_resources.toggled.connect(self._on_scan_resources_toggled)
@@ -395,23 +375,12 @@ class SubmitDialog(QDialog):
         self.txt_command.textChanged.connect(self._refresh_preview)
         self.cmb_template = QComboBox()
         self.cmb_template.setToolTip(
-            "Conventional command line for each program MoleditPy writes input "
-            "for. Picking one fills the Command field, which stays editable."
+            "Conventional command line per program; picking one fills the Command field."
         )
         self.cmb_template.activated.connect(self._on_template_chosen)
         self._reload_templates()
         self.txt_globs = QLineEdit("*.out, *.log, *.xyz, *.hess, *.fchk")
-        self.txt_globs.setToolTip(
-            "Which files come back when the job ends. Comma separated.\n\n"
-            "Picking a program from the Template dropdown fills these in for "
-            "that program -- ORCA writes .gbw and .hess, Gaussian .chk and "
-            ".fchk, VASP files with no extension at all -- and saving your own "
-            "template keeps whatever you set here with it.\n\n"
-            "A pattern may name a subdirectory: 'scratch/*.out' or '*/*.molden' "
-            "fetch from one level down.\n\n"
-            "The wrapper's own job.log is never downloaded whatever the "
-            "patterns say; Tail Log reads it on the host."
-        )
+        self.txt_globs.setToolTip("Which files come back when the job ends, comma separated.")
         #: What the last applied template put in the patterns field. An edit
         #: away from it means the user has an opinion, and the next template
         #: leaves the field alone.
@@ -422,8 +391,7 @@ class SubmitDialog(QDialog):
 
         self.chk_download_all = QCheckBox("Download all output files")
         self.chk_download_all.setToolTip(
-            "When checked, all output files produced by the job in its remote directory "
-            "are downloaded upon completion without pattern filtering."
+            "Fetch everything the job produced, ignoring the patterns above."
         )
         self.chk_download_all.setChecked(bool(self.store.get_pref("download_all_outputs", True)))
         self.chk_download_all.toggled.connect(
@@ -433,12 +401,7 @@ class SubmitDialog(QDialog):
 
         self.chk_beside_input = QCheckBox("...next to the input file")
         self.chk_beside_input.setToolTip(
-            "Put the results in the directory the input came from, which is "
-            "where you are already working.\n\n"
-            "Unticked, they go to a single download folder shared by every job "
-            "(shown under Settings). A job with no local input to sit beside "
-            "uses that folder either way.\n\n"
-            "An input file is never overwritten by a result of the same name."
+            "Put the results next to the input file instead of in the download folder."
         )
         self.chk_beside_input.setChecked(bool(self.store.get_pref("download_beside_input", True)))
         self.chk_beside_input.toggled.connect(
@@ -451,8 +414,11 @@ class SubmitDialog(QDialog):
         self.txt_download_root.setToolTip(
             "Default download directory when results are not placed next to the input file."
         )
-        self.txt_download_root.textChanged.connect(
-            lambda text: self.store.set_pref("download_root", text.strip())
+        # editingFinished, not textChanged: a preference is written to disk
+        # with an fsync, and saving one per keystroke is a write per character
+        # typed into this field.
+        self.txt_download_root.editingFinished.connect(
+            lambda: self.store.set_pref("download_root", self.txt_download_root.text().strip())
         )
         self.txt_download_root.setEnabled(self.chk_auto_download.isChecked())
 
@@ -469,28 +435,12 @@ class SubmitDialog(QDialog):
 
         self.chk_chain = QCheckBox("Run after the job already queued on this host")
         self.chk_chain.setToolTip(
-            "Hold this job until the one already queued on this host has finished.\n\n"
-            "On SLURM, PBS and SGE this becomes the queue's own dependency flag "
-            "(--dependency=afterok, -W depend, -hold_jid). With no queue, the "
-            "wrapper waits for the previous job's process instead -- which is "
-            "the case that needs it most, since two submissions would otherwise "
-            "start at once and fight over the same cores.\n\n"
-            "Either way the waiting happens on the host, so the chain keeps "
-            "moving with MoleditPy closed."
+            "Hold this job until the one already queued on this host has finished."
         )
         self.chk_chain.setChecked(True)
         self.chk_chain_any = QCheckBox("...even if that job fails")
         self.chk_chain_any.setToolTip(
-            "SLURM and PBS are asked by default to start this job only if the "
-            "previous one succeeds (afterok). That is usually right for a "
-            "sequence -- an optimisation feeding a frequency job is pointless "
-            "if the optimisation failed -- but it means one failure leaves "
-            "everything behind it queued for ever.\n\n"
-            "Tick this for a dependency the previous job satisfies simply by "
-            "ending (afterany), when the jobs are independent and only being "
-            "serialised to share the machine.\n\n"
-            "SGE and the no-queue mode always release on the predecessor "
-            "ending, so this changes nothing there."
+            "Release it when that job ends, however it ended, rather than only on success."
         )
         self.chk_chain_any.toggled.connect(self._refresh_preview)
         self.lbl_chain = QLabel("")
@@ -499,12 +449,7 @@ class SubmitDialog(QDialog):
 
         self.chk_start_at = QCheckBox("Do not start before")
         self.chk_start_at.setToolTip(
-            "Hand the job over now, but tell the queue not to start it until "
-            "this moment -- for a nightly window, or to stay off a shared "
-            "machine during the day.\n\n"
-            "Uses the scheduler's own flag (--begin, -a) where there is one, "
-            "and waits in the wrapper where there is not. Either way the job is "
-            "submitted immediately, so MoleditPy need not be running later."
+            "Hand the job over now, but do not let it start before this time."
         )
         self.dt_start_at = QDateTimeEdit()
         self.dt_start_at.setCalendarPopup(True)
@@ -592,10 +537,21 @@ class SubmitDialog(QDialog):
     # --- data ---------------------------------------------------------------
 
     def _reload_hosts(self) -> None:
+        """Fill the host list, opening on the one submitted to last time.
+
+        Whichever host is alphabetically first is not a useful default: people
+        submit to the same machine for weeks at a time, and picking the wrong
+        one is not always obvious before pressing Submit. A prefilled host --
+        from Resubmit, or from an input generator's handoff -- still wins, since
+        that is applied after this.
+        """
         self.cmb_host.blockSignals(True)
         self.cmb_host.clear()
         for host in self.store.host_list():
             self.cmb_host.addItem(f"{host.name} ({host.target})", host.id)
+        remembered = self.cmb_host.findData(self.store.get_pref("last_host_id", "") or "")
+        if remembered >= 0:
+            self.cmb_host.setCurrentIndex(remembered)
         self.cmb_host.blockSignals(False)
         self._on_host_changed()
 
@@ -615,12 +571,6 @@ class SubmitDialog(QDialog):
             self.cmb_preset.setCurrentIndex(1)
         self._on_preset_changed()
         self._update_queue_fields()
-        if host is not None and self.cmb_preset.currentIndex() == 0:
-            # Only where no named preset took the form: a preset the user chose
-            # is a decision, and last time's settings must not overwrite it.
-            # Do not apply remembered preset so the form resets to default each time.
-            # self._apply_remembered(host)
-            pass
         self._update_chain_row()
 
     def _update_queue_fields(self) -> None:
@@ -647,15 +597,12 @@ class SubmitDialog(QDialog):
             widget.setEnabled(live)
             if not live:
                 widget.setToolTip(
-                    f"{scheduler.label if scheduler else 'This host'} has no queue to read it: "
-                    "there is no partition to pick, no account to charge and no "
-                    "walltime anything will enforce.\n\n"
-                    "Cores and memory still matter -- the helper queue schedules "
-                    "on them."
+                    f"{scheduler.label if scheduler else 'This host'} has no queue to read it. "
+                    "Cores and memory still matter."
                 )
 
     #: How each scheduler is told to wait, for the hint under the checkbox.
-    _CHAIN_MECHANISM = {
+    _CHAIN_MECHANISM: ClassVar[dict] = {
         "slurm": "--dependency=afterok",
         "pbs": "-W depend=afterok",
         "sge": "-hold_jid",
@@ -679,6 +626,27 @@ class SubmitDialog(QDialog):
             scheduler = None
         chainable = scheduler is not None and scheduler.supports_chaining
         limit = self.slot_limit()
+
+        if host is not None and host.uses_remote_runner:
+            # There is a queue on that host already, and it schedules on cores
+            # and memory. Chaining on top of it fixes an order it would have
+            # worked out for itself, turns independent jobs into one line that
+            # a single cancellation breaks, and stops anything else starting
+            # while the job in front waits. So: off, and say why. It stays
+            # available for a sequence that really does depend on the one
+            # before it.
+            self.chk_chain.setVisible(chainable)
+            self.chk_chain.setEnabled(chainable and predecessor is not None)
+            self.chk_chain.setChecked(False)
+            self.chk_chain_any.setVisible(False)
+            self.lbl_chain.setVisible(True)
+            waiting = len(self.store.runnable_jobs(host.id))
+            self.lbl_chain.setText(
+                f"The queue on {host.name} decides when this starts: it runs what fits "
+                f"in the cores and memory it has ({waiting} job(s) there now). "
+                "Tick above only if this job needs the previous one to finish first."
+            )
+            return
 
         # A limit the user can untick is not a limit, so where one is set the
         # host decides and the manual controls step aside.
@@ -1235,6 +1203,9 @@ class SubmitDialog(QDialog):
         remembered = dict(self.store.get_pref("last_preset", {}) or {})
         remembered[host.id] = preset.to_dict()
         self.store.set_pref("last_preset", remembered)
+        # Which host, as well as what was asked of it: the next submission
+        # opens on this one rather than on whichever sorts first.
+        self.store.set_pref("last_host_id", host.id)
 
     def _apply_remembered(self, host: HostProfile) -> None:
         """Restore the last submission to this host, where nothing else has."""

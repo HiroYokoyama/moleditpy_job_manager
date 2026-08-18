@@ -125,7 +125,12 @@ class OpenSSHTransport(Transport):
         return CommandResult(proc.returncode, proc.stdout or "", stderr)
 
     def run(self, cmd: str, timeout: Optional[int] = None) -> CommandResult:
-        wrapped = remote_paths.wrap_login(cmd, self.host.environment_commands())
+        from .. import dialect
+
+        # A Windows host is sent base64 PowerShell: see dialect.wrap_remote.
+        wrapped = dialect.wrap_remote(
+            self.host, remote_paths.wrap_login(cmd, self.host.environment_commands())
+        )
         limit = int(timeout or self.host.command_timeout or 60)
         return self._spawn(self._ssh_argv(wrapped), limit, "remote command")
 

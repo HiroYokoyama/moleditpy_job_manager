@@ -8,6 +8,7 @@ open beside the table, and read while the list keeps updating behind it.
 
 from __future__ import annotations
 
+import logging
 from typing import Callable, Optional
 
 from PyQt6.QtCore import QTimer
@@ -32,6 +33,12 @@ from .window_utils import make_independent
 class TextDialog(QDialog):
     """Read-only monospaced text, with an optional Refresh and Auto-refresh timer."""
 
+    #: Preference names for the auto-refresh controls. One pair for every tail
+    #: window: the question "how often do I want to see this" is about the user
+    #: and their connection, not about the particular file.
+    PREF_ENABLED = "tail_auto_refresh"
+    PREF_INTERVAL = "tail_refresh_interval"
+
     def __init__(
         self,
         title: str,
@@ -39,8 +46,12 @@ class TextDialog(QDialog):
         parent: Optional[QWidget] = None,
         on_refresh: Optional[Callable[[], None]] = None,
         auto_interval: int = 5,
+        store: Optional[object] = None,
     ) -> None:
         super().__init__(parent)
+        #: When given, the auto-refresh choice is remembered in it. Optional so
+        #: this stays a plain text window for callers that have no store.
+        self._store = store
         self.setWindowTitle(title)
         make_independent(self)
         apply_theme(self)
@@ -68,14 +79,19 @@ class TextDialog(QDialog):
             )
             self.spin_interval = QSpinBox()
             self.spin_interval.setRange(1, 120)
-            self.spin_interval.setValue(max(1, auto_interval))
             self.spin_interval.setSuffix(" s")
-            self.spin_interval.setToolTip("Refresh interval in seconds.")
+            self.spin_interval.setToolTip("How often the file is read again.")
             self.lbl_interval = QLabel("every")
 
+            # The stored choice wins over the per-backend suggestion, and is
+            # applied before the signals are connected so restoring it is not
+            # recorded as a change the user made.
+            self.spin_interval.setValue(self._stored_interval(max(1, auto_interval)))
+            self.chk_auto_refresh.setChecked(self._stored_enabled())
             self.chk_auto_refresh.toggled.connect(self._on_auto_refresh_toggled)
             self.spin_interval.valueChanged.connect(self._on_interval_changed)
-            self.chk_auto_refresh.setChecked(True)
+            if self.chk_auto_refresh.isChecked():
+                self._timer.start(int(self.spin_interval.value() * 1000))
 
             bottom_row.addWidget(self.chk_auto_refresh)
             bottom_row.addWidget(self.lbl_interval)
@@ -94,6 +110,39 @@ class TextDialog(QDialog):
         box.rejected.connect(self.reject)
         bottom_row.addWidget(box)
         layout.addLayout(bottom_row)
+
+    def _stored_interval(self, fallback: int) -> int:
+        if self._store is None:
+            return fallback
+        try:
+            value = int(self._store.get_pref(self.PREF_INTERVAL, 0) or 0)
+        except (AttributeError, TypeError, ValueError):
+            return fallback
+        # 0 means "never chosen", so the caller's per-backend suggestion stands.
+        return min(120, max(1, value)) if value else fallback
+
+    def _stored_enabled(self) -> bool:
+        if self._store is None:
+            return True
+        try:
+            return bool(self._store.get_pref(self.PREF_ENABLED, True))
+        except AttributeError:
+            return True
+
+    def _remember(self) -> None:
+        """Keep the auto-refresh choice for the next window.
+
+        Written when the window closes rather than on every step of the spin
+        box: the preferences file is rewritten atomically, and holding the up
+        arrow should not be a write per second.
+        """
+        if self._store is None or not hasattr(self, "spin_interval"):
+            return
+        try:
+            self._store.set_pref(self.PREF_INTERVAL, int(self.spin_interval.value()))
+            self._store.set_pref(self.PREF_ENABLED, bool(self.chk_auto_refresh.isChecked()))
+        except (AttributeError, TypeError, ValueError):
+            logging.debug("Job Manager: could not remember the tail interval", exc_info=True)
 
     def _trigger_refresh(self) -> None:
         if self._on_refresh_callback is not None:
@@ -139,14 +188,18 @@ class TextDialog(QDialog):
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
         self._timer.stop()
+        self._remember()
         super().closeEvent(event)
 
     def reject(self) -> None:
+        # Esc and the Close button both come through here without a closeEvent.
         self._timer.stop()
+        self._remember()
         super().reject()
 
     def accept(self) -> None:
         self._timer.stop()
+        self._remember()
         super().accept()
 
 

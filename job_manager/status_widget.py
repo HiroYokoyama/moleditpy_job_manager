@@ -55,8 +55,9 @@ class JobStatusWidget(QLabel):
         """Running / waiting / blocked, counted off the live store."""
         store = self.service.store
         running = waiting = blocked = 0
+        blocked_ids = store.blocked_ids()
         for job in store.active_jobs():
-            if store.chain_blocker(job) is not None:
+            if job.id in blocked_ids:
                 blocked += 1
             elif job.state == STATE_RUNNING:
                 running += 1
@@ -94,19 +95,16 @@ class JobStatusWidget(QLabel):
             self._color = ""
             return
         self._color = _BLOCKED_COLOR if counts["blocked"] else _BUSY_COLOR
-        self.setText(f"⚙ {text}")
+        self.setText(f"Jobs: {text}")
         # Do NOT call setStyleSheet here.  Once a widget has a stylesheet Qt
         # resolves its palette through it, so the colour never follows a later
         # theme switch.  QPalette override instead -- it respects change events.
         self._apply_color()
+        blocked = counts["blocked"]
         self.setToolTip(
-            "MoleditPy job manager: click to open the monitor.\n"
-            + (
-                f"{counts['blocked']} job(s) are waiting for something that failed "
-                "and will never start."
-                if counts["blocked"]
-                else "Jobs are being tracked in the background."
-            )
+            f"{blocked} job(s) will never start: click to open the monitor."
+            if blocked
+            else "Job Manager: click to open the monitor."
         )
 
     def _apply_color(self) -> None:

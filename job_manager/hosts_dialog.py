@@ -35,6 +35,7 @@ from .models import (
     BACKEND_LOCAL,
     BACKEND_OPENSSH,
     BACKEND_PARAMIKO,
+    BACKEND_WSL,
     MODE_LANES,
     MODE_RUNNER,
     SCHEDULER_SHELL,
@@ -47,7 +48,7 @@ from .service import JobService
 from .tasks import run_async
 from .theme import apply_theme
 from .window_utils import make_independent
-from .transport import local_shell_available, paramiko_available
+from .transport import local_shell_available, paramiko_available, wsl_available
 from .transport.local import INSTALL_HINT as LOCAL_INSTALL_HINT
 from .transport.local import POWERSHELL_HINT, SHELL_POSIX, SHELL_POWERSHELL
 from .transport.base import HostKeyRejected
@@ -133,13 +134,7 @@ class HostsDialog(QDialog):
 
         self.chk_enabled = QCheckBox("Enabled")
         self.chk_enabled.setChecked(True)
-        self.chk_enabled.setToolTip(
-            "Off skips this host everywhere: the submit wizard, the poller, and "
-            "the Host Monitor's live panel.\n\n"
-            "For a machine down for maintenance, or an account between uses -- "
-            "the profile and its presets stay put, ready for when it is back, "
-            "rather than being deleted and typed in again."
-        )
+        self.chk_enabled.setToolTip("Off keeps the profile but skips this host everywhere.")
 
         self.txt_name = QLineEdit()
         self.txt_hostname = QLineEdit()
@@ -154,7 +149,14 @@ class HostsDialog(QDialog):
             "paramiko (keeps one session; private key, agent or password)", BACKEND_PARAMIKO
         )
         self.cmb_backend.addItem("This machine (no SSH)", BACKEND_LOCAL)
+        self.cmb_backend.addItem("This machine, inside WSL (no SSH)", BACKEND_WSL)
         self.cmb_backend.currentIndexChanged.connect(self._update_backend_hint)
+
+        # Editable: a distribution installed after this dialog opened can still
+        # be typed in, and the list is only a convenience.
+        self.cmb_distro = QComboBox()
+        self.cmb_distro.setEditable(True)
+        self.cmb_distro.setToolTip("Which WSL distribution to run in. Empty means the default one.")
 
         self.lbl_backend_hint = QLabel("")
         self.lbl_backend_hint.setWordWrap(True)
@@ -210,16 +212,7 @@ class HostsDialog(QDialog):
         self.spin_max_concurrent.setRange(0, 64)
         self.spin_max_concurrent.setSpecialValueText("no limit")
         self.spin_max_concurrent.setToolTip(
-            "Run at most this many jobs at a time on this host.\n\n"
-            "Meant for the no-queue mode, where nothing else stops several "
-            "submissions piling onto the same cores. A queue already schedules "
-            "for you, so leave it at 'no limit' on SLURM, PBS or SGE unless you "
-            "have a reason not to.\n\n"
-            "Jobs over the limit are chained behind the shortest lane, so the "
-            "waiting happens on the host and holds with MoleditPy closed. The "
-            "limit applies whether or not you asked for chaining.\n\n"
-            "With the helper queue, 'no limit' means the cores below decide: "
-            "jobs run together for as long as there are cores for them."
+            "Run at most this many jobs here at once. 0 means no limit."
         )
 
         form.addRow("", self.chk_enabled)
@@ -230,6 +223,8 @@ class HostsDialog(QDialog):
         form.addRow("Backend", self.cmb_backend)
         form.addRow("", self.lbl_backend_hint)
         form.addRow("Scheduler", self.cmb_scheduler)
+        self.row_distro_label = QLabel("WSL distribution")
+        form.addRow(self.row_distro_label, self.cmb_distro)
         form.addRow("Private key", key_row)
         form.addRow("Jump host", self.txt_jump)
         self.cmb_concurrency = QComboBox()
@@ -238,50 +233,27 @@ class HostsDialog(QDialog):
         self.cmb_concurrency.addItem("Queue them with a helper on the host", MODE_RUNNER)
         self.cmb_concurrency.addItem("Chain the jobs together", MODE_LANES)
         self.cmb_concurrency.setToolTip(
-            "How the limit above is kept.\n\n"
-            "Chaining leaves nothing behind on the host: each job is told to "
-            "wait for another, and the order is fixed when you submit.\n\n"
-            "The helper is a small script that holds a real queue on the host. "
-            "It can count cores rather than jobs, free a slot the moment "
-            "something ends, cancel a job that has not started, and reorder "
-            "what is waiting -- and it exits by itself as soon as the queue is "
-            "empty. It needs a POSIX shell, so it is offered only where there "
-            "is no scheduler already doing the job."
+            "How that limit is kept: a small queue on the host, or jobs chained together."
         )
         self.cmb_concurrency.currentIndexChanged.connect(self._update_concurrency_row)
 
         self.chk_detect_resources = QCheckBox("Ask the host instead")
         self.chk_detect_resources.setToolTip(
-            "Let the helper read the machine's own core count and memory "
-            "(nproc, /proc/meminfo) instead of the two numbers below.\n\n"
-            "Off by default, because what the machine reports is the whole "
-            "machine: on anything shared, that is not the share you are "
-            "entitled to. The number you know beats the number it reports.\n\n"
-            "The Detect button fills the fields in without handing the budget "
-            "over, which is usually what you want: see what it has, then decide."
+            "Let the queue read the machine's own cores and memory instead of the fields above."
         )
         self.chk_detect_resources.toggled.connect(self._on_detect_toggled)
 
         self.spin_runner_cores = QSpinBox()
         self.spin_runner_cores.setRange(1, 4096)
         self.spin_runner_cores.setToolTip(
-            "How many cores the helper may hand out. Each job asks for as many "
-            "as its preset's 'CPUs per task', and starts when that many are "
-            "free."
+            "Cores the queue may hand out; a job starts when its CPUs per task are free."
         )
 
         self.spin_runner_memory = QSpinBox()
         self.spin_runner_memory.setRange(1, 8192)
         self.spin_runner_memory.setSuffix(" GB")
         self.spin_runner_memory.setToolTip(
-            "How much memory the helper may hand out, in total.\n\n"
-            "A second budget beside the cores, and the one that matters most: "
-            "two jobs asking for 90 GB each must not both start on a 120 GB "
-            "machine merely because the cores were free. Overcommitting memory "
-            "does not slow a calculation down, it gets it killed hours in.\n\n"
-            "Each job asks for its preset's Memory field, which the wizard "
-            "fills in from the input file where it can. A job that asks for "
-            "nothing waits for nothing."
+            "Memory the queue may hand out in total, so two large jobs never share too little."
         )
 
         form.addRow("Remote root", self.txt_remote_root)
@@ -309,17 +281,7 @@ class HostsDialog(QDialog):
         self.spin_command_timeout.setSuffix(" s")
         self.chk_load_profile = QCheckBox("Read the login files first")
         self.chk_load_profile.setToolTip(
-            "Run /etc/profile, ~/.bash_profile, ~/.profile and ~/.bashrc before "
-            "anything else -- for every command sent to the host, and at the top "
-            "of every job script.\n\n"
-            "'ssh host command' gets a shell that is neither login nor "
-            "interactive, so none of those files is read, while logging in by "
-            "hand reads all of them. That is why a program you can run over SSH "
-            "yourself is 'command not found' in the job.\n\n"
-            "Each file is optional and allowed to fail, so a host missing one "
-            "is not an error. Note that Debian's stock ~/.bashrc stops early "
-            "for a non-interactive shell: keep module loads above that guard, "
-            "or name them in Login commands below."
+            "Read /etc/profile and the ~/.bash files before every command and in the job script."
         )
         adv.addRow("Environment", self.chk_load_profile)
         adv.addRow("Login commands", self.txt_login)
@@ -349,30 +311,16 @@ class HostsDialog(QDialog):
         queue_layout = QHBoxLayout(self.queue_box)
         self.chk_pause = QCheckBox("Hold the queue")
         self.chk_pause.setToolTip(
-            "Stop the helper starting anything new. Jobs already running are "
-            "left alone -- a pause that killed them would mean throwing away "
-            "however long they have been going.\n\n"
-            "The flag lives on the host, so it outlasts this dialog, this "
-            "session, and the helper's own comings and goings."
+            "Stop the queue starting anything new. Jobs already running are left alone."
         )
         self.chk_pause.toggled.connect(self._on_pause_toggled)
         self.btn_apply_limits = QPushButton("Apply limits now")
         self.btn_apply_limits.setToolTip(
-            "Send 'Run at most' and 'Cores available' to a helper that is "
-            "already running.\n\n"
-            "Submitting a job sends them too, so this is for changing your "
-            "mind while jobs are queued -- which is exactly when waiting for "
-            "the next submission is no use."
+            "Send the limits above to a queue that is already running."
         )
         self.btn_apply_limits.clicked.connect(self._apply_queue_limits)
         self.btn_detect = QPushButton("Detect")
-        self.btn_detect.setToolTip(
-            "Ask the host how many cores and how much memory it has, and put "
-            "the answers in the two fields above.\n\n"
-            "Left at 'detect' the helper asks for itself, so this is for when "
-            "you want to see the numbers -- or to give the queue a smaller "
-            "share of a machine you do not have to yourself."
-        )
+        self.btn_detect.setToolTip("Ask the host what it has, and fill the two fields in.")
         self.btn_detect.clicked.connect(self._detect_resources)
         self.lbl_queue = QLabel("")
         self.lbl_queue.setWordWrap(True)
@@ -487,6 +435,7 @@ class HostsDialog(QDialog):
         self.txt_username.setText("")
         self.spin_port.setValue(22)
         self.txt_key.setText("")
+        self.cmb_distro.setCurrentText("")
         self.txt_jump.setText("")
         self.txt_remote_root.setText("~/moleditpy_jobs")
         self.txt_equal_path.setText("")
@@ -528,6 +477,7 @@ class HostsDialog(QDialog):
         index = self.cmb_scheduler.findData(host.scheduler)
         self.cmb_scheduler.setCurrentIndex(max(0, index))
         self.txt_key.setText(host.key_path)
+        self.cmb_distro.setCurrentText(getattr(host, "wsl_distro", "") or "")
         self.txt_jump.setText(host.jump_host)
         self.txt_remote_root.setText(host.remote_root)
         self.txt_equal_path.setText(getattr(host, "equal_path", "") or "")
@@ -682,9 +632,40 @@ class HostsDialog(QDialog):
         if checked:
             self.lbl_queue.setText("The helper will read the machine's own cores and memory.")
 
+    def _reload_distributions(self) -> None:
+        """Offer the distributions that are installed, keeping what is typed."""
+        from .transport.wsl import list_distributions
+
+        current = self.cmb_distro.currentText().strip()
+        self.cmb_distro.blockSignals(True)
+        self.cmb_distro.clear()
+        self.cmb_distro.addItem("")
+        for name in list_distributions():
+            self.cmb_distro.addItem(name)
+        self.cmb_distro.setCurrentText(current)
+        self.cmb_distro.blockSignals(False)
+
     def _update_backend_hint(self) -> None:
         backend = self.cmb_backend.currentData()
-        self._set_ssh_fields_enabled(backend != BACKEND_LOCAL)
+        local = backend in (BACKEND_LOCAL, BACKEND_WSL)
+        self._set_ssh_fields_enabled(not local)
+        self.cmb_distro.setVisible(backend == BACKEND_WSL)
+        self.row_distro_label.setVisible(backend == BACKEND_WSL)
+        if backend == BACKEND_WSL:
+            self._reload_distributions()
+            if not wsl_available():
+                from .transport.wsl import INSTALL_HINT as WSL_HINT
+
+                self.lbl_backend_hint.setText(WSL_HINT)
+            else:
+                self.lbl_backend_hint.setText(
+                    "Runs the job inside WSL. Remote root is a Linux path there "
+                    "(/home/you/jobs), and input files are copied across for you."
+                )
+            self.txt_equal_path.setEnabled(False)
+            self.lbl_key_tip.setVisible(False)
+            self.chk_ask_password.setEnabled(False)
+            return
         # A local host's remote root already is a path on this machine, so a
         # second local path standing in for it would be the same directory
         # under two names.
@@ -715,13 +696,10 @@ class HostsDialog(QDialog):
                 self.lbl_backend_hint.setText(LOCAL_INSTALL_HINT)
             return
         if self.cmb_scheduler.currentData() == SCHEDULER_WINDOWS:
-            # Every command sent to this host is PowerShell, which only works
-            # over SSH if the remote sshd's default shell is PowerShell too --
-            # not the default on Windows, and not something this end can check.
             self.lbl_backend_hint.setText(
-                "The Windows scheduler sends PowerShell. Over SSH that needs the "
-                "remote machine's default SSH shell to be PowerShell; the tested "
-                "combination is 'This machine (no SSH)'."
+                "A Windows machine over SSH. Commands are sent as encoded "
+                "PowerShell, so the server's default SSH shell may be either "
+                "cmd or PowerShell."
             )
             return
         if backend == BACKEND_PARAMIKO and not paramiko_available():
@@ -763,6 +741,7 @@ class HostsDialog(QDialog):
         host.backend = self.cmb_backend.currentData()
         host.scheduler = self.cmb_scheduler.currentData()
         host.key_path = self.txt_key.text().strip()
+        host.wsl_distro = self.cmb_distro.currentText().strip()
         host.jump_host = self.txt_jump.text().strip()
         host.remote_root = self.txt_remote_root.text().strip() or "~/moleditpy_jobs"
         host.equal_path = self.txt_equal_path.text().strip()

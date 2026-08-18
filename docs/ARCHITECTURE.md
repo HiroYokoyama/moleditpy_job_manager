@@ -258,7 +258,7 @@ working in, so a transfer cut off half way would otherwise leave a truncated
 | `poller.py` | the timer, per-host backoff and the in-flight guard |
 | `runner.py` | submit / poll / fetch / cancel / tail, blocking |
 | `schedulers/` | per-queue directives, submit verb, status parsing |
-| `transport/` | `Transport` ABC, OpenSSH and paramiko backends |
+| `transport/` | `Transport` ABC; the OpenSSH, paramiko, local and WSL backends |
 | `credentials.py` | the password prompt, GUI thread only |
 | `command_templates.py` | built-in command lines per program |
 | `remote_paths.py` | POSIX path building and shell quoting |

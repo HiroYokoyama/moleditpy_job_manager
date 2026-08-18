@@ -491,6 +491,19 @@ def cancel_in_runner(transport: Transport, host: HostProfile, job: Job) -> None:
     transport.run(remote_runner.flavour_for(host).cancel_command(directory, job.remote_job_id))
 
 
+def release_in_runner(transport: Transport, host: HostProfile, job: Job) -> None:
+    """Let a queued job start although what it waits for did not succeed.
+
+    Used when the user cancels one job of a chain and keeps the rest: without
+    it the helper queue sets every job behind the cancelled one aside, which is
+    the whole chain thrown away for one deliberate cancellation.
+    """
+    if not job.remote_job_id:
+        return
+    directory = remote_runner.runner_dir(host.remote_root)
+    transport.run(remote_runner.flavour_for(host).release_command(directory, job.remote_job_id))
+
+
 def poll_host(transport: Transport, host: HostProfile, jobs: Sequence[Job]) -> Dict[str, str]:
     """Resolve the state of every active job on one host.
 
@@ -562,6 +575,59 @@ def _classify_sentinel(raw: str, job: Job) -> str:
         return STATE_LOST
     job.rc = code
     return STATE_DONE if code == 0 else STATE_FAILED
+
+
+#: Files this plugin puts in the job directory itself. None of them is a
+#: result: the wrapper's log holds whatever the command wrote to the terminal,
+#: the sentinel holds one number, and the script is the script. Tail Log reads
+#: the log on the host, which is where it belongs.
+def is_plugin_file(name: str, log_file: str = "") -> bool:
+    """True for a file this plugin wrote, rather than the calculation."""
+    from .models import STARTED_NAME
+
+    leaf = (name or "").replace("\\", "/").rsplit("/", 1)[-1]
+    if log_file and (name == log_file or leaf == f"{log_file}.err"):
+        return True
+    return (
+        leaf.startswith(SENTINEL_NAME)
+        or leaf.startswith(STARTED_NAME)
+        or leaf.startswith("moleditpy_run.")
+        or (leaf.startswith("moleditpy_") and leaf.endswith(".log"))
+    )
+
+
+#: Extensions a calculation writes, best first. The order is what decides which
+#: file is offered when several could be opened.
+RESULT_PRIORITY = (".out", ".log", ".fchk", ".hess", ".molden", ".cube", ".xyz")
+
+
+def likely_outputs(names: Sequence[str], log_file: str = "") -> List[str]:
+    """The files worth offering, in priority order; never the plugin's own.
+
+    Used to preselect: the Open Result window opens on one of these, and the
+    download chooser ticks them when the fetch patterns matched nothing at all
+    -- which is the case it exists for. ``job.log`` is excluded however the
+    ranking falls, because it is this plugin's file: the outputs the user cares
+    about are the ones the command was told to write.
+    """
+    candidates = [name for name in names or [] if name and not is_plugin_file(name, log_file)]
+    ranked: List[str] = []
+    for extension in RESULT_PRIORITY:
+        ranked += [name for name in candidates if name.lower().endswith(extension)]
+    # Deduplicated, keeping the best rank each file reached.
+    seen = set()
+    ordered = []
+    for name in ranked:
+        if name not in seen:
+            seen.add(name)
+            ordered.append(name)
+    return ordered
+
+
+def primary_output(names: Sequence[str], log_file: str = "") -> str:
+    """The one file to open, or "" when none of them looks like a result."""
+    ranked = likely_outputs(names, log_file)
+    return ranked[0] if ranked else ""
 
 
 #: How deep a fetch pattern may reach. A pattern is allowed to name a
@@ -807,6 +873,9 @@ __all__ = [
     "cancel_job",
     "fetch_results",
     "input_name_for",
+    "is_plugin_file",
+    "likely_outputs",
+    "primary_output",
     "list_remote_files",
     "make_remote_dir",
     "name_job_files",
@@ -816,6 +885,7 @@ __all__ = [
     "script_name_for",
     "sentinel_for",
     "queue_paused",
+    "release_in_runner",
     "select_files",
     "set_queue_paused",
     "short_id",

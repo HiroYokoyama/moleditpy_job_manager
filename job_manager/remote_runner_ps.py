@@ -503,6 +503,22 @@ def cancel_command(directory: str, entry: str) -> str:
     )
 
 
+def release_command(directory: str, entry: str) -> str:
+    """The PowerShell half of :func:`remote_runner.release_command`."""
+    quoted = ps_quote(directory)
+    queued = ps_quote(_join("queue", entry))
+    tag = ps_quote(REQUIRE_SUCCESS_TAG)
+    return (
+        f"Set-Location -LiteralPath {quoted}; "
+        f"if (-not (Test-Path -LiteralPath {queued})) {{ exit 0 }}; "
+        f"$lines = Get-Content -LiteralPath {queued}; "
+        f"$lines = $lines | ForEach-Object {{ if ($_ -like ({tag} + '*')) "
+        f"{{ {tag} + ' 0' }} else {{ $_ }} }}; "
+        f"Set-Content -LiteralPath {queued} -Value $lines -Encoding ascii; "
+        "'released'"
+    )
+
+
 def set_slots_command(directory: str, slots: int) -> str:
     """Change the job limit under a running runner; it re-reads it each pass."""
     path = ps_quote(_join(directory, SLOTS_NAME))
@@ -575,6 +591,7 @@ __all__: List[str] = [
     "list_command",
     "pause_command",
     "prepare_command",
+    "release_command",
     "set_cores_command",
     "set_memory_command",
     "set_slots_command",

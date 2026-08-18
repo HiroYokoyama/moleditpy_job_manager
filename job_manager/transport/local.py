@@ -141,9 +141,17 @@ class LocalTransport(Transport):
             # -NonInteractive so a cmdlet that wants confirmation fails instead
             # of blocking a worker thread on a prompt nobody can see.
             return [self._shell, "-NoProfile", "-NonInteractive", "-Command", command]
-        # -l so the user's profile is sourced: a login node's modules and PATH
-        # live there, and a job that cannot find its program is the usual
-        # symptom of skipping it.
+        if getattr(self.host, "load_profile", False):
+            # The profile is already *in* the command: environment_commands()
+            # sources /etc/profile, ~/.bash_profile, ~/.profile and ~/.bashrc,
+            # which is everything a login shell reads and then some. Asking bash
+            # for a login shell as well would read them a second time, and a
+            # login shell costs 260 ms against 14 ms here -- on every command,
+            # so on every poll, every tail and every status query.
+            return [self._shell, "-c", command]
+        # A host that has opted out of reading the login files still gets them
+        # this way, which is how it has always behaved: switching it to -c would
+        # take away the PATH its jobs are currently finding their program on.
         return [self._shell, "-lc", command]
 
     def _resolve(self, path: str) -> str:

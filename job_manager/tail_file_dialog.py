@@ -10,12 +10,9 @@ from __future__ import annotations
 from typing import Dict, Optional, Sequence
 
 from PyQt6.QtWidgets import (
-    QAbstractItemView,
     QDialog,
     QDialogButtonBox,
-    QHBoxLayout,
     QLabel,
-    QLineEdit,
     QTreeWidget,
     QTreeWidgetItem,
     QVBoxLayout,
@@ -23,6 +20,8 @@ from PyQt6.QtWidgets import (
 )
 
 
+from . import PLUGIN_VERSION
+from .file_tree import configure_tree, folder_factory, make_filter_row
 from .theme import apply_theme
 from .tree_utils import (
     PATH_ROLE,
@@ -44,7 +43,7 @@ class TailFileDialog(QDialog):
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle(title or f"Tail Specific File - {job_name}")
+        self.setWindowTitle(title or f"Job Manager {PLUGIN_VERSION} - Tail File: {job_name}")
         apply_theme(self)
         self.resize(560, 480)
 
@@ -61,18 +60,10 @@ class TailFileDialog(QDialog):
         self.lbl_headline.setWordWrap(True)
         layout.addWidget(self.lbl_headline)
 
-        # Quick filter bar
-        filter_row = QHBoxLayout()
-        filter_row.addWidget(QLabel("Filter:"))
-        self.txt_filter = QLineEdit()
-        self.txt_filter.setPlaceholderText("Filter files (e.g. .out, .log, *.xyz)...")
-        self.txt_filter.textChanged.connect(self._apply_filter)
-        filter_row.addWidget(self.txt_filter, 1)
+        filter_row, self.txt_filter = make_filter_row(self._apply_filter)
         layout.addLayout(filter_row)
 
-        self.tree = QTreeWidget()
-        self.tree.setHeaderHidden(True)
-        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.tree = configure_tree(QTreeWidget())
         self.tree.itemDoubleClicked.connect(self._on_item_double_clicked)
         self.tree.itemSelectionChanged.connect(self._on_selection_changed)
         layout.addWidget(self.tree, 1)
@@ -94,16 +85,7 @@ class TailFileDialog(QDialog):
         self.tree.clear()
         folders: Dict[tuple, QTreeWidgetItem] = {}
         default_item: Optional[QTreeWidgetItem] = None
-
-        def styled_folder(
-            name: str, parts: Sequence[str], parent: Optional[QTreeWidgetItem]
-        ) -> QTreeWidgetItem:
-            # ensure_folder_item owns insertion into the tree. Returning an
-            # unattached item avoids inserting the same folder twice.
-            item = QTreeWidgetItem()
-            item.setText(0, f"📁 {name}")
-            item.setData(0, PATH_ROLE, None)
-            return item
+        styled_folder = folder_factory()
 
         for name in names:
             if not name:
@@ -116,7 +98,7 @@ class TailFileDialog(QDialog):
             )
             leaf = parts[-1]
             item = QTreeWidgetItem(parent) if parent is not None else QTreeWidgetItem(self.tree)
-            item.setText(0, f"📄 {leaf}")
+            item.setText(0, leaf)
             item.setData(0, PATH_ROLE, name)
             if default_file and (name == default_file or leaf == default_file):
                 default_item = item

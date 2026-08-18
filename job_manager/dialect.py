@@ -19,6 +19,7 @@ the user's profile directory before quoting.
 
 from __future__ import annotations
 
+import base64
 import os
 import shlex
 from typing import List, Sequence
@@ -178,6 +179,39 @@ POSIX = Dialect()
 POWERSHELL = PowerShellDialect()
 
 
+def powershell_encoded(command: str) -> str:
+    """``command`` as a self-contained ``powershell -EncodedCommand`` line.
+
+    This is what makes a Windows host reachable over SSH. Everything the plugin
+    sends such a host is PowerShell, and OpenSSH on Windows hands a command to
+    whatever the server has configured as its default shell -- which is cmd.exe
+    unless somebody changed it, and cmd is not PowerShell. Sending the source
+    through cmd (or through a POSIX shell on the way out) mangles it: quotes,
+    ``$``, ``&`` and ``|`` all mean something to those shells too.
+
+    UTF-16LE base64 has no such characters in it, so the command survives any
+    number of shells between here and PowerShell, and works whether the far end
+    defaults to cmd or to PowerShell.
+    """
+    encoded = base64.b64encode((command or "").encode("utf-16-le")).decode("ascii")
+    return f"powershell -NoProfile -NonInteractive -EncodedCommand {encoded}"
+
+
+def wrap_remote(host, command: str) -> str:
+    """What actually goes down the wire to ``host`` for ``command``.
+
+    Only a Windows host is wrapped, and only over a network: the local backend
+    starts PowerShell itself, so there is nothing in between to protect it from.
+    """
+    from .models import BACKEND_LOCAL, BACKEND_WSL, SCHEDULER_WINDOWS
+
+    if getattr(host, "scheduler", "") != SCHEDULER_WINDOWS:
+        return command
+    if getattr(host, "backend", "") in (BACKEND_LOCAL, BACKEND_WSL):
+        return command
+    return powershell_encoded(command)
+
+
 def for_host(host) -> Dialect:
     """The dialect this host's commands are written in."""
     from .models import SCHEDULER_WINDOWS
@@ -193,4 +227,6 @@ __all__ = [
     "Dialect",
     "PowerShellDialect",
     "for_host",
+    "powershell_encoded",
+    "wrap_remote",
 ]

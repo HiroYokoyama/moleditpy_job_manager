@@ -21,7 +21,6 @@ from typing import Dict, List, Optional, Sequence
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QAbstractItemView,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -35,11 +34,14 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from . import PLUGIN_VERSION
+from .file_tree import configure_tree, folder_factory, make_filter_row
 from .theme import apply_theme
 from .tree_utils import (
     PATH_ROLE,
     collect_tree_leaves,
     ensure_folder_item,
+    filter_tree_items,
     set_tree_checked_recursive,
     split_path,
 )
@@ -56,9 +58,10 @@ class DownloadDialog(QDialog):
         folder: str,
         title: str,
         parent: Optional[QWidget] = None,
+        suggested: bool = False,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle(title)
+        self.setWindowTitle(title or f"Job Manager {PLUGIN_VERSION} - Download {job_name}")
         apply_theme(self)
         self.resize(600, 520)
         #: True while check states are being propagated, so a change made in
@@ -68,6 +71,14 @@ class DownloadDialog(QDialog):
 
         if not names:
             headline = "The job directory is empty."
+        elif matched and suggested:
+            # Nothing matched, so what is ticked is a guess from the file names
+            # -- and saying so is the difference between a suggestion and a
+            # claim that these are the files the patterns asked for.
+            headline = (
+                f"Nothing matched the fetch patterns. Of the {len(names)} files here, "
+                f"the {len(matched)} that look like outputs are ticked."
+            )
         elif matched:
             headline = f"{len(matched)} of {len(names)} files match the fetch patterns."
         else:
@@ -80,11 +91,14 @@ class DownloadDialog(QDialog):
         self.lbl_headline.setWordWrap(True)
         layout.addWidget(self.lbl_headline)
 
-        self.tree = QTreeWidget()
-        self.tree.setHeaderHidden(True)
+        # The same filter box as the other two file lists, and the reason this
+        # one needed it most: this is the list that is long.
+        filter_row, self.txt_filter = make_filter_row(self._apply_filter)
+        layout.addLayout(filter_row)
+
         # Drag or shift-click a run of files, ctrl-click to add: the tick boxes
         # are the choice, but nobody wants to click forty of them one at a time.
-        self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.tree = configure_tree(QTreeWidget(), multi_select=True)
         self.tree.itemDoubleClicked.connect(self._toggle)
         self._build_tree(names, set(matched))
         self.tree.itemChanged.connect(self._on_item_changed)
@@ -134,18 +148,7 @@ class DownloadDialog(QDialog):
     def _build_tree(self, names: Sequence[str], matched: set) -> None:
         """One item per path segment; files carry their full relative path."""
         folders: Dict[tuple, QTreeWidgetItem] = {}
-
-        def checkable_folder(
-            name: str, parts: Sequence[str], parent: Optional[QTreeWidgetItem]
-        ) -> QTreeWidgetItem:
-            # ensure_folder_item owns insertion into the tree. Returning an
-            # unattached item avoids inserting the same folder twice.
-            item = QTreeWidgetItem()
-            item.setText(0, name)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(0, Qt.CheckState.Unchecked)
-            item.setData(0, PATH_ROLE, None)
-            return item
+        checkable_folder = folder_factory(checkable=True)
 
         for name in names:
             if not name:
@@ -164,6 +167,14 @@ class DownloadDialog(QDialog):
                 0, Qt.CheckState.Checked if name in matched else Qt.CheckState.Unchecked
             )
         self.tree.expandAll()
+
+    def _apply_filter(self, text: str) -> None:
+        """Hide what does not match, keeping every tick exactly as it was.
+
+        Filtering is a view, never a choice: a file ticked before the filter
+        was typed is still downloaded, whether or not it is on screen.
+        """
+        filter_tree_items(self.tree, text)
 
     def _leaves(self) -> List[QTreeWidgetItem]:
         return collect_tree_leaves(self.tree)

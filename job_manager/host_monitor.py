@@ -37,13 +37,22 @@ from PyQt6.QtWidgets import (
 
 from . import PLUGIN_VERSION, host_stats
 from .credentials import needs_password
-from .models import SCHEDULER_WINDOWS, HostProfile
+from .models import (
+    ACTIVE_STATES,
+    SCHEDULER_WINDOWS,
+    STATE_DONE,
+    STATE_NEW,
+    STATE_RUNNING,
+    STATE_UPLOADING,
+    HostProfile,
+)
 from .theme import (
     CY_ACCENT,
     CY_ACCENT2,
     CY_AMBER,
     CY_GREEN,
     CY_GREY,
+    CY_RED,
 )
 
 from .window_utils import make_independent
@@ -66,6 +75,20 @@ OPENSSH_INTERVAL_SECONDS = 10
 #: A host that fails is asked less often, doubling up to this, rather than
 #: every tick for as long as the window is open.
 MAX_BACKOFF_TICKS = 16
+
+#: A real space that keeps a label its full height while it has nothing to say.
+#: Written as the character, never as ``&nbsp;``: a QLabel left on the default
+#: AutoText format decides between plain text and rich text by looking at the
+#: string, and "&nbsp;" does not look like markup -- so every card showed the
+#: entity itself where the load average belongs.
+BLANK = "\u00a0"
+
+#: Waiting, drawn as the *white hourglass* rather than the emoji one. U+231B is
+#: an emoji codepoint: the platform substitutes a colour glyph from a font with
+#: different metrics, which sits crushed and off-baseline in a line of text.
+#: U+29D6 is a mathematical symbol, so it is drawn by the text font at the text
+#: size, like every other character on the line.
+HOURGLASS = "\u29d6"
 
 #: Dark theme palette and styling definitions for the Host Monitor window.
 _DARK = {
@@ -255,6 +278,23 @@ GRAPH_LOAD = GRAPH_CPU
 GRAPH_MEMORY = QColor(CY_ACCENT2)
 
 
+def primary_state_word(job) -> str:
+    """What a card calls a job that is not active any more.
+
+    Words rather than the canonical state names: the card is read at a glance
+    from across a desk, where "FAILED" beside a machine name reads as the
+    machine having failed.
+    """
+    from .models import STATE_CANCELLED, STATE_FAILED, STATE_LOST
+
+    return {
+        STATE_DONE: "finished",
+        STATE_FAILED: "failed",
+        STATE_CANCELLED: "cancelled",
+        STATE_LOST: "lost",
+    }.get(job.state, (job.state or "").lower())
+
+
 class Meter(QWidget):
     """A vertical bar displaying resource usage."""
 
@@ -340,7 +380,14 @@ class Meter(QWidget):
 
 
 class Sparkline(QWidget):
-    """History graph displaying samples over time."""
+    """History graph displaying samples over time.
+
+    Every sample is a fraction of the machine, so the top of the plot is always
+    100% of it and never the largest value seen -- a graph that rescaled itself
+    would make a quiet host look as busy as a full one. That ceiling is drawn
+    and labelled rather than left implied: without it, the same shape meant
+    "saturated" on one card and "barely ticking over" on the next.
+    """
 
     def __init__(self, color: QColor, caption: str = "", parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -348,10 +395,11 @@ class Sparkline(QWidget):
         self.caption = caption
         self.values: Deque[float] = deque(maxlen=HISTORY)
         self._dark = False
-        self.setMinimumHeight(70)
+        # Room for the label row above the plot as well as the plot itself.
+        self.setMinimumHeight(86)
 
     def sizeHint(self) -> QSize:
-        return QSize(180, 84)
+        return QSize(180, 100)
 
     def set_dark(self, dark: bool = False) -> None:
         self._dark = dark
@@ -368,10 +416,13 @@ class Sparkline(QWidget):
     def paintEvent(self, event) -> None:  # noqa: N802
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        rect = self.rect().adjusted(0, 1, -1, -1)
+        # The plot area starts below the labels, so the 100% line is drawn where
+        # the ceiling actually is rather than under the caption text.
+        outer = self.rect().adjusted(0, 1, -1, -1)
+        label_height = painter.fontMetrics().height()
+        rect = outer.adjusted(0, label_height + 1, 0, 0)
 
         guide_color = QColor("#8b949e" if self._dark else "#656d76")
-        QColor("#f0f6fc" if self._dark else "#1f2328")
 
         guide = QColor(guide_color)
         guide.setAlpha(60)
@@ -379,14 +430,27 @@ class Sparkline(QWidget):
         for share in (0.25, 0.5, 0.75):
             y = int(rect.bottom() - share * rect.height())
             painter.drawLine(rect.left() + 2, y, rect.right() - 2, y)
+        # The ceiling, solid and a shade stronger than the quarter marks: it is
+        # the one line the shape below has to be read against.
+        ceiling = QColor(guide_color)
+        ceiling.setAlpha(110)
+        painter.setPen(QPen(ceiling, 1.0))
+        painter.drawLine(rect.left() + 2, rect.top(), rect.right() - 2, rect.top())
 
+        header = outer.adjusted(6, 0, -6, -(outer.height() - label_height))
+        painter.setPen(QPen(guide_color))
         if self.caption:
-            painter.setPen(QPen(guide_color))
+            current = f"  {self.values[-1] * 100:.0f}%" if self.values else ""
             painter.drawText(
-                rect.adjusted(6, 2, -6, 0),
-                Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft,
-                self.caption,
+                header,
+                int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
+                f"{self.caption}{current}",
             )
+        painter.drawText(
+            header,
+            int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight),
+            "100% full",
+        )
 
         if len(self.values) < 2:
             painter.setPen(QPen(guide_color))
@@ -425,6 +489,71 @@ class Sparkline(QWidget):
         painter.drawEllipse(QRectF(points[-1][0] - 2.5, points[-1][1] - 2.5, 5, 5))
 
 
+class _FixedLine(QLabel):
+    """Exactly one line of text, whatever it says.
+
+    The card is a grid of identical shapes, and it stops being one the moment a
+    long job name wraps and makes its card a line taller than the card beside
+    it. This never wraps, keeps the height of one line, and takes no part in
+    deciding how wide the card is; text too long for the width is elided.
+    """
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setWordWrap(False)
+        self.setTextFormat(Qt.TextFormat.RichText)
+        self.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.setFixedHeight(self.fontMetrics().height() + 2)
+        self._head = ""
+        self._tail = ""
+        self._head_style = ""
+        self._tail_style = ""
+        self.clear_line()
+
+    def setFont(self, font) -> None:  # noqa: N802 - Qt's spelling
+        super().setFont(font)
+        self.setFixedHeight(self.fontMetrics().height() + 2)
+
+    def show_line(
+        self, head: str, tail: str = "", head_style: str = "", tail_style: str = ""
+    ) -> None:
+        """``head`` is elided to fit; ``tail`` is kept whole beside it."""
+        self._head, self._tail = head, tail
+        self._head_style, self._tail_style = head_style, tail_style
+        self._render()
+
+    def clear_line(self) -> None:
+        self.show_line("")
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt's spelling
+        super().resizeEvent(event)
+        self._render()
+
+    def _render(self) -> None:
+        import html as _html
+
+        if not self._head and not self._tail:
+            self.setText(BLANK)
+            return
+        metrics = self.fontMetrics()
+        room = self.width() - metrics.horizontalAdvance(self._tail) - 4
+        # Only once the layout has given this label a width. Qt's default 100px
+        # is not one, and eliding against it leaves an ellipsis and nothing
+        # else until something forces a resize -- which re-renders anyway, so
+        # there is nothing to lose by waiting for it.
+        laid_out = self.testAttribute(Qt.WidgetAttribute.WA_Resized)
+        head = (
+            metrics.elidedText(self._head, Qt.TextElideMode.ElideRight, room)
+            if laid_out and room > 20
+            else self._head
+        )
+        parts = [f"<span style='{self._head_style}'>{_html.escape(head)}</span>"]
+        if self._tail:
+            parts.append(f"<span style='{self._tail_style}'>{_html.escape(self._tail)}</span>")
+        self.setText("".join(parts))
+
+
 class HostCard(QFrame):
     """One host: what it is doing now, and its history on a double click."""
 
@@ -460,7 +589,8 @@ class HostCard(QFrame):
         font = self.lbl_load_avg.font()
         font.setPointSizeF(max(7.5, font.pointSizeF() * 0.85))
         self.lbl_load_avg.setFont(font)
-        self.lbl_load_avg.setText("&nbsp;")
+        self.lbl_load_avg.setTextFormat(Qt.TextFormat.PlainText)
+        self.lbl_load_avg.setText(BLANK)
         outer.addWidget(self.lbl_load_avg)
 
         self.meter_cpu = Meter("CPU", GRAPH_CPU)
@@ -481,13 +611,20 @@ class HostCard(QFrame):
             widget.setVisible(False)
             outer.addWidget(widget)
 
-        # Jobs running on this host -- locked to fixed 2-line height to prevent any layout jump.
-        self.lbl_jobs = QLabel("&nbsp;")
-        self.lbl_jobs.setTextFormat(Qt.TextFormat.RichText)
-        self.lbl_jobs.setWordWrap(True)
-        self.lbl_jobs.setFixedHeight(36)
-        self.lbl_jobs.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
-        outer.addWidget(self.lbl_jobs)
+        # What this host is doing: one line for the job, one for the counts.
+        # Two labels of one line each, never one label of two: a word-wrapping
+        # label reflows a long job name onto a second line and pushes the
+        # counts out of the fixed height, so one card in the grid silently
+        # loses a line the others have. Neither wraps; the name is elided to
+        # the width there is.
+        self._jobs: list = []
+        self.lbl_job = _FixedLine(self)
+        self.lbl_job_counts = _FixedLine(self)
+        counts_font = self.lbl_job_counts.font()
+        counts_font.setPointSizeF(max(7.5, counts_font.pointSizeF() * 0.85))
+        self.lbl_job_counts.setFont(counts_font)
+        outer.addWidget(self.lbl_job)
+        outer.addWidget(self.lbl_job_counts)
 
         self.restyle()
 
@@ -542,46 +679,56 @@ class HostCard(QFrame):
         self.meter_memory.setVisible(not expanded)
 
     def show_jobs(self, jobs: list) -> None:
-        """Update the running job display: shows running job on line 1, and task progress on line 2."""
-        import html as _html
+        """One line for what this host is doing, one for how far it has got.
 
+        The job named on the first line is chosen by state, not by the order the
+        list happens to be in: whatever is running, else whatever was submitted
+        most recently, else the last one to finish. Picking only from RUNNING is
+        what made a card go blank for the whole of a resubmission -- a job that
+        has been handed over but not yet started is in NEW, UPLOADING or
+        SUBMITTED, none of which was matched, so the host looked idle at exactly
+        the moment the user was waiting to see their job appear.
+        """
+        self._jobs = list(jobs)
+        self._render_jobs()
+
+    def _render_jobs(self) -> None:
+        jobs = self._jobs
         if not jobs:
-            self.lbl_jobs.setText("&nbsp;")
+            self.lbl_job.clear_line()
+            self.lbl_job_counts.clear_line()
             return
 
         total = len(jobs)
-        done = sum(1 for j in jobs if getattr(j, "state", "").upper() in ("DONE", "COMPLETED"))
-        running = [
-            j
-            for j in jobs
-            if getattr(j, "is_active", False) and getattr(j, "state", "").upper() == "RUNNING"
-        ]
-        queued = sum(
-            1
-            for j in jobs
-            if getattr(j, "is_active", False)
-            and getattr(j, "state", "").upper() in ("QUEUED", "PENDING", "SUBMITTED")
-        )
+        done = sum(1 for job in jobs if job.state == STATE_DONE)
+        starting = [job for job in jobs if job.state in (STATE_NEW, STATE_UPLOADING)]
+        running = [job for job in jobs if job.state == STATE_RUNNING]
+        waiting = [job for job in jobs if job.state in ACTIVE_STATES and job.state != STATE_RUNNING]
 
-        if not running and queued == 0 and done == 0:
-            self.lbl_jobs.setText("&nbsp;")
-            return
+        def latest(candidates: list):
+            return max(candidates, key=lambda job: job.updated_at or job.submitted_at)
 
-        line1 = "&nbsp;"
         if running:
-            name = running[0].name or "Job"
-            if len(name) > 38:
-                name = name[:35] + "..."
-            name_html = _html.escape(name)
-            line1 = f"<span style='color:{CY_GREEN};font-weight:bold'>▶ {name_html}</span>"
-        elif queued > 0:
-            line1 = f"<span style='color:#8b949e'>⏳ {queued} queued</span>"
-        elif done == total and total > 0:
-            line1 = f"<span style='color:#8b949e'>✔ {total}/{total} completed</span>"
+            primary, word, color, mark = latest(running), "running", CY_GREEN, ""
+        elif starting:
+            primary, word, color, mark = latest(starting), "submitting", CY_AMBER, HOURGLASS
+        elif waiting:
+            primary, word, color, mark = latest(waiting), "queued", CY_AMBER, HOURGLASS
+        else:
+            last = latest(jobs)
+            primary, word, color, mark = last, primary_state_word(last), CY_GREY, ""
 
-        line2 = f"<span style='color:#8b949e;font-size:11px'>task {done}/{total} done</span>"
-
-        self.lbl_jobs.setText(f"<div style='line-height:1.2'>{line1}<br>{line2}</div>")
+        name = f"{mark} {primary.name}" if mark else (primary.name or "job")
+        self.lbl_job.show_line(
+            name,
+            f" - {word}",
+            head_style=f"color:{color};font-weight:bold",
+            tail_style=f"color:{CY_GREY}",
+        )
+        busy = len(running) + len(waiting) + len(starting)
+        counts = [f"{busy} active"] if busy else []
+        counts.append(f"{done}/{total} done")
+        self.lbl_job_counts.show_line(", ".join(counts), head_style=f"color:{CY_GREY}")
 
     # --- what a sample changes ----------------------------------------------
 
@@ -615,12 +762,9 @@ class HostCard(QFrame):
 
         if stats.load:
             self.lbl_load_avg.setText(f"load avg {stats.load[0]:.2f}")
-            self.lbl_load_avg.setToolTip(
-                "1-minute load average, as the host reports it -- separate "
-                "from the CPU meter above, which is instantaneous usage."
-            )
+            self.lbl_load_avg.setToolTip("1-minute load average, as the host reports it.")
         else:
-            self.lbl_load_avg.setText("&nbsp;")
+            self.lbl_load_avg.setText(BLANK)
             self.lbl_load_avg.setToolTip("")
 
         total = f"{stats.mem_total_mb / 1024:.1f} GB" if stats.mem_total_mb else ""
@@ -647,7 +791,8 @@ class HostCard(QFrame):
         self.setToolTip(first)
         self.meter_cpu.show_value(0.0, "-")
         self.meter_memory.show_value(0.0, "-")
-        self.lbl_load_avg.setText("&nbsp;")
+        self.lbl_load_avg.setText(BLANK)
+        self.lbl_load_avg.setToolTip("")
 
 
 class HostMonitorDialog(QDialog):
@@ -717,13 +862,7 @@ class HostMonitorDialog(QDialog):
         self.spin_interval.setValue(DEFAULT_INTERVAL_SECONDS)
         self.spin_interval.setMaximum(300)
         self.spin_interval.setToolTip(
-            "How often each host is asked for its load and memory.\n\n"
-            "One command per host per tick, and only while this window is "
-            "open. On a shared login node, slower is politer.\n\n"
-            "The default follows the backend: two seconds where the connection "
-            "is kept (paramiko, this machine), ten for OpenSSH, which starts a "
-            "whole ssh process per command and is rate-limited by the far end "
-            "if asked faster. Whatever you set here is remembered."
+            "How often each host is asked, while this window is open. Remembered."
         )
         self.spin_interval.valueChanged.connect(self._set_interval)
         top.addWidget(self.spin_interval)
@@ -731,11 +870,7 @@ class HostMonitorDialog(QDialog):
         self.btn_history = QPushButton("History")
         self.btn_history.setCheckable(True)
         self.btn_history.setToolTip(
-            "Show the last two minutes under every card: load in green, memory "
-            "in blue.\n\n"
-            "The bars answer 'is there room on that machine?'. The graphs "
-            "answer 'has it been like that long?', which is worth the space "
-            "only while it is being asked."
+            "Show the last two minutes under every card: load in green, memory in blue."
         )
         self.btn_history.setChecked(
             bool(self.service.store.get_pref("host_monitor_history", False))
@@ -746,9 +881,7 @@ class HostMonitorDialog(QDialog):
         self.btn_dark = QPushButton("Dark")
         self.btn_dark.setCheckable(True)
         self.btn_dark.setToolTip(
-            "Dark colours for this window only.\n\n"
-            "For the case this window is built for: left up on a second screen "
-            "beside something else. MoleditPy's own theme is not touched."
+            "Dark colours for this window only; MoleditPy's own theme is not touched."
         )
         self.btn_dark.setChecked(bool(self.service.store.get_pref("host_monitor_dark", False)))
         self.btn_dark.toggled.connect(self._set_dark)
@@ -766,23 +899,14 @@ class HostMonitorDialog(QDialog):
         scroll.setWidget(self.body)
         layout.addWidget(scroll, 1)
 
-        for host in self.service.store.host_list():
-            card = HostCard(host)
-            if not getattr(host, "enabled", True):
-                card.setEnabled(False)
-                card.lbl_state.setText("disabled")
-                # HostCard paints its surface and labels with fixed colours,
-                # not through the palette, so setEnabled() alone leaves it
-                # looking identical to an enabled card. An opacity effect dims
-                # it regardless of how its colours are drawn.
-                effect = QGraphicsOpacityEffect(card)
-                effect.setOpacity(0.45)
-                card.setGraphicsEffect(effect)
-            self.cards[host.id] = card
-        if not self.cards:
-            self.grid.addWidget(QLabel("No hosts yet. Add one under Hosts..."), 0, 0)
-        self._relayout()
-        self.service.jobs_changed.connect(self._refresh_card_jobs)
+        self._empty_label = QLabel("No hosts yet. Add one under Hosts...")
+        self.grid.addWidget(self._empty_label, 0, 0)
+        self._build_cards()
+        self._refresh_pending = QTimer(self)
+        self._refresh_pending.setSingleShot(True)
+        self._refresh_pending.setInterval(120)
+        self._refresh_pending.timeout.connect(self._refresh_card_jobs)
+        self.service.jobs_changed.connect(self._request_card_refresh)
         self.service.job_updated.connect(self._on_job_updated)
         self._refresh_card_jobs()
 
@@ -795,8 +919,10 @@ class HostMonitorDialog(QDialog):
 
     def _disconnect_signals(self) -> None:
         """Disconnect service signals to prevent memory leaks on re-open."""
+        if getattr(self, "_refresh_pending", None) is not None:
+            self._refresh_pending.stop()
         try:
-            self.service.jobs_changed.disconnect(self._refresh_card_jobs)
+            self.service.jobs_changed.disconnect(self._request_card_refresh)
         except Exception:
             pass
         try:
@@ -807,19 +933,81 @@ class HostMonitorDialog(QDialog):
             self._jobs_bar.teardown()
 
     def _on_job_updated(self, _job_id: str = "") -> None:
-        self._refresh_card_jobs()
+        self._request_card_refresh()
+
+    def _request_card_refresh(self) -> None:
+        """Coalesce a burst of job signals into one pass over the cards.
+
+        A poll that resolves eight jobs emits eight ``job_updated`` and a
+        ``jobs_changed`` besides, and each one used to walk the whole job list
+        again for every card on screen.
+        """
+        if not self._refresh_pending.isActive():
+            self._refresh_pending.start()
 
     def _refresh_card_jobs(self) -> None:
-        """Push each host's active jobs into its card's jobs strip."""
-        jobs_by_host: dict = {}
+        """Push each host's jobs into its card's strip.
+
+        Grouped by id and by name into separate maps: one map keyed by both
+        meant a host whose *name* matched another host's *id* could be handed
+        the wrong jobs, and a job appended under both keys was counted twice on
+        a card that fell back to the name.
+        """
+        by_id: Dict[str, list] = {}
+        by_name: Dict[str, list] = {}
         for job in self.service.store.jobs.values():
             if job.host_id:
-                jobs_by_host.setdefault(job.host_id, []).append(job)
-            if job.host_name:
-                jobs_by_host.setdefault(job.host_name, []).append(job)
-        for host_id, card in self.cards.items():
-            card_jobs = jobs_by_host.get(card.host.id) or jobs_by_host.get(card.host.name, [])
-            card.show_jobs(card_jobs)
+                by_id.setdefault(job.host_id, []).append(job)
+            elif job.host_name:
+                # Only as a fallback: a job that still knows its host id is
+                # placed by that alone, so renaming a host cannot split it.
+                by_name.setdefault(job.host_name, []).append(job)
+        for card in self.cards.values():
+            card.show_jobs(by_id.get(card.host.id) or by_name.get(card.host.name, []))
+
+    def _host_signature(self) -> tuple:
+        """What the cards depend on: which hosts there are, and their labels."""
+        return tuple(
+            (host.id, host.name, host.target, bool(getattr(host, "enabled", True)))
+            for host in self.service.store.host_list()
+        )
+
+    def _build_cards(self) -> None:
+        """Make one card per host, replacing whatever was there.
+
+        Called again whenever the host list changes underneath the window: a
+        host added in the Hosts dialog used to be invisible here until the
+        monitor was closed and opened again.
+        """
+        self._card_signature = self._host_signature()
+        for card in self.cards.values():
+            self.grid.removeWidget(card)
+            card.setParent(None)
+            card.deleteLater()
+        self.cards.clear()
+        self._laid_out_for = 0
+        for host in self.service.store.host_list():
+            card = HostCard(host)
+            if not getattr(host, "enabled", True):
+                card.setEnabled(False)
+                card.lbl_state.setText("disabled")
+                # HostCard paints its surface and labels with fixed colours,
+                # not through the palette, so setEnabled() alone leaves it
+                # looking identical to an enabled card. An opacity effect dims
+                # it regardless of how its colours are drawn.
+                effect = QGraphicsOpacityEffect(card)
+                effect.setOpacity(0.45)
+                card.setGraphicsEffect(effect)
+            card.restyle(self.palette(), dark=bool(self.btn_dark.isChecked()))
+            self.cards[host.id] = card
+        self._empty_label.setVisible(not self.cards)
+        self._relayout()
+        self._refresh_card_jobs()
+
+    def _sync_cards(self) -> None:
+        """Rebuild the cards if the host list has changed since they were made."""
+        if self._host_signature() != self._card_signature:
+            self._build_cards()
 
     def _columns(self) -> int:
         return max(1, min(len(self.cards) or 1, self.width() // self.CARD_WIDTH or 1))
@@ -933,6 +1121,9 @@ class HostMonitorDialog(QDialog):
         return transport
 
     def _sample_all(self) -> None:
+        # Cheap: a tuple of the host list, compared. The alternative is a
+        # signal from the store, which does not exist for host edits.
+        self._sync_cards()
         for host in self._hosts():
             if host.id in self._busy:
                 # Still waiting on the last one. Skipping a tick is the right
@@ -1081,14 +1272,25 @@ class _ActiveJobsBar(QWidget):
         layout.addWidget(self._lbl_count)
         layout.addStretch(1)
 
-        service.jobs_changed.connect(self.refresh)
+        # Coalesced for the same reason the cards are: one poll emits a signal
+        # per job it resolved, and each pass counts the whole list again.
+        self._pending = QTimer(self)
+        self._pending.setSingleShot(True)
+        self._pending.setInterval(120)
+        self._pending.timeout.connect(self.refresh)
+        service.jobs_changed.connect(self._request_refresh)
         service.job_updated.connect(self._on_updated)
         self.refresh()
 
+    def _request_refresh(self) -> None:
+        if not self._pending.isActive():
+            self._pending.start()
+
     def teardown(self) -> None:
         """Disconnect service signals; call when the parent dialog closes."""
+        self._pending.stop()
         try:
-            self.service.jobs_changed.disconnect(self.refresh)
+            self.service.jobs_changed.disconnect(self._request_refresh)
         except Exception:
             pass
         try:
@@ -1097,47 +1299,35 @@ class _ActiveJobsBar(QWidget):
             pass
 
     def _on_updated(self, _job_id: str = "") -> None:
-        self.refresh()
-
-    def _display_state(self, job) -> str:
-        """Mirrors JobTableModel.display_state without importing it."""
-        store = self.service.store
-        if store.chain_blocker(job) is not None:
-            return "blocked"
-        if (
-            job.after_job_id
-            and job.is_active
-            and store.jobs.get(job.after_job_id) is not None
-            and store.jobs[job.after_job_id].is_active
-        ):
-            return "queued"
-        return job.state.lower()
+        self._request_refresh()
 
     def refresh(self) -> None:
-        active = list(self.service.store.active_jobs())
-        total = len(active)
-        if not total:
-            self._lbl_count.setText(f"<span style='color:{CY_GREY};'>● no active jobs</span>")
+        store = self.service.store
+        active = store.active_jobs()
+        if not active:
+            self._lbl_count.setText(f"<span style='color:{CY_GREY};'>no active jobs</span>")
             return
 
-        running = sum(1 for j in active if self._display_state(j) == "running")
-        remaining = total - running
-        all_jobs = list(self.service.store.jobs.values())
-        done_count = sum(1 for j in all_jobs if j.state in ("DONE", "FAILED"))
-        total_all = len(all_jobs)
+        blocked_ids = store.blocked_ids()
+        running = sum(
+            1 for job in active if job.state == STATE_RUNNING and job.id not in blocked_ids
+        )
+        blocked = sum(1 for job in active if job.id in blocked_ids)
+        waiting = len(active) - running - blocked
+        all_jobs = list(store.jobs.values())
+        finished = sum(1 for job in all_jobs if job.is_terminal)
 
         parts = []
         if running:
             parts.append(
-                f"<span style='color:{CY_GREEN};font-weight:bold'>▶ {running} running</span>"
+                f"<span style='color:{CY_GREEN};font-weight:bold'>{running} running</span>"
             )
-        if remaining:
-            parts.append(f"<span style='color:{CY_AMBER};'>⧖ {remaining} remaining</span>")
-        if total_all > 0:
-            parts.append(
-                f"<span style='color:{CY_GREY};'>(task {done_count}/{total_all} done)</span>"
-            )
-        self._lbl_count.setText("  ".join(parts))
+        if waiting:
+            parts.append(f"<span style='color:{CY_AMBER};'>{HOURGLASS} {waiting} waiting</span>")
+        if blocked:
+            parts.append(f"<span style='color:{CY_RED};'>{blocked} blocked</span>")
+        parts.append(f"<span style='color:{CY_GREY};'>{finished}/{len(all_jobs)} finished</span>")
+        self._lbl_count.setText("&nbsp;&nbsp;".join(parts))
 
 
 __all__ = ["HostCard", "HostMonitorDialog", "Sparkline"]

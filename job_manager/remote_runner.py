@@ -624,6 +624,26 @@ def cancel_command(directory: str, entry: str) -> str:
     )
 
 
+def release_command(directory: str, entry: str) -> str:
+    """Let a still-queued job start even though what it waits for did not succeed.
+
+    Cancelling one job in a chain must not throw away the jobs behind it. The
+    runner blocks a dependent whose predecessor did not exit 0, and a cancelled
+    predecessor leaves no exit code at all -- so without this, cancelling the
+    middle job of a chain quietly killed the rest of it.
+
+    The header is rewritten in place, through a temp file: ``sed -i`` needs an
+    argument on BSD and macOS and none on GNU, and there is no spelling that
+    works on both.
+    """
+    return (
+        f"cd {quote(directory)} 2>/dev/null || exit 0; "
+        f'f="queue/{entry}"; [ -f "$f" ] || exit 0; '
+        f'sed \'s|^{REQUIRE_SUCCESS_TAG} .*|{REQUIRE_SUCCESS_TAG} 0|\' "$f" > "tmp/{entry}" '
+        f'&& mv "tmp/{entry}" "$f" && echo released'
+    )
+
+
 def set_slots_command(directory: str, slots: int) -> str:
     """Change the job limit under a running runner; it re-reads it each pass."""
     return f"cd {quote(directory)} 2>/dev/null && echo {max(1, int(slots))} > {SLOTS_NAME}"
@@ -734,6 +754,7 @@ __all__: List[str] = [
     "store_digest_command",
     "REQUIRE_SUCCESS_TAG",
     "STATUS_BLOCKED",
+    "release_command",
     "is_paused_command",
     "pause_command",
     "prepare_command",

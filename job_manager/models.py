@@ -71,6 +71,12 @@ BACKEND_OPENSSH = "openssh"
 BACKEND_PARAMIKO = "paramiko"
 #: This machine, no SSH at all.
 BACKEND_LOCAL = "local"
+#: This machine as well, but inside a WSL distribution: a Linux filesystem, a
+#: Linux program and a real bash, reached through ``wsl.exe`` rather than over
+#: a network. Separate from ``local`` because nothing about it is a Windows
+#: path -- the job directory, the command and the outputs are all Linux side,
+#: and every file that crosses has to be translated.
+BACKEND_WSL = "wsl"
 
 SCHEDULER_SLURM = "slurm"
 SCHEDULER_PBS = "pbs"
@@ -186,6 +192,9 @@ class HostProfile:
     #: reports is the whole machine, not the share you are entitled to, so the
     #: honest default is the number the user actually knows.
     runner_detect: bool = False
+    #: WSL backend only: which distribution to run in. Empty means the default
+    #: one, which is what ``wsl.exe`` uses with no ``-d``.
+    wsl_distro: str = ""
     ssh_options: List[str] = field(default_factory=list)
     #: paramiko backend only: prompt for a password (never stored on disk).
     ask_password: bool = False
@@ -213,7 +222,14 @@ class HostProfile:
 
     @property
     def is_local(self) -> bool:
-        return self.backend == BACKEND_LOCAL
+        """True when the job runs on this machine, over no network at all.
+
+        WSL counts: it is this machine's own kernel and disk, reached through a
+        process rather than a socket. Everything that asks this question --
+        whether a hostname is needed, whether there is a password to prompt for,
+        whether a connection can fail -- wants the same answer for both.
+        """
+        return self.backend in (BACKEND_LOCAL, BACKEND_WSL)
 
     def environment_commands(self) -> List[str]:
         """The login files to read, then whatever the user added.
@@ -245,6 +261,8 @@ class HostProfile:
 
     @property
     def target(self) -> str:
+        if self.backend == BACKEND_WSL:
+            return f"WSL: {self.wsl_distro}" if self.wsl_distro else "WSL"
         if self.is_local:
             return "this machine"
         return f"{self.username}@{self.hostname}" if self.username else self.hostname
@@ -268,6 +286,23 @@ class HostProfile:
         )
         mirror_root = expanded_root if is_absolute else os.path.abspath(expanded_root)
         return os.path.join(mirror_root, *parts) if parts else mirror_root
+
+    def owns_local_path(self, path: str) -> bool:
+        """True when ``path`` is inside this host's local mirror.
+
+        A file the user has just written into the share that *is* the cluster's
+        filesystem is, as far as they are concerned, already on the cluster --
+        so that is the host to offer them.
+        """
+        if not self.equal_path or not path:
+            return False
+        try:
+            root = os.path.abspath(os.path.expanduser(self.equal_path))
+            target = os.path.abspath(os.path.expanduser(path))
+            return os.path.commonpath([root, target]) == root
+        except (OSError, ValueError):
+            # Different drives on Windows, or a path that cannot be resolved.
+            return False
 
     def mirrored_job_dir(self, remote_dir: str) -> str:
         """Map a remote job directory below ``remote_root`` to its mirror."""

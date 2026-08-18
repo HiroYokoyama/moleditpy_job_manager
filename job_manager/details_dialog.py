@@ -65,10 +65,7 @@ class JobDetailsDialog(QDialog):
         self.txt_name.setToolTip("What this job is called in the table and in notifications.")
         self.txt_globs = QLineEdit(", ".join(job.fetch_globs or []))
         self.txt_globs.setToolTip(
-            "Which files are fetched from the job directory when it ends.\n\n"
-            "Comma separated, e.g. *.out, *.log, *.xyz. Wrong patterns are the "
-            "usual reason a finished job downloads nothing -- and they can be "
-            "corrected here while it is still running."
+            "Which files are fetched from the job directory when it ends, comma separated."
         )
         self.chk_auto = QCheckBox("Download when the job ends")
         self.chk_auto.setChecked(bool(job.auto_download))
@@ -83,10 +80,7 @@ class JobDetailsDialog(QDialog):
         self.txt_local = QLineEdit(job.local_dir)
         self.txt_local.setPlaceholderText("decided when downloading (beside the input)")
         self.txt_local.setToolTip(
-            "Where the results are written.\n\n"
-            "Left empty, it is chosen when the download happens: beside the "
-            "input file, or the shared download folder for a job that has no "
-            "local input to sit beside."
+            "Where the results are written. Empty means it is chosen at download time."
         )
         browse = QPushButton("...")
         browse.setMaximumWidth(32)

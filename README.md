@@ -34,8 +34,14 @@ fetch, open.
 - **Run natively on Windows**, with nothing to install: choose the Windows
   scheduler and the wrapper, the status checks and the plugin's own commands
   are all PowerShell, which ships with the OS — including the helper queue,
-  which has a PowerShell runner of its own. The bash backends still work there
-  under Git Bash or WSL.
+  which has a PowerShell runner of its own. It works the same way over SSH to
+  a Windows machine: commands are sent as encoded PowerShell, so the server's
+  default SSH shell may be either `cmd` or PowerShell.
+- **Run inside WSL** from Windows, which is where most calculation programs
+  are actually installed. The job directory, the wrapper and the outputs are
+  all Linux side — the same bash script a cluster is sent — and input files
+  are translated and copied across for you (`wslpath`, so a distribution that
+  mounts its drives somewhere unusual still works).
 - **Chain** jobs — "run this after that one" — using each scheduler's own
   mechanism (`--dependency=afterok`, `-W depend`, `-hold_jid`), or a wrapper
   that waits for the previous process where there is no queue at all. Ask for
@@ -53,8 +59,14 @@ fetch, open.
   too, for hosts where nothing at all may be left behind.)
 - **Schedule** a start time (`--begin`, `-a`, or a sleep). The job is handed
   over now; MoleditPy need not be running when it starts.
+- **Rebuild a job list from a folder** of results nobody tracked: fetched by
+  hand, copied off a cluster, or run before this plugin existed. One record
+  per directory that holds outputs, saved beside them as a `.pmejbs` and
+  marked read only — results can be opened from it, but nothing in it can be
+  submitted, cancelled or polled, because there is no host behind any of it.
 - **Track** every job in one table: queue id, state, elapsed time, and what it
-  is queued behind. Status survives closing the window, closing the project,
+  is queued behind. A double click opens the log while a job runs and the
+  result once it has finished. Status survives closing the window, closing the project,
   and restarting MoleditPy — tracking resumes by itself at launch when jobs
   from a previous session are still running.
 - **Watch** without the window open: a counter appears in MoleditPy's own
@@ -154,17 +166,17 @@ start "" pythonw -m job_manager
 3. *(Optional)* Right-click the new shortcut ➔ **Properties** ➔ **Change Icon...** to assign a custom icon.
 
 
-## Two SSH backends
+## Four backends
 
 
-| | OpenSSH (default) | paramiko (optional) | This machine |
-|---|---|---|---|
-| Install | nothing | `pip install paramiko` | nothing (needs bash) |
-| Auth | keys and ssh-agent | keys, agent **and passwords** | none needed |
-| `~/.ssh/config` | inherited automatically | `HostName`, `User`, `Port`, `IdentityFile` | not applicable |
-| `ProxyJump` | yes | refused, with an explanation | not applicable |
-| Connection | one process per command (multiplexed on macOS/Linux) | one persistent session | no network at all |
-| Job chaining | via the queue's own flag | via the queue's own flag | the wrapper waits for the process |
+| | OpenSSH (default) | paramiko (optional) | This machine | WSL |
+|---|---|---|---|---|
+| Install | nothing | `pip install paramiko` | nothing (needs bash, or the Windows scheduler) | nothing (needs a WSL distribution with bash) |
+| Auth | keys and ssh-agent | keys, agent **and passwords** | none needed | none needed |
+| `~/.ssh/config` | inherited automatically | `HostName`, `User`, `Port`, `IdentityFile` | not applicable | not applicable |
+| `ProxyJump` | yes | refused, with an explanation | not applicable | not applicable |
+| Connection | one process per command (multiplexed on macOS/Linux) | one persistent session | no network at all | no network at all |
+| Job chaining | via the queue's own flag | via the queue's own flag | the wrapper waits for the process | the wrapper waits for the process |
 
 The OpenSSH backend runs `ssh` in batch mode on purpose: a background thread must
 never block on an invisible password prompt — and it also means **no password can

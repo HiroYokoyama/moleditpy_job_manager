@@ -525,16 +525,24 @@ class TestChoosingWhatToDownload(DialogTestCase):
         self.addCleanup(dialog.deleteLater)
         self.assertEqual(dialog.chosen(), ["mol.out"])
 
-    def test_nothing_matching_says_so_and_still_lists(self):
+    def test_nothing_matching_says_so_and_suggests_the_outputs(self):
         # The case the dialog exists for: a finished job that appears to have
-        # produced nothing because the patterns were wrong.
+        # produced nothing because the patterns were wrong. What the names say
+        # is an output is ticked, so there is something to press Download on.
         self.job.fetch_globs = ["*.nothing"]
         dialog = self.chooser()
         self.addCleanup(dialog.deleteLater)
 
         self.assertIn("Nothing matched", dialog.lbl_headline.text())
-        self.assertEqual(dialog.chosen(), [])
+        self.assertIn("mol.out", dialog.chosen())
         self.assertEqual(len(self.listed(dialog)), 3)
+
+    def test_the_wrappers_log_is_never_suggested(self):
+        # It is this plugin's file, not a result, whatever the patterns say.
+        self.job.fetch_globs = ["*.nothing"]
+        dialog = self.chooser()
+        self.addCleanup(dialog.deleteLater)
+        self.assertNotIn("job.log", dialog.chosen())
 
     def test_an_empty_directory_says_that_instead(self):
         dialog = self.chooser(listing="")
@@ -575,9 +583,11 @@ class TestChoosingWhatToDownload(DialogTestCase):
         self.assertIn(item.text(0), dialog.chosen())
 
     def test_download_is_refused_while_nothing_is_ticked(self):
+        # Nothing matched and nothing looks like an output either.
         self.job.fetch_globs = ["*.nothing"]
-        dialog = self.chooser()
+        dialog = self.chooser(listing="notes.txt\ncore.12345\n")
         self.addCleanup(dialog.deleteLater)
+        self.assertEqual(dialog.chosen(), [])
         self.assertFalse(dialog.btn_download.isEnabled())
 
 

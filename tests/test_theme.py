@@ -16,7 +16,7 @@ from PyQt6.QtCore import QEvent  # noqa: E402
 from PyQt6.QtGui import QPalette, QColor  # noqa: E402
 
 from job_manager import theme  # noqa: E402
-from job_manager.host_monitor import _ActiveJobsBar  # noqa: E402
+from job_manager.host_monitor import BLANK, HOURGLASS, _ActiveJobsBar  # noqa: E402
 from job_manager.hosts_dialog import HostsDialog  # noqa: E402
 from job_manager.jobs_dialog import JobsDialog  # noqa: E402
 from job_manager.models import STATE_RUNNING, STATE_FAILED, STATE_PENDING, Job  # noqa: E402
@@ -306,7 +306,7 @@ class TestStatusWidgetDarkModeFix(DialogTestCase):
 
 
 class TestActiveJobsBar(HostMonitorTestCase):
-    """The running-jobs strip at the bottom of the Host Monitor."""
+    """The summary strip at the bottom of the Host Monitor."""
 
     def _bar(self):
         bar = _ActiveJobsBar(self.service)
@@ -314,32 +314,32 @@ class TestActiveJobsBar(HostMonitorTestCase):
         return bar
 
     def test_shows_idle_when_no_active_jobs(self):
-        # Bar stays visible and shows a quiet idle message rather than hiding.
         bar = self._bar()
         self.assertIn("no active jobs", bar._lbl_count.text())
 
     def test_visible_when_a_job_is_active(self):
         self.store.add_job(Job(id="j1", name="mol", state=STATE_RUNNING, submitted_at=1000.0))
         bar = self._bar()
-        self.assertIn("running", bar._lbl_count.text())
+        self.assertIn("1 running", bar._lbl_count.text())
 
-    def test_running_count_is_shown(self):
-        self.store.add_job(Job(id="j1", name="mol", state=STATE_RUNNING, submitted_at=1000.0))
-        bar = self._bar()
-        # The label uses HTML; check the plain text contains the count.
-        self.assertIn("1", bar._lbl_count.text())
-        self.assertIn("running", bar._lbl_count.text())
-
-    def test_pending_jobs_count_as_remaining(self):
+    def test_pending_jobs_count_as_waiting(self):
         self.store.add_job(Job(id="j1", name="mol", state=STATE_PENDING, submitted_at=1000.0))
         bar = self._bar()
-        self.assertIn("remaining", bar._lbl_count.text())
+        self.assertIn("1 waiting", bar._lbl_count.text())
+
+    def test_no_emoji_in_the_summary(self):
+        self.store.add_job(Job(id="j1", name="mol", state=STATE_PENDING, submitted_at=1000.0))
+        bar = self._bar()
+        text = bar._lbl_count.text()
+        self.assertNotIn("\u23f3", text)
+        self.assertNotIn("\u231b", text)
 
     def test_updates_on_jobs_changed(self):
         bar = self._bar()
         self.assertIn("no active jobs", bar._lbl_count.text())
         self.store.add_job(Job(id="j1", name="mol", state=STATE_RUNNING, submitted_at=1000.0))
         self.service.jobs_changed.emit()
+        bar.refresh()
         self.assertIn("running", bar._lbl_count.text())
 
     def test_updates_on_job_updated(self):
@@ -348,20 +348,20 @@ class TestActiveJobsBar(HostMonitorTestCase):
         self.store.add_job(Job(id="j1", name="mol", state=STATE_RUNNING, submitted_at=1000.0))
         bar = self._bar()
         self.assertIn("running", bar._lbl_count.text())
-        # is_active is a derived property; transition to a terminal state
-        # to make the job inactive and verify the bar returns to idle.
         self.store.jobs["j1"].state = STATE_DONE
+        self.store.invalidate_chains()
         self.service.job_updated.emit("j1")
+        bar.refresh()
         self.assertIn("no active jobs", bar._lbl_count.text())
 
-    def test_task_done_progress_on_summary_bar(self):
+    def test_finished_progress_on_summary_bar(self):
         from job_manager.models import STATE_DONE
 
         self.store.add_job(Job(id="j1", name="done1", state=STATE_DONE, submitted_at=900.0))
         self.store.add_job(Job(id="j2", name="run1", state=STATE_RUNNING, submitted_at=1000.0))
         bar = self._bar()
         self.assertIn("1 running", bar._lbl_count.text())
-        self.assertIn("task 1/2 done", bar._lbl_count.text())
+        self.assertIn("1/2 finished", bar._lbl_count.text())
 
     def test_bar_is_present_in_the_monitor_dialog(self):
         dialog = self.monitor()
@@ -371,14 +371,13 @@ class TestActiveJobsBar(HostMonitorTestCase):
         dialog = self.monitor()
         self.assertIsInstance(dialog._jobs_bar, _ActiveJobsBar)
 
-    def test_running_and_remaining_shown_together(self):
+    def test_running_and_waiting_shown_together(self):
         self.store.add_job(Job(id="j1", name="run", state=STATE_RUNNING, submitted_at=1000.0))
         self.store.add_job(Job(id="j2", name="pend", state=STATE_PENDING, submitted_at=1001.0))
         bar = self._bar()
         text = bar._lbl_count.text()
-        # One job is running, one is pending/remaining -- both must appear.
         self.assertIn("running", text)
-        self.assertIn("remaining", text)
+        self.assertIn("waiting", text)
 
 
 # ---------------------------------------------------------------------------
@@ -387,130 +386,120 @@ class TestActiveJobsBar(HostMonitorTestCase):
 
 
 class TestHostCardJobsStrip(HostMonitorTestCase):
-    """Each card shows its own host's active jobs inline."""
+    """Each card says what its own host is doing, on exactly two lines."""
 
-    def _card(self):
+    def _card(self, width: int = 300):
         from job_manager.host_monitor import HostCard
 
         card = HostCard(self.host)
+        card.resize(width, 320)
+        # Shown so the layout gives the two lines a real width: that is what
+        # decides whether a long name is elided.
+        card.show()
         self.addCleanup(card.deleteLater)
         return card
 
-    def test_hidden_by_default(self):
+    def _job(self, **overrides):
+        fields = dict(state=STATE_RUNNING, host_name=self.host.name, submitted_at=1000.0)
+        fields.update(overrides)
+        return Job(**fields)
+
+    def test_blank_by_default(self):
         card = self._card()
-        self.assertEqual(card.lbl_jobs.text(), "&nbsp;")
+        self.assertEqual(card.lbl_job.text(), BLANK)
+        self.assertEqual(card.lbl_job_counts.text(), BLANK)
+
+    def test_no_markup_entity_is_ever_shown(self):
+        card = self._card()
+        for label in (card.lbl_job, card.lbl_job_counts, card.lbl_load_avg):
+            self.assertNotIn("&nbsp;", label.text())
 
     def test_shows_running_job(self):
-        job = Job(
-            id="j1",
-            name="myrun",
-            state=STATE_RUNNING,
-            host_name=self.host.name,
-            submitted_at=1000.0,
-        )
         card = self._card()
-        card.show_jobs([job])
-        self.assertFalse(card.lbl_jobs.isHidden())
-        self.assertIn("myrun", card.lbl_jobs.text())
-        self.assertIn("task 0/1 done", card.lbl_jobs.text())
+        card.show_jobs([self._job(id="j1", name="myrun")])
+        self.assertIn("myrun", card.lbl_job.text())
+        self.assertIn("running", card.lbl_job.text())
+        self.assertIn("0/1 done", card.lbl_job_counts.text())
 
-    def test_hidden_when_no_active_jobs(self):
+    def test_blank_when_there_are_no_jobs(self):
         card = self._card()
         card.show_jobs([])
-        self.assertEqual(card.lbl_jobs.text(), "&nbsp;")
+        self.assertEqual(card.lbl_job.text(), BLANK)
 
-    def test_long_name_is_truncated(self):
-        long_name = "z" * 50
-        job = Job(
-            id="j1",
-            name=long_name,
-            state=STATE_RUNNING,
-            host_name=self.host.name,
-            submitted_at=1000.0,
-        )
+    def test_a_job_being_submitted_is_shown(self):
+        # The resubmit case: the job exists but the queue has not seen it yet.
+        from job_manager.models import STATE_UPLOADING
+
         card = self._card()
-        card.show_jobs([job])
-        self.assertNotIn(long_name, card.lbl_jobs.text())
-        self.assertIn("...", card.lbl_jobs.text())
+        card.show_jobs([self._job(id="j1", name="fresh", state=STATE_UPLOADING)])
+        self.assertIn("fresh", card.lbl_job.text())
+        self.assertIn("submitting", card.lbl_job.text())
 
-    def test_overflow_shows_single_running_job(self):
-        jobs = [
-            Job(
-                id=f"j{i}",
-                name=f"job{i}",
-                state=STATE_RUNNING,
-                host_name=self.host.name,
-                submitted_at=float(i),
-            )
-            for i in range(8)
-        ]
-        card = self._card()
-        card.show_jobs(jobs)
-        self.assertIn("job0", card.lbl_jobs.text())
-        self.assertIn("task 0/8 done", card.lbl_jobs.text())
-
-    def test_colour_matches_state(self):
-        job = Job(
-            id="j1",
-            name="pendingjob",
-            state=STATE_PENDING,
-            host_name=self.host.name,
-            submitted_at=1000.0,
-        )
-        card = self._card()
-        card.show_jobs([job])
-        self.assertIn("queued", card.lbl_jobs.text())
-        self.assertIn("task 0/1 done", card.lbl_jobs.text())
-
-    def test_dialog_wires_refresh_on_open(self):
-        self.store.add_job(
-            Job(
-                id="j1",
-                name="mol",
-                state=STATE_RUNNING,
-                host_name=self.host.name,
-                submitted_at=1000.0,
-            )
-        )
-        dialog = self.monitor()
-        card = dialog.cards[self.host.id]
-        self.assertIn("mol", card.lbl_jobs.text())
-        self.assertFalse(card.lbl_jobs.isHidden())
-
-    def test_task_done_progress_counter(self):
+    def test_a_finished_job_still_names_itself(self):
         from job_manager.models import STATE_DONE
 
-        j_done = Job(
-            id="j1", name="job1", state=STATE_DONE, host_name=self.host.name, submitted_at=1000.0
-        )
-        j_run = Job(
-            id="j2", name="job2", state=STATE_RUNNING, host_name=self.host.name, submitted_at=1001.0
-        )
-        j_pend = Job(
-            id="j3", name="job3", state=STATE_PENDING, host_name=self.host.name, submitted_at=1002.0
-        )
         card = self._card()
-        card.show_jobs([j_done, j_run, j_pend])
-        text = card.lbl_jobs.text()
-        self.assertIn("job2", text)
-        self.assertIn("task 1/3 done", text)
+        card.show_jobs([self._job(id="j1", name="allover", state=STATE_DONE)])
+        self.assertIn("allover", card.lbl_job.text())
+        self.assertIn("finished", card.lbl_job.text())
+
+    def test_a_long_name_is_elided_not_wrapped(self):
+        card = self._card(width=200)
+        before = card.lbl_job.height()
+        card.show_jobs([self._job(id="j1", name="z" * 120)])
+        self.assertEqual(card.lbl_job.height(), before)
+        self.assertFalse(card.lbl_job.wordWrap())
+        self.assertNotIn("z" * 120, card.lbl_job.text())
+
+    def test_both_lines_keep_their_height_whatever_the_name(self):
+        short = self._card(width=220)
+        short.show_jobs([self._job(id="j1", name="a")])
+        wide = self._card(width=220)
+        wide.show_jobs([self._job(id="j2", name="b" * 200)])
+        self.assertEqual(short.lbl_job.height(), wide.lbl_job.height())
+        self.assertEqual(short.lbl_job_counts.height(), wide.lbl_job_counts.height())
+
+    def test_running_wins_over_everything_else(self):
+        jobs = [self._job(id=f"j{i}", name=f"job{i}", submitted_at=float(i)) for i in range(8)]
+        card = self._card()
+        card.show_jobs(jobs)
+        self.assertIn("job7", card.lbl_job.text())
+        self.assertIn("8 active", card.lbl_job_counts.text())
+
+    def test_a_queued_job_is_marked_with_the_text_hourglass(self):
+        card = self._card()
+        card.show_jobs([self._job(id="j1", name="pendingjob", state=STATE_PENDING)])
+        self.assertIn("queued", card.lbl_job.text())
+        self.assertIn(HOURGLASS, card.lbl_job.text())
+
+    def test_dialog_wires_refresh_on_open(self):
+        self.store.add_job(self._job(id="j1", name="mol", host_id=self.host.id))
+        dialog = self.monitor()
+        card = dialog.cards[self.host.id]
+        self.assertIn("mol", card.lbl_job.text())
+
+    def test_finished_counter(self):
+        from job_manager.models import STATE_DONE
+
+        card = self._card()
+        card.show_jobs(
+            [
+                self._job(id="j1", name="job1", state=STATE_DONE),
+                self._job(id="j2", name="job2", submitted_at=1001.0),
+                self._job(id="j3", name="job3", state=STATE_PENDING, submitted_at=1002.0),
+            ]
+        )
+        self.assertIn("job2", card.lbl_job.text())
+        self.assertIn("1/3 done", card.lbl_job_counts.text())
 
     def test_card_updates_on_jobs_changed(self):
         dialog = self.monitor()
         card = dialog.cards[self.host.id]
-        self.assertEqual(card.lbl_jobs.text(), "&nbsp;")
-        self.store.add_job(
-            Job(
-                id="j1",
-                name="newjob",
-                state=STATE_RUNNING,
-                host_name=self.host.name,
-                submitted_at=1000.0,
-            )
-        )
+        self.assertEqual(card.lbl_job.text(), BLANK)
+        self.store.add_job(self._job(id="j1", name="newjob", host_id=self.host.id))
         self.service.jobs_changed.emit()
-        self.assertIn("newjob", card.lbl_jobs.text())
-        self.assertFalse(card.lbl_jobs.isHidden())
+        dialog._refresh_card_jobs()
+        self.assertIn("newjob", card.lbl_job.text())
 
 
 # ---------------------------------------------------------------------------

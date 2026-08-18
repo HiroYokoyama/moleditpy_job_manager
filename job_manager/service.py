@@ -34,6 +34,7 @@ from .runner import (
     cancel_job,
     fetch_results,
     list_remote_files,
+    release_in_runner,
     require_remote_path,
     submit_job,
     submit_to_runner,
@@ -265,7 +266,9 @@ class JobService(QObject):
             stored.touch(job.state)
         self.store.save_jobs()
         self.message.emit(f"Submitted {job.name} as {job.remote_job_id}")
-        self.poller.start()
+        # prime, not start: the first status query comes seconds later rather
+        # than a full interval later, so the table catches the job starting.
+        self.poller.prime(job.host_id)
         self.job_updated.emit(job.id)
         self.jobs_changed.emit()
 
@@ -440,17 +443,35 @@ class JobService(QObject):
 
         run_async(self.pool, work, on_success=on_ok, on_error=on_error)
 
-    def cancel(self, job: Job) -> None:
+    def cancel(self, job: Job, release_dependents: bool = True) -> None:
+        """Cancel one job, and by default let the jobs behind it carry on.
+
+        Cancelling the middle job of a chain used to take the rest of the chain
+        with it: the helper queue sets aside anything waiting on a job that did
+        not exit 0, and a cancelled job leaves no exit code at all. Since the
+        user cancelled *one* job, the others are released -- on the host, so it
+        holds with MoleditPy closed -- unless the caller says otherwise.
+        """
         host = self.store.hosts.get(job.host_id)
         if host is None:
             self.error.emit(f"Host profile for {job.name} no longer exists")
             return
+        dependents = self.store.dependents_of(job.id) if release_dependents else []
+        if dependents:
+            # Recorded before the cancel goes out: the flag is what stops the
+            # monitor calling them blocked, and it has to survive a restart.
+            for dependent in dependents:
+                dependent.chain_any = True
+                dependent.touch()
+            self.store.save_jobs()
 
         def work() -> None:
             transport = self.transport_for(host)
             try:
                 if host.uses_remote_runner:
                     cancel_in_runner(transport, host, job)
+                    for dependent in dependents:
+                        release_in_runner(transport, host, dependent)
                 else:
                     cancel_job(transport, host, job)
             finally:
@@ -478,7 +499,7 @@ class JobService(QObject):
             finally:
                 transport.close()
 
-        return run_async(self.pool, work, on_success=self.log_ready.emit, on_error=self.error.emit)
+        run_async(self.pool, work, on_success=self.log_ready.emit, on_error=self.error.emit)
 
     def tail_file(
         self,
@@ -504,7 +525,7 @@ class JobService(QObject):
 
         success_handler = on_done or self.log_ready.emit
         error_handler = on_error or self.error.emit
-        return run_async(self.pool, work, on_success=success_handler, on_error=error_handler)
+        run_async(self.pool, work, on_success=success_handler, on_error=error_handler)
 
     # --- housekeeping -------------------------------------------------------
 
