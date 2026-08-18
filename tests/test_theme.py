@@ -110,6 +110,27 @@ class TestDialogStylesheets(DialogTestCase):
         self.addCleanup(dialog.deleteLater)
         self.assertTrue(self._has_stylesheet(dialog))
 
+    def test_submit_dialog_carries_the_stylesheet(self):
+        from job_manager.submit_dialog import SubmitDialog
+
+        self.service.store.add_host(
+            __import__("job_manager.models", fromlist=["HostProfile"]).HostProfile(name="h")
+        )
+        dialog = SubmitDialog(self.service)
+        self.addCleanup(dialog.deleteLater)
+        self.assertTrue(self._has_stylesheet(dialog))
+
+    def test_every_window_title_names_the_plugin_and_version(self):
+        # One shape for all of them: "Job Manager <version> - <what>".
+        from job_manager import PLUGIN_VERSION
+
+        for dialog in (JobsDialog(self.service), HostsDialog(self.service)):
+            self.addCleanup(dialog.deleteLater)
+            self.assertTrue(
+                dialog.windowTitle().startswith(f"Job Manager {PLUGIN_VERSION} - "),
+                dialog.windowTitle(),
+            )
+
     def test_download_dialog_carries_the_stylesheet(self):
         dialog = DownloadDialog("mol", ["a.out", "b.log"], ["a.out"], self.tmp, "Download")
         self.addCleanup(dialog.deleteLater)

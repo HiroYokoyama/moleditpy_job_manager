@@ -38,6 +38,7 @@ from .credentials import ensure_password
 from .models import HostProfile, Job, SubmitPreset
 from .runner import make_remote_dir
 from .schedulers import get_scheduler, references_input
+from .theme import apply_theme
 from .window_utils import make_independent
 from .service import JobService
 
@@ -72,6 +73,9 @@ class SubmitDialog(QDialog):
         self.store = service.store
         self.setWindowTitle(f"Job Manager {PLUGIN_VERSION} - Submit Job")
         make_independent(self)
+        # The one window that had never had it, so its buttons and fields were
+        # a different size and colour from every other window in the plugin.
+        apply_theme(self)
         self.resize(760, self._preferred_height(640))
         # Input files can be dropped straight onto the wizard.
         self.setAcceptDrops(True)
