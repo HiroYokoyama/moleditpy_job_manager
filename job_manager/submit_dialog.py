@@ -92,11 +92,15 @@ class SubmitDialog(QDialog):
         preset: Optional[dict] = None,
         remote_dir: str = "",
         remote_input: str = "",
+        batch: bool = False,
     ) -> None:
         """Populate the form from outside.
 
         Used by the input-generator handoff (a file that was just written) and
-        by Resubmit (a previous job's host, preset and inputs).
+        by Resubmit (a previous job's host, preset and inputs). ``batch`` asks
+        for the "one job per file" checkbox to start ticked -- for a drop of
+        several files at once, where each is its own calculation rather than
+        one job's worth of inputs.
         """
         if remote_dir:
             self.box_remote.setChecked(True)
@@ -131,6 +135,11 @@ class SubmitDialog(QDialog):
             # queue for one core.
             if not preset:
                 self._apply_scanned_resources(files[0])
+        self._update_batch_row()
+        if batch:
+            # Only takes effect where it is enabled -- more than one file, and
+            # not "work already on the host", which names a single file.
+            self.chk_batch.setChecked(True)
         if name:
             self.txt_job_name.setText(name)
         elif files:
@@ -205,6 +214,18 @@ class SubmitDialog(QDialog):
         row.addWidget(remove)
         row.addStretch(1)
         files_layout.addLayout(row)
+        self.chk_batch = QCheckBox("Submit each file as its own job")
+        self.chk_batch.setToolTip(
+            "One independent job per file, each running the command below on "
+            "its own -- rather than one job with every file uploaded to it.\n\n"
+            "Shown only with more than one file, and not together with 'Work "
+            "already on the host', which names a single file for {input}.\n\n"
+            "Dropping several files onto this window or the monitor starts "
+            "ticked; hold Shift while dropping to keep them as one job instead."
+        )
+        self.chk_batch.toggled.connect(self._on_batch_toggled)
+        self.chk_batch.setVisible(False)
+        files_layout.addWidget(self.chk_batch)
         layout.addWidget(files_box)
         layout.addWidget(self._build_remote_box())
 
@@ -230,7 +251,8 @@ class SubmitDialog(QDialog):
         box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
-        box.button(QDialogButtonBox.StandardButton.Ok).setText("Submit")
+        self.btn_submit = box.button(QDialogButtonBox.StandardButton.Ok)
+        self.btn_submit.setText("Submit")
         box.accepted.connect(self._submit)
         box.rejected.connect(self.reject)
         # Outside the scroll area, so it stays put however far the body scrolls.
@@ -290,6 +312,7 @@ class SubmitDialog(QDialog):
     def _on_remote_toggled(self, checked: bool) -> None:
         if not checked:
             self.lbl_remote.setText("")
+        self._update_batch_row()
         self._refresh_preview()
 
     def remote_dir(self) -> str:
@@ -974,12 +997,19 @@ class SubmitDialog(QDialog):
             self.store.set_pref("input_filter", used)
         self.add_files(paths or [])
 
-    def add_files(self, paths: Sequence[str]) -> None:
+    def add_files(self, paths: Sequence[str], batch: Optional[bool] = None) -> None:
         """Add input files from the picker or from a drop, and follow up.
 
         The follow-up is the point: naming the job, offering the right command
         template for the extension, and refreshing the preview are what make an
         added file useful rather than just listed.
+
+        ``batch`` sets the "one job per file" checkbox where it is not None --
+        used by a drop, which knows from the Shift key whether the files it
+        carried should become separate jobs. The file picker leaves it alone:
+        multi-selecting from a dialog is a deliberate act of building one job's
+        input list, not the "I dropped a pile of calculations" case batch mode
+        is for.
         """
         added = [p for p in paths or [] if p and p not in self.selected_files()]
         for path in added:
@@ -989,6 +1019,9 @@ class SubmitDialog(QDialog):
             if not self.txt_job_name.text().strip():
                 self.txt_job_name.setText(os.path.splitext(os.path.basename(added[0]))[0])
             self._apply_scanned_resources(added[0])
+        self._update_batch_row()
+        if batch is not None:
+            self.chk_batch.setChecked(bool(batch))
         self._reload_templates()
         self._apply_suggested_template()
         self._refresh_preview()
@@ -1070,14 +1103,54 @@ class SubmitDialog(QDialog):
             event.ignore()
             return
         event.acceptProposedAction()
-        self.add_files(paths)
+        # Several files at once, dropped plainly, is a pile of separate
+        # calculations far more often than it is one job's worth of inputs --
+        # so that is the default, and Shift is held for the one job it used to
+        # always mean. A single file is unaffected either way.
+        batch = None
+        if len(paths) > 1:
+            batch = not bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+        self.add_files(paths, batch=batch)
 
     def _remove_file(self) -> None:
         for item in self.list_files.selectedItems():
             self.list_files.takeItem(self.list_files.row(item))
+        self._update_batch_row()
         self._refresh_preview()
 
     # --- preview ------------------------------------------------------------
+
+    def _batch_active(self) -> bool:
+        return self.chk_batch.isEnabled() and self.chk_batch.isChecked()
+
+    def _update_batch_row(self) -> None:
+        """Show the batch checkbox only where it means something.
+
+        More than one file, and not "work already on the host": that box names
+        one file already there for ``{input}``, and a batch has no single file
+        that could answer.
+        """
+        files = self.selected_files()
+        allowed = len(files) > 1 and not self.box_remote.isChecked()
+        self.chk_batch.setVisible(len(files) > 1)
+        self.chk_batch.setEnabled(allowed)
+        if not allowed and self.chk_batch.isChecked():
+            self.chk_batch.blockSignals(True)
+            self.chk_batch.setChecked(False)
+            self.chk_batch.blockSignals(False)
+        self.btn_submit.setText(f"Submit {len(files)} Jobs" if self._batch_active() else "Submit")
+
+    def _on_batch_toggled(self, checked: bool) -> None:
+        if checked and self.chk_chain.isChecked():
+            # A batch exists to run several calculations independently; a
+            # chain would serialise it into the very thing batch mode is for
+            # avoiding. Off by default, not forced -- a batch that really
+            # should queue one after another is still one tick away.
+            self.chk_chain.setChecked(False)
+        self.btn_submit.setText(
+            f"Submit {len(self.selected_files())} Jobs" if checked else "Submit"
+        )
+        self._refresh_preview()
 
     def _refresh_preview(self) -> None:
         host = self.current_host()
@@ -1085,6 +1158,16 @@ class SubmitDialog(QDialog):
             self.txt_preview.setPlainText("Add a host profile first (Hosts...).")
             return
         files = self.selected_files()
+        if self._batch_active():
+            self.lbl_preview_hint.setText(
+                f"{len(files)} separate jobs will be submitted, one per file, each "
+                "running this script. Shown below for the first file."
+            )
+        else:
+            self.lbl_preview_hint.setText(
+                "This exact script is uploaded and submitted. The trailing "
+                "sentinel is how the plugin detects completion."
+            )
         input_name = self.remote_input() or (os.path.basename(files[0]) if files else "")
         if not input_name and not self.remote_dir():
             # Nothing chosen yet: show what a job with an input would look
@@ -1097,6 +1180,10 @@ class SubmitDialog(QDialog):
             return
         predecessor = self.chain_predecessor() if self.chain_requested() else None
         name = self.txt_job_name.text().strip() or "moleditpy_job"
+        if self._batch_active() and files:
+            # The name a batch job actually gets: its own file's stem, not
+            # whatever happens to be in the Job name field.
+            name = os.path.splitext(os.path.basename(files[0]))[0]
         script = scheduler.build_script(
             name,
             self.collect_preset(),
@@ -1177,9 +1264,25 @@ class SubmitDialog(QDialog):
             )
             if confirm != QMessageBox.StandardButton.Yes:
                 return
+        batch = self._batch_active() and len(files) > 1
+        if batch and remote_dir:
+            # Guarded against in the UI by disabling one box while the other
+            # is checked; asserted here too in case a caller drives the model
+            # directly. "Work already on the host" names one file for
+            # {input}, and a batch has no single file that could answer.
+            QMessageBox.warning(
+                self,
+                "Submit",
+                "Batch submission cannot be combined with a directory already on the host.",
+            )
+            return
         if not self._confirm_duplicate(files):
             return
         if not ensure_password(self.service, host, self):
+            return
+        if batch:
+            self._submit_batch(host, preset, files)
+            self.accept()
             return
         name = self.txt_job_name.text().strip() or self._default_job_name(files, remote_dir)
         after = self.chain_predecessor() if self.chain_requested() else None
@@ -1196,6 +1299,31 @@ class SubmitDialog(QDialog):
         )
         self._remember(host, preset)
         self.accept()
+
+    def _submit_batch(self, host: HostProfile, preset: SubmitPreset, files: List[str]) -> None:
+        """Submit each file as its own job, named after itself.
+
+        Chaining, when the user has asked for it, is resolved fresh for every
+        file: :meth:`chain_predecessor` reads the store, so a job this same
+        loop just added becomes the predecessor for the next one -- which is
+        what lets "batch" and "run one after another" compose with nothing
+        special-cased here. Each submission's own message ("Submitted X as Y")
+        is what reports progress; there is nothing else to summarise once this
+        returns, since the wizard closes right after.
+        """
+        for path in files:
+            name = os.path.splitext(os.path.basename(path))[0]
+            after = self.chain_predecessor() if self.chain_requested() else None
+            self.service.submit(
+                host,
+                preset,
+                name,
+                [path],
+                after_job=after,
+                start_after=self.selected_start_time(),
+                chain_any=self.chain_any_requested(),
+            )
+        self._remember(host, preset)
 
     def _remember(self, host: HostProfile, preset: SubmitPreset) -> None:
         """Keep this submission's settings as the starting point for the next.

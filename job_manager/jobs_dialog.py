@@ -12,7 +12,15 @@ import time
 from typing import Any, List, Optional
 
 
-from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, QTimer, QVariant
+from PyQt6.QtCore import (
+    QAbstractTableModel,
+    QModelIndex,
+    QObject,
+    QSortFilterProxyModel,
+    Qt,
+    QTimer,
+    QVariant,
+)
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -23,6 +31,7 @@ from PyQt6.QtWidgets import (
     QHeaderView,
     QInputDialog,
     QLabel,
+    QLineEdit,
     QMenu,
     QMessageBox,
     QPlainTextEdit,
@@ -253,6 +262,20 @@ class JobTableModel(QAbstractTableModel):
                 return f"wait {format_duration(job.waiting())}"
             if column == 6:
                 return format_stamp(job.updated_at)
+        elif role == Qt.ItemDataRole.UserRole:
+            # What the column is actually sorted on: the raw value behind the
+            # formatted text, so "10m" does not sort before "2m" and the
+            # newest job is not decided by string order on its timestamp.
+            column = index.column()
+            if column == 5:
+                return (
+                    job.elapsed()
+                    if (job.is_terminal or job.state == STATE_RUNNING or job.started_at)
+                    else job.waiting()
+                )
+            if column == 6:
+                return job.updated_at
+            return self.data(index, Qt.ItemDataRole.DisplayRole)
         elif role == Qt.ItemDataRole.ForegroundRole and index.column() == 3:
             color = _STATE_COLORS.get(self.display_state(job))
             if color:
@@ -275,6 +298,53 @@ class JobTableModel(QAbstractTableModel):
                 lines.append(f"Error: {job.last_error}")
             return "\n".join(lines)
         return QVariant()
+
+
+class JobFilterProxyModel(QSortFilterProxyModel):
+    """Sits between the table and :class:`JobTableModel`: click a header to
+    sort, type to filter -- without either changing what the model itself
+    holds.
+
+    Sorting reads UserRole, not the formatted text: Elapsed is shown as
+    "10m 05s", and a plain text sort would put it before "2m 05s". Filtering
+    matches any column, not only the first, because a search for a host name
+    or a queue id is exactly as reasonable as one for a job name.
+    """
+
+    def __init__(self, parent: Optional[QObject] = None) -> None:
+        super().__init__(parent)
+        self._search = ""
+        self.setSortCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+
+    def set_search_text(self, text: str) -> None:
+        text = (text or "").strip().lower()
+        if text == self._search:
+            return
+        self._search = text
+        self.invalidateFilter()
+
+    def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
+        left_value = self.sourceModel().data(left, Qt.ItemDataRole.UserRole)
+        right_value = self.sourceModel().data(right, Qt.ItemDataRole.UserRole)
+        if left_value is None or right_value is None:
+            return super().lessThan(left, right)
+        try:
+            return left_value < right_value
+        except TypeError:
+            # A mismatched pair (a QVariant() on one side, a real value on the
+            # other) is rare but not impossible mid-reload; text is always
+            # comparable, and a merely-approximate order there is no loss.
+            return str(left_value) < str(right_value)
+
+    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
+        if not self._search:
+            return True
+        model = self.sourceModel()
+        for column in range(model.columnCount()):
+            value = model.index(source_row, column, source_parent).data(Qt.ItemDataRole.DisplayRole)
+            if value and self._search in str(value).lower():
+                return True
+        return False
 
 
 class JobsDialog(QDialog):
@@ -382,10 +452,27 @@ class JobsDialog(QDialog):
         archive_row.addWidget(self.btn_back)
         layout.addLayout(archive_row)
 
+        filter_row = QHBoxLayout()
+        filter_row.addWidget(QLabel("Filter"))
+        self.txt_filter = QLineEdit()
+        self.txt_filter.setPlaceholderText("Filter jobs by name, host, queue id or state...")
+        self.txt_filter.setClearButtonEnabled(True)
+        self.txt_filter.textChanged.connect(self._apply_job_filter)
+        filter_row.addWidget(self.txt_filter, 1)
+        layout.addLayout(filter_row)
+
         splitter = QSplitter(Qt.Orientation.Vertical)
 
         self.table = QTableView()
-        self.table.setModel(self.model)
+        # A proxy between the table and the model, not the model itself:
+        # JobTableModel stays the plain, testable read-only view of the store
+        # it always was, and every existing row-index caller (job_at, row_of,
+        # the elapsed ticker) keeps addressing it directly by source row.
+        self.proxy = JobFilterProxyModel(self)
+        self.proxy.setSourceModel(self.model)
+        self.table.setModel(self.proxy)
+        self.table.setSortingEnabled(True)
+        self.table.horizontalHeader().setSortIndicator(6, Qt.SortOrder.DescendingOrder)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -580,11 +667,18 @@ class JobsDialog(QDialog):
     def viewing_archive(self) -> bool:
         return bool(self._archive_path)
 
+    def _apply_job_filter(self, text: str) -> None:
+        self.proxy.set_search_text(text)
+
     def selected_job(self) -> Optional[Job]:
         rows = self.table.selectionModel().selectedRows() if self.table.selectionModel() else []
         if not rows:
             return None
-        return self.model.job_at(rows[0].row())
+        # The view's model is the sort/filter proxy, so a selected row's index
+        # is a proxy row and has to be mapped back to the source model that
+        # actually holds the job.
+        source = self.proxy.mapToSource(rows[0])
+        return self.model.job_at(source.row())
 
     def _append_message(self, text: str) -> None:
         self.txt_log.appendPlainText(f"[{time.strftime('%H:%M:%S')}] {text}")
@@ -731,6 +825,7 @@ class JobsDialog(QDialog):
         preset: Optional[dict] = None,
         remote_dir: str = "",
         remote_input: str = "",
+        batch: bool = False,
     ) -> None:
         from .submit_dialog import SubmitDialog
 
@@ -758,6 +853,7 @@ class JobsDialog(QDialog):
                 preset=preset,
                 remote_dir=remote_dir,
                 remote_input=remote_input,
+                batch=batch,
             )
         dialog.exec()
 
@@ -1539,7 +1635,11 @@ class JobsDialog(QDialog):
             event.ignore()
             return
         event.acceptProposedAction()
-        self.open_submit_dialog(files=files)
+        # Several files, dropped plainly, become that many separate jobs --
+        # the far more common reason to drop a pile of files here. Hold Shift
+        # while dropping for the one job every one of them used to become.
+        batch = len(files) > 1 and not bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+        self.open_submit_dialog(files=files, batch=batch)
 
     # --- lifecycle ----------------------------------------------------------
 
