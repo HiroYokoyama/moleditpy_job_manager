@@ -130,7 +130,11 @@ class TestTheWSLCommandLine(unittest.TestCase):
             translated = transport.to_wsl_path(r"C:\Users\me\mol.inp")
 
         self.assertEqual(translated, "/mnt/c/Users/me/mol.inp")
-        self.assertIn(r"'C:\Users\me\mol.inp'", seen["cmd"])
+        # The tail, not the whole path: off Windows a Windows path is not
+        # absolute, so abspath puts the working directory in front of it. What
+        # matters is that its backslashes reach the shell inside single quotes.
+        self.assertTrue(seen["cmd"].startswith("wslpath -a -u '"))
+        self.assertTrue(seen["cmd"].endswith(r"\Users\me\mol.inp'"))
 
     def test_a_path_wsl_cannot_see_is_reported_plainly(self):
         transport = self.transport()
