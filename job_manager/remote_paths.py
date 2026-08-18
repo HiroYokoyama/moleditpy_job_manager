@@ -35,7 +35,11 @@ def quote(path: str) -> str:
 
 def join(*parts: str) -> str:
     """posixpath.join with empty segments dropped."""
-    return posixpath.join(*[p for p in parts if p])
+    kept = [p for p in parts if p]
+    # posixpath.join() with no arguments is a TypeError, and a job whose remote
+    # directory and file name are both empty is a bad record, not a crash in
+    # the middle of a poll that was reading every other job as well.
+    return posixpath.join(*kept) if kept else ""
 
 
 def basename(path: str) -> str:

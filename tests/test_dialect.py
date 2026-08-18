@@ -55,12 +55,15 @@ class TestPowerShellQuoting(unittest.TestCase):
     def test_a_dollar_sign_is_not_expanded(self):
         self.assertEqual(self.speak.quote("$env:TEMP"), "'$env:TEMP'")
 
-    def test_a_tilde_is_resolved_rather_than_passed_on(self):
-        # PowerShell does not expand ~ inside a quoted string, and leaving it
-        # unquoted is not an option for a path that may contain spaces.
+    def test_a_tilde_is_left_for_the_remote_shell_to_expand(self):
+        # PowerShell's path resolver expands a leading ~ for every provider
+        # cmdlet used here, -LiteralPath and single quotes included (see
+        # TestThePowerShellCommandsReallyWork). Expanding it here instead put
+        # *this* machine's profile directory into a command meant for a remote
+        # Windows host, and disagreed with schedulers.windows.ps_quote besides.
         quoted = self.speak.quote("~/jobs")
-        self.assertNotIn("~", quoted)
-        self.assertIn(os.path.basename(os.path.expanduser("~")), quoted)
+        self.assertEqual(quoted, "'~/jobs'")
+        self.assertNotIn(os.path.basename(os.path.expanduser("~")), quoted)
 
     def test_it_chains_with_a_semicolon_not_double_ampersand(self):
         # Windows PowerShell 5.1 has no pipeline chain operators; && is a
@@ -106,6 +109,23 @@ class TestThePowerShellCommandsReallyWork(unittest.TestCase):
 
     def test_mkdirs_on_an_existing_directory_is_not_an_error(self):
         self.run_ps(self.speak.mkdirs(self.tmp))  # would raise on non-zero rc
+
+    def test_powershell_expands_a_quoted_leading_tilde_itself(self):
+        # The whole reason quote() no longer expands ~ locally: doing so put
+        # this machine's profile directory into a command meant for a remote
+        # Windows host. It is only safe to stop if PowerShell really does the
+        # expansion at the far end -- quoted, and through -LiteralPath.
+        name = "moleditpy_tilde_probe"
+        target = os.path.join(os.path.expanduser("~"), name)
+        self.addCleanup(shutil.rmtree, target, ignore_errors=True)
+
+        self.run_ps(self.speak.mkdirs(f"~/{name}"))
+
+        self.assertTrue(os.path.isdir(target))
+        # And the same path is then found again by every other command.
+        self.assertEqual(
+            self.run_ps(self.speak.exists(f"~/{name}", directory=True)).strip(), "PRESENT"
+        )
 
     def test_a_directory_with_a_space_and_a_quote(self):
         target = os.path.join(self.tmp, "Bob's jobs")

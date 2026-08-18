@@ -20,7 +20,6 @@ the user's profile directory before quoting.
 from __future__ import annotations
 
 import base64
-import os
 import shlex
 from typing import List, Sequence
 
@@ -121,11 +120,11 @@ class Dialect:
             source = remote_paths.join(source_dir, name)
             if "/" in name:
                 lines.append(self.mkdirs(remote_paths.dirname(name)))
-            lines.append(
-                f"{self.copy(source, name)} || "
-                f"{{ echo 'Job Manager: could not copy {name} from the relay "
-                f"source' >&2; exit 1; }}"
-            )
+            # Quoted, not interpolated raw: a file name may contain a single
+            # quote, which closed the message's own quoting and left the rest
+            # of the name being read as shell words.
+            message = shlex.quote(f"Job Manager: could not copy {name} from the relay source")
+            lines.append(f"{self.copy(source, name)} || {{ echo {message} >&2; exit 1; }}")
         return lines
 
     def run_in(self, directory: str, command: str) -> str:
@@ -142,12 +141,16 @@ class PowerShellDialect(Dialect):
     name = "powershell"
 
     def quote(self, path: str) -> str:
-        text = str(path or "")
-        if text == "~" or text.startswith("~/") or text.startswith("~\\"):
-            # PowerShell does not expand ~ inside a quoted string, and leaving
-            # it unquoted is not an option for a path that may contain spaces.
-            text = os.path.expanduser(text.replace("/", os.sep))
-        return "'" + text.replace("'", "''") + "'"
+        # ~ is left alone. PowerShell's own path resolver expands a leading
+        # tilde for every provider cmdlet used here, quoted or not, -LiteralPath
+        # included. Expanding it locally instead put *this* machine's profile
+        # directory into a command meant for a remote Windows host, so a host
+        # whose user name differs -- the ordinary case -- had its job directory
+        # created, read and polled under a path belonging to nobody there. It
+        # also disagreed with schedulers.windows.ps_quote, which never expanded
+        # it, so the runner queue and the plugin's own housekeeping commands
+        # were pointed at two different directories on the same host.
+        return "'" + str(path or "").replace("'", "''") + "'"
 
     def mkdirs(self, path: str) -> str:
         # -Force is the -p: it creates parents and is silent when the directory
@@ -226,10 +229,11 @@ class PowerShellDialect(Dialect):
             if "/" in name:
                 lines.append(self.mkdirs(remote_paths.dirname(name)))
             quoted_source = self.quote(source)
+            # Quoted the same way and for the same reason as the POSIX branch:
+            # a single quote in the name closed the message's own string.
+            message = self.quote(f"Job Manager: could not copy {name} from the relay source")
             lines.append(
-                f"if (-not (Test-Path -LiteralPath {quoted_source})) "
-                f"{{ throw 'Job Manager: could not copy {name} from the "
-                f"relay source' }}"
+                f"if (-not (Test-Path -LiteralPath {quoted_source})) {{ throw {message} }}"
             )
             lines.append(self.copy(source, name))
         return lines

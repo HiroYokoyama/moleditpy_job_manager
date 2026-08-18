@@ -108,9 +108,17 @@ class ParamikoTransport(Transport):
         host = self.host
         # The profile always wins; ssh_config only fills in what it leaves blank.
         ssh_config = ssh_config_for(host.hostname)
+        # A profile left on the default port is not a profile that asked for 22:
+        # `port` has a default and so is never blank, which meant `or` never
+        # reached the config and a `Port 2222` stanza was silently ignored --
+        # while the OpenSSH backend, which omits -p for 22 and lets ssh read the
+        # config itself, honoured it. The two backends have to agree.
+        port = int(host.port or 22)
+        if port == 22:
+            port = int(ssh_config.get("port") or 22)
         kwargs = {
             "hostname": ssh_config.get("hostname") or host.hostname,
-            "port": int(host.port or ssh_config.get("port") or 22),
+            "port": port,
             "username": host.username or ssh_config.get("user") or None,
             "timeout": int(host.connect_timeout or 10),
             "allow_agent": True,

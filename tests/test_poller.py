@@ -414,4 +414,25 @@ class TestWhatReachesDiskAndWhatReachesTheWorker(PollerTestCase):
         self.assertEqual(len(seen), 1)
         self.assertIsNot(seen[0], stored)
         self.assertEqual(seen[0].id, stored.id)
-        self.assertIsNone(stored.rc)
+        # The copy is what the worker wrote; the store's own record is only
+        # ever reached on the GUI thread, through the signal payload.
+        self.assertEqual(seen[0].rc, 3)
+
+    def test_an_exit_code_lands_even_when_the_state_did_not_change(self):
+        # The code used to be applied inside the state loop, so a poll that
+        # re-read the sentinel of a job already in its final state threw the
+        # number away -- and the job showed a failure with no exit code at all.
+        job = self.add_job("j1", state=STATE_RUNNING, queue_id="100")
+        job.rc = None
+        self.poller._on_poll_finished(self.host.id, {}, {"j1": 137})
+        self.assertEqual(self.store.jobs["j1"].rc, 137)
+
+    def test_the_reason_a_job_never_started_reaches_the_store(self):
+        # poll_runner writes it onto the job it is given, which is the pool
+        # thread's private copy: without a channel back it died with the copy,
+        # and the one message explaining a blocked job reached nobody.
+        self.add_job("j1", state=STATE_RUNNING, queue_id="100")
+        self.poller._on_poll_finished(
+            self.host.id, {}, {}, {"j1": "Queued behind a job that did not succeed."}
+        )
+        self.assertIn("did not succeed", self.store.jobs["j1"].last_error)

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -181,8 +182,11 @@ class OpenSSHTransport(Transport):
             except (OSError, subprocess.SubprocessError):
                 logging.debug("Job Manager: ControlMaster exit failed", exc_info=True)
         if self._control_dir and os.path.isdir(self._control_dir):
-            try:
-                os.rmdir(self._control_dir)
-            except OSError:
-                logging.debug("Job Manager: control dir not empty: %s", self._control_dir)
+            # rmtree, not rmdir: a host that stopped answering leaves its
+            # ControlMaster socket behind, `ssh -O exit` above cannot reach it,
+            # and rmdir then fails on the non-empty directory. A transport is
+            # opened per operation, so an unreachable host quietly left one
+            # temp directory per poll in the user's temp folder for the whole
+            # session.
+            shutil.rmtree(self._control_dir, ignore_errors=True)
         self._control_dir = None

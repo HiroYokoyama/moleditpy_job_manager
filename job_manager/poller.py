@@ -42,7 +42,8 @@ FIRST_POLL_SECONDS = 6.0
 
 
 class _WorkerSignals(QObject):
-    finished = pyqtSignal(str, dict, dict)  # host_id, {job_id: state}, {job_id: rc}
+    # host_id, {job_id: state}, {job_id: rc}, {job_id: message}
+    finished = pyqtSignal(str, dict, dict, dict)
     failed = pyqtSignal(str, str)  # host_id, message
 
 
@@ -85,11 +86,15 @@ class _PollTask(QRunnable):
                     transport.close()
                 except Exception:
                     logging.debug("Job Manager: poll transport close failed", exc_info=True)
-        # ``poll_host`` records the sentinel's exit code on the job it is given.
-        # Those are this task's private copies, so the codes are carried back as
-        # data and applied on the GUI thread with everything else.
+        # ``poll_host`` records the sentinel's exit code on the job it is given,
+        # and ``poll_runner`` records why a job the helper set aside never ran.
+        # Those are this task's private copies, so both are carried back as data
+        # and applied on the GUI thread with everything else -- the reason used
+        # to be written onto the copy and thrown away with it, so the one
+        # message explaining a job that never started reached nobody.
         exit_codes = {job.id: job.rc for job in self.jobs if job.rc is not None}
-        self.signals.finished.emit(self.host.id, updates, exit_codes)
+        errors = {job.id: job.last_error for job in self.jobs if job.last_error}
+        self.signals.finished.emit(self.host.id, updates, exit_codes, errors)
 
 
 class JobPoller(QObject):
@@ -236,26 +241,44 @@ class JobPoller(QObject):
         self._next_poll[host_id] = time.time() + max(1.0, delay + random.uniform(-jitter, jitter))
 
     def _on_poll_finished(
-        self, host_id: str, updates: dict, exit_codes: Optional[dict] = None
+        self,
+        host_id: str,
+        updates: dict,
+        exit_codes: Optional[dict] = None,
+        errors: Optional[dict] = None,
     ) -> None:
         self._in_flight[host_id] = False
         self._backoff.pop(host_id, None)
         self._schedule_next(host_id, float(self.store.poll_interval))
+
+        # Before the state loop, and not inside it: the exit code and the reason
+        # are worth recording for a job whose *state* has not changed as well --
+        # they were dropped for exactly those jobs, which is the resubmitted job
+        # that failed the same way twice.
+        recorded = False
+        for job_id, code in (exit_codes or {}).items():
+            job = self.store.jobs.get(job_id)
+            if job is not None and job.rc != code:
+                job.rc = code
+                recorded = True
+        for job_id, message in (errors or {}).items():
+            job = self.store.jobs.get(job_id)
+            if job is not None and message and job.last_error != message:
+                job.last_error = message
+                recorded = True
 
         applied: List[tuple] = []
         for job_id, state in (updates or {}).items():
             job = self.store.jobs.get(job_id)
             if job is None or job.state == state:
                 continue
-            if job_id in (exit_codes or {}):
-                job.rc = exit_codes[job_id]
             job.touch(state)
             applied.append((job_id, state))
         # Persist before announcing. A listener reacts synchronously -- a
         # finished job starts its auto-download, which moves the job to
         # DOWNLOADING -- so saving afterwards wrote that transient state to
         # disk in place of the real outcome.
-        if applied:
+        if applied or recorded:
             self.store.save_jobs()
         for job_id, state in applied:
             self.job_updated.emit(job_id, state)
