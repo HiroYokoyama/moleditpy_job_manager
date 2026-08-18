@@ -190,9 +190,11 @@ class TestListingCandidateJobs(RelayCase):
         offered = candidate_jobs([here, there])
         self.assertEqual({job.id for job in offered}, {"a", "b"})
 
-    def test_newest_finished_first(self):
-        older = self.job(id="a", state=STATE_DONE, finished_at=10.0)
-        newer = self.job(id="b", state=STATE_DONE, finished_at=99.0)
+    def test_newest_first(self):
+        # Sorted by updated_at, not finished_at: a still-active candidate has
+        # no finished_at yet, and updated_at is what every job gets bumped on.
+        older = self.job(id="a", state=STATE_DONE, updated_at=10.0)
+        newer = self.job(id="b", state=STATE_DONE, updated_at=99.0)
         offered = candidate_jobs([older, newer])
         self.assertEqual([job.id for job in offered], ["b", "a"])
 
