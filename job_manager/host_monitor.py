@@ -706,7 +706,13 @@ class HostCard(QFrame):
         waiting = [job for job in jobs if job.state in ACTIVE_STATES and job.state != STATE_RUNNING]
 
         def latest(candidates: list):
-            return max(candidates, key=lambda job: job.updated_at or job.submitted_at)
+            # By when the job was handed over, never by updated_at: a poll
+            # rewrites that on every job it touches, so the card would name a
+            # different one of two running jobs each time the queue answered.
+            # Ties are possible -- a batch submitted in the same second, and on
+            # Windows the clock moves in 15 ms steps -- so the id breaks them,
+            # arbitrarily but stably.
+            return max(candidates, key=lambda job: (job.started_at or job.submitted_at, job.id))
 
         if running:
             primary, word, color, mark = latest(running), "running", CY_GREEN, ""

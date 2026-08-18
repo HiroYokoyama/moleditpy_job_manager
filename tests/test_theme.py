@@ -487,6 +487,20 @@ class TestHostCardJobsStrip(HostMonitorTestCase):
         self.assertIn("job7", card.lbl_job.text())
         self.assertIn("8 active", card.lbl_job_counts.text())
 
+    def test_the_named_job_does_not_change_when_a_poll_touches_the_others(self):
+        # updated_at is rewritten for every job a poll resolves, so choosing by
+        # it made the card flip between two running jobs at random.
+        first = self._job(id="j1", name="older", submitted_at=10.0)
+        second = self._job(id="j2", name="newer", submitted_at=20.0)
+        card = self._card()
+        card.show_jobs([first, second])
+        self.assertIn("newer", card.lbl_job.text())
+
+        first.touch()  # as a poll would
+        card.show_jobs([first, second])
+
+        self.assertIn("newer", card.lbl_job.text())
+
     def test_a_queued_job_is_marked_with_the_text_hourglass(self):
         card = self._card()
         card.show_jobs([self._job(id="j1", name="pendingjob", state=STATE_PENDING)])
