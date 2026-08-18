@@ -205,6 +205,13 @@ which is also why this needs an input file, and neither batch mode (there is
 no single file to rewrite) nor "Work already on the host" (which already
 names one file of its own).
 
+Written as one tag, not two: `[prevfile:.res]/[prevfile:.xyz]` looks the
+same once substituted, but each `[prevfile:...]` is resolved on its own, so
+this asks for two unrelated top-level files named `<stem>.res` and
+`<stem>.xyz` rather than a folder and the file inside it — and then fails,
+since `<stem>.res` is a directory `cp -f` cannot copy as a file, and
+`<stem>.xyz` was never at the top level to begin with.
+
 ### Work that is already on the host
 
 Files staged on the cluster days ago — generated there, copied with `rsync`,
