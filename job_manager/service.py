@@ -125,6 +125,8 @@ class JobService(QObject):
         chain_any: bool = False,
         remote_dir: str = "",
         remote_input: str = "",
+        relay_source_dir: str = "",
+        relay_filenames: Optional[List[str]] = None,
     ) -> Job:
         """Create the job record and start the upload/submit on a worker.
 
@@ -137,6 +139,11 @@ class JobService(QObject):
         than in a new one -- work the user staged there themselves, which
         ``local_files`` need not (and usually does not) duplicate.
         ``remote_input`` names a file in it for ``{input}``.
+
+        ``relay_source_dir``/``relay_filenames`` copy files from a previous
+        job's own directory into this one's before anything runs -- a
+        checkpoint or geometry that job produced, reused here with nothing
+        downloaded to this machine and re-uploaded.
         """
         job = Job(
             name=name or self._default_name(local_files, remote_input, remote_dir),
@@ -177,7 +184,14 @@ class JobService(QObject):
                     # The runner takes the dependency by job id and resolves it
                     # itself, so there is no pid to wait for here.
                     return submit_to_runner(
-                        transport, host, preset, job, local_files, after_job=after_job
+                        transport,
+                        host,
+                        preset,
+                        job,
+                        local_files,
+                        after_job=after_job,
+                        relay_source_dir=relay_source_dir,
+                        relay_filenames=relay_filenames or (),
                     )
                 return submit_job(
                     transport,
@@ -188,6 +202,8 @@ class JobService(QObject):
                     run_after=run_after,
                     start_after=job.start_after,
                     run_after_any=job.chain_any,
+                    relay_source_dir=relay_source_dir,
+                    relay_filenames=relay_filenames or (),
                 )
             finally:
                 transport.close()

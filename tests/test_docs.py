@@ -306,7 +306,7 @@ class TestTheRunnerDocument(unittest.TestCase):
                 self.runner.MEMORY_NAME,
                 self.runner.PAUSED_NAME,
                 self.runner.SEQUENCE_NAME,
-                self.runner.DIGEST_NAME,
+                self.runner.VERSION_NAME,
             },
         )
 
@@ -330,9 +330,9 @@ class TestTheRunnerDocument(unittest.TestCase):
         self.assertIn(f"sleep {self.runner.RUNNER_POLL_SECONDS}", self.text)
 
     def test_it_does_not_still_claim_a_fixed_runner_script_name(self):
-        # The name is content-addressed now; documenting the old one would send
-        # a user looking for a file that is not there.
-        self.assertIn("moleditpy_runner_<digest>.sh", self.text)
+        # The name is version-addressed now; documenting the old one would
+        # send a user looking for a file that is not there.
+        self.assertIn("moleditpy_runner_v<version>.sh", self.text)
         self.assertNotIn("moleditpy_runner.sh`", self.text)
 
     def test_it_explains_why_the_name_carries_both_halves(self):

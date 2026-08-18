@@ -32,7 +32,7 @@ from .remote_runner import (
     AFTER_TAG,
     CORES_NAME,
     CORES_TAG,
-    DIGEST_NAME,
+    VERSION_NAME,
     MEMORY_NAME,
     MEMORY_TAG,
     PAUSED_NAME,
@@ -386,38 +386,39 @@ def claim_sequence_command(directory: str) -> str:
     )
 
 
-def runner_script_name(digest: str) -> str:
-    """The runner script's file name for one version of its contents.
+def runner_script_name(version: str) -> str:
+    """The runner script's file name for one version of the plugin.
 
-    Content-addressed for the same reasons as the bash flavour: a runner that
-    is up holds its script open, and a script that ran a job is worth keeping.
+    Named after the version for the same reasons as the bash flavour: a
+    runner that is up holds its script open, and a script that ran a job is
+    worth keeping, at least until the next submission.
     """
-    return f"moleditpy_runner_{digest}.ps1"
+    return f"moleditpy_runner_v{version}.ps1"
 
 
 def setup_command(directory: str, slots: int, cores: int, memory_mb: int = 0) -> str:
     """Prepare, set the limits, and report the runner script already there."""
-    digest_path = ps_quote(_join(directory, DIGEST_NAME))
-    prefix = ps_quote(_join(directory, "moleditpy_runner_"))
+    version_path = ps_quote(_join(directory, VERSION_NAME))
+    prefix = ps_quote(_join(directory, "moleditpy_runner_v"))
     parts = [
         prepare_command(directory),
         set_slots_command(directory, slots),
         set_cores_command(directory, cores),
         set_memory_command(directory, memory_mb),
-        # Reported only when the script that digest names is really still
+        # Reported only when the script that version names is really still
         # there: a version whose file has been deleted would have the caller
         # skip the upload and then start a runner that does not exist.
-        f"$d = if (Test-Path -LiteralPath {digest_path}) "
-        f"{{ Get-Content -LiteralPath {digest_path} | Select-Object -First 1 }} else {{ '' }}",
-        f"if ($d -and (Test-Path -LiteralPath ({prefix} + $d + '.ps1'))) {{ $d }}",
+        f"$v = if (Test-Path -LiteralPath {version_path}) "
+        f"{{ Get-Content -LiteralPath {version_path} | Select-Object -First 1 }} else {{ '' }}",
+        f"if ($v -and (Test-Path -LiteralPath ({prefix} + $v + '.ps1'))) {{ $v }}",
     ]
     return "; ".join(parts)
 
 
-def store_digest_command(directory: str, digest: str) -> str:
+def store_version_command(directory: str, version: str) -> str:
     """Record which runner script is on the host, after uploading it."""
-    path = ps_quote(_join(directory, DIGEST_NAME))
-    return f"Set-Content -Path {path} -Value {ps_quote(digest)} -Encoding ascii"
+    path = ps_quote(_join(directory, VERSION_NAME))
+    return f"Set-Content -Path {path} -Value {ps_quote(version)} -Encoding ascii"
 
 
 def list_command(directory: str) -> str:
@@ -596,5 +597,5 @@ __all__: List[str] = [
     "set_memory_command",
     "set_slots_command",
     "setup_command",
-    "store_digest_command",
+    "store_version_command",
 ]

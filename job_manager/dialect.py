@@ -24,6 +24,8 @@ import os
 import shlex
 from typing import List, Sequence
 
+from . import remote_paths
+
 
 #: What :meth:`Dialect.read_files` prints for a file that is not there. The
 #: poller turns exactly this word into LOST -- it is how a job killed before
@@ -87,6 +89,44 @@ class Dialect:
 
     def tail(self, path: str, lines: int) -> str:
         return f"tail -n {int(lines)} {self.quote(path)} 2>&1 || true"
+
+    def copy(self, source: str, destination: str) -> str:
+        """Copy one file to another path, both already on this host.
+
+        Used to relay a file from one job's directory into another's without
+        it ever leaving the machine -- a previous job's checkpoint or
+        geometry, reused by a new one.
+        """
+        return f"cp -f {self.quote(source)} {self.quote(destination)}"
+
+    def relay_lines(self, source_dir: str, filenames: Sequence[str]) -> List[str]:
+        """Script lines that copy each of ``filenames`` in from ``source_dir``.
+
+        Written into the wrapper itself, to run once it has already ``cd``ed
+        into the new job's own directory -- not as a command sent ahead of
+        submission. That is what lets this relay from a job that has not
+        finished yet: a queue's own dependency (or the no-queue wrapper's own
+        wait) already holds this job's *start* until the predecessor is done,
+        so by the time these lines run, the file is there to copy whether the
+        source job was already finished when it was chosen or not.
+
+        A name containing ``/`` is one directory down (see
+        ``structure_relay.TAG_RE``'s nested form) and gets its folder made
+        first. A failed copy fails the job outright, with a clear message in
+        its own log, rather than letting the payload run against a file that
+        never arrived.
+        """
+        lines: List[str] = []
+        for name in filenames:
+            source = remote_paths.join(source_dir, name)
+            if "/" in name:
+                lines.append(self.mkdirs(remote_paths.dirname(name)))
+            lines.append(
+                f"{self.copy(source, name)} || "
+                f"{{ echo 'Job Manager: could not copy {name} from the relay "
+                f"source' >&2; exit 1; }}"
+            )
+        return lines
 
     def run_in(self, directory: str, command: str) -> str:
         """Run a command with the job directory as the working directory."""
@@ -165,6 +205,34 @@ class PowerShellDialect(Dialect):
             f"if (Test-Path -LiteralPath {quoted}) "
             f"{{ Get-Content -LiteralPath {quoted} -Tail {int(lines)} }}"
         )
+
+    def copy(self, source: str, destination: str) -> str:
+        return (
+            f"Copy-Item -LiteralPath {self.quote(source)} "
+            f"-Destination {self.quote(destination)} -Force"
+        )
+
+    def relay_lines(self, source_dir: str, filenames: Sequence[str]) -> List[str]:
+        # Placed inside the wrapper's own try{} (see windows.py), so a missing
+        # source has to *throw* rather than call exit directly: exit inside
+        # try does not reliably reach the catch block that records the
+        # failure, while a terminating error does, the same way a payload
+        # that throws is already handled. $ErrorActionPreference is
+        # 'Continue' for the rest of the job, so Copy-Item's own error is not
+        # trusted to be terminating either -- checked with Test-Path first.
+        lines: List[str] = []
+        for name in filenames:
+            source = remote_paths.join(source_dir, name)
+            if "/" in name:
+                lines.append(self.mkdirs(remote_paths.dirname(name)))
+            quoted_source = self.quote(source)
+            lines.append(
+                f"if (-not (Test-Path -LiteralPath {quoted_source})) "
+                f"{{ throw 'Job Manager: could not copy {name} from the "
+                f"relay source' }}"
+            )
+            lines.append(self.copy(source, name))
+        return lines
 
     def run_in(self, directory: str, command: str) -> str:
         # `;` not `&&`: Windows PowerShell 5.1 has no pipeline chain operators

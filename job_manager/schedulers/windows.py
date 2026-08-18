@@ -105,6 +105,7 @@ class WindowsScheduler(Scheduler):
         run_after_any: bool = False,
         sentinel: str = "",
         preamble: Sequence[str] = (),
+        relay_lines: Sequence[str] = (),
     ) -> str:
         """The whole wrapper, in PowerShell rather than bash."""
         from ..models import SENTINEL_NAME
@@ -150,6 +151,11 @@ class WindowsScheduler(Scheduler):
             "$__moleditpy_done = $false",
             "try {",
         ]
+        # Inside the try, not before it: a relay copy that throws is then
+        # caught by the same catch block a failing payload is, and recorded
+        # through the same finally -- rather than skipping both entirely.
+        for line in relay_lines or ():
+            lines.append(f"    {line}")
         for command in preamble or []:
             if command.strip():
                 lines.append(f"    {command.strip()}")

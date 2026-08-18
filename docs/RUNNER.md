@@ -26,8 +26,8 @@ done/       the same script, once it has ended        (kept)
 status/     the exit code the runner observed         (kept)
 pids/       the wrapper pid of each running job
 tmp/        scripts mid-upload, before they are moved into queue/
-slots  cores  memory  paused  sequence  runner.sha
-moleditpy_runner_<digest>.sh
+slots  cores  memory  paused  sequence  runner.version
+moleditpy_runner_v<version>.sh
 ```
 
 **A job's directory is its state.** Nothing tracks it separately — where the
@@ -105,9 +105,9 @@ Five commands and three transfers, for a host that already has the runner:
 5. Upload the queue entry to `tmp/`, then `mv` it into `queue/`.
 6. **Ensure a runner is up** — always last; see below.
 
-The runner script is a fourth transfer only when its digest differs.
-`build_runner_script` is deterministic, so that is one extra file per plugin
-version, not per submission.
+The runner script is a fourth transfer only when the version differs.
+`build_runner_script` is deterministic within one plugin version, so that is
+one extra file per version, not per submission.
 
 ## The loop
 
@@ -207,10 +207,12 @@ is a dotfile so it is never among the results fetched back.
 This only ever matters when a wrapper is re-run by hand in a directory that has
 already been used — every submission gets a directory of its own.
 
-The runner script is named after a digest of its own contents, so an upgrade is
+The runner script is named after the plugin's own version, so an upgrade is
 a **new file**. A runner already up is executing the old one, and bash reads a
 script *by byte offset as it goes*: replace the contents underneath it and it
-resumes in the middle of different text, with no warning.
+resumes in the middle of different text, with no warning. The old file is left
+on the host rather than deleted -- it is what ran, and the queue is readable
+over plain ssh precisely so a user can see that.
 
 Each job has its own directory, named with the job id as well as the timestamp.
 The stamp is accurate only to the second, so two jobs of the same name submitted

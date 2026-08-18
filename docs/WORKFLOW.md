@@ -56,6 +56,15 @@ opens with it already added, named after it, and with the right command
 template chosen where the extension says so unambiguously. You can also drop
 files straight onto the wizard, or add them with **Add files...**.
 
+Drop **several files at once** and each becomes its own job by default — the
+far more common reason to drop a pile of files. Hold **Shift** while dropping
+to get the older behaviour instead: one job with every file uploaded to it,
+for a command that genuinely wants more than one (a checkpoint alongside an
+input, a structure and a basis set file together). The wizard's own "Submit
+each file as its own job" checkbox is the same switch by hand, and turns
+itself off together with "Work already on the host", which names a single
+file and has no answer for a batch.
+
 Dropping onto the *main* MoleditPy window is not the same thing — input
 extensions are deliberately not claimed application-wide, since that would take
 `.inp` and `.xyz` away from simply being opened.
@@ -161,6 +170,40 @@ quoted for you, so quote the tag yourself where the value may contain spaces:
 A command that names an input — `{input}`, `{basename}`, `{stem}`, `{output}` —
 is refused for a job that has none, rather than submitted as `orca  > .out` for
 you to find in tomorrow's log.
+
+### Reusing a finished job's file
+
+These two placeholders above are substituted into the *command line*. A
+different one, `[prevfile:.ext]`, is substituted into the *content* of the
+input file itself, before it is uploaded — for a job that should read
+something a previous job wrote: an ORCA `* xyzfile` block, a Gaussian
+`%oldchk`, anything a program reads by way of a file path.
+
+Write the tag where the path belongs and tick **Reuse another job's file**:
+
+```
+%oldchk=[prevfile:.chk]
+```
+
+Pick which job to read from — only jobs **on the same host** are offered,
+since the file is moved with a single `cp` (or `Copy-Item`) on the host
+itself, never downloaded here and re-uploaded. A job that has not finished
+yet can be picked too: the new job is then chained to start only once that
+one succeeds, and the copy is written into the new job's own script rather
+than run ahead of submission, so it never runs before the file is actually
+there. The filename is resolved from the uploaded input's own name
+(`mol.inp` → `mol.chk`), copied into the new job's directory under that same
+name, and checked for real on the host when the copy runs — a guess that
+turns out wrong fails that job with a clear message in its log, rather than
+letting it run against a file that never arrived.
+
+`[prevfile:.res/.xyz]` reaches one directory down: the part before the slash
+names a folder (itself named after the same stem), the part after names the
+file inside it. Nothing here knows or cares what either extension means to
+the program that reads it — that is between the input file and the program,
+which is also why this needs an input file, and neither batch mode (there is
+no single file to rewrite) nor "Work already on the host" (which already
+names one file of its own).
 
 ### Work that is already on the host
 
@@ -508,11 +551,20 @@ still starts at the instant you meant. Chaining and a start time can be combined
 The monitor polls every 120 s by default: one status query per host per cycle,
 however many jobs you have. The timer stops when nothing is active.
 
-You can go faster — down to 5 s — but under 30 s the toolbar shows **⚠ fast**.
-On a shared login node that is the kind of thing admins complain about; against
-your own workstation it is fine.
+You can go faster — down to 5 s — but under 30 s the toolbar shows **fast
+polling**. On a shared login node that is the kind of thing admins complain
+about; against your own workstation it is fine.
 
 **Refresh Now** forces a cycle immediately (rate limited to once every 10 s).
+
+### Sorting and filtering the table
+
+Click a column header to sort by it; click again to reverse. Elapsed and
+Updated sort by their real value — seconds, a timestamp — not by the
+formatted text, so "10m" does not come before "2m" and the newest job is not
+decided by the digits its date happens to print. Type into the filter box
+above the table to narrow it to jobs matching any column: a name, a host, a
+queue id, a state.
 
 ### Being told when a job ends
 

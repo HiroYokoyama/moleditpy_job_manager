@@ -14,7 +14,7 @@ import subprocess
 import tempfile
 import unittest
 
-from job_manager import remote_runner, remote_runner_ps
+from job_manager import PLUGIN_VERSION, remote_runner, remote_runner_ps
 from job_manager.models import MODE_RUNNER, SCHEDULER_SHELL, SCHEDULER_WINDOWS
 from job_manager.runner import apply_queue_limits, queue_paused, set_queue_paused, submit_to_runner
 from job_manager.transport.base import TransportError
@@ -159,21 +159,21 @@ class TestSlotsFor(unittest.TestCase):
 
 
 class TestTheSetupCommand(unittest.TestCase):
-    """One call in place of prepare + slots + cores + a digest read."""
+    """One call in place of prepare + slots + cores + a version read."""
 
-    def test_the_bash_flavour_prints_the_stored_digest_last(self):
+    def test_the_bash_flavour_prints_the_stored_version_last(self):
         command = remote_runner.setup_command("/tmp/r", 2, 4)
         self.assertIn("mkdir -p", command)
         self.assertIn(remote_runner.SLOTS_NAME, command)
         self.assertIn(remote_runner.CORES_NAME, command)
         # Ends by reporting the runner already there, if its file still is.
-        self.assertIn(remote_runner.DIGEST_NAME, command)
+        self.assertIn(remote_runner.VERSION_NAME, command)
         self.assertTrue(command.rstrip().endswith("fi"))
 
     def test_the_powershell_flavour_covers_the_same_ground(self):
         command = remote_runner_ps.setup_command(r"C:\r", 2, 4)
         self.assertIn("New-Item", command)
-        self.assertIn(remote_runner.DIGEST_NAME, command)
+        self.assertIn(remote_runner.VERSION_NAME, command)
         # 5.1 has no pipeline chain operators at all.
         self.assertNotIn("&&", command)
 
@@ -201,16 +201,16 @@ class TestTheSetupCommand(unittest.TestCase):
         self.assertEqual(result.stdout.strip(), "")
 
     @unittest.skipUnless(BASH, "needs a bash")
-    def test_a_stored_digest_comes_back_out(self):
+    def test_a_stored_version_comes_back_out(self):
         tmp = tempfile.mkdtemp(prefix="setup_")
         self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
         directory = os.path.join(tmp, "runner").replace("\\", "/")
 
         subprocess.run([BASH, "-c", remote_runner.setup_command(directory, 1, 0)], timeout=60)
         subprocess.run(
-            [BASH, "-c", remote_runner.store_digest_command(directory, "abc123")], timeout=60
+            [BASH, "-c", remote_runner.store_version_command(directory, "abc123")], timeout=60
         )
-        # The digest names a script that has to be there: reporting a version
+        # The version names a script that has to be there: reporting one
         # whose file was deleted would skip the upload and then start nothing.
         open(os.path.join(directory, remote_runner.runner_script_name("abc123")), "w").close()
         again = subprocess.run(
@@ -244,8 +244,8 @@ class TestSubmissionSkipsWhatTheHostHas(unittest.TestCase):
         )
 
     def uploaded_runner(self, transport) -> bool:
-        # Content-addressed: moleditpy_runner_<digest>.sh, never a fixed name,
-        # so a new version cannot be written over the file a running runner is
+        # Versioned: moleditpy_runner_v<version>.sh, never a fixed name, so a
+        # new version cannot be written over the file a running runner is
         # part way through reading.
         return any("moleditpy_runner_" in remote for _, remote in transport.uploads)
 
@@ -253,26 +253,23 @@ class TestSubmissionSkipsWhatTheHostHas(unittest.TestCase):
         transport = FakeTransport(self.host)
         self.submit(transport)
         self.assertTrue(self.uploaded_runner(transport))
-        self.assertTrue(transport.ran(remote_runner.DIGEST_NAME))
+        self.assertTrue(transport.ran(remote_runner.VERSION_NAME))
 
     def test_a_host_that_already_has_it_is_not_sent_it_again(self):
         transport = FakeTransport(self.host)
-        script = remote_runner.build_runner_script(remote_runner.runner_dir(self.host.remote_root))
-        import hashlib
-
-        digest = hashlib.sha256(script.encode("utf-8")).hexdigest()[:16]
-        # What the setup call reports back from the host.
-        transport.when("mkdir -p", stdout=f"{digest}\n")
+        # What the setup call reports back from the host: this plugin's own
+        # version, which is what the file on the host is now named after.
+        transport.when("mkdir -p", stdout=f"{PLUGIN_VERSION}\n")
 
         self.submit(transport)
 
         self.assertFalse(self.uploaded_runner(transport))
 
     def test_a_changed_runner_is_sent_even_though_one_is_there(self):
-        # An updated plugin writes a different script; reusing the old one
+        # A different plugin version is on the host; reusing that script
         # because "a runner exists" is how a queue ends up on stale code.
         transport = FakeTransport(self.host)
-        transport.when("mkdir -p", stdout="0000000000000000\n")
+        transport.when("mkdir -p", stdout="0.0.0-not-the-current-version\n")
 
         self.submit(transport)
 
@@ -303,25 +300,25 @@ class TestNothingIsOverwrittenOrRemoved(unittest.TestCase):
             [self.input],
         )
 
-    def test_the_runner_script_is_named_after_its_own_contents(self):
+    def test_the_runner_script_is_named_after_the_plugin_version(self):
         # Overwriting the file a runner is executing is the hazard: bash reads
         # a script by byte offset as it goes, so replacing the contents makes a
         # running runner resume in the middle of different text.
-        digest = remote_runner.runner_script_name("abc123")
-        self.assertIn("abc123", digest)
-        self.assertNotEqual(digest, remote_runner.RUNNER_SCRIPT_NAME)
+        name = remote_runner.runner_script_name("0.19.0")
+        self.assertIn("0.19.0", name)
+        self.assertNotEqual(name, remote_runner.RUNNER_SCRIPT_NAME)
 
     def test_two_versions_are_two_files(self):
-        first = remote_runner.runner_script_name("1111111111111111")
-        second = remote_runner.runner_script_name("2222222222222222")
+        first = remote_runner.runner_script_name("0.18.0")
+        second = remote_runner.runner_script_name("0.19.0")
         self.assertNotEqual(first, second)
 
     def test_the_powershell_flavour_versions_its_own_too(self):
-        name = remote_runner_ps.runner_script_name("abc123")
-        self.assertIn("abc123", name)
+        name = remote_runner_ps.runner_script_name("0.19.0")
+        self.assertIn("0.19.0", name)
         self.assertTrue(name.endswith(".ps1"))
 
-    def test_a_reported_digest_whose_file_is_gone_is_not_believed(self):
+    def test_a_reported_version_whose_file_is_gone_is_not_believed(self):
         # Otherwise the upload is skipped and a runner is started that is not
         # there. The setup command checks the file, not just the record.
         command = remote_runner.setup_command("/r", 1, 0)

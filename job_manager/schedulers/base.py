@@ -214,6 +214,7 @@ class Scheduler(ABC):
         run_after_any: bool = False,
         sentinel: str = SENTINEL_NAME,
         preamble: Sequence[str] = (),
+        relay_lines: Sequence[str] = (),
     ) -> str:
         """Assemble the complete run script, sentinel included.
 
@@ -226,6 +227,12 @@ class Scheduler(ABC):
         user prepared shares it: with one fixed name, two such jobs overwrite
         each other's exit code and whichever finished first decides what both
         are reported to have done.
+
+        ``relay_lines`` copies a previous job's file into this one's directory
+        -- built by ``dialect.relay_lines()`` -- run after whatever this job
+        waits for (a queue dependency, or the wrapper's own wait for a pid)
+        and before the payload, so a file relayed from a job that had not
+        finished at submit time is there by the time this runs either way.
         """
         sentinel = sentinel or SENTINEL_NAME
         # Once, here: the directive block was already sanitising while {name}
@@ -272,6 +279,12 @@ class Scheduler(ABC):
             lines += self._start_time_block(start_after)
         if not dependency:
             lines += self._predecessor_wait_block(run_after)
+        # After whatever gated this job's start (a queue dependency above, or
+        # the wait block just added) and before anything that reads the file:
+        # by this point the predecessor -- if there was one -- has already
+        # finished, whether or not it had when the relay was chosen.
+        if relay_lines:
+            lines += list(relay_lines) + [""]
         # Before the modules: `module` itself usually comes from a login file,
         # so a module load above this line is a command not found.
         for command in preamble or []:

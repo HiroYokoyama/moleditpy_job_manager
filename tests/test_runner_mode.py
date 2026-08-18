@@ -108,7 +108,7 @@ class TestWhichHostsUseIt(unittest.TestCase):
             "set_memory_command",
             "set_slots_command",
             "setup_command",
-            "store_digest_command",
+            "store_version_command",
         }
         for module in (remote_runner, remote_runner_ps):
             with self.subTest(flavour=module.__name__):

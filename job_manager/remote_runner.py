@@ -81,8 +81,11 @@ ENTRY_SUFFIX = ".sh"
 #: The runner's own log, for when a user asks why nothing started.
 RUNNER_LOG_NAME = "runner.log"
 #: Records which runner script the host already has, so a submission does not
-#: upload an identical one every time.
-DIGEST_NAME = "runner.sha"
+#: upload an identical one every time. Holds the plugin's own version -- the
+#: runner script is fixed for the life of a release, so the version is as
+#: reliable an identifier as a content hash and, unlike one, is something a
+#: user reading the directory over plain ssh can actually recognise.
+VERSION_NAME = "runner.version"
 
 #: Holds the slot count, re-read every pass so the limit can be changed
 #: without restarting the runner.
@@ -486,11 +489,13 @@ def parse_sequence(stdout: str) -> int:
     return 0
 
 
-def runner_script_name(digest: str) -> str:
-    """The runner script's file name for one version of its contents.
+def runner_script_name(version: str) -> str:
+    """The runner script's file name for one version of the plugin.
 
-    Content-addressed, so a new version is a *new file* and the old one stays
-    where it is. Two reasons, and the second is not optional:
+    Named after the version, so a new one is a *new file* and the old one
+    stays where it is until :func:`cleanup_stale_command` removes it. Two
+    reasons the file must never be overwritten in place, and the second is
+    not optional:
 
     A runner already up is executing that file, and **bash reads a script as it
     goes** -- it seeks by byte offset rather than loading the whole thing. Write
@@ -498,11 +503,11 @@ def runner_script_name(digest: str) -> str:
     an offset into text that has moved, running whatever fragment now lives
     there. Nothing warns; the queue simply misbehaves.
 
-    And a script that ran a job is worth keeping. The queue is readable over
-    plain ssh precisely so that a user can see what ran, and quietly replacing
-    the runner underneath a finished batch takes that away.
+    And a script that ran a job is worth keeping, at least until the next
+    submission: the queue is readable over plain ssh precisely so that a user
+    can see what ran.
     """
-    return f"moleditpy_runner_{digest}.sh"
+    return f"moleditpy_runner_v{version}.sh"
 
 
 def setup_command(directory: str, slots: int, cores: int, memory_mb: int = 0) -> str:
@@ -512,22 +517,22 @@ def setup_command(directory: str, slots: int, cores: int, memory_mb: int = 0) ->
     and the OpenSSH backend cannot multiplex on Windows -- so on that platform
     they were four full handshakes on the way to every single submission.
 
-    Prints the digest of the runner script already on the host, or nothing:
+    Prints the version of the runner script already on the host, or nothing:
     that is what lets the caller skip re-uploading a script the host already
     has, which is the last of the fixed costs and the only one that is an scp.
     """
     # Built before the f-string, not inside it: nesting the same quote inside
     # an f-string expression is Python 3.12 syntax, and this package supports
     # 3.9. The same shape has already shipped a module that would not import.
-    digest_path = quote(f"{directory.rstrip('/')}/{DIGEST_NAME}")
-    # Printed only when the script that digest names is really still there:
+    version_path = quote(f"{directory.rstrip('/')}/{VERSION_NAME}")
+    # Printed only when the script that version names is really still there:
     # reporting a version whose file has been deleted would have the caller
     # skip the upload and then start a runner that does not exist.
     # Absolute, not relying on the cd that prepare_command left behind.
-    prefix = quote(f"{directory.rstrip('/')}/moleditpy_runner_")
+    prefix = quote(f"{directory.rstrip('/')}/moleditpy_runner_v")
     report = (
-        f"d=$(cat {digest_path} 2>/dev/null); "
-        f'if [ -n "$d" ] && [ -f {prefix}"$d".sh ]; then echo "$d"; fi'
+        f"v=$(cat {version_path} 2>/dev/null); "
+        f'if [ -n "$v" ] && [ -f {prefix}"$v".sh ]; then echo "$v"; fi'
     )
     parts = [
         prepare_command(directory),
@@ -539,9 +544,9 @@ def setup_command(directory: str, slots: int, cores: int, memory_mb: int = 0) ->
     return "; ".join(parts)
 
 
-def store_digest_command(directory: str, digest: str) -> str:
+def store_version_command(directory: str, version: str) -> str:
     """Record which runner script is on the host, after uploading it."""
-    return f"cd {quote(directory)} && echo {quote(digest)} > {DIGEST_NAME}"
+    return f"cd {quote(directory)} && echo {quote(version)} > {VERSION_NAME}"
 
 
 def list_command(directory: str) -> str:
@@ -744,14 +749,14 @@ __all__: List[str] = [
     "AFTER_TAG",
     "CORES_NAME",
     "CORES_TAG",
-    "DIGEST_NAME",
+    "VERSION_NAME",
     "MEMORY_NAME",
     "MEMORY_TAG",
     "PAUSED_NAME",
     "UNLIMITED_SLOTS",
     "slots_for",
     "setup_command",
-    "store_digest_command",
+    "store_version_command",
     "REQUIRE_SUCCESS_TAG",
     "STATUS_BLOCKED",
     "release_command",

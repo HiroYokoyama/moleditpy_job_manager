@@ -87,7 +87,23 @@ fetch, open.
 - **Hold** the queue on a host without cancelling anything, change its limits
   while jobs are already waiting, and **Detect** what the machine really has.
 - **Drop** an input file on the Job Monitor to start: the wizard opens
-  prefilled, named after the file, with its command template chosen.
+  prefilled, named after the file, with its command template chosen. Drop
+  several at once and each becomes its own job by default — hold **Shift**
+  while dropping to keep the old behaviour of one job with every file
+  uploaded to it, for a command that genuinely wants more than one.
+- **Reuse another job's file** in a new one, without copying a path by
+  hand: an ORCA `* xyzfile`, a Gaussian `%oldchk`, anything an input names
+  with a `[prevfile:.ext]` tag. The file is copied on the host itself, from
+  the old job's directory into the new one's — nothing is downloaded here
+  and re-uploaded — so this only ever relays between two jobs on the same
+  host. `[prevfile:.res/.xyz]` reaches one directory down, for a result kept
+  inside a folder of its own. The source job need not have finished yet — the
+  new job is chained to start only once it succeeds, and the copy is written
+  into the job's own script, so it is only ever attempted once the file
+  actually exists.
+- **Sort and filter** the job table: click a header to sort — by the real
+  elapsed seconds and the real timestamp, not the formatted text — and type
+  to filter across every column at once.
 - **Fetch** the outputs automatically when a job ends — next to the input file
   by default, so results sit where you are already working — then hand them to
   whichever plugin already claims that file type — a finished ORCA run opens in
@@ -197,8 +213,8 @@ A login node is not a status API, so:
 - one `squeue`/`qstat` per **host** per cycle, no matter how many jobs you have;
 - 120 s by default. You *can* go faster — down to 5 s, which is useful against
   your own workstation or while debugging — but anything under 30 s is flagged
-  with a **⚠ fast** warning next to the field explaining what it costs the login
-  node;
+  with a **fast polling** warning next to the field explaining what it costs
+  the login node;
 - the timer stops entirely when no job is active;
 - a host that errors backs off exponentially, up to 15 minutes;
 - **Refresh Now** is there when you actually need an answer immediately.

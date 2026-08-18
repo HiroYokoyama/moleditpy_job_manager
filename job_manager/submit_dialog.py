@@ -35,6 +35,7 @@ from . import PLUGIN_VERSION, input_scan
 from .command_templates import CommandTemplate, extension_of, suggest, templates_for
 from .credentials import ensure_password
 
+from . import structure_relay
 from .models import HostProfile, Job, SubmitPreset
 from .runner import make_remote_dir
 from .schedulers import get_scheduler, references_input
@@ -136,6 +137,7 @@ class SubmitDialog(QDialog):
             if not preset:
                 self._apply_scanned_resources(files[0])
         self._update_batch_row()
+        self._update_relay_row()
         if batch:
             # Only takes effect where it is enabled -- more than one file, and
             # not "work already on the host", which names a single file.
@@ -228,6 +230,7 @@ class SubmitDialog(QDialog):
         files_layout.addWidget(self.chk_batch)
         layout.addWidget(files_box)
         layout.addWidget(self._build_remote_box())
+        layout.addWidget(self._build_structure_relay_box())
 
         tabs = QTabWidget()
         tabs.addTab(self._build_resources_tab(), "Resources")
@@ -313,7 +316,135 @@ class SubmitDialog(QDialog):
         if not checked:
             self.lbl_remote.setText("")
         self._update_batch_row()
+        self._update_relay_row()
         self._refresh_preview()
+
+    # --- structure relay -----------------------------------------------------
+
+    def _build_structure_relay_box(self) -> QWidget:
+        """Fill ``[prevfile]``/``[prevfile:.ext]`` tags with a previous job's
+        own files, copied in on the host itself.
+
+        What the tag means to the program that reads it -- an ORCA
+        ``* xyzfile``, a Gaussian ``%oldchk`` -- is between the input file and
+        that program; nothing here parses chemistry or knows which software
+        wrote either job. It only ever relays between two jobs on the *same*
+        host, with a single remote copy per file and nothing downloaded to
+        this machine and re-uploaded.
+        """
+        box = QGroupBox("Reuse another job's file")
+        box.setCheckable(True)
+        box.setChecked(False)
+        box.setToolTip(
+            "Copy a file from another job on this host into this one, and "
+            "write its name wherever the input above says "
+            f"{structure_relay.TAG_RE.pattern} -- an ORCA geometry, a "
+            "Gaussian checkpoint, anything the input names by an extension.\n\n"
+            "A job that has not finished yet can be picked too: this one is "
+            "then chained to start only once it succeeds, so the file is "
+            "there by the time the copy runs.\n\n"
+            "Only jobs on the host selected above are offered: a file cannot "
+            "be relayed onto a different machine without downloading and "
+            "re-uploading it, which this does not do.\n\n"
+            "Needs an input file, and neither batch mode nor 'Work already "
+            "on the host', which have no single local file this could rewrite."
+        )
+        self.box_relay = box
+        # Nothing to relay onto until there is an input file; every later
+        # state is reached through _update_relay_row(), called from
+        # add_files/prefill/etc, none of which have run yet.
+        box.setEnabled(False)
+        form = QFormLayout(box)
+
+        self.cmb_relay_source = QComboBox()
+        self.cmb_relay_source.currentIndexChanged.connect(self._update_relay_status)
+        form.addRow("Source job", self.cmb_relay_source)
+
+        self.lbl_relay_status = QLabel("")
+        self.lbl_relay_status.setWordWrap(True)
+        self.lbl_relay_status.setStyleSheet("color: palette(mid);")
+        form.addRow("", self.lbl_relay_status)
+
+        box.toggled.connect(self._on_relay_toggled)
+        return box
+
+    def _update_relay_row(self) -> None:
+        """The relay box needs exactly one local file and nothing exotic.
+
+        Reads ``chk_batch.isChecked()`` directly, not ``_batch_active()``:
+        that also asks whether the box is *enabled*, and the two rows disable
+        each other, so mid-toggle one of them is checked but momentarily
+        disabled -- exactly the state each row's own guard has to see through
+        to break the tie cleanly rather than leaving both re-enabled.
+        """
+        allowed = bool(self.selected_files()) and not self.box_remote.isChecked()
+        allowed = allowed and not self.chk_batch.isChecked()
+        self.box_relay.setEnabled(allowed)
+        if not allowed and self.box_relay.isChecked():
+            self.box_relay.blockSignals(True)
+            self.box_relay.setChecked(False)
+            self.box_relay.blockSignals(False)
+
+    def _on_relay_toggled(self, checked: bool) -> None:
+        if checked:
+            self._reload_relay_sources()
+            self._update_batch_row()
+        self._refresh_preview()
+
+    def _reload_relay_sources(self) -> None:
+        """Refill the source-job dropdown with candidate jobs on this host."""
+        host = self.current_host()
+        current = self.cmb_relay_source.currentData()
+        self.cmb_relay_source.blockSignals(True)
+        self.cmb_relay_source.clear()
+        jobs = structure_relay.candidate_jobs(
+            self.store.jobs.values(), host_id=host.id if host else ""
+        )
+        for job in jobs:
+            self.cmb_relay_source.addItem(job.name, job.id)
+        if current:
+            index = self.cmb_relay_source.findData(current)
+            if index >= 0:
+                self.cmb_relay_source.setCurrentIndex(index)
+        self.cmb_relay_source.blockSignals(False)
+        self._update_relay_status()
+
+    def selected_relay_job(self) -> Optional[Job]:
+        job_id = self.cmb_relay_source.currentData()
+        return self.store.jobs.get(job_id) if job_id else None
+
+    def _update_relay_status(self) -> None:
+        """What will actually be filled in, read from the input as it stands."""
+        job = self.selected_relay_job()
+        if job is None:
+            self.lbl_relay_status.setText(
+                "" if self.store.jobs else "No other job on this host yet."
+            )
+            return
+        files = self.selected_files()
+        if not files:
+            self.lbl_relay_status.setText("")
+            return
+        try:
+            with open(files[0], "r", encoding="utf-8", errors="replace") as handle:
+                text = handle.read()
+        except OSError:
+            self.lbl_relay_status.setText("")
+            return
+        tags = structure_relay.find_tags(text)
+        if not tags:
+            self.lbl_relay_status.setText(f"No {structure_relay.TAG_RE.pattern} tag found yet.")
+            return
+        resolved = sorted(
+            {
+                structure_relay.resolve_filename(job, match.group("ext"))
+                for match in tags
+                if match.group("ext")
+            }
+        )
+        self.lbl_relay_status.setText(
+            f"Will copy {', '.join(resolved)} from {job.name}." if resolved else ""
+        )
 
     def remote_dir(self) -> str:
         """The host directory to run in, or "" for a new one per job."""
@@ -599,6 +730,10 @@ class SubmitDialog(QDialog):
         self._on_preset_changed()
         self._update_queue_fields()
         self._update_chain_row()
+        # Relay candidates are host-scoped, so a host change re-filters them
+        # even while the box is unchecked -- cheap, and it means the dropdown
+        # is never a tick behind by the time it is opened.
+        self._reload_relay_sources()
 
     def _update_queue_fields(self) -> None:
         """Grey the fields this host's scheduler has no queue to read.
@@ -1020,6 +1155,7 @@ class SubmitDialog(QDialog):
                 self.txt_job_name.setText(os.path.splitext(os.path.basename(added[0]))[0])
             self._apply_scanned_resources(added[0])
         self._update_batch_row()
+        self._update_relay_row()
         if batch is not None:
             self.chk_batch.setChecked(bool(batch))
         self._reload_templates()
@@ -1116,6 +1252,7 @@ class SubmitDialog(QDialog):
         for item in self.list_files.selectedItems():
             self.list_files.takeItem(self.list_files.row(item))
         self._update_batch_row()
+        self._update_relay_row()
         self._refresh_preview()
 
     # --- preview ------------------------------------------------------------
@@ -1131,7 +1268,9 @@ class SubmitDialog(QDialog):
         that could answer.
         """
         files = self.selected_files()
-        allowed = len(files) > 1 and not self.box_remote.isChecked()
+        allowed = (
+            len(files) > 1 and not self.box_remote.isChecked() and not self.box_relay.isChecked()
+        )
         self.chk_batch.setVisible(len(files) > 1)
         self.chk_batch.setEnabled(allowed)
         if not allowed and self.chk_batch.isChecked():
@@ -1150,6 +1289,7 @@ class SubmitDialog(QDialog):
         self.btn_submit.setText(
             f"Submit {len(self.selected_files())} Jobs" if checked else "Submit"
         )
+        self._update_relay_row()
         self._refresh_preview()
 
     def _refresh_preview(self) -> None:
@@ -1284,8 +1424,44 @@ class SubmitDialog(QDialog):
             self._submit_batch(host, preset, files)
             self.accept()
             return
+        relay_source_dir = ""
+        relay_filenames: List[str] = []
+        relay_job: Optional[Job] = None
+        if self.box_relay.isChecked():
+            # Original paths are what the duplicate check above just looked
+            # at; the substituted copies -- same basenames, a resolved
+            # filename in place of each tag -- are what actually get
+            # uploaded, so this happens last.
+            relay_job = self.selected_relay_job()
+            if relay_job is None:
+                QMessageBox.warning(self, "Submit", "Choose a job to reuse a file from.")
+                return
+            if not relay_job.remote_dir:
+                QMessageBox.warning(
+                    self, "Submit", f"'{relay_job.name}' has no remote directory recorded."
+                )
+                return
+            try:
+                for path in files:
+                    with open(path, "r", encoding="utf-8", errors="replace") as handle:
+                        for filename in structure_relay.relay_plan(handle.read(), relay_job):
+                            if filename not in relay_filenames:
+                                relay_filenames.append(filename)
+                files = [structure_relay.materialize(path, relay_job) for path in files]
+            except (structure_relay.StructureRelayError, OSError) as exc:
+                QMessageBox.warning(self, "Submit", str(exc))
+                return
+            relay_source_dir = relay_job.remote_dir
         name = self.txt_job_name.text().strip() or self._default_job_name(files, remote_dir)
         after = self.chain_predecessor() if self.chain_requested() else None
+        chain_any = self.chain_any_requested()
+        if after is None and relay_job is not None and relay_job.is_active:
+            # The relay source has not finished yet; the copy embedded in the
+            # script only produces a real file once it has, so this job must
+            # not start before then. afterok, not afterany: a relay source
+            # that fails leaves nothing worth copying.
+            after = relay_job
+            chain_any = False
         self.service.submit(
             host,
             preset,
@@ -1293,7 +1469,9 @@ class SubmitDialog(QDialog):
             files,
             after_job=after,
             start_after=self.selected_start_time(),
-            chain_any=self.chain_any_requested(),
+            chain_any=chain_any,
+            relay_source_dir=relay_source_dir,
+            relay_filenames=relay_filenames,
             remote_dir=remote_dir,
             remote_input=self.remote_input(),
         )

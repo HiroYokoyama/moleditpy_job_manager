@@ -9,14 +9,13 @@ event loop and no network.
 from __future__ import annotations
 
 import fnmatch
-import hashlib
 import logging
 import os
 import tempfile
 import time
 from typing import Dict, Iterable, List, Optional, Sequence
 
-from . import dialect, remote_paths, remote_runner
+from . import PLUGIN_VERSION, dialect, remote_paths, remote_runner
 from .models import (
     SENTINEL_NAME,
     STATE_CANCELLED,
@@ -149,6 +148,8 @@ def submit_job(
     run_after: str = "",
     start_after: float = 0.0,
     run_after_any: bool = False,
+    relay_source_dir: str = "",
+    relay_filenames: Sequence[str] = (),
 ) -> Job:
     """Create the remote directory, upload everything, enqueue the script.
 
@@ -160,6 +161,13 @@ def submit_job(
 
     Input files are optional: a job may instead run a command over work the
     user has already staged on the host (``job.remote_dir_provided``).
+
+    ``relay_source_dir``/``relay_filenames`` copy files from a previous job's
+    own directory into this one's -- written *into the generated script*
+    itself, not run ahead of submission, which is what lets this relay from a
+    job that has not finished yet: whatever gates this job's start (a queue
+    dependency, or the wrapper's own wait for a pid) already guarantees the
+    predecessor is done by the time those lines run.
     """
     scheduler = get_scheduler(host.scheduler)
     if not (preset.command_template or "").strip():
@@ -172,6 +180,11 @@ def submit_job(
         transport.upload(path, remote_paths.join(job.remote_dir, os.path.basename(path)))
 
     input_name = input_name_for(job, local_files)
+    relay_lines = (
+        dialect.for_host(host).relay_lines(relay_source_dir, relay_filenames)
+        if relay_source_dir and relay_filenames
+        else []
+    )
     script = scheduler.build_script(
         sanitize_name(job.name),
         preset,
@@ -183,6 +196,7 @@ def submit_job(
         run_after_any=run_after_any or job.chain_any,
         sentinel=sentinel_for(job),
         preamble=host.environment_commands(),
+        relay_lines=relay_lines,
     )
     job.command = script
     script_name = script_name_for(job, scheduler)
@@ -246,6 +260,8 @@ def submit_to_runner(
     job: Job,
     local_files: Sequence[str],
     after_job: Optional[Job] = None,
+    relay_source_dir: str = "",
+    relay_filenames: Sequence[str] = (),
 ) -> Job:
     """Upload a job and put it in the remote runner's queue.
 
@@ -257,6 +273,8 @@ def submit_to_runner(
     Chaining is handed to the runner as a header on the queued script, not as a
     ``kill -0`` wait in the wrapper. The runner knows whether the predecessor
     *succeeded*, which a wrapper watching a pid cannot.
+
+    ``relay_source_dir``/``relay_filenames``: see :func:`submit_job`.
     """
     scheduler = get_scheduler(host.scheduler)
     flavour = remote_runner.flavour_for(host)
@@ -268,6 +286,11 @@ def submit_to_runner(
     for path in local_files:
         transport.upload(path, remote_paths.join(job.remote_dir, os.path.basename(path)))
 
+    relay_lines = (
+        dialect.for_host(host).relay_lines(relay_source_dir, relay_filenames)
+        if relay_source_dir and relay_filenames
+        else []
+    )
     script = scheduler.build_script(
         sanitize_name(job.name),
         preset,
@@ -277,6 +300,7 @@ def submit_to_runner(
         remote_dir=job.remote_dir,
         sentinel=sentinel_for(job),
         preamble=host.environment_commands(),
+        relay_lines=relay_lines,
     )
     job.command = script
     # Not `script_name`: that name belongs to the runner's own script below.
@@ -293,18 +317,19 @@ def submit_to_runner(
         )
     )
     runner_script = flavour.build_runner_script(directory)
-    digest = _digest(runner_script)
-    # Named after its own contents, so a new version never writes over the file
-    # a running runner is part way through -- bash reads a script by byte
-    # offset as it goes, and replacing it underneath resumes in the middle of
-    # different text. Old versions stay on the host, next to the queue entries
-    # they ran.
-    script_name = flavour.runner_script_name(digest)
-    if (setup.stdout or "").strip().splitlines()[-1:] != [digest]:
+    # Named after the plugin's own version, not a content hash: the script is
+    # fixed for the life of a release, so this is an equally reliable way to
+    # tell whether the host already has the current one, and it is a name a
+    # user reading the directory over plain ssh can actually place.
+    script_name = flavour.runner_script_name(PLUGIN_VERSION)
+    if (setup.stdout or "").strip().splitlines()[-1:] != [PLUGIN_VERSION]:
         # Only when it would differ. The script is the same bytes on every
         # submission to the same host, and re-uploading it was an scp per job.
+        # The version this replaces is left where it is, deliberately: a
+        # script that ran a job is worth keeping, since the queue is readable
+        # over plain ssh precisely so a user can see what ran.
         _upload_text(transport, runner_script, remote_paths.join(directory, script_name))
-        transport.run(flavour.store_digest_command(directory, digest))
+        transport.run(flavour.store_version_command(directory, PLUGIN_VERSION))
 
     # Claimed on the host, not worked out from a listing: the number is the
     # dispatch order, and one derived from the queue restarts the moment a user
@@ -355,11 +380,6 @@ def submit_to_runner(
     job.submitted_at = time.time()
     job.touch(STATE_SUBMITTED)
     return job
-
-
-def _digest(text: str) -> str:
-    """Identifies one runner script. Short: it is compared, never trusted."""
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
 def poll_runner(transport: Transport, host: HostProfile, jobs: Sequence[Job]) -> Dict[str, str]:
