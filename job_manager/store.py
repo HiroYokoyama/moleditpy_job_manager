@@ -104,6 +104,10 @@ DEFAULT_PREFS: Dict[str, Any] = {
     #: the user asked to be told about by submitting a job that runs for hours.
     #: The badge is a persistent change to how MoleditPy looks; this is not.
     "notify_on_finish": True,
+    #: An incoming-webhook URL for Slack, Discord, Teams or anything else that
+    #: takes a JSON POST. Empty by default: a job's name and host leave this
+    #: machine only once somebody has pasted a room's URL in on purpose.
+    "notify_webhook": "",
     "last_input_dir": "",
     #: Which file type the input picker opens on. Empty means the first one.
     "input_filter": "",

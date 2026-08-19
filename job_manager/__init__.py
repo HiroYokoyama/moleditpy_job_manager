@@ -106,22 +106,33 @@ def _finished_words() -> dict:
 
 
 def _notify_finished(job_id: str, state: str) -> None:
-    """Raise a desktop notification for a job that ended out of sight."""
+    """Say that a job ended: on this desktop, and in a chat room if asked."""
     if _service is None or not _service.store.get_pref("notify_on_finish", True):
         return
     job = _service.store.jobs.get(job_id)
     if job is None:
         return
+    wording = _finished_words().get(state, state.lower())
+    message = f"{job.name} {wording} on {job.host_name}."
     try:
         from . import notify
 
-        wording = _finished_words().get(state, state.lower())
-        notify.notify(
-            "MoleditPy job manager",
-            f"{job.name} {wording} on {job.host_name}.",
-        )
+        notify.notify("MoleditPy job manager", message)
     except Exception:
         logging.debug("Job Manager: could not raise a notification", exc_info=True)
+    # Separately, and after: a chat room is the notification for the case where
+    # nobody is at this desktop to see the other one, so a tray that refuses the
+    # message must not take this with it.
+    try:
+        from . import webhook
+
+        webhook.post_async(
+            str(_service.store.get_pref("notify_webhook", "") or ""),
+            "MoleditPy job manager",
+            message,
+        )
+    except Exception:
+        logging.debug("Job Manager: could not post to the chat webhook", exc_info=True)
 
 
 def _install_status_widget(service) -> None:

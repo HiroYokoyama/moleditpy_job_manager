@@ -269,8 +269,9 @@ working in, so a transfer cut off half way would otherwise leave a truncated
 | `status_widget.py` | the job counter in the host's status bar |
 | `taskbar.py` | the same count on the application icon (Dock / task bar / launcher) |
 | `notify.py` | the desktop notification raised when a job ends |
+| `webhook.py` | the same line posted to a chat room (Slack, Discord, generic JSON) |
 | `input_scan.py` | the memory and core request stated in an input file |
-| `*_dialog.py` | the three windows |
+| `*_dialog.py` | the windows |
 
 ## The `submit_file()` handoff
 

@@ -78,7 +78,10 @@ fetch, open.
   rather than this plugin's.
 - **Be told** when a job ends: a desktop notification names the job and the
   host when it finishes, fails or vanishes from the queue. On by default, and
-  one checkbox away from off.
+  one checkbox away from off. The same line can go to **Slack, Discord or
+  Teams** — paste an incoming-webhook URL under *Chat alerts...* and it reaches
+  you away from the machine. Nothing is installed for it; see
+  [docs/WORKFLOW.md](docs/WORKFLOW.md#being-told-somewhere-else-slack-discord-teams).
 - **Read the request from the input** rather than asking for it twice: ORCA,
   Gaussian, Psi4, NWChem, Q-Chem and GAMESS all state their own memory and
   cores, so the wizard fills those fields in — ORCA's `%maxcore` is *per core*

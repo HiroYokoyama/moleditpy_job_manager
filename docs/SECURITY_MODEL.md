@@ -32,6 +32,15 @@ Everything lives in `~/.moleditpy/job_manager/`, outside the plugin folder.
 | `ask_password` | `true` — a *flag* meaning "prompt me", not a password | no |
 | presets | queue, walltime, modules, command template | no |
 | `command_templates` | your saved command lines | no |
+| `notify_webhook` | `https://hooks.slack.com/services/...` | **in effect, yes** |
+
+The chat webhook is the one field here that acts as a credential: anyone
+holding that URL can post to the room. It is stored in the clear, like the rest
+of this file, because it is the only way to use it and because a webhook is
+revoked in the workspace rather than here. Nothing is sent until you paste one
+in, and what is sent is one sentence — the job's name, what became of it, and
+the host it ran on. That sentence leaves your network; the input files, the
+results and the paths do not.
 
 `HostProfile` has **no password field at all**, so there is nothing for
 `asdict()` to serialise even by accident. This is enforced by tests

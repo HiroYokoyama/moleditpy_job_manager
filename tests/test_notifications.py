@@ -202,6 +202,59 @@ class TestTheHandlerRespectsThePreference(ServiceTestCase):
             job_manager._notify_finished("j1", STATE_DONE)
 
 
+class TestTheChatRoomGetsItToo(ServiceTestCase):
+    """The webhook is the notification for when nobody is at this desktop."""
+
+    def setUp(self):
+        super().setUp()
+        from job_manager import webhook
+
+        self.webhook = webhook
+        self.store.add_job(make_job(id="j1", name="opt", host_name="cluster"))
+        self._previous = job_manager._service
+        job_manager._service = self.service
+        self.addCleanup(setattr, job_manager, "_service", self._previous)
+
+    def test_nothing_is_posted_until_a_url_is_configured(self):
+        with patch.object(self.webhook, "post_async") as posted:
+            with patch.object(notify, "notify", return_value=True):
+                job_manager._notify_finished("j1", STATE_DONE)
+        # Called, and refused there: one place decides what is a URL.
+        self.assertEqual(posted.call_args[0][0], "")
+
+    def test_a_configured_url_gets_the_same_sentence(self):
+        self.store.set_pref("notify_webhook", "https://hooks.slack.com/services/T/B/x")
+        with patch.object(self.webhook, "post_async") as posted:
+            with patch.object(notify, "notify", return_value=True):
+                job_manager._notify_finished("j1", STATE_DONE)
+        url, _title, message = posted.call_args[0]
+        self.assertEqual(url, "https://hooks.slack.com/services/T/B/x")
+        self.assertIn("opt", message)
+        self.assertIn("cluster", message)
+
+    def test_a_desktop_with_no_tray_still_posts_to_the_room(self):
+        # The whole point: the tray refusing is exactly the session where the
+        # chat message is the only one that will be seen.
+        self.store.set_pref("notify_webhook", "https://hooks.slack.com/services/T/B/x")
+        with patch.object(self.webhook, "post_async") as posted:
+            with patch.object(notify, "notify", side_effect=RuntimeError("no tray")):
+                job_manager._notify_finished("j1", STATE_DONE)
+        posted.assert_called_once()
+
+    def test_turning_notifications_off_stops_the_chat_message_as_well(self):
+        self.store.set_pref("notify_webhook", "https://hooks.slack.com/services/T/B/x")
+        self.store.set_pref("notify_on_finish", False)
+        with patch.object(self.webhook, "post_async") as posted:
+            job_manager._notify_finished("j1", STATE_DONE)
+        posted.assert_not_called()
+
+    def test_a_webhook_that_explodes_is_not_an_error(self):
+        self.store.set_pref("notify_webhook", "https://hooks.slack.com/services/T/B/x")
+        with patch.object(self.webhook, "post_async", side_effect=RuntimeError("boom")):
+            with patch.object(notify, "notify", return_value=True):
+                job_manager._notify_finished("j1", STATE_DONE)
+
+
 class TestTheNotifierItself(unittest.TestCase):
     def tearDown(self):
         notify.shutdown()

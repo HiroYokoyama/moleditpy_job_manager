@@ -617,6 +617,14 @@ class JobsDialog(QDialog):
             lambda checked: self.service.store.set_pref("notify_on_finish", bool(checked))
         )
         actions.addWidget(self.chk_notify)
+
+        self.btn_chat = QPushButton("Chat alerts...")
+        self.btn_chat.setToolTip(
+            "Also post to Slack, Discord or Teams when a job ends, so the news "
+            "reaches you away from this machine."
+        )
+        self.btn_chat.clicked.connect(self._edit_chat_webhook)
+        actions.addWidget(self.btn_chat)
         actions.addStretch(1)
         layout.addLayout(actions)
 
@@ -661,6 +669,12 @@ class JobsDialog(QDialog):
         if not enabled:
             clear_badge()
         self.service.jobs_changed.emit()
+
+    def _edit_chat_webhook(self) -> None:
+        from .chat_webhook_dialog import ChatWebhookDialog
+
+        dialog = ChatWebhookDialog(self.service.store, self, pool=self.service.pool)
+        dialog.exec()
 
     # --- helpers ------------------------------------------------------------
 
