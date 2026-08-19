@@ -543,15 +543,22 @@ is told to hold it:
 
 | Scheduler | Mechanism |
 |---|---|
-| SLURM | `#SBATCH --begin=2026-08-07T22:00:00` |
+| SLURM | `#SBATCH --begin=now+3600` |
 | PBS / Torque | `#PBS -a 202608072200.00` |
 | SGE / UGE | `#$ -a 202608072200.00` |
 | None (background) | the wrapper sleeps until that moment |
 
 Useful for a nightly window, or for staying off a shared workstation during the
-day. The no-queue wait compares epoch seconds, so a machine in another timezone
-still starts at the instant you meant. Chaining and a start time can be combined:
-"after that job, and not before 10 pm".
+day. Chaining and a start time can be combined: "after that job, and not before
+10 pm".
+
+**Timezones.** The no-queue wait compares epoch seconds, and SLURM is told a
+delay rather than a clock time, so both start at the instant you meant however
+the cluster's clock is set. PBS and SGE have no relative form: their `-a` stamp
+carries no timezone and the server reads it in *its* local time, so if the
+cluster does not keep the same time as this machine, a start time on those two
+is out by the difference. Give the time in the cluster's timezone there, or use
+a chain instead.
 
 ## 4. Watch
 

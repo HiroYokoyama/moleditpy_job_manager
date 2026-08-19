@@ -67,7 +67,10 @@ class SlurmScheduler(Scheduler):
         return lines
 
     def submit_command(self, script_name: str, log_file: str) -> str:
-        return f"sbatch --parsable {script_name}"
+        # Quoted like every other name that reaches a remote command line;
+        # shell.py already does, and safe_relative_name -- which is what a
+        # script name is filtered through -- permits spaces and semicolons.
+        return f"sbatch --parsable {quote(script_name)}"
 
     def parse_submit_output(self, stdout: str, stderr: str) -> str:
         text = (stdout or "").strip()
@@ -100,8 +103,15 @@ class SlurmScheduler(Scheduler):
         target = int(start_after or 0)
         if target <= 0:
             return []
-        stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(target))
-        return [f"#SBATCH --begin={stamp}"]
+        # Relative, not a wall-clock stamp. A stamp carries no timezone, and
+        # slurmctld reads it in the *cluster's* local time -- so "start at 9pm"
+        # chosen in Tokyo started the job at 9pm UTC, nine hours out, on every
+        # cluster that keeps UTC. `now+N` is evaluated by the controller at the
+        # moment of submission, which is this same instant however either clock
+        # is set, so the offset cancels. The no-queue wrapper compares epoch
+        # seconds for exactly this reason; this is the queue's spelling of it.
+        delay = max(0, target - int(time.time()))
+        return [f"#SBATCH --begin=now+{delay}"]
 
     def dependency_directives(self, after_id: str, any_outcome: bool = False) -> List[str]:
         after_id = str(after_id or "").strip()

@@ -107,6 +107,9 @@ class OutputFileSelectorDialog(QDialog):
         self.job = job
         self.on_open_callback = on_open_callback
         self._all_items: List[QTreeWidgetItem] = []
+        #: (signal, handler) pairs a download in progress has connected on the
+        #: service, which outlives this window. See :meth:`_disconnect_download`.
+        self._pending: List[tuple] = []
 
         self.setWindowTitle(f"Job Manager {PLUGIN_VERSION} - Open Result: {job.name}")
         apply_theme(self)
@@ -468,7 +471,29 @@ class OutputFileSelectorDialog(QDialog):
             return
         self._download_and_open(item, data)
 
+    def _disconnect_download(self) -> None:
+        """Drop the handlers a pending download left connected. Safe to repeat.
+
+        The service outlives this window by design, so a handler still attached
+        when the dialog closes is a closure holding a deleted widget: the next
+        download of this job called setEnabled on it and took the application
+        down with it. Nothing disconnected them on any path where neither
+        signal arrived -- a refused download, or the window simply being shut.
+        """
+        for signal, handler in self._pending or []:
+            try:
+                signal.disconnect(handler)
+            except TypeError:
+                # Already disconnected by whichever handler ran first.
+                pass
+        self._pending = []
+
     def _download_and_open(self, item: QTreeWidgetItem, remote_name: str) -> None:
+        # One at a time: a double-click reaches this while the button that
+        # would have blocked it is disabled, and the second call's handlers
+        # then waited on a download the service had already refused.
+        if self._pending:
+            return
         self.btn_open.setEnabled(False)
         self.lbl_status.setText(f"Downloading {remote_name}...")
         job_id = self.job.id
@@ -476,8 +501,7 @@ class OutputFileSelectorDialog(QDialog):
         def on_ready(finished_id, paths) -> None:
             if finished_id != job_id:
                 return
-            self.service.results_ready.disconnect(on_ready)
-            self.service.error.disconnect(on_error)
+            self._disconnect_download()
             self.btn_open.setEnabled(True)
             wanted = remote_name.replace("\\", "/").strip("/")
             local_root = self.job.local_dir or ""
@@ -507,14 +531,22 @@ class OutputFileSelectorDialog(QDialog):
             # signal -- the job's own name in the message is what ties it back.
             if self.job.name not in (msg or ""):
                 return
-            self.service.results_ready.disconnect(on_ready)
-            self.service.error.disconnect(on_error)
+            self._disconnect_download()
             self.btn_open.setEnabled(True)
             self.lbl_status.setText(f"Could not download {remote_name}: {msg}")
 
         self.service.results_ready.connect(on_ready)
         self.service.error.connect(on_error)
-        self.service.download(self.job, names=[remote_name])
+        self._pending = [(self.service.results_ready, on_ready), (self.service.error, on_error)]
+        if not self.service.download(self.job, names=[remote_name]):
+            # Refused, so neither handler will ever fire: an auto-download for
+            # this job was already running. Put the window back rather than
+            # leaving it reading "Downloading..." for good.
+            self._disconnect_download()
+            self.btn_open.setEnabled(True)
+            self.lbl_status.setText(
+                f"{self.job.name} is already downloading; try again when it has finished."
+            )
 
     def _on_selection_changed(self) -> None:
         item = self.tree.currentItem()
@@ -557,6 +589,21 @@ class OutputFileSelectorDialog(QDialog):
                 "No local directory has been created for this job yet.\n"
                 "Open a file or download results first.",
             )
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt's spelling
+        self._disconnect_download()
+        # Accepted rather than delegated: QDialog's own closeEvent calls
+        # reject(), which tears down as well, and doing both would recurse.
+        event.accept()
+
+    def reject(self) -> None:
+        # Esc and the Close button both come through here with no closeEvent.
+        self._disconnect_download()
+        super().reject()
+
+    def accept(self) -> None:
+        self._disconnect_download()
+        super().accept()
 
 
 __all__ = ["OutputFileSelectorDialog", "describe_file_type", "format_file_size"]

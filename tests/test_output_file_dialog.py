@@ -11,6 +11,7 @@ import pytest
 
 pytest.importorskip("PyQt6")
 
+from PyQt6.QtCore import QObject, pyqtSignal
 from PyQt6.QtWidgets import QApplication
 
 from job_manager.models import Job, new_id
@@ -285,3 +286,93 @@ class TestOutputFileSelectorDialog(unittest.TestCase):
         existing = dialog._get_existing_local_files()
         self.assertIn(os.path.normpath(my_output), [os.path.normpath(p) for p in existing])
         self.assertNotIn(os.path.normpath(other_file), [os.path.normpath(p) for p in existing])
+
+
+class _FakeService(QObject):
+    """Just enough service to hold real signals the dialog can connect to.
+
+    A MagicMock cannot answer "is anything still connected?", which is the
+    whole question here: the service outlives this window, so a handler left
+    attached is a closure holding a deleted widget.
+    """
+
+    results_ready = pyqtSignal(str, list)
+    error = pyqtSignal(str)
+    message = pyqtSignal(str)
+
+    def __init__(self, started: bool = True) -> None:
+        super().__init__()
+        self.started = started
+        self.calls: list = []
+        # The dialog asks for the host to work out an equal-path mirror.
+        self.store = MagicMock()
+        self.store.hosts.get.return_value = None
+        # With no local files the dialog offers to list the host; nothing here
+        # is testing that, so it is answered with an empty listing.
+        self.list_remote_results = MagicMock()
+
+    def download(self, job, into: str = "", names=None) -> bool:
+        self.calls.append(names)
+        return self.started
+
+
+class TestAPendingDownloadIsNotLeftConnected(unittest.TestCase):
+    """The service outlives the window; a handler that survives it fires into
+    a deleted widget the next time this job downloads."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.job = Job(
+            id=new_id(),
+            name="benzene_opt",
+            host_id="h1",
+            remote_dir="/scratch/user/benzene_opt",
+            local_dir=self.temp_dir,
+        )
+
+    def tearDown(self):
+        import shutil
+
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def dialog(self, service):
+        dlg = OutputFileSelectorDialog(service, self.job)
+        self.addCleanup(dlg.deleteLater)
+        return dlg
+
+    def test_closing_mid_download_disconnects(self):
+        service = _FakeService()
+        dlg = self.dialog(service)
+        dlg._download_and_open(None, "benzene.out")
+        self.assertTrue(dlg._pending)
+
+        dlg.reject()
+
+        self.assertFalse(dlg._pending)
+        # Nothing left listening: emitting must not reach the closed window.
+        service.results_ready.emit(self.job.id, [])
+        service.error.emit(f"{self.job.name} exploded")
+
+    def test_a_refused_download_does_not_strand_the_window(self):
+        # download() returns False when one is already running for this job,
+        # and neither signal ever arrives -- so the window sat on
+        # "Downloading..." with Open disabled for the rest of the session.
+        service = _FakeService(started=False)
+        dlg = self.dialog(service)
+
+        dlg._download_and_open(None, "benzene.out")
+
+        self.assertFalse(dlg._pending)
+        self.assertTrue(dlg.btn_open.isEnabled())
+        self.assertIn("already downloading", dlg.lbl_status.text())
+
+    def test_a_second_request_does_not_stack_another_pair(self):
+        # A double-click reaches _open_item while btn_open is disabled.
+        service = _FakeService()
+        dlg = self.dialog(service)
+
+        dlg._download_and_open(None, "benzene.out")
+        dlg._download_and_open(None, "benzene.out")
+
+        self.assertEqual(len(dlg._pending), 2)
+        self.assertEqual(len(service.calls), 1)

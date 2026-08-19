@@ -446,6 +446,25 @@ class SubmitDialog(QDialog):
             f"Will copy {', '.join(resolved)} from {job.name}." if resolved else ""
         )
 
+    @staticmethod
+    def _files_with_relay_tags(paths: Sequence[str]) -> List[str]:
+        """Those of ``paths`` still carrying an unresolved ``[prevfile]`` tag.
+
+        Read rather than assumed: a file that cannot be opened is not reported,
+        because refusing to submit over a permissions error would be worse than
+        the tag it might not even contain.
+        """
+        found: List[str] = []
+        for path in paths or []:
+            try:
+                with open(path, "r", encoding="utf-8", errors="replace") as handle:
+                    text = handle.read()
+            except OSError:
+                continue
+            if structure_relay.find_tags(text):
+                found.append(path)
+        return found
+
     def remote_dir(self) -> str:
         """The host directory to run in, or "" for a new one per job."""
         if not self.box_remote.isChecked():
@@ -1420,6 +1439,24 @@ class SubmitDialog(QDialog):
             return
         if not ensure_password(self.service, host, self):
             return
+        # Above the batch branch, not beside the relay one: batch mode excludes
+        # the relay box altogether, so every tagged file in a batch shipped
+        # verbatim with nothing to substitute it. Unticked, the tag reaches the
+        # host as a literal filename and the program reads "[prevfile:.xyz]" --
+        # nothing failed until the calculation did, an hour later on the
+        # cluster. This is also the path Resubmit takes, since it reopens the
+        # wizard on the original file rather than on the substituted copy.
+        if not self.box_relay.isChecked() and self._files_with_relay_tags(files):
+            QMessageBox.warning(
+                self,
+                "Submit",
+                "This input still contains a "
+                f"{structure_relay.TAG_RE.pattern} tag, which only means "
+                "something when a file is being reused from a previous job.\n\n"
+                "Tick 'Reuse a file from a previous job' and choose that job, "
+                "or edit the tag out of the input.",
+            )
+            return
         if batch:
             self._submit_batch(host, preset, files)
             self.accept()
@@ -1427,6 +1464,7 @@ class SubmitDialog(QDialog):
         relay_source_dir = ""
         relay_filenames: List[str] = []
         relay_job: Optional[Job] = None
+        upload_files: Optional[List[str]] = None
         if self.box_relay.isChecked():
             # Original paths are what the duplicate check above just looked
             # at; the substituted copies -- same basenames, a resolved
@@ -1447,7 +1485,10 @@ class SubmitDialog(QDialog):
                         for filename in structure_relay.relay_plan(handle.read(), relay_job):
                             if filename not in relay_filenames:
                                 relay_filenames.append(filename)
-                files = [structure_relay.materialize(path, relay_job) for path in files]
+                # Uploaded instead of the originals, but the job still belongs
+                # to the files the user picked: recording these scratch copies
+                # as its input put the results beside *them*, in a temp folder.
+                upload_files = [structure_relay.materialize(path, relay_job) for path in files]
             except (structure_relay.StructureRelayError, OSError) as exc:
                 QMessageBox.warning(self, "Submit", str(exc))
                 return
@@ -1474,6 +1515,7 @@ class SubmitDialog(QDialog):
             relay_filenames=relay_filenames,
             remote_dir=remote_dir,
             remote_input=self.remote_input(),
+            upload_files=upload_files,
         )
         self._remember(host, preset)
         self.accept()

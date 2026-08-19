@@ -127,6 +127,7 @@ class JobService(QObject):
         remote_input: str = "",
         relay_source_dir: str = "",
         relay_filenames: Optional[List[str]] = None,
+        upload_files: Optional[List[str]] = None,
     ) -> Job:
         """Create the job record and start the upload/submit on a worker.
 
@@ -144,6 +145,13 @@ class JobService(QObject):
         job's own directory into this one's before anything runs -- a
         checkpoint or geometry that job produced, reused here with nothing
         downloaded to this machine and re-uploaded.
+
+        ``upload_files`` is what actually goes to the host, when that is not
+        the same thing as ``local_files``: a relay uploads a substituted copy
+        written to a temp directory, while the job still belongs to the file
+        the user chose. Recording the copies instead put the job's results in
+        a temp folder -- ``_local_dir_for`` sits them beside their input --
+        and left Resubmit pointing at a scratch path.
         """
         job = Job(
             name=name or self._default_name(local_files, remote_input, remote_dir),
@@ -165,6 +173,9 @@ class JobService(QObject):
         job.touch(STATE_UPLOADING)
         self.store.add_job(job)
         self.jobs_changed.emit()
+        # The originals unless the caller says otherwise; the basename is the
+        # same either way, so {input} means the same thing for both.
+        to_upload = list(upload_files) if upload_files else list(local_files)
 
         def work() -> Job:
             # Resolved here, not at dispatch: submitting twice in quick
@@ -188,7 +199,7 @@ class JobService(QObject):
                         host,
                         preset,
                         job,
-                        local_files,
+                        to_upload,
                         after_job=after_job,
                         relay_source_dir=relay_source_dir,
                         relay_filenames=relay_filenames or (),
@@ -198,7 +209,7 @@ class JobService(QObject):
                     host,
                     preset,
                     job,
-                    local_files,
+                    to_upload,
                     run_after=run_after,
                     start_after=job.start_after,
                     run_after_any=job.chain_any,
@@ -374,21 +385,27 @@ class JobService(QObject):
 
         run_async(self.pool, work, on_success=on_ok, on_error=on_error)
 
-    def download(self, job: Job, into: str = "", names: Optional[Sequence[str]] = None) -> None:
+    def download(self, job: Job, into: str = "", names: Optional[Sequence[str]] = None) -> bool:
         """Fetch the job's outputs; emits ``results_ready`` when they land.
 
         ``into`` is the folder the user picked for this download. Without it,
         the automatic choice applies: beside the input, or the shared download
         folder. A chosen folder is remembered on the job, so Open Result and a
         second download go to the same place.
+
+        Returns whether a download actually started. It does not when one is
+        already running for this job, and a caller that had wired itself to
+        ``results_ready`` for the answer would otherwise wait for a signal that
+        is never coming -- which is how the Open Result window sat on
+        "Downloading..." with its button disabled for the rest of the session.
         """
         host = self.store.hosts.get(job.host_id)
         if host is None:
             self.error.emit(f"Host profile for {job.name} no longer exists")
-            return
+            return False
         if job.id in self._downloads_in_flight:
             self.message.emit(f"Download already in progress for {job.name}")
-            return
+            return False
         self._downloads_in_flight.add(job.id)
         previous_state = job.state
         local_dir = into or job.local_dir or self._local_dir_for(job.name, job.input_files)
@@ -424,6 +441,7 @@ class JobService(QObject):
             self.error.emit(f"Download failed: {message}")
 
         run_async(self.pool, work, on_success=done, on_error=failed)
+        return True
 
     def fetch_file_to_cache(self, job: Job, filename: str, on_ok, on_error) -> None:
         """Fetch one remote file into a local temporary cache directory."""

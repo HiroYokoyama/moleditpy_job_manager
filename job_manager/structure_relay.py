@@ -191,10 +191,16 @@ def materialize(local_path: str, job: Job) -> str:
         raise StructureRelayError(f"Could not read {local_path}: {exc}") from exc
     filled = substitute_paths(text, job)
 
-    directory = os.path.join(
-        tempfile.gettempdir(), RELAY_DIRNAME, f"{int(time.time())}_{os.getpid()}"
-    )
-    os.makedirs(directory, exist_ok=True)
+    # One directory per call, not one per second per process. Keyed on the
+    # clock and the pid, two files materialised in the same second shared a
+    # directory -- and two inputs with the same basename, which is the ordinary
+    # case for a job assembled from several folders, resolved to one path: the
+    # second overwrote the first, and the job uploaded that one twice under
+    # both names. The timestamp stays in the prefix, because the directory is
+    # deliberately never cleaned up and wants to be readable by hand.
+    root = os.path.join(tempfile.gettempdir(), RELAY_DIRNAME)
+    os.makedirs(root, exist_ok=True)
+    directory = tempfile.mkdtemp(prefix=f"{int(time.time())}_{os.getpid()}_", dir=root)
     target = os.path.join(directory, os.path.basename(local_path))
     try:
         with open(target, "w", encoding="utf-8", newline="\n") as handle:

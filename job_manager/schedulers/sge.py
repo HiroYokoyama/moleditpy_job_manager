@@ -73,7 +73,9 @@ class SgeScheduler(Scheduler):
         return lines
 
     def submit_command(self, script_name: str, log_file: str) -> str:
-        return f"qsub {script_name}"
+        # Quoted for the reason cancel_command gives: safe_relative_name
+        # permits spaces and semicolons, and this string is run by a shell.
+        return f"qsub {quote(script_name)}"
 
     def parse_submit_output(self, stdout: str, stderr: str) -> str:
         match = _SUBMIT_RE.search(f"{stdout}\n{stderr}")
@@ -97,6 +99,12 @@ class SgeScheduler(Scheduler):
         if target <= 0:
             return []
         # SGE -a takes [[CC]YY]MMDDhhmm[.SS].
+        #
+        # Known limitation, the same one pbs.py records: the stamp carries no
+        # timezone and the qmaster reads it in its own local time, so a start
+        # time is out by the difference between the two clocks. SGE has no
+        # relative form either; fixing it properly means asking the host for
+        # its UTC offset at submit time.
         return [f"#$ -a {time.strftime('%Y%m%d%H%M.%S', time.localtime(target))}"]
 
     def dependency_directives(self, after_id: str, any_outcome: bool = False) -> List[str]:

@@ -161,14 +161,52 @@ class TestSubmittingWithARelay(DialogTestCase):
 
         dialog._submit()
 
-        # Not next(iter(...)): the store also holds the relay source job
-        # ("opt") from self.source_job(), inserted first.
+        # What reached the host, not what the job says its input was: those are
+        # deliberately different now. The substituted copy is uploaded; the job
+        # still belongs to the file the user picked, so its results land beside
+        # that one instead of in a temp folder.
+        remote = next(path for path in self.transport.uploaded_text if path.endswith("run.inp"))
+        self.assertEqual(self.transport.uploaded_text[remote], "%oldchk=opt.chk\n# hi\n")
+
+    def test_the_job_records_the_users_own_file_not_the_scratch_copy(self):
+        # _local_dir_for sits a job's results beside its input, so recording
+        # the substituted copy put every relayed job's results in a temp
+        # directory -- and left Resubmit pointing at a scratch path.
+        self.source_job()
+        template = self.make_input("run.inp")
+        with open(template, "w", encoding="utf-8") as handle:
+            handle.write("%oldchk=[prevfile:.chk]\n")
+
+        dialog = self.dialog()
+        dialog.add_files([template])
+        dialog.txt_command.setText("g16 {input} > {stem}.log")
+        dialog.box_relay.setChecked(True)
+        self.select_source(dialog, "opt")
+
+        dialog._submit()
+
         job = next(j for j in self.store.jobs.values() if j.id != "opt-id")
-        uploaded = job.input_files[0]
-        self.assertNotEqual(uploaded, template)
-        self.assertEqual(os.path.basename(uploaded), "run.inp")
-        text = open(uploaded, encoding="utf-8").read()
-        self.assertEqual(text, "%oldchk=opt.chk\n# hi\n")
+        self.assertEqual(job.input_files, [template])
+        self.assertEqual(job.local_dir, os.path.dirname(template))
+
+    def test_a_tag_left_in_with_the_box_unticked_is_refused(self):
+        # Unticked, the tag went to the host verbatim and the program read a
+        # filename of "[prevfile:.chk]" -- nothing failed until the calculation
+        # did, an hour later on the cluster.
+        template = self.make_input("run.inp")
+        with open(template, "w", encoding="utf-8") as handle:
+            handle.write("%oldchk=[prevfile:.chk]\n")
+
+        dialog = self.dialog()
+        dialog.add_files([template])
+        dialog.txt_command.setText("g16 {input} > {stem}.log")
+        self.assertFalse(dialog.box_relay.isChecked())
+
+        with patch("job_manager.submit_dialog.QMessageBox.warning") as warned:
+            dialog._submit()
+
+        warned.assert_called_once()
+        self.assertEqual(self.store.jobs, {})
 
     def test_the_original_file_on_disk_is_never_changed(self):
         self.source_job()

@@ -62,7 +62,9 @@ class PbsScheduler(Scheduler):
         return lines
 
     def submit_command(self, script_name: str, log_file: str) -> str:
-        return f"qsub {script_name}"
+        # Quoted for the reason cancel_command gives: safe_relative_name
+        # permits spaces and semicolons, and this string is run by a shell.
+        return f"qsub {quote(script_name)}"
 
     def parse_submit_output(self, stdout: str, stderr: str) -> str:
         for line in (stdout or "").splitlines():
@@ -96,6 +98,15 @@ class PbsScheduler(Scheduler):
         if target <= 0:
             return []
         # PBS -a takes [[[[CC]YY]MM]DD]hhmm[.SS], not an ISO timestamp.
+        #
+        # Known limitation: that stamp carries no timezone and the server reads
+        # it in *its* local time, so a start time chosen here lands wrong by the
+        # difference between the two clocks. SLURM avoids this with `now+N`;
+        # PBS has no relative form, and the only correct fix is to learn the
+        # host's UTC offset at submit time -- a round trip this deliberately
+        # does not spend without being asked. Writing the local stamp is what
+        # a user typing `qsub -a` by hand would get, so it is at least the
+        # behaviour the site's own documentation describes.
         return [f"#PBS -a {time.strftime('%Y%m%d%H%M.%S', time.localtime(target))}"]
 
     def dependency_directives(self, after_id: str, any_outcome: bool = False) -> List[str]:

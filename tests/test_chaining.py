@@ -133,8 +133,20 @@ class TestScheduledStart(unittest.TestCase):
         )
 
     def test_slurm_uses_begin(self):
-        expected = time.strftime("#SBATCH --begin=%Y-%m-%dT%H:%M:%S", self.stamp)
-        self.assertIn(expected, self.script("slurm"))
+        # A delay, not a wall-clock stamp: slurmctld reads a bare stamp in the
+        # cluster's own timezone, so a time chosen here landed hours out on a
+        # cluster keeping UTC. `now+N` is evaluated at submission, so whatever
+        # either clock says, the offset cancels.
+        script = self.script("slurm")
+        self.assertRegex(script, r"#SBATCH --begin=now\+\d+")
+        self.assertNotIn(time.strftime("--begin=%Y-%m-%d", self.stamp), script)
+
+    def test_the_slurm_delay_is_measured_to_the_requested_moment(self):
+        delay = int(
+            get_scheduler("slurm").start_time_directives(time.time() + 3600)[0].split("now+")[1]
+        )
+        # Computed against the clock, so allow for the seconds this test takes.
+        self.assertAlmostEqual(delay, 3600, delta=30)
 
     def test_pbs_uses_its_own_timestamp_format(self):
         # -a takes [[[[CC]YY]MM]DD]hhmm[.SS], not ISO.
