@@ -1698,6 +1698,35 @@ def pick_primary_result(paths: List[str], log_file: str = "") -> str:
     return primary_output(paths, log_file) or (paths or [""])[0]
 
 
+def clear_document(main_window) -> bool:
+    """Empty the editor so a result opens onto a clean canvas.
+
+    Which of the two things used to happen depended entirely on the file's
+    extension. The built-in loaders for .xyz and .mol clear the whole document
+    themselves -- and with the unsaved-changes check skipped, so an auto-open
+    after a download threw away work with no prompt. A result claimed by an
+    analyzer plugin instead (.out, .log) cleared nothing, so the previous
+    molecule stayed on the 2D canvas beside a 3D view of the new one, two
+    different structures presented as one document.
+
+    Cleared here for every route, and *with* the check: the host asks about
+    unsaved work as it would for File > New, and answering Cancel leaves both
+    the document and the result alone.
+
+    Returns True when the document is clear -- including when this host is too
+    old to have the manager, where the openers behave exactly as they did.
+    """
+    manager = getattr(main_window, "edit_actions_manager", None)
+    clear = getattr(manager, "clear_all", None)
+    if not callable(clear):
+        return True
+    try:
+        return clear() is not False
+    except Exception:
+        logging.debug("Job Manager: the document was not cleared", exc_info=True)
+        return True
+
+
 def open_in_host(path: str) -> bool:
     """Route a downloaded file through the application's own file openers.
 
@@ -1705,6 +1734,8 @@ def open_in_host(path: str) -> bool:
     registered plugin file openers by priority (that is how the ORCA Result
     Analyzer claims ``.out``) before falling back to the built-in loaders --
     so no analyzer plugin needs to be hard-coded here.
+
+    The document is cleared first -- see :func:`clear_document`.
     """
     from . import get_context
 
@@ -1715,6 +1746,9 @@ def open_in_host(path: str) -> bool:
         main_window = context.get_main_window()
     except Exception:
         logging.debug("Job Manager: no main window available", exc_info=True)
+        return False
+
+    if not clear_document(main_window):
         return False
 
     init_manager = getattr(main_window, "init_manager", None)

@@ -138,6 +138,46 @@ class TestOpenInHost(unittest.TestCase):
         with patch("job_manager.get_context", return_value=context):
             self.assertFalse(open_in_host(self.path))
 
+    def test_the_document_is_cleared_before_the_result_arrives(self):
+        # A result claimed by an analyzer plugin cleared nothing, so the
+        # molecule from before the job stayed on the 2D canvas beside a 3D view
+        # of the result -- two structures shown as one document.
+        context = MagicMock()
+        main_window = context.get_main_window.return_value
+        order = []
+        main_window.edit_actions_manager.clear_all.side_effect = lambda: order.append("clear")
+        main_window.init_manager.load_command_line_file.side_effect = lambda p: order.append("open")
+        with patch("job_manager.get_context", return_value=context):
+            self.assertTrue(open_in_host(self.path))
+        self.assertEqual(order, ["clear", "open"])
+
+    def test_cancelling_the_unsaved_prompt_opens_nothing(self):
+        # clear_all() returns False when the user cancelled at the host's
+        # unsaved-changes prompt; their work stays and so does the view.
+        context = MagicMock()
+        main_window = context.get_main_window.return_value
+        main_window.edit_actions_manager.clear_all.return_value = False
+        with patch("job_manager.get_context", return_value=context):
+            self.assertFalse(open_in_host(self.path))
+        main_window.init_manager.load_command_line_file.assert_not_called()
+
+    def test_a_host_that_cannot_clear_still_opens_the_result(self):
+        # An older host without the manager behaves exactly as it did.
+        context = MagicMock()
+        main_window = context.get_main_window.return_value
+        main_window.edit_actions_manager = None
+        with patch("job_manager.get_context", return_value=context):
+            self.assertTrue(open_in_host(self.path))
+        main_window.init_manager.load_command_line_file.assert_called_once_with(self.path)
+
+    def test_a_failing_clear_does_not_stop_the_result(self):
+        context = MagicMock()
+        main_window = context.get_main_window.return_value
+        main_window.edit_actions_manager.clear_all.side_effect = RuntimeError("no scene")
+        with patch("job_manager.get_context", return_value=context):
+            self.assertTrue(open_in_host(self.path))
+        main_window.init_manager.load_command_line_file.assert_called_once_with(self.path)
+
 
 class TestJobTableModel(DialogTestCase):
     def setUp(self):

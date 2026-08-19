@@ -658,6 +658,12 @@ handed to the application's file openers, which is how ORCA Result Analyzer and
 the Gaussian analyzers pick it up. Untick **Open results automatically** if you
 would rather do that yourself.
 
+Opening a result clears the editor first, so what you are looking at is the
+result and nothing else — the molecule you submitted does not stay on the 2D
+canvas beside a 3D view of what came back. You are asked about unsaved work
+exactly as **File > New** would ask, and answering Cancel leaves both your
+document and the result alone.
+
 **Tail Log** reads the last 200 lines of the running job's log without
 downloading anything.
 
