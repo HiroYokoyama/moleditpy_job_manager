@@ -39,6 +39,7 @@ from job_manager.remote_runner import (
 )
 
 from .bash_support import bash_path, find_bash
+from .runner_support import kill_dispatched_jobs
 
 BASH = find_bash()
 
@@ -80,6 +81,7 @@ class RunnerHarness(unittest.TestCase):
                 pass
             if process.stderr:
                 process.stderr.close()
+        kill_dispatched_jobs(self.dir)
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     # --- driving it ---------------------------------------------------------

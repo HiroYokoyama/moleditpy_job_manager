@@ -42,6 +42,8 @@ from job_manager.remote_runner_ps import (
     store_version_command,
 )
 
+from .runner_support import kill_dispatched_jobs
+
 POWERSHELL = shutil.which("pwsh") or shutil.which("powershell")
 
 #: The runner is Windows-only by construction -- it builds `running\entry`
@@ -83,6 +85,7 @@ class RunnerHarness(unittest.TestCase):
                 pass
             if process.stderr:
                 process.stderr.close()
+        kill_dispatched_jobs(self.dir)
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     @staticmethod
