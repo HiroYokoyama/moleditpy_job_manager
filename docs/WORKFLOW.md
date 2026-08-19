@@ -638,14 +638,28 @@ not know.
 
 Paste the URL into **Chat alerts...** and press **Send a test message**: the
 answer appears under the field, so a wrong URL is found now rather than when a
-job ends at three in the morning. Press **OK** to keep it; clear the field to
-stop sending. What is sent is one line — the job's name, what became of it, and
-the host it ran on. The URL is a password in effect: anyone holding it can post
-to that room, and it is stored in `~/.moleditpy/job_manager/settings.json` in
-the clear, so use a webhook you can revoke in the workspace.
+job ends at three in the morning. Press **OK** to keep it, then tick **Post to
+chat** beside the button.
 
-The message goes out only when **Notify me when a job ends** is ticked: the
-checkbox is the switch for being told at all, and the webhook is where.
+Saving a URL never starts the posting by itself — sending a job's name and the
+host it ran on off this machine is a decision to make deliberately, so it is
+off until that tick. Untick it to pause for a while without losing the URL;
+clear the URL to stop entirely. It cannot be ticked before a room is set,
+because a tick with nothing behind it would claim messages are going out while
+none are. Both live in the monitor's preference row next to
+**Notify me when a job ends**, which remains the switch for being told at all —
+untick that and neither the desktop nor the room hears anything.
+
+Every ending is reported, not just the happy one: *finished*, *failed*,
+*was cancelled*, and *disappeared from the queue* all arrive, which is what
+makes the phone worth reaching for at all. What is sent is one line — the job's
+name, what became of it, and the host it ran on. A submission that fails
+outright is not among them: that happens while you are still in the wizard, and
+it is shown there.
+
+The URL is a password in effect: anyone holding it can post to that room, and
+it is stored in `~/.moleditpy/job_manager/settings.json` in the clear, so use a
+webhook you can revoke in the workspace.
 
 ### Hosts at work
 

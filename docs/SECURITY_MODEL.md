@@ -33,6 +33,7 @@ Everything lives in `~/.moleditpy/job_manager/`, outside the plugin folder.
 | presets | queue, walltime, modules, command template | no |
 | `command_templates` | your saved command lines | no |
 | `notify_webhook` | `https://hooks.slack.com/services/...` | **in effect, yes** |
+| `notify_chat` | `true` — a *flag* meaning "use that webhook" | no |
 
 The chat webhook is the one field here that acts as a credential: anyone
 holding that URL can post to the room. It is stored in the clear, like the rest

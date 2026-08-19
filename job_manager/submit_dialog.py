@@ -64,6 +64,14 @@ INPUT_FILTER = ";;".join(INPUT_FILTERS)
 RELAY_TITLE = "Reuse another job's file"
 BATCH_TEXT = "Submit each file as its own job"
 
+#: What an unticked panel says in place of its own status line. Qt greys the
+#: contents of a checkable group box until its title is ticked, which reads as
+#: "this is unavailable to you" rather than "switch this on" -- especially on
+#: the submit wizard, where the box below it really is disabled and captioned
+#: with a reason. So each of them says which it is.
+REMOTE_HINT = "Tick the box above to run in a directory that is already on the host."
+RELAY_HINT = "Tick the box above to copy a file in from another job on this host."
+
 #: Dropdown entries that are actions rather than templates.
 _SAVE_TEMPLATE = object()
 _DELETE_TEMPLATE = object()
@@ -333,7 +341,7 @@ class SubmitDialog(QDialog):
         self.txt_remote_input.setToolTip(
             "A file in that directory, which {input} and {stem} then stand for. Optional."
         )
-        self.lbl_remote = QLabel("")
+        self.lbl_remote = QLabel(REMOTE_HINT)
         self.lbl_remote.setWordWrap(True)
         self.lbl_remote.setStyleSheet("color: palette(mid);")
 
@@ -357,8 +365,10 @@ class SubmitDialog(QDialog):
         return box
 
     def _on_remote_toggled(self, checked: bool) -> None:
-        if not checked:
-            self.lbl_remote.setText("")
+        # Cleared on the way in as well as restored on the way out: the label is
+        # where Check writes what it found in the directory, and the hint would
+        # otherwise sit there until it did.
+        self.lbl_remote.setText("" if checked else REMOTE_HINT)
         self._update_batch_row()
         self._update_relay_row()
         self._refresh_preview()
@@ -443,6 +453,11 @@ class SubmitDialog(QDialog):
             self.box_relay.blockSignals(True)
             self.box_relay.setChecked(False)
             self.box_relay.blockSignals(False)
+        if not self.box_relay.isChecked():
+            # Usable but not ticked looks identical to unusable otherwise: both
+            # are a panel of dead fields. The title carries the reason when
+            # there is one, so this only speaks when there is not.
+            self.lbl_relay_status.setText(RELAY_HINT if allowed else "")
 
     def _on_relay_toggled(self, checked: bool) -> None:
         if checked:

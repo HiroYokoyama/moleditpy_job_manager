@@ -108,6 +108,10 @@ DEFAULT_PREFS: Dict[str, Any] = {
     #: takes a JSON POST. Empty by default: a job's name and host leave this
     #: machine only once somebody has pasted a room's URL in on purpose.
     "notify_webhook": "",
+    #: Whether to use it. Separate from the URL so that pausing the chat
+    #: messages for a week does not mean deleting a webhook that then has to be
+    #: fetched out of the workspace again; off until a URL is actually set.
+    "notify_chat": False,
     "last_input_dir": "",
     #: Which file type the input picker opens on. Empty means the first one.
     "input_filter": "",

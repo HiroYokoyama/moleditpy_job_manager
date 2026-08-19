@@ -120,6 +120,32 @@ class TestSaving(ChatDialogTestCase):
         dialog.accept()
         self.assertEqual(self.store.get_pref("notify_webhook"), "")
 
+    def test_setting_a_room_up_does_not_start_posting_by_itself(self):
+        # Off until it is ticked. Configuring a room is not the same statement
+        # as agreeing to send a job's name and host to it.
+        dialog = self.dialog()
+        dialog.edit_url.setText(SLACK_URL)
+        dialog.accept()
+        self.assertFalse(self.store.get_pref("notify_chat"))
+
+    def test_clearing_the_room_turns_them_off(self):
+        self.store.set_pref("notify_webhook", SLACK_URL)
+        self.store.set_pref("notify_chat", True)
+        dialog = self.dialog()
+        dialog.edit_url.setText("")
+        dialog.accept()
+        self.assertFalse(self.store.get_pref("notify_chat"))
+
+    def test_re_opening_the_window_does_not_undo_a_pause(self):
+        # The tick is the pause switch: merely looking at the URL again, or
+        # correcting a typo in it, must not switch the messages back on.
+        self.store.set_pref("notify_webhook", SLACK_URL)
+        self.store.set_pref("notify_chat", False)
+        dialog = self.dialog()
+        dialog.edit_url.setText(SLACK_URL + "y")
+        dialog.accept()
+        self.assertFalse(self.store.get_pref("notify_chat"))
+
     def test_the_setting_survives_a_restart(self):
         dialog = self.dialog()
         dialog.edit_url.setText(SLACK_URL)

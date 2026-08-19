@@ -45,7 +45,7 @@ from PyQt6.QtWidgets import (
 )
 
 
-from . import PLUGIN_VERSION
+from . import PLUGIN_VERSION, webhook
 from .credentials import ensure_password
 from .models import (
     STATE_BLOCKED,
@@ -618,6 +618,12 @@ class JobsDialog(QDialog):
         )
         actions.addWidget(self.chk_notify)
 
+        self.chk_chat = QCheckBox("Post to chat")
+        self.chk_chat.toggled.connect(
+            lambda checked: self.service.store.set_pref("notify_chat", bool(checked))
+        )
+        actions.addWidget(self.chk_chat)
+
         self.btn_chat = QPushButton("Chat alerts...")
         self.btn_chat.setToolTip(
             "Also post to Slack, Discord or Teams when a job ends, so the news "
@@ -625,6 +631,7 @@ class JobsDialog(QDialog):
         )
         self.btn_chat.clicked.connect(self._edit_chat_webhook)
         actions.addWidget(self.btn_chat)
+        self._sync_chat_controls()
         actions.addStretch(1)
         layout.addLayout(actions)
 
@@ -675,6 +682,28 @@ class JobsDialog(QDialog):
 
         dialog = ChatWebhookDialog(self.service.store, self, pool=self.service.pool)
         dialog.exec()
+        self._sync_chat_controls()
+
+    def _sync_chat_controls(self) -> None:
+        """Show the tick as what it is: unusable until a room is configured.
+
+        A tick that can be set with no webhook behind it says messages are
+        being posted while nothing is, which is the worst of the three states
+        to be in -- it is believed, and only a job ending disproves it.
+        """
+        url = str(self.service.store.get_pref("notify_webhook", "") or "")
+        # Blocked: this runs whenever the URL might have changed, and letting
+        # setChecked through here would write the *displayed* state back over
+        # the user's own setting every time the dialog was merely opened.
+        self.chk_chat.blockSignals(True)
+        self.chk_chat.setChecked(bool(url) and bool(self.service.store.get_pref("notify_chat")))
+        self.chk_chat.blockSignals(False)
+        self.chk_chat.setEnabled(bool(url))
+        self.chk_chat.setToolTip(
+            f"Post to {webhook.service_name(url)} as well, when a job ends."
+            if url
+            else "Set a webhook URL under Chat alerts... first."
+        )
 
     # --- helpers ------------------------------------------------------------
 

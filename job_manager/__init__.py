@@ -126,11 +126,9 @@ def _notify_finished(job_id: str, state: str) -> None:
     try:
         from . import webhook
 
-        webhook.post_async(
-            str(_service.store.get_pref("notify_webhook", "") or ""),
-            "MoleditPy job manager",
-            message,
-        )
+        url = str(_service.store.get_pref("notify_webhook", "") or "")
+        if _service.store.get_pref("notify_chat", False):
+            webhook.post_async(url, "MoleditPy job manager", message)
     except Exception:
         logging.debug("Job Manager: could not post to the chat webhook", exc_info=True)
 

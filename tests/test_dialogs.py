@@ -316,6 +316,47 @@ class TestJobsDialog(DialogTestCase):
         self.dialog.chk_auto_open.setChecked(False)
         self.assertFalse(JobStore(self.tmp).get_pref("open_result_after_download"))
 
+    def test_the_chat_tick_sits_beside_the_desktop_one(self):
+        # Both say "tell me when a job ends", so they belong in the same row of
+        # the monitor -- not in the wizard, which is per-submission.
+        from PyQt6.QtWidgets import QHBoxLayout
+
+        rows = [
+            row
+            for row in self.dialog.findChildren(QHBoxLayout)
+            if row.indexOf(self.dialog.chk_notify) >= 0
+        ]
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row.indexOf(self.dialog.chk_chat), row.indexOf(self.dialog.chk_notify) + 1)
+
+    def test_the_chat_tick_is_unusable_until_a_room_is_set(self):
+        # A tick that can be set with nothing behind it claims messages are
+        # going out while none are, and only a job ending disproves it.
+        self.assertFalse(self.dialog.chk_chat.isEnabled())
+        self.assertFalse(self.dialog.chk_chat.isChecked())
+
+    def test_the_chat_tick_is_persisted(self):
+        self.store.set_pref("notify_webhook", "https://hooks.slack.com/services/T/B/x")
+        self.dialog._sync_chat_controls()
+        self.assertTrue(self.dialog.chk_chat.isEnabled())
+
+        self.dialog.chk_chat.setChecked(True)
+
+        self.assertTrue(JobStore(self.tmp).get_pref("notify_chat"))
+
+    def test_syncing_the_row_does_not_write_the_setting_back(self):
+        # It runs whenever the URL might have changed; letting setChecked
+        # through would overwrite the user's own choice on every open.
+        self.store.set_pref("notify_webhook", "https://hooks.slack.com/services/T/B/x")
+        self.store.set_pref("notify_chat", True)
+        self.dialog._sync_chat_controls()
+        self.store.set_pref("notify_chat", False)
+
+        self.dialog._sync_chat_controls()
+
+        self.assertFalse(self.store.get_pref("notify_chat"))
+
     def test_results_ready_does_not_open_when_auto_open_is_off(self):
         self.dialog.chk_auto_open.setChecked(False)
         with patch("job_manager.jobs_dialog.open_in_host") as opener:

@@ -347,6 +347,49 @@ def test_the_relay_box_says_why_it_is_greyed_on_opening(service, qapp):
     assert "input file" in dlg.box_relay.title()
 
 
+def test_an_unticked_panel_says_it_is_waiting_to_be_ticked(service, qapp, tmp_path):
+    # Qt greys the contents of a checkable group box until its title is ticked.
+    # Next to a box that is genuinely disabled and captioned with a reason, that
+    # reads as "not available to you" rather than "switch me on".
+    from job_manager.submit_dialog import RELAY_HINT, REMOTE_HINT
+
+    service.store.add_host(HostProfile(id="h1", name="Host1"))
+    dlg = SubmitDialog(service)
+    dlg.add_files(_two_inputs(tmp_path)[:1])
+
+    assert not dlg.box_remote.isChecked()
+    assert dlg.lbl_remote.text() == REMOTE_HINT
+    assert dlg.box_relay.isEnabled() and not dlg.box_relay.isChecked()
+    assert dlg.lbl_relay_status.text() == RELAY_HINT
+
+
+def test_the_hint_goes_away_once_the_panel_is_in_use(service, qapp, tmp_path):
+    from job_manager.submit_dialog import REMOTE_HINT
+
+    service.store.add_host(HostProfile(id="h1", name="Host1"))
+    dlg = SubmitDialog(service)
+    dlg.add_files(_two_inputs(tmp_path)[:1])
+
+    dlg.box_remote.setChecked(True)
+    assert dlg.lbl_remote.text() != REMOTE_HINT
+
+    dlg.box_remote.setChecked(False)
+    assert dlg.lbl_remote.text() == REMOTE_HINT
+
+
+def test_a_disabled_relay_box_leaves_the_reason_to_its_title(service, qapp, tmp_path):
+    # Two explanations for one greyed panel -- one in the title, one inside it
+    # -- would disagree the moment either changed.
+    from job_manager.submit_dialog import RELAY_HINT
+
+    service.store.add_host(HostProfile(id="h1", name="Host1"))
+    dlg = SubmitDialog(service)
+
+    assert not dlg.box_relay.isEnabled()
+    assert dlg.lbl_relay_status.text() != RELAY_HINT
+    assert "input file" in dlg.box_relay.title()
+
+
 def test_the_relay_box_title_goes_back_to_plain_when_usable(service, qapp, tmp_path):
     from job_manager.submit_dialog import RELAY_TITLE
 

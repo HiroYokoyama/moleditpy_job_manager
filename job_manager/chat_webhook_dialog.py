@@ -138,7 +138,14 @@ class ChatWebhookDialog(QDialog):
         # Saved even when it is not a URL at all: refusing to close on a typo
         # traps somebody who was clearing the field, and an unusable value posts
         # nothing rather than doing something wrong.
-        self.store.set_pref("notify_webhook", self.edit_url.text().strip())
+        url = self.edit_url.text().strip()
+        self.store.set_pref("notify_webhook", url)
+        # Saving a URL never switches the posting on by itself: sending a job's
+        # name and host off this machine is the user's decision to make with the
+        # tick, not something configuring a room implies. Clearing the URL does
+        # switch it off -- there is nothing left to post to.
+        if not url:
+            self.store.set_pref("notify_chat", False)
         super().accept()
 
 
