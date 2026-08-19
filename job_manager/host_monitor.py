@@ -446,11 +446,6 @@ class Sparkline(QWidget):
                 int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft),
                 f"{self.caption}{current}",
             )
-        painter.drawText(
-            header,
-            int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight),
-            "100% full",
-        )
 
         if len(self.values) < 2:
             painter.setPen(QPen(guide_color))

@@ -38,7 +38,7 @@ from .credentials import ensure_password
 from . import structure_relay
 from .models import HostProfile, Job, SubmitPreset
 from .runner import make_remote_dir
-from .schedulers import get_scheduler, references_input
+from .schedulers import get_scheduler, references_input, requested_cores, requested_memory_mb
 from .theme import apply_theme
 from .window_utils import make_independent
 from .service import JobService
@@ -80,6 +80,10 @@ class SubmitDialog(QDialog):
         self.resize(760, self._preferred_height(640))
         # Input files can be dropped straight onto the wizard.
         self.setAcceptDrops(True)
+        #: Set once the user picks a host from the dropdown themselves. Until
+        #: then the selection is only "whichever was used last", which an input
+        #: file living in a host's own mirror is a better answer than.
+        self._host_chosen_by_user = False
         self._build_ui()
         self._reload_hosts()
 
@@ -118,6 +122,10 @@ class SubmitDialog(QDialog):
             index = self.cmb_host.findData(host_id)
             if index >= 0:
                 self.cmb_host.setCurrentIndex(index)
+                # A host named by the caller -- Resubmit, or the detection just
+                # above -- is as deliberate as one picked from the dropdown, so
+                # adding a file later must not move it again.
+                self._host_chosen_by_user = True
         if preset:
             self._apply_preset(SubmitPreset.from_dict(preset))
         if files:
@@ -190,6 +198,10 @@ class SubmitDialog(QDialog):
         top = QFormLayout()
         self.cmb_host = QComboBox()
         self.cmb_host.currentIndexChanged.connect(self._on_host_changed)
+        # activated, not currentIndexChanged: it fires only for a choice the
+        # user made, so filling the list or detecting a host does not count as
+        # one and cannot silently switch off the detection below.
+        self.cmb_host.activated.connect(self._on_host_picked_by_user)
         self.cmb_preset = QComboBox()
         self.cmb_preset.currentIndexChanged.connect(self._on_preset_changed)
         self.txt_job_name = QLineEdit()
@@ -1137,6 +1149,73 @@ class SubmitDialog(QDialog):
     def selected_files(self) -> List[str]:
         return [self.list_files.item(row).text() for row in range(self.list_files.count())]
 
+    def _on_host_picked_by_user(self, _index: int) -> None:
+        self._host_chosen_by_user = True
+
+    @staticmethod
+    def _resource_overrun(host: HostProfile, preset: SubmitPreset) -> str:
+        """Why this job cannot fit on this host, or "" when it can.
+
+        Only where the capacity is actually known: a host running the helper
+        queue, with the budget typed in rather than detected. A real cluster
+        enforces its own limits and this plugin has no idea how big its nodes
+        are, so nothing is refused there; and a host left on "detect" only
+        learns its numbers on the machine itself.
+
+        Asking for more than the whole budget is not a job that waits, it is a
+        job that can never be scheduled -- the helper clamps the request to the
+        machine and runs it alone, which quietly gives a calculation fewer
+        cores (or less memory) than it was told it had.
+        """
+        if host is None or not host.uses_remote_runner or getattr(host, "runner_detect", False):
+            return ""
+        cores = int(getattr(host, "runner_cores", 0) or 0)
+        memory = int(getattr(host, "runner_memory_mb", 0) or 0)
+        wanted_cores = requested_cores(preset)
+        wanted_memory = requested_memory_mb(preset)
+        if cores and wanted_cores > cores:
+            return (
+                f"This job asks for {wanted_cores} cores, but {host.name} has "
+                f"{cores} to give.\n\nLower the CPUs, or raise 'Cores available' "
+                "for this host under Hosts..."
+            )
+        if memory and wanted_memory > memory:
+            return (
+                f"This job asks for {input_scan.format_memory(wanted_memory)} of memory, but "
+                f"{host.name} has {input_scan.format_memory(memory)} to give.\n\nLower the "
+                "memory, or raise 'Memory available' for this host under Hosts..."
+            )
+        return ""
+
+    def _detect_host_from_path(self, path: str) -> bool:
+        """Switch to the host whose local mirror holds ``path``. True if moved.
+
+        A file written into the share that *is* a host's filesystem is already
+        on that host as far as the user is concerned, so that is the host to
+        offer -- ahead of whichever one happens to have been used last.
+
+        Never over a deliberate choice: once the user has picked a host from
+        the dropdown, adding a file does not move it. And never away from a
+        host that already owns the file, so two profiles mirroring the same
+        share do not fight over it.
+        """
+        if self._host_chosen_by_user or not path:
+            return False
+        owner = self.store.host_for_local_path(path)
+        if owner is None:
+            return False
+        current = self.current_host()
+        if current is not None and current.id == owner.id:
+            return False
+        index = self.cmb_host.findData(owner.id)
+        if index < 0:
+            return False
+        self.cmb_host.setCurrentIndex(index)
+        self.service.message.emit(
+            f"{os.path.basename(path)} is inside {owner.name}'s local mirror, so it was selected."
+        )
+        return True
+
     def _add_files(self) -> None:
         start = self.store.get_pref("last_input_dir", "") or ""
         chosen = self.store.get_pref("input_filter", "") or INPUT_FILTERS[0]
@@ -1172,6 +1251,12 @@ class SubmitDialog(QDialog):
             self.store.set_pref("last_input_dir", os.path.dirname(added[0]))
             if not self.txt_job_name.text().strip():
                 self.txt_job_name.setText(os.path.splitext(os.path.basename(added[0]))[0])
+            # Before the resource scan, so the numbers are checked against the
+            # host the file actually belongs to. This used to run only in
+            # prefill(), so a file that arrived any other way -- "Add files...",
+            # a drop onto the open wizard -- never moved the host, and the
+            # mirror was only detected on the one route nobody takes by hand.
+            self._detect_host_from_path(added[0])
             self._apply_scanned_resources(added[0])
         self._update_batch_row()
         self._update_relay_row()
@@ -1393,6 +1478,10 @@ class SubmitDialog(QDialog):
         preset = self.collect_preset()
         if not preset.command_template.strip():
             QMessageBox.warning(self, "Submit", "Enter the command to run.")
+            return
+        overrun = self._resource_overrun(host, preset)
+        if overrun:
+            QMessageBox.warning(self, "Submit", overrun)
             return
         remote_dir = self.remote_dir()
         if self.box_remote.isChecked() and not remote_dir:
