@@ -214,6 +214,7 @@ __marimo__/
 # Temporary directories created by the repository's tests.
 /atomic_*/
 /both_*/
+/chain_tail_*/
 /corrupt_*/
 /download_safety_*/
 /export_*/
@@ -227,6 +228,7 @@ __marimo__/
 /local_results_*/
 /mem_runner_*/
 /migrate_*/
+/moleditpy_job_manager_tests_*/
 /moleditpy_ssh_*/
 /paramiko_*/
 /ps_runner_*/
