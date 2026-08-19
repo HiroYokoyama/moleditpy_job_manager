@@ -67,6 +67,10 @@ class TestDocumentedNumbers(unittest.TestCase):
         self.assertIn(f"{minutes} minutes", read(DOCS / "WORKFLOW.md"))
         self.assertIn(f"{minutes} minutes", read(DOCS / "ARCHITECTURE.md"))
 
+    def test_the_first_poll_after_a_submission(self):
+        seconds = int(_poller().FIRST_POLL_SECONDS)
+        self.assertIn(f"about {seconds} s after it is handed over", read(DOCS / "WORKFLOW.md"))
+
     def test_the_manual_refresh_cooldown(self):
         seconds = int(_poller().MANUAL_REFRESH_COOLDOWN)
         self.assertIn(f"once every {seconds} s", read(DOCS / "WORKFLOW.md"))

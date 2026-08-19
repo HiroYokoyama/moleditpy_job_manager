@@ -580,6 +580,12 @@ about; against your own workstation it is fine.
 
 **Refresh Now** forces a cycle immediately (rate limited to once every 10 s).
 
+Every submission is also asked about once, about 5 s after it is handed over,
+whatever the interval says — that is the query that catches a job starting, or
+finding out it never did, instead of leaving it reading SUBMITTED for the first
+two minutes. Submit a batch and each of them gets that query, not just the
+first.
+
 ### Sorting and filtering the table
 
 Click a column header to sort by it; click again to reverse. Elapsed and
@@ -601,6 +607,45 @@ On by default, unlike the badge: it is transient rather than a lasting change
 to how MoleditPy looks. Untick **Notify me when a job ends** in the monitor to
 stop it. A desktop with no notification service simply shows nothing; the job
 is tracked either way.
+
+### Being told somewhere else: Slack, Discord, Teams
+
+A desktop notification reaches whoever is sitting at this machine, and a job
+that runs overnight usually ends when nobody is. **Chat alerts...**, beside the
+checkbox in the monitor, posts the same sentence to a chat room instead — which
+is what puts it on a phone.
+
+Nothing is installed for it and no account is connected: you paste in a webhook
+URL that your own workspace creates, and the plugin posts a JSON message to it.
+
+**Slack.** In the workspace, *Settings & administration → Manage apps → Custom
+Integrations → Incoming Webhooks* (or create an app at api.slack.com, enable
+*Incoming Webhooks*, and *Add New Webhook to Workspace*). Choose the channel;
+copy the `https://hooks.slack.com/services/...` URL it gives you.
+
+**Discord.** Right-click the channel → *Edit Channel → Integrations → Webhooks
+→ New Webhook*, then *Copy Webhook URL*. Paste it as it is — there is no
+`/slack` suffix to add.
+
+**Microsoft Teams.** Right-click the channel → *Connectors → Incoming Webhook →
+Configure*, name it, and copy the URL.
+
+**Anything else** that accepts an unauthenticated JSON POST — Mattermost,
+Rocket.Chat, a script of your own — works too: it is sent `{"text": "..."}`.
+Slack and Discord are recognised by their URL and sent the shape each of them
+expects, since Discord reads `content` and rejects a body with fields it does
+not know.
+
+Paste the URL into **Chat alerts...** and press **Send a test message**: the
+answer appears under the field, so a wrong URL is found now rather than when a
+job ends at three in the morning. Press **OK** to keep it; clear the field to
+stop sending. What is sent is one line — the job's name, what became of it, and
+the host it ran on. The URL is a password in effect: anyone holding it can post
+to that room, and it is stored in `~/.moleditpy/job_manager/settings.json` in
+the clear, so use a webhook you can revoke in the workspace.
+
+The message goes out only when **Notify me when a job ends** is ticked: the
+checkbox is the switch for being told at all, and the webhook is where.
 
 ### Hosts at work
 

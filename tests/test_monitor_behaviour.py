@@ -216,11 +216,59 @@ class TestTheFirstPollAfterASubmission(DialogTestCase):
             poller._on_kickoff()
         tick.assert_not_called()
 
+    def test_the_wait_is_short_enough_to_catch_the_first_status(self):
+        from job_manager.poller import FIRST_POLL_SECONDS
+
+        self.assertLessEqual(FIRST_POLL_SECONDS, 5.0)
+
     def test_shutdown_stops_the_kickoff(self):
         poller = self.service.poller
         poller.prime("h")
         poller.shutdown()
         self.assertFalse(poller._kickoff.isActive())
+
+    def test_every_submission_gets_its_own_query_not_just_the_first(self):
+        # A second job handed over while the first one's kickoff was still
+        # pending used to be covered by that one alone -- which can fire a
+        # moment after the second submission, before the queue knows anything,
+        # putting its real first status a whole interval away again.
+        poller = self.service.poller
+        self.store.add_job(Job(id="j1", host_id="h", state=STATE_RUNNING, submitted_at=1.0))
+        poller.prime("h")
+        poller.prime("h")  # the second submission, while the kickoff is pending
+
+        with patch.object(poller, "tick") as tick:
+            poller._on_kickoff()
+        tick.assert_called_once()
+        self.assertTrue(poller._kickoff.isActive(), "no follow-up query was scheduled")
+
+    def test_the_follow_up_makes_the_host_due_again(self):
+        # The first pass polls the host, which puts it back on the normal
+        # interval; without clearing that, the second pass would skip the very
+        # host the newest job was submitted to.
+        poller = self.service.poller
+        self.store.add_job(Job(id="j1", host_id="h", state=STATE_RUNNING, submitted_at=1.0))
+        poller.prime("h")
+        with patch.object(poller, "tick"):
+            poller._on_kickoff()
+        poller._next_poll["h"] = 1e12  # as a finished poll would leave it
+
+        with patch.object(poller, "tick"):
+            poller._on_kickoff()
+
+        self.assertNotIn("h", poller._next_poll)
+
+    def test_the_burst_stops_once_no_more_jobs_are_handed_over(self):
+        poller = self.service.poller
+        self.store.add_job(Job(id="j1", host_id="h", state=STATE_RUNNING, submitted_at=1.0))
+        poller.prime("h")
+        poller._kickoff_until = 0.0  # as it is once the window has passed
+
+        with patch.object(poller, "tick"):
+            poller._on_kickoff()
+
+        self.assertFalse(poller._kickoff.isActive())
+        self.assertFalse(poller._primed)
 
 
 class TestTheHostAnInputAlreadyLivesOn(DialogTestCase):

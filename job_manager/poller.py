@@ -38,7 +38,7 @@ MANUAL_REFRESH_COOLDOWN = 10.0
 #: wrong one for the thirty seconds after a submission, when the user is
 #: watching to see their job start and the table says SUBMITTED either way.
 #: One extra query per submission is a user action, not a poll loop.
-FIRST_POLL_SECONDS = 6.0
+FIRST_POLL_SECONDS = 5.0
 
 
 class _WorkerSignals(QObject):
@@ -127,6 +127,10 @@ class JobPoller(QObject):
         self._kickoff = QTimer(self)
         self._kickoff.setSingleShot(True)
         self._kickoff.timeout.connect(self._on_kickoff)
+        #: Hosts a submission has just been made to, and the moment after which
+        #: the kickoff has covered them all.
+        self._primed: set = set()
+        self._kickoff_until = 0.0
         self.timer = QTimer(self)
         self.timer.setSingleShot(False)
         self.timer.timeout.connect(self.tick)
@@ -166,19 +170,41 @@ class JobPoller(QObject):
         by default -- so a job that started at once still read SUBMITTED for
         two minutes, and an empty list that has just been given its first job
         showed nothing happening at all.
+
+        Every submission gets its own query, not just the first of a burst. A
+        job handed over while an earlier kickoff was still pending used to be
+        covered by that one alone, which could fire a moment after it was
+        submitted -- before the queue had any status to give -- leaving the real
+        first status a whole interval away again.
         """
         if host_id:
             self._next_poll.pop(host_id, None)
             self._backoff.pop(host_id, None)
+            self._primed.add(host_id)
         self.start()
+        self._kickoff_until = time.time() + FIRST_POLL_SECONDS
         if not self._kickoff.isActive():
             self._kickoff.start(int(FIRST_POLL_SECONDS * 1000))
 
     def _on_kickoff(self) -> None:
-        if self.store.active_jobs():
+        # A poll that has finished in the meantime put the host back on the
+        # normal interval, so being due again has to be re-asserted here or the
+        # second pass would skip the host the newest job was submitted to.
+        for host_id in self._primed:
+            self._next_poll.pop(host_id, None)
+            self._backoff.pop(host_id, None)
+        active = self.store.active_jobs()
+        if active:
             self.tick()
+        if active and time.time() < self._kickoff_until:
+            self._kickoff.start(int(FIRST_POLL_SECONDS * 1000))
+        else:
+            self._kickoff.stop()
+            self._primed.clear()
 
     def shutdown(self) -> None:
+        self._kickoff_until = 0.0
+        self._primed.clear()
         self._kickoff.stop()
         self.stop()
         self.pool.clear()
