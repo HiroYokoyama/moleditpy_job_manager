@@ -1102,12 +1102,20 @@ class JobsDialog(QDialog):
             if not filtered:
                 filtered = [job.log_file or "job.log"]
 
+            from .runner import primary_output
             from .tail_file_dialog import TailFileDialog
 
+            # The calculation's own output, never the wrapper's log. This
+            # window exists for the file the program writes; the wrapper's log
+            # is what the Tail Log button already opens, and preselecting it
+            # here meant the one file this dialog is not for was the one
+            # offered. It stays in the list -- it is a real file on the host
+            # and asking for it deliberately is allowed -- just not first.
             dialog = TailFileDialog(
                 job.name,
                 filtered,
-                default_file=job.log_file or "",
+                default_file=primary_output(filtered, job.log_file or ""),
+                log_file=job.log_file or "",
                 title=f"Job Manager {PLUGIN_VERSION} - Tail Specific File: {job.name}",
                 parent=self,
             )

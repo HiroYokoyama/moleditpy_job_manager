@@ -232,3 +232,72 @@ def test_a_host_that_detects_its_own_resources_is_never_refused():
     host = _runner_host(cores=0, memory_mb=0, detect=True)
     preset = SubmitPreset(cpus_per_task=999, memory="999G", command_template="x")
     assert SubmitDialog._resource_overrun(host, preset) == ""
+
+
+# --- a greyed control has to say why ----------------------------------------
+
+
+def _two_inputs(tmp_path):
+    paths = []
+    for name in ("a.inp", "b.inp"):
+        p = tmp_path / name
+        p.write_text("x", encoding="utf-8")
+        paths.append(str(p))
+    return paths
+
+
+def test_the_relay_box_says_why_it_is_greyed_on_opening(service, qapp):
+    # Qt shows no tooltip for a disabled widget, so a reason kept only there is
+    # unreachable exactly when it is wanted -- and this box is greyed from the
+    # moment the wizard opens.
+    from job_manager.submit_dialog import RELAY_TITLE
+
+    service.store.add_host(HostProfile(id="h1", name="Host1"))
+    dlg = SubmitDialog(service)
+
+    assert not dlg.box_relay.isEnabled()
+    assert dlg.box_relay.title() != RELAY_TITLE
+    assert "input file" in dlg.box_relay.title()
+
+
+def test_the_relay_box_title_goes_back_to_plain_when_usable(service, qapp, tmp_path):
+    from job_manager.submit_dialog import RELAY_TITLE
+
+    service.store.add_host(HostProfile(id="h1", name="Host1"))
+    dlg = SubmitDialog(service)
+    dlg.add_files(_two_inputs(tmp_path)[:1])
+
+    assert dlg.box_relay.isEnabled()
+    assert dlg.box_relay.title() == RELAY_TITLE
+
+
+def test_each_box_names_the_other_as_the_reason(service, qapp, tmp_path):
+    from job_manager.submit_dialog import BATCH_TEXT
+
+    service.store.add_host(HostProfile(id="h1", name="Host1"))
+    dlg = SubmitDialog(service)
+    dlg.add_files(_two_inputs(tmp_path))
+
+    dlg.chk_batch.setChecked(True)
+    assert not dlg.box_relay.isEnabled()
+    assert "one job per file" in dlg.box_relay.title()
+
+    dlg.chk_batch.setChecked(False)
+    dlg.box_relay.setChecked(True)
+    assert not dlg.chk_batch.isEnabled()
+    assert "reusing another job's file" in dlg.chk_batch.text()
+
+    dlg.box_relay.setChecked(False)
+    assert dlg.chk_batch.isEnabled()
+    assert dlg.chk_batch.text() == BATCH_TEXT
+
+
+def test_work_already_on_the_host_explains_both(service, qapp, tmp_path):
+    service.store.add_host(HostProfile(id="h1", name="Host1"))
+    dlg = SubmitDialog(service)
+    dlg.add_files(_two_inputs(tmp_path))
+
+    dlg.box_remote.setChecked(True)
+
+    assert "already on the host" in dlg.box_relay.title()
+    assert "already on the host" in dlg.chk_batch.text()

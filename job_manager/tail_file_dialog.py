@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
 
 
 from . import PLUGIN_VERSION
+from .runner import is_plugin_file
 from .file_tree import configure_tree, folder_factory, make_filter_row
 from .theme import apply_theme
 from .tree_utils import (
@@ -39,6 +40,7 @@ class TailFileDialog(QDialog):
         job_name: str,
         names: Sequence[str],
         default_file: str = "",
+        log_file: str = "",
         title: str = "",
         parent: Optional[QWidget] = None,
     ) -> None:
@@ -48,6 +50,10 @@ class TailFileDialog(QDialog):
         self.resize(560, 480)
 
         self._all_names = list(names)
+        #: The wrapper's own log. Kept in the list -- it is a real file on the
+        #: host -- but never the one selected for you: this window is for what
+        #: the calculation writes, and the Tail Log button already opens that.
+        self._log_file = log_file
         self._selected_path: str = ""
 
         layout = QVBoxLayout(self)
@@ -86,6 +92,15 @@ class TailFileDialog(QDialog):
         folders: Dict[tuple, QTreeWidgetItem] = {}
         default_item: Optional[QTreeWidgetItem] = None
         styled_folder = folder_factory()
+
+        # With nothing better named, fall to the first file that is not one of
+        # this plugin's own. Only when every file is ours does the plain first
+        # leaf win, which is the job whose directory holds nothing else yet.
+        if not default_file:
+            default_file = next(
+                (name for name in names if name and not is_plugin_file(name, self._log_file)),
+                "",
+            )
 
         for name in names:
             if not name:

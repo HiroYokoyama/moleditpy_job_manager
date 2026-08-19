@@ -58,6 +58,12 @@ INPUT_FILTERS = (
 )
 INPUT_FILTER = ";;".join(INPUT_FILTERS)
 
+#: Base captions for the two boxes that disable each other. The reason a box
+#: is greyed is appended to its own caption, because Qt shows no tooltip for a
+#: disabled widget -- which is where the explanation used to live.
+RELAY_TITLE = "Reuse another job's file"
+BATCH_TEXT = "Submit each file as its own job"
+
 #: Dropdown entries that are actions rather than templates.
 _SAVE_TEMPLATE = object()
 _DELETE_TEMPLATE = object()
@@ -86,6 +92,11 @@ class SubmitDialog(QDialog):
         self._host_chosen_by_user = False
         self._build_ui()
         self._reload_hosts()
+        # Once here, rather than only from add_files/prefill: the relay box is
+        # greyed from the moment the wizard opens -- there is no input file yet
+        # -- and until this ran it was greyed with a caption that gave no
+        # reason, which is the state most users see it in.
+        self._update_relay_row()
 
     # --- prefilling ---------------------------------------------------------
 
@@ -228,7 +239,7 @@ class SubmitDialog(QDialog):
         row.addWidget(remove)
         row.addStretch(1)
         files_layout.addLayout(row)
-        self.chk_batch = QCheckBox("Submit each file as its own job")
+        self.chk_batch = QCheckBox(BATCH_TEXT)
         self.chk_batch.setToolTip(
             "One independent job per file, each running the command below on "
             "its own -- rather than one job with every file uploaded to it.\n\n"
@@ -344,7 +355,7 @@ class SubmitDialog(QDialog):
         host, with a single remote copy per file and nothing downloaded to
         this machine and re-uploaded.
         """
-        box = QGroupBox("Reuse another job's file")
+        box = QGroupBox(RELAY_TITLE)
         box.setCheckable(True)
         box.setChecked(False)
         box.setToolTip(
@@ -381,17 +392,32 @@ class SubmitDialog(QDialog):
         return box
 
     def _update_relay_row(self) -> None:
-        """The relay box needs exactly one local file and nothing exotic.
+        """The relay box needs a local file and nothing exotic.
 
         Reads ``chk_batch.isChecked()`` directly, not ``_batch_active()``:
         that also asks whether the box is *enabled*, and the two rows disable
         each other, so mid-toggle one of them is checked but momentarily
         disabled -- exactly the state each row's own guard has to see through
         to break the tie cleanly rather than leaving both re-enabled.
+
+        The reason it is greyed goes in the title, not only in the tooltip:
+        Qt does not show a tooltip for a disabled widget, so the explanation
+        was in the one place nobody could reach. This box is greyed the moment
+        the wizard opens -- there is no input file yet -- and a greyed panel
+        with no caption, directly under another one, reads as though the
+        greying belonged to the box above it.
         """
-        allowed = bool(self.selected_files()) and not self.box_remote.isChecked()
-        allowed = allowed and not self.chk_batch.isChecked()
+        if not self.selected_files():
+            reason = "add an input file first"
+        elif self.box_remote.isChecked():
+            reason = "not with work already on the host"
+        elif self.chk_batch.isChecked():
+            reason = "not with one job per file"
+        else:
+            reason = ""
+        allowed = not reason
         self.box_relay.setEnabled(allowed)
+        self.box_relay.setTitle(RELAY_TITLE if allowed else f"{RELAY_TITLE} - {reason}")
         if not allowed and self.box_relay.isChecked():
             self.box_relay.blockSignals(True)
             self.box_relay.setChecked(False)
@@ -400,7 +426,12 @@ class SubmitDialog(QDialog):
     def _on_relay_toggled(self, checked: bool) -> None:
         if checked:
             self._reload_relay_sources()
-            self._update_batch_row()
+        # Unconditionally, not only when ticked: the batch row is disabled
+        # *because* this box is, so unticking it has to release the batch
+        # checkbox again. It did not, so one tick and untick of this box left
+        # "Submit each file as its own job" greyed for the rest of the wizard,
+        # with nothing on screen still reusing anything.
+        self._update_batch_row()
         self._refresh_preview()
 
     def _reload_relay_sources(self) -> None:
@@ -1372,11 +1403,18 @@ class SubmitDialog(QDialog):
         that could answer.
         """
         files = self.selected_files()
-        allowed = (
-            len(files) > 1 and not self.box_remote.isChecked() and not self.box_relay.isChecked()
-        )
+        if self.box_remote.isChecked():
+            reason = "not with work already on the host"
+        elif self.box_relay.isChecked():
+            reason = "not while reusing another job's file"
+        else:
+            reason = ""
+        allowed = len(files) > 1 and not reason
         self.chk_batch.setVisible(len(files) > 1)
         self.chk_batch.setEnabled(allowed)
+        # Why, on the control itself: a disabled checkbox shows no tooltip, so
+        # the explanation was unreachable exactly when it was needed.
+        self.chk_batch.setText(BATCH_TEXT if allowed else f"{BATCH_TEXT} - {reason}")
         if not allowed and self.chk_batch.isChecked():
             self.chk_batch.blockSignals(True)
             self.chk_batch.setChecked(False)
