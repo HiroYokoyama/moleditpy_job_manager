@@ -318,8 +318,10 @@ class Meter(QWidget):
         # Two lines of text sit under the bar, so a hint near the minimum left
         # the bar itself barely taller than the caption below it -- and a bar
         # that short cannot be compared across cards at a glance, which is the
-        # whole point of drawing one.
-        return QSize(100, 208)
+        # whole point of drawing one. Two thirds of the first attempt at that:
+        # a full-height column read as a wall of colour and cost a card that
+        # could otherwise share the window with the one below it.
+        return QSize(100, 140)
 
     def set_dark(self, dark: bool = False) -> None:
         self._dark = dark
