@@ -47,6 +47,7 @@ from job_manager.transport.local import LocalTransport, find_shell
 from job_manager.transport.wsl import WSLTransport
 
 from .bash_support import BASH
+from .runner_support import REAL_PROCESS_TIMEOUT
 
 ON_WINDOWS = os.name == "nt"
 POWERSHELL = find_shell("powershell") if ON_WINDOWS else ""
@@ -84,6 +85,7 @@ class SubmissionCase(unittest.TestCase):
             runner_cores=2,
             runner_memory_mb=1024,
             load_profile=False,
+            command_timeout=REAL_PROCESS_TIMEOUT,
         )
         self.transport = self.make_transport()
         self.addCleanup(self.transport.close)

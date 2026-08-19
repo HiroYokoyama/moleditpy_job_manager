@@ -41,6 +41,7 @@ from job_manager.transport.local import LocalTransport
 from .fakes import make_preset
 
 from .bash_support import bash_path, find_bash
+from .runner_support import REAL_PROCESS_TIMEOUT
 
 BASH = find_bash()
 POWERSHELL = shutil.which("pwsh") or shutil.which("powershell")
@@ -80,6 +81,7 @@ class EndToEndCase(unittest.TestCase):
             concurrency_mode=MODE_RUNNER,
             remote_root=os.path.join(self.root, "jobs").replace("\\", "/"),
             load_profile=False,
+            command_timeout=REAL_PROCESS_TIMEOUT,
         )
         self.directory = remote_runner.runner_dir(self.host.remote_root)
 

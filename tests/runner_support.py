@@ -10,6 +10,18 @@ from __future__ import annotations
 import os
 import signal
 
+#: What a host is given for ``command_timeout`` in a test that really starts a
+#: process, rather than the production default of 60 s.
+#:
+#: The default is right for a user submitting a job: a handover that has taken
+#: a minute is not going to finish, and saying so beats hanging. It is wrong for
+#: CI, where the suite runs one xdist worker per logical core and a Windows
+#: runner then has eight of them starting Windows PowerShell 5.1 at once --
+#: which took over 60 s to hand back a pid and failed a submission test that had
+#: nothing to do with timing. Nothing waits this out on the happy path; it is
+#: only the point at which a test gives up rather than hanging for ever.
+REAL_PROCESS_TIMEOUT = 300
+
 
 def kill_dispatched_jobs(runner_dir: str) -> int:
     """Kill the jobs the runner started. Returns how many were signalled.
