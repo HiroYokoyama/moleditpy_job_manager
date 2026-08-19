@@ -109,6 +109,7 @@ class SubmitDialog(QDialog):
         remote_dir: str = "",
         remote_input: str = "",
         batch: bool = False,
+        handoff: bool = False,
     ) -> None:
         """Populate the form from outside.
 
@@ -117,6 +118,12 @@ class SubmitDialog(QDialog):
         for the "one job per file" checkbox to start ticked -- for a drop of
         several files at once, where each is its own calculation rather than
         one job's worth of inputs.
+
+        ``handoff`` marks the call as another plugin's ``submit_file``, which
+        picks a host with a local mirror over whichever was used last -- see
+        :meth:`Store.preferred_mirrored_host`. Only that entry point sets it:
+        a drop onto this window is the user pointing at a file themselves,
+        and Resubmit names its host outright.
         """
         if remote_dir:
             self.box_remote.setChecked(True)
@@ -129,14 +136,28 @@ class SubmitDialog(QDialog):
             owner = self.store.host_for_local_path(files[0])
             if owner is not None:
                 host_id = owner.id
+        guessed = False
+        if not host_id and handoff:
+            # Nothing mirrors this file, but the work still came from another
+            # plugin with no host in mind: a machine reachable through a mirror
+            # is the better guess than the last one used.
+            preferred = self.store.preferred_mirrored_host(
+                self.store.get_pref("last_host_id", "") or ""
+            )
+            if preferred is not None:
+                host_id = preferred.id
+                guessed = True
         if host_id:
             index = self.cmb_host.findData(host_id)
             if index >= 0:
                 self.cmb_host.setCurrentIndex(index)
                 # A host named by the caller -- Resubmit, or the detection just
                 # above -- is as deliberate as one picked from the dropdown, so
-                # adding a file later must not move it again.
-                self._host_chosen_by_user = True
+                # adding a file later must not move it again. The mirrored-host
+                # preference is not: it is a guess made with no file to go on,
+                # and a file added afterwards that really does live in a mirror
+                # is better evidence than it.
+                self._host_chosen_by_user = not guessed
         if preset:
             self._apply_preset(SubmitPreset.from_dict(preset))
         if files:

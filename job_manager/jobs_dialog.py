@@ -826,6 +826,7 @@ class JobsDialog(QDialog):
         remote_dir: str = "",
         remote_input: str = "",
         batch: bool = False,
+        handoff: bool = False,
     ) -> None:
         from .submit_dialog import SubmitDialog
 
@@ -845,7 +846,7 @@ class JobsDialog(QDialog):
             if not self.service.store.hosts:
                 return
         dialog = SubmitDialog(self.service, self)
-        if files or name or host_id or preset or remote_dir:
+        if files or name or host_id or preset or remote_dir or handoff:
             dialog.prefill(
                 files=files,
                 name=name,
@@ -854,6 +855,7 @@ class JobsDialog(QDialog):
                 remote_dir=remote_dir,
                 remote_input=remote_input,
                 batch=batch,
+                handoff=handoff,
             )
         dialog.exec()
 

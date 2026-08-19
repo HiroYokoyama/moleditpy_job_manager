@@ -423,6 +423,44 @@ class JobStore:
             matches, key=lambda host: len(os.path.abspath(os.path.expanduser(host.equal_path)))
         )
 
+    def mirrored_hosts(self) -> List[HostProfile]:
+        """Enabled hosts that have a local mirror (``equal_path``) configured,
+        the one most recently submitted to first."""
+        last_used: Dict[str, float] = {}
+        for job in self.jobs.values():
+            when = job.submitted_at or job.updated_at or 0.0
+            if when > last_used.get(job.host_id, 0.0):
+                last_used[job.host_id] = when
+        candidates = [
+            host
+            for host in self.host_list()
+            if getattr(host, "enabled", True) and (host.equal_path or "").strip()
+        ]
+        return sorted(candidates, key=lambda h: -last_used.get(h.id, 0.0))
+
+    def preferred_mirrored_host(self, remembered_id: str = "") -> Optional[HostProfile]:
+        """The mirrored host a handoff from another plugin should open on.
+
+        A file written by an input generator lands wherever the user saved it,
+        which is usually *not* inside a mirror -- so
+        :meth:`host_for_local_path` finds nothing and the wizard falls back to
+        whichever host was used last, even when that one has no mirror and the
+        results will have to be downloaded one by one. A host that mirrors its
+        filesystem here is the better default for work arriving that way.
+
+        ``remembered_id`` wins whenever it is itself mirrored: the user's own
+        habit is a better answer than this ordering, and moving the selection
+        off a machine they submit to every day is exactly the surprise that
+        makes a job land on the wrong host.
+        """
+        candidates = self.mirrored_hosts()
+        if not candidates:
+            return None
+        for host in candidates:
+            if host.id == remembered_id:
+                return host
+        return candidates[0]
+
     def host_list(self) -> List[HostProfile]:
         return sorted(self.hosts.values(), key=lambda h: h.name.lower())
 

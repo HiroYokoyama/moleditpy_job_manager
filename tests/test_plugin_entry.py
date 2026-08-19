@@ -232,7 +232,9 @@ class TestSubmitFilePublicAPI(PluginEntryTestCase):
         self.context.get_window.side_effect = [None, window, window]
         with patch("job_manager.jobs_dialog.JobsDialog", return_value=window):
             self.assertTrue(job_manager.submit_file("/tmp/mol.inp"))
-        window.open_submit_dialog.assert_called_once_with(files=["/tmp/mol.inp"], name="")
+        window.open_submit_dialog.assert_called_once_with(
+            files=["/tmp/mol.inp"], name="", handoff=True
+        )
 
     def test_a_list_of_paths_is_accepted(self):
         job_manager.initialize(self.context)
@@ -241,7 +243,7 @@ class TestSubmitFilePublicAPI(PluginEntryTestCase):
         with patch("job_manager.jobs_dialog.JobsDialog", return_value=window):
             job_manager.submit_file(["/tmp/a.inp", "/tmp/b.xyz"], name="run")
         window.open_submit_dialog.assert_called_once_with(
-            files=["/tmp/a.inp", "/tmp/b.xyz"], name="run"
+            files=["/tmp/a.inp", "/tmp/b.xyz"], name="run", handoff=True
         )
 
     def test_no_paths_returns_false(self):

@@ -342,6 +342,11 @@ def submit_file(paths, name: str = "") -> bool:
 
     ``paths`` is one path or a list of them; the first is the file passed to
     the command. Returns True if the wizard was opened.
+
+    The wizard opens on a host with an equal path (local mirror) configured
+    where there is one, rather than on whichever host was used last: work
+    arriving this way has no host in mind, and a mirrored host is the one
+    whose results need no downloading.
     """
     if isinstance(paths, str):
         paths = [paths]
@@ -353,7 +358,7 @@ def submit_file(paths, name: str = "") -> bool:
     if window is None:
         return False
     try:
-        window.open_submit_dialog(files=files, name=name)
+        window.open_submit_dialog(files=files, name=name, handoff=True)
     except Exception:
         logging.exception("Job Manager: could not open the submit wizard")
         return False

@@ -111,6 +111,15 @@ opened for says otherwise -- Resubmit, an input generator's handoff, or an
 input file written into a host's *equal path* mirror, which is that host's
 filesystem seen from here.
 
+A handoff from an input generator ("Submit to Cluster" in ORCA or Gaussian
+Input Generator Pro) has no host in mind at all: the file was saved wherever
+you pointed the save dialog. Those open on a host that has an *equal path*
+configured where you have one, since that is the machine whose results need no
+downloading — the one you submitted to most recently among them, and the last host
+used when that host is itself mirrored. Pick a host yourself and it stays
+picked; add a file that really does live in a mirror and that host wins, as it
+always does.
+
 Everything that describes the *site* rather than the molecule comes back the
 next time you submit to the same host: queue, account, walltime, nodes, tasks,
 modules, pre-commands, extra directives, the command, the fetch patterns and

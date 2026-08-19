@@ -127,6 +127,44 @@ class TestHostsAndPresets(StoreTestCase):
         self.assertEqual(self.store.presets, {})
 
 
+class TestMirroredHosts(StoreTestCase):
+    def mirror(self, host_id, name, enabled=True, equal_path="/mnt/share"):
+        host = HostProfile(id=host_id, name=name, enabled=enabled, equal_path=equal_path)
+        self.store.add_host(host)
+        return host
+
+    def test_only_enabled_hosts_with_a_mirror_are_offered(self):
+        self.mirror("h1", "alpha")
+        self.mirror("h2", "beta", enabled=False)
+        self.mirror("h3", "gamma", equal_path="   ")
+        self.store.add_host(HostProfile(id="h4", name="delta"))
+        self.assertEqual([h.id for h in self.store.mirrored_hosts()], ["h1"])
+
+    def test_the_most_recently_used_mirror_comes_first(self):
+        # Not alphabetical order: a machine submitted to yesterday is a better
+        # guess than whichever profile happens to be named first.
+        self.mirror("h1", "alpha")
+        self.mirror("h2", "beta")
+        self.store.add_job(Job(id="j1", host_id="h1", submitted_at=100.0))
+        self.store.add_job(Job(id="j2", host_id="h2", submitted_at=200.0))
+        self.assertEqual([h.id for h in self.store.mirrored_hosts()], ["h2", "h1"])
+
+    def test_the_remembered_host_wins_when_it_is_mirrored(self):
+        self.mirror("h1", "alpha")
+        self.mirror("h2", "beta")
+        self.store.add_job(Job(id="j1", host_id="h1", submitted_at=100.0))
+        self.assertEqual(self.store.preferred_mirrored_host("h2").id, "h2")
+
+    def test_an_unmirrored_remembered_host_does_not_win(self):
+        self.store.add_host(HostProfile(id="plain", name="plain"))
+        self.mirror("h1", "alpha")
+        self.assertEqual(self.store.preferred_mirrored_host("plain").id, "h1")
+
+    def test_no_mirror_anywhere_means_no_preference(self):
+        self.store.add_host(HostProfile(id="plain", name="plain"))
+        self.assertIsNone(self.store.preferred_mirrored_host("plain"))
+
+
 class TestJobs(StoreTestCase):
     def test_jobs_persist_across_instances(self):
         self.store.add_job(Job(id="j1", name="one"))

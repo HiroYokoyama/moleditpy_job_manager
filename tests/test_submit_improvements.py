@@ -172,6 +172,93 @@ def test_the_most_specific_mirror_wins(service, qapp, tmp_path):
     assert dlg.current_host().id == inner.id
 
 
+# --- a handoff from another plugin ------------------------------------------
+
+
+def test_a_handoff_opens_on_a_mirrored_host_over_the_last_one_used(service, qapp, tmp_path):
+    # An input generator saves wherever the user pointed the save dialog, which
+    # is almost never inside a mirror -- so the mirror detection above finds
+    # nothing and the wizard fell back to the last host used, downloading every
+    # result from a machine whose files were readable here all along.
+    plain = HostProfile(id="h-plain", name="Plain")
+    service.store.add_host(plain)
+    service.store.set_pref("last_host_id", plain.id)
+    mirror_host, _root = _mirror_host(service.store, tmp_path, "Cluster", "share")
+    inp = tmp_path / "elsewhere" / "mol.inp"
+    inp.parent.mkdir()
+    inp.write_text("x", encoding="utf-8")
+
+    dlg = SubmitDialog(service)
+    assert dlg.current_host().id == plain.id
+    dlg.prefill(files=[str(inp)], name="mol", handoff=True)
+
+    assert dlg.current_host().id == mirror_host.id
+
+
+def test_the_same_file_without_a_handoff_keeps_the_last_host(service, qapp, tmp_path):
+    plain = HostProfile(id="h-plain", name="Plain")
+    service.store.add_host(plain)
+    service.store.set_pref("last_host_id", plain.id)
+    _mirror_host(service.store, tmp_path, "Cluster", "share")
+    inp = tmp_path / "elsewhere" / "mol.inp"
+    inp.parent.mkdir()
+    inp.write_text("x", encoding="utf-8")
+
+    dlg = SubmitDialog(service)
+    dlg.prefill(files=[str(inp)], name="mol")
+
+    assert dlg.current_host().id == plain.id
+
+
+def test_a_handoff_keeps_a_mirrored_host_the_user_already_favours(service, qapp, tmp_path):
+    # Two mirrored machines: the habit decides, not this plugin's ordering.
+    _first, _root = _mirror_host(service.store, tmp_path, "Alpha", "alpha")
+    second, _root2 = _mirror_host(service.store, tmp_path, "Beta", "beta")
+    service.store.set_pref("last_host_id", second.id)
+    inp = tmp_path / "elsewhere" / "mol.inp"
+    inp.parent.mkdir()
+    inp.write_text("x", encoding="utf-8")
+
+    dlg = SubmitDialog(service)
+    dlg.prefill(files=[str(inp)], name="mol", handoff=True)
+
+    assert dlg.current_host().id == second.id
+
+
+def test_a_handoff_still_yields_to_a_file_that_lives_in_a_mirror(service, qapp, tmp_path):
+    # The preferred host is a guess made with no file to go on; a file added
+    # afterwards that really is on a host beats it, exactly as it beats the
+    # last-used default.
+    _preferred, _root = _mirror_host(service.store, tmp_path, "Alpha", "alpha")
+    owner, owner_root = _mirror_host(service.store, tmp_path, "Beta", "beta")
+    handed = tmp_path / "elsewhere" / "mol.inp"
+    handed.parent.mkdir()
+    handed.write_text("x", encoding="utf-8")
+    owned = owner_root / "second.inp"
+    owned.write_text("x", encoding="utf-8")
+
+    dlg = SubmitDialog(service)
+    dlg.prefill(files=[str(handed)], name="mol", handoff=True)
+    dlg.add_files([str(owned)])
+
+    assert dlg.current_host().id == owner.id
+
+
+def test_a_handoff_with_no_mirrored_host_changes_nothing(service, qapp, tmp_path):
+    plain = HostProfile(id="h-plain", name="Plain")
+    other = HostProfile(id="h-other", name="Other")
+    service.store.add_host(plain)
+    service.store.add_host(other)
+    service.store.set_pref("last_host_id", other.id)
+    inp = tmp_path / "mol.inp"
+    inp.write_text("x", encoding="utf-8")
+
+    dlg = SubmitDialog(service)
+    dlg.prefill(files=[str(inp)], name="mol", handoff=True)
+
+    assert dlg.current_host().id == other.id
+
+
 # --- refusing a job the machine cannot hold ---------------------------------
 
 
