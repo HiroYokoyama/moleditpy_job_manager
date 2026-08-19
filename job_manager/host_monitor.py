@@ -398,10 +398,14 @@ class Sparkline(QWidget):
         self.values: Deque[float] = deque(maxlen=HISTORY)
         self._dark = False
         # Room for the label row above the plot as well as the plot itself.
-        self.setMinimumHeight(86)
+        # Generous rather than tight: the caption row and the four guide lines
+        # take a fixed share of whatever height there is, so at the old 86 the
+        # plot itself was a band barely taller than the text above it and the
+        # difference between a busy host and an idle one was a few pixels.
+        self.setMinimumHeight(110)
 
     def sizeHint(self) -> QSize:
-        return QSize(180, 100)
+        return QSize(180, 128)
 
     def set_dark(self, dark: bool = False) -> None:
         self._dark = dark
