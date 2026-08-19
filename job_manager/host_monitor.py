@@ -40,7 +40,11 @@ from .credentials import needs_password
 from .models import (
     ACTIVE_STATES,
     SCHEDULER_WINDOWS,
+    STATE_CANCELLED,
     STATE_DONE,
+    STATE_DOWNLOADING,
+    STATE_FAILED,
+    STATE_LOST,
     STATE_NEW,
     STATE_RUNNING,
     STATE_UPLOADING,
@@ -285,8 +289,6 @@ def primary_state_word(job) -> str:
     from across a desk, where "FAILED" beside a machine name reads as the
     machine having failed.
     """
-    from .models import STATE_CANCELLED, STATE_FAILED, STATE_LOST
-
     return {
         STATE_DONE: "finished",
         STATE_FAILED: "failed",
@@ -695,10 +697,23 @@ class HostCard(QFrame):
             return
 
         total = len(jobs)
-        done = sum(1 for job in jobs if job.state == STATE_DONE)
+        # Anything that has stopped for good, however it stopped -- the same
+        # measure the summary bar reports. Counting only DONE said "14/21 done"
+        # for a host with one job left to run and six that had failed or been
+        # cancelled: six jobs that will never finish read as still to come, and
+        # the card disagreed with the bar under it about the same list.
+        finished = [job for job in jobs if job.is_terminal]
+        # Cancelled is not a failure -- the user stopped it themselves and does
+        # not need telling. LOST is: nothing came back and the result is gone.
+        failed = [job for job in finished if job.state in (STATE_FAILED, STATE_LOST)]
+        # Every state that is not terminal, not a hand-listed few: a job in
+        # DOWNLOADING was in neither half of this count and vanished from the
+        # card for as long as its results were being fetched.
+        unfinished = [job for job in jobs if not job.is_terminal]
         starting = [job for job in jobs if job.state in (STATE_NEW, STATE_UPLOADING)]
         running = [job for job in jobs if job.state == STATE_RUNNING]
         waiting = [job for job in jobs if job.state in ACTIVE_STATES and job.state != STATE_RUNNING]
+        fetching = [job for job in jobs if job.state == STATE_DOWNLOADING]
 
         def latest(candidates: list):
             # By when the job was handed over, never by updated_at: a poll
@@ -715,6 +730,8 @@ class HostCard(QFrame):
             primary, word, color, mark = latest(starting), "submitting", CY_AMBER, HOURGLASS
         elif waiting:
             primary, word, color, mark = latest(waiting), "queued", CY_AMBER, HOURGLASS
+        elif fetching:
+            primary, word, color, mark = latest(fetching), "downloading", CY_AMBER, ""
         else:
             last = latest(jobs)
             primary, word, color, mark = last, primary_state_word(last), CY_GREY, ""
@@ -726,9 +743,10 @@ class HostCard(QFrame):
             head_style=f"color:{color};font-weight:bold",
             tail_style=f"color:{CY_GREY}",
         )
-        busy = len(running) + len(waiting) + len(starting)
-        counts = [f"{busy} active"] if busy else []
-        counts.append(f"{done}/{total} done")
+        counts = [f"{len(unfinished)} active"] if unfinished else []
+        counts.append(f"{len(finished)}/{total} finished")
+        if failed:
+            counts.append(f"{len(failed)} failed")
         self.lbl_job_counts.show_line(", ".join(counts), head_style=f"color:{CY_GREY}")
 
     # --- what a sample changes ----------------------------------------------

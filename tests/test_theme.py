@@ -440,7 +440,7 @@ class TestHostCardJobsStrip(HostMonitorTestCase):
         card.show_jobs([self._job(id="j1", name="myrun")])
         self.assertIn("myrun", card.lbl_job.text())
         self.assertIn("running", card.lbl_job.text())
-        self.assertIn("0/1 done", card.lbl_job_counts.text())
+        self.assertIn("0/1 finished", card.lbl_job_counts.text())
 
     def test_blank_when_there_are_no_jobs(self):
         card = self._card()
@@ -525,7 +525,55 @@ class TestHostCardJobsStrip(HostMonitorTestCase):
             ]
         )
         self.assertIn("job2", card.lbl_job.text())
-        self.assertIn("1/3 done", card.lbl_job_counts.text())
+        self.assertIn("1/3 finished", card.lbl_job_counts.text())
+
+    def test_a_job_that_failed_is_finished_not_still_to_come(self):
+        # "14/21 done" on a host with one job left: the six that had failed or
+        # been cancelled were counted as outstanding, so the card said seven
+        # jobs remained and disagreed with the summary bar under it.
+        from job_manager.models import STATE_CANCELLED, STATE_DONE, STATE_FAILED
+
+        card = self._card()
+        card.show_jobs(
+            [
+                self._job(id="j1", name="ok", state=STATE_DONE),
+                self._job(id="j2", name="bad", state=STATE_FAILED),
+                self._job(id="j3", name="stopped", state=STATE_CANCELLED),
+                self._job(id="j4", name="going", state=STATE_RUNNING),
+            ]
+        )
+        text = card.lbl_job_counts.text()
+        self.assertIn("1 active", text)
+        self.assertIn("3/4 finished", text)
+
+    def test_only_a_real_failure_is_called_one(self):
+        # A job the user cancelled is not reported back to them as a failure.
+        from job_manager.models import STATE_CANCELLED, STATE_FAILED, STATE_LOST
+
+        card = self._card()
+        card.show_jobs([self._job(id="j1", name="stopped", state=STATE_CANCELLED)])
+        self.assertNotIn("failed", card.lbl_job_counts.text())
+
+        card.show_jobs(
+            [
+                self._job(id="j1", name="bad", state=STATE_FAILED),
+                self._job(id="j2", name="gone", state=STATE_LOST),
+            ]
+        )
+        self.assertIn("2 failed", card.lbl_job_counts.text())
+
+    def test_a_job_being_downloaded_is_still_counted_and_named(self):
+        # DOWNLOADING is in neither ACTIVE_STATES nor TERMINAL_STATES, so it
+        # counted as neither active nor finished and the card went quiet for
+        # as long as the results were being fetched.
+        from job_manager.models import STATE_DOWNLOADING
+
+        card = self._card()
+        card.show_jobs([self._job(id="j1", name="fetching", state=STATE_DOWNLOADING)])
+        self.assertIn("fetching", card.lbl_job.text())
+        self.assertIn("downloading", card.lbl_job.text())
+        self.assertIn("1 active", card.lbl_job_counts.text())
+        self.assertIn("0/1 finished", card.lbl_job_counts.text())
 
     def test_card_updates_on_jobs_changed(self):
         dialog = self.monitor()
