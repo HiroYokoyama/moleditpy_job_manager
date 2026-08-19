@@ -92,6 +92,39 @@ class TestWhatItShows(HostMonitorTestCase):
         self.assertFalse(card.graph_load.isVisibleTo(card))
         self.assertFalse(card.expanded)
 
+    def test_a_card_is_never_squeezed_below_the_height_it_asked_for(self):
+        # The scroll area shrinks what it holds down to its minimum before it
+        # will show a scrollbar, so a window one row too short used to squash
+        # the bars into a band barely taller than the caption under them.
+        dialog = self.monitor()
+        card = dialog.cards[self.host.id]
+        self.assertGreaterEqual(card.minimumSizeHint().height(), card.sizeHint().height())
+
+    def test_a_card_still_narrows(self):
+        # Height only: the labels elide, and forcing a minimum width would put
+        # a horizontal scrollbar under a narrow window.
+        dialog = self.monitor()
+        card = dialog.cards[self.host.id]
+        self.assertLess(card.minimumSizeHint().width(), dialog.CARD_WIDTH)
+
+    def test_the_bar_takes_the_height_the_card_has_spare(self):
+        dialog = self.monitor()
+        card = dialog.cards[self.host.id]
+        tall = card.height() + 120
+        card.resize(card.width(), tall)
+        card.layout().activate()
+        self.assertGreater(card.meter_cpu.height(), 160)
+
+    def test_the_hidden_bars_do_not_hold_height_back_from_the_graphs(self):
+        # The meters sit in a nested layout, which -- unlike a hidden widget --
+        # stays in the parent layout and would keep its share of the card.
+        dialog = self.monitor()
+        card = dialog.cards[self.host.id]
+        card.set_expanded(True)
+        self.assertEqual(card._outer.stretch(card._outer.indexOf(card._meter_row)), 0)
+        card.set_expanded(False)
+        self.assertEqual(card._outer.stretch(card._outer.indexOf(card._meter_row)), 1)
+
     def test_the_history_button_opens_every_card_at_once(self):
         self.store.add_host(make_host(id="second", name="workstation"))
         dialog = self.monitor()

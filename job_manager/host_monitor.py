@@ -310,9 +310,16 @@ class Meter(QWidget):
         self.setMinimumHeight(132)
         self.setMinimumWidth(67)
         self.setMaximumWidth(132)
+        # The bar is the thing this card exists to show, so it takes whatever
+        # height the card has spare instead of leaving it blank underneath.
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
 
     def sizeHint(self) -> QSize:
-        return QSize(100, 156)
+        # Two lines of text sit under the bar, so a hint near the minimum left
+        # the bar itself barely taller than the caption below it -- and a bar
+        # that short cannot be compared across cards at a glance, which is the
+        # whole point of drawing one.
+        return QSize(100, 208)
 
     def set_dark(self, dark: bool = False) -> None:
         self._dark = dark
@@ -403,6 +410,7 @@ class Sparkline(QWidget):
         # plot itself was a band barely taller than the text above it and the
         # difference between a busy host and an idle one was a few pixels.
         self.setMinimumHeight(110)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
 
     def sizeHint(self) -> QSize:
         return QSize(180, 128)
@@ -603,14 +611,16 @@ class HostCard(QFrame):
         columns.addWidget(self.meter_cpu)
         columns.addWidget(self.meter_memory)
         columns.addStretch(1)
-        outer.addLayout(columns)
+        outer.addLayout(columns, 1)
+        self._outer = outer
+        self._meter_row = columns
 
         self.graph_cpu = Sparkline(GRAPH_CPU, "CPU")
         self.graph_load = self.graph_cpu
         self.graph_memory = Sparkline(GRAPH_MEMORY, "memory")
         for widget in (self.graph_cpu, self.graph_memory):
             widget.setVisible(False)
-            outer.addWidget(widget)
+            outer.addWidget(widget, 1)
 
         # What this host is doing: one line for the job, one for the counts.
         # Two labels of one line each, never one label of two: a word-wrapping
@@ -628,6 +638,18 @@ class HostCard(QFrame):
         outer.addWidget(self.lbl_job_counts)
 
         self.restyle()
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt's spelling
+        """Never shorter than the card asked to be.
+
+        Height only. The cards sit in a scroll area, which shrinks what it holds
+        all the way down to its minimum before it will show a scrollbar, so on
+        any window too short for every row at once the bars -- and the graphs
+        behind them -- were squeezed to a band barely taller than the text under
+        them. Width still shrinks: the labels elide.
+        """
+        hint = super().minimumSizeHint()
+        return QSize(hint.width(), max(hint.height(), self.sizeHint().height()))
 
     def restyle(self, palette: Optional[QPalette] = None, dark: Optional[bool] = None) -> None:
         """Recalculate the card's surface and border colours for the palette."""
@@ -678,6 +700,11 @@ class HostCard(QFrame):
         self.graph_memory.setVisible(expanded)
         self.meter_cpu.setVisible(not expanded)
         self.meter_memory.setVisible(not expanded)
+        # A hidden widget drops out of the layout, but the row holding the
+        # meters is a nested layout and does not: left with a stretch factor it
+        # would claim a share of the card's height for two invisible bars and
+        # push the graphs into the gap the bars used to leave.
+        self._outer.setStretchFactor(self._meter_row, 0 if expanded else 1)
 
     def show_jobs(self, jobs: list) -> None:
         """One line for what this host is doing, one for how far it has got.
