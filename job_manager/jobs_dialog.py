@@ -76,15 +76,13 @@ from .store import (
     RECOMMENDED_MIN_POLL_INTERVAL,
 )
 
-#: Job lists this window opens -- archived or not. .json covers the files
-#: written before the extension existed.
+#: Job lists this window opens -- archived or not. .json covers files written
+#: before the extension existed.
 JOB_LIST_EXTENSIONS = (JOB_EXTENSION, ".json")
 JOB_LIST_FILTER = f"Job lists (*{JOB_EXTENSION} *.json);;All files (*)"
 
-#: Used for the two banners above the table. Palette roles rather than fixed
-#: pastels: the old pair were light-theme colours, so a dark-theme user read
-#: navy on near-white inside an otherwise dark window.  The left border picks
-#: up the accent colour so the banner stands out without a hard background.
+#: Used for the two banners above the table. Palette roles, not fixed pastels:
+#: the old pair read as navy on near-white in a dark theme.
 from .theme import CY_ACCENT2 as _ACCENT2  # noqa: E402 – after other imports
 
 BANNER_STYLE = (
@@ -127,13 +125,10 @@ def format_stamp(stamp: float) -> str:
 class _StateColorDelegate(QStyledItemDelegate):
     """Keeps the State column's colour when its row is selected.
 
-    Qt's item delegate paints selected text with the palette's HighlightedText
-    role and ignores the model's ForegroundRole entirely while a row is
-    selected -- so RUNNING/FAILED/etc. all rendered as the same near-black
-    text the moment you clicked the row, on top of a blue highlight that made
-    it worse. Overriding the palette colours the delegate paints with, rather
-    than the pen colour after the fact, is what actually takes effect for both
-    the selected and unselected states.
+    Qt paints selected text with HighlightedText and ignores the model's
+    ForegroundRole while selected, so RUNNING/FAILED/etc. all rendered the
+    same near-black. Overriding the palette colour, not the pen after the
+    fact, is what actually takes effect in both states.
     """
 
     def initStyleOption(self, option, index) -> None:  # noqa: N802 - Qt's spelling
@@ -182,9 +177,8 @@ class JobTableModel(QAbstractTableModel):
         or waiting for something that already failed, and those two deserve
         very different reactions from the user.
         """
-        # The cached set, not chain_blocker: this is asked twice per visible
-        # row per repaint -- once for the text, once for the colour -- and each
-        # call walked the job's whole chain through the scheduler registry.
+        # The cached set, not chain_blocker: asked twice per row per repaint,
+        # and chain_blocker walks the whole chain each time.
         if job.id in self.service.store.blocked_ids():
             return STATE_BLOCKED
         if self._is_waiting(job):
@@ -256,16 +250,14 @@ class JobTableModel(QAbstractTableModel):
                     return "-"
                 return predecessor.name + ("" if job.chain_any else " (on success)")
             if column == 5:
-                # Running time once it is running or over; queue wait before.
                 if job.is_terminal or job.state == STATE_RUNNING or job.started_at:
                     return format_duration(job.elapsed())
                 return f"wait {format_duration(job.waiting())}"
             if column == 6:
                 return format_stamp(job.updated_at)
         elif role == Qt.ItemDataRole.UserRole:
-            # What the column is actually sorted on: the raw value behind the
-            # formatted text, so "10m" does not sort before "2m" and the
-            # newest job is not decided by string order on its timestamp.
+            # The raw value behind the formatted text, so sorting is numeric
+            # ("10m" vs "2m") rather than string order.
             column = index.column()
             if column == 5:
                 return (
@@ -302,13 +294,10 @@ class JobTableModel(QAbstractTableModel):
 
 class JobFilterProxyModel(QSortFilterProxyModel):
     """Sits between the table and :class:`JobTableModel`: click a header to
-    sort, type to filter -- without either changing what the model itself
-    holds.
+    sort, type to filter, without changing what the model itself holds.
 
-    Sorting reads UserRole, not the formatted text: Elapsed is shown as
-    "10m 05s", and a plain text sort would put it before "2m 05s". Filtering
-    matches any column, not only the first, because a search for a host name
-    or a queue id is exactly as reasonable as one for a job name.
+    Sorting reads UserRole, not the formatted text ("10m" vs "2m 05s").
+    Filtering matches any column, not only the job name.
     """
 
     def __init__(self, parent: Optional[QObject] = None) -> None:
@@ -331,9 +320,8 @@ class JobFilterProxyModel(QSortFilterProxyModel):
         try:
             return left_value < right_value
         except TypeError:
-            # A mismatched pair (a QVariant() on one side, a real value on the
-            # other) is rare but not impossible mid-reload; text is always
-            # comparable, and a merely-approximate order there is no loss.
+            # A mismatched pair (QVariant() vs a real value) can happen
+            # mid-reload; an approximate text order is no real loss.
             return str(left_value) < str(right_value)
 
     def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
@@ -361,25 +349,19 @@ class JobsDialog(QDialog):
         self.resize(940, 560)
         #: Non-empty while a cleared list is being viewed read-only.
         self._archive_path = ""
-        #: The open log window, if any; the tail goes there rather than into
-        #: the four-line strip at the bottom.
+        #: The open log window, if any; the tail goes there instead of the
+        #: four-line strip at the bottom.
         self._tail_dialog: Optional[QDialog] = None
-        #: The live host panel, if open. One is enough, and it polls.
         self._host_monitor: Optional[QDialog] = None
-        #: Detail windows stay open until closed, so they have to be held.
         self._detail_dialogs: List[QDialog] = []
-        # Dropping a job list opens it: read-only when the file says it is
-        # archived, otherwise it becomes the list in use for this session.
         self.setAcceptDrops(True)
         self.model = JobTableModel(service, self)
         self._build_ui()
         self._connect_service()
         self._update_buttons()
         self._update_interval_warning()
-        # Elapsed is computed from the clock every time the cell is drawn, but
-        # a cell is only drawn when the model says it changed -- which happened
-        # on a poll result, so the column advanced in two-minute jumps. This
-        # repaints one column, reads nothing, and contacts nobody.
+        # Elapsed is only redrawn when the model changes, which is on a poll
+        # result -- without a separate repaint it advanced in jumps.
         self._ticker = QTimer(self)
         self._ticker.setInterval(1000)
         self._ticker.timeout.connect(self._tick_elapsed)
@@ -464,10 +446,9 @@ class JobsDialog(QDialog):
         splitter = QSplitter(Qt.Orientation.Vertical)
 
         self.table = QTableView()
-        # A proxy between the table and the model, not the model itself:
-        # JobTableModel stays the plain, testable read-only view of the store
-        # it always was, and every existing row-index caller (job_at, row_of,
-        # the elapsed ticker) keeps addressing it directly by source row.
+        # A proxy between the table and the model: JobTableModel stays the
+        # plain, testable read-only view of the store, addressed by source
+        # row everywhere else (job_at, row_of, the elapsed ticker).
         self.proxy = JobFilterProxyModel(self)
         self.proxy.setSourceModel(self.model)
         self.table.setModel(self.proxy)
@@ -526,10 +507,8 @@ class JobsDialog(QDialog):
         self.btn_resubmit.clicked.connect(self._resubmit_selected)
         self.btn_remove = QPushButton("Remove")
         self.btn_remove.clicked.connect(self._remove_selected)
-        # The counterparts to Save As..., at the head of the row that is about
-        # the list rather than about one job. Opening a list was reachable only
-        # through Load Archive... or a banner that appears once you are already
-        # somewhere else.
+        # Counterparts to Save As..., for the row that acts on the list as a
+        # whole rather than on one job.
         self.btn_open_default = QPushButton("Default")
         self.btn_open_default.setToolTip(
             "Back to the job list this plugin keeps in ~/.moleditpy/job_manager/."
@@ -562,9 +541,8 @@ class JobsDialog(QDialog):
             "Empty the table, saving a dated copy first. Nothing on the host is deleted."
         )
         self.btn_clear.clicked.connect(self._clear_jobs)
-        # Two rows, split by what they act on: the selected job above, the list
-        # as a whole below. Ten buttons on one line ran off the side of a narrow
-        # window, and put "Clear List..." within a slip of "Cancel Job".
+        # Two rows, split by what they act on: selected job above, whole list
+        # below. Ten buttons on one line ran off a narrow window.
         for button in (
             self.btn_cancel,
             self.btn_download,
@@ -593,7 +571,7 @@ class JobsDialog(QDialog):
         list_actions.addStretch(1)
         layout.addLayout(list_actions)
 
-        # And the preferences on a line of their own: they are not actions.
+        # Preferences, not actions, so on a line of their own.
         actions = QHBoxLayout()
         self.chk_auto_open = QCheckBox("Open results automatically")
         self.chk_auto_open.setChecked(
@@ -624,9 +602,8 @@ class JobsDialog(QDialog):
         )
         actions.addWidget(self.chk_chat)
 
-        # Just the ellipsis: this row already carries three long checkboxes, and
-        # a fourth control with a word in it pushed the window's minimum width
-        # past what a laptop screen gives it.
+        # Just the ellipsis: a fourth labelled control here pushed the window's
+        # minimum width past a laptop screen.
         self.btn_chat = QPushButton("...")
         self.btn_chat.setMaximumWidth(36)
         self.btn_chat.setToolTip(
@@ -643,10 +620,8 @@ class JobsDialog(QDialog):
         layout.addWidget(self.lbl_status)
 
     def _connect_service(self) -> None:
-        # Kept as a list so closeEvent can undo every one of them. The service
-        # outlives this window, so a connection left behind is a closed dialog
-        # that still reloads its model on every poll and still opens each
-        # finished job's results -- once per window the user ever opened.
+        # Kept as a list so closeEvent can undo every one: the service outlives
+        # this window, and a leaked connection keeps reloading a dead dialog.
         self._connections = [
             (self.service.jobs_changed, self.model.reload),
             (self.service.jobs_changed, self._update_buttons),
@@ -673,8 +648,7 @@ class JobsDialog(QDialog):
 
     def _on_taskbar_badge_toggled(self, enabled: bool) -> None:
         self.service.store.set_pref("taskbar_badge", bool(enabled))
-        # Applied now rather than at the next poll: switching it off has to
-        # take the badge off the icon, not leave the last count sitting there.
+        # Applied now, not at the next poll, so switching off clears the icon.
         from .taskbar import clear_badge
 
         if not enabled:
@@ -689,16 +663,11 @@ class JobsDialog(QDialog):
         self._sync_chat_controls()
 
     def _sync_chat_controls(self) -> None:
-        """Show the tick as what it is: unusable until a room is configured.
-
-        A tick that can be set with no webhook behind it says messages are
-        being posted while nothing is, which is the worst of the three states
-        to be in -- it is believed, and only a job ending disproves it.
-        """
+        """Show the tick as unusable until a room is configured -- a tick set
+        with no webhook behind it would claim to post when nothing is sent."""
         url = str(self.service.store.get_pref("notify_webhook", "") or "")
-        # Blocked: this runs whenever the URL might have changed, and letting
-        # setChecked through here would write the *displayed* state back over
-        # the user's own setting every time the dialog was merely opened.
+        # Blocked: setChecked here must not overwrite the user's own setting
+        # with the merely-displayed state every time the dialog opens.
         self.chk_chat.blockSignals(True)
         self.chk_chat.setChecked(bool(url) and bool(self.service.store.get_pref("notify_chat")))
         self.chk_chat.blockSignals(False)
@@ -721,9 +690,8 @@ class JobsDialog(QDialog):
         rows = self.table.selectionModel().selectedRows() if self.table.selectionModel() else []
         if not rows:
             return None
-        # The view's model is the sort/filter proxy, so a selected row's index
-        # is a proxy row and has to be mapped back to the source model that
-        # actually holds the job.
+        # The view's model is the sort/filter proxy, so map back to the
+        # source model that actually holds the job.
         source = self.proxy.mapToSource(rows[0])
         return self.model.job_at(source.row())
 
@@ -738,17 +706,12 @@ class JobsDialog(QDialog):
         if self._tail_dialog is not None:
             self._tail_dialog.set_text(text)
             return
-        # No window open: the tail was asked for by something else, or the
-        # window was closed while the read was in flight.
         self.txt_log.setPlainText(text)
 
     def _show_row_menu(self, position) -> None:
-        """Everything that can be done to the row under the cursor.
-
-        The same actions as the buttons, and disabled on the same conditions --
-        driven from the buttons themselves so the two can never disagree about
-        what is possible for a job.
-        """
+        """Everything that can be done to the row under the cursor: the same
+        actions as the buttons, driven from them so the two can never
+        disagree."""
         index = self.table.indexAt(position)
         if index.isValid():
             self.table.selectRow(index.row())
@@ -778,7 +741,6 @@ class JobsDialog(QDialog):
     def _tick_elapsed(self) -> None:
         """Repaint the Elapsed cell of every job that is still going."""
         if not self.isVisible():
-            # A hidden window paints nothing; waking Qt up for it is waste.
             return
         column = COLUMNS.index("Elapsed")
         for row in range(self.model.rowCount()):
@@ -793,11 +755,9 @@ class JobsDialog(QDialog):
 
     def _update_buttons(self) -> None:
         if self.viewing_reconstructed() and not self.viewing_archive():
-            # Everything that would talk to a host is off: these jobs were read
-            # off a disk and there is no host, no queue id and no remote
-            # directory behind any of them. Opening a result, reading the
-            # record and exporting the list all still work, and are the whole
-            # point of having rebuilt it.
+            # Everything that would talk to a host is off: these jobs were
+            # read off disk, with no host, queue id or remote directory.
+            # Opening a result, reading the record and exporting still work.
             job = self.selected_job()
             for button in (
                 self.btn_new,
@@ -816,8 +776,8 @@ class JobsDialog(QDialog):
             return
         self.btn_new.setEnabled(True)
         if self.viewing_archive():
-            # An archived job's queue id is stale and its remote directory may
-            # be long gone, so every action that would act on one is off.
+            # An archived job's queue id and remote directory may be gone, so
+            # every action that would act on one is off.
             for button in (
                 self.btn_cancel,
                 self.btn_download,
@@ -854,12 +814,11 @@ class JobsDialog(QDialog):
         )
         self.btn_tail.setEnabled(bool(job and job.remote_dir))
         self.btn_tail_file.setEnabled(bool(job and job.remote_dir))
-        # A command-only job has no input files to check for; what makes it
-        # resubmittable is the command, which the preset snapshot carries.
+        # A command-only job has no input files; the preset snapshot alone
+        # makes it resubmittable.
         self.btn_resubmit.setEnabled(bool(job and (job.input_files or job.preset)))
         self.btn_remove.setEnabled(has_job)
-        # Details reads only what is already recorded, so it needs no host and
-        # works for an archived job too -- which is when it is most useful.
+        # Details reads only what is already recorded, so it works archived too.
         self.btn_details.setEnabled(has_job)
 
     # --- actions ------------------------------------------------------------
@@ -878,8 +837,7 @@ class JobsDialog(QDialog):
         from .submit_dialog import SubmitDialog
 
         if self.viewing_reconstructed():
-            # Including a drop onto the window, which lands here as well: a
-            # rebuilt list has nowhere to submit to and nothing to track with.
+            # Also reached from a drop: a rebuilt list has nowhere to submit to.
             QMessageBox.information(
                 self,
                 "Job Manager",
@@ -917,8 +875,8 @@ class JobsDialog(QDialog):
             )
             return
         if job.host_id not in self.service.store.hosts:
-            # Prefill cannot select a host that no longer exists, so the wizard
-            # would silently open on whichever host happens to be first.
+            # Prefill can't select a host that no longer exists; the wizard
+            # would silently open on whichever host sorts first.
             confirm = QMessageBox.question(
                 self,
                 "Resubmit",
@@ -932,8 +890,8 @@ class JobsDialog(QDialog):
             name=job.name,
             host_id=job.host_id,
             preset=job.preset or None,
-            # A job that ran on work already staged on the host is resubmitted
-            # against that same directory: there is no local input to send.
+            # A job that ran on work already staged on the host resubmits
+            # against that same directory; there is no local input to send.
             remote_dir=job.remote_dir if job.remote_dir_provided else "",
             remote_input=job.remote_input,
         )
@@ -993,9 +951,8 @@ class JobsDialog(QDialog):
             if confirm == QMessageBox.StandardButton.Yes and self._has_credentials(job):
                 self.service.cancel(job)
             return
-        # A chain is the case where "cancel" is ambiguous: one job, or that job
-        # and everything queued behind it. Asked outright rather than decided
-        # here, because both answers are ones people really want.
+        # A chain makes "cancel" ambiguous -- one job, or it and everything
+        # queued behind it -- so ask outright rather than decide.
         box = QMessageBox(self)
         box.setWindowTitle("Cancel job")
         box.setText(
@@ -1010,8 +967,8 @@ class JobsDialog(QDialog):
         if clicked not in (this_one, whole_chain) or not self._has_credentials(job):
             return
         if clicked is whole_chain:
-            # Behind first, so nothing is released by the cancel of the job in
-            # front of it and started while the chain is being taken down.
+            # Behind first, so nothing starts by being released while the
+            # chain is still being taken down.
             for dependent in reversed(dependents):
                 self.service.cancel(dependent, release_dependents=False)
             self.service.cancel(job, release_dependents=False)
@@ -1026,14 +983,8 @@ class JobsDialog(QDialog):
         return ensure_password(self.service, host, self)
 
     def _download_selected(self) -> None:
-        """Show what is on the host and let the user pick. Nothing is fetched
-        until they say so.
-
-        The automatic download follows the fetch patterns and says nothing when
-        they match nothing, which is the usual way a finished job appears to
-        have produced no results. Pressing the button is a deliberate act, so
-        it asks: which files, and into which folder.
-        """
+        """Show what is on the host and let the user pick which files, and
+        into which folder. Nothing is fetched until they say so."""
         job = self.selected_job()
         if job is None or not self._has_credentials(job):
             return
@@ -1057,14 +1008,10 @@ class JobsDialog(QDialog):
         matched = [
             name
             for name in select_files(names, job.fetch_globs or [])
-            # Offered, never pre-ticked: `*.log` is in the default patterns for
-            # Gaussian's output, and ticking the wrapper's log on its account
-            # would be the automatic download this is meant to replace.
+            # Offered, never pre-ticked: `*.log` matches Gaussian's own output
+            # too, and ticking the wrapper's log would defeat the point.
             if not is_plugin_file(name, job.log_file)
         ]
-        # Nothing matched is the case this dialog exists for, and a list with
-        # nothing ticked leaves the user to find their own output among the
-        # scratch files. The names say which those are.
         suggested = not matched
         if suggested:
             matched = likely_outputs(names, job.log_file)
@@ -1086,13 +1033,7 @@ class JobsDialog(QDialog):
         self.service.download(job, into=folder, names=chosen)
 
     def _open_double_clicked(self) -> None:
-        """What a double click means depends on whether the job is still going.
-
-        While it runs, the question is "how far has it got", and the answer is
-        the log. Once it has finished, the log is the least interesting file in
-        the directory -- what was wanted is the result -- and opening it there
-        meant every finished job took a second click to get past.
-        """
+        """Tail the log while a job runs; open the result once it has finished."""
         job = self.selected_job()
         if job is None:
             return
@@ -1127,8 +1068,8 @@ class JobsDialog(QDialog):
             self._tail_dialog.finished.connect(lambda *_: setattr(self, "_tail_dialog", None))
             self._tail_dialog.show()
         else:
-            # Update the window title AND the refresh callback so the
-            # auto-refresh pulls from the newly selected job, not the old one.
+            # Both title and refresh callback, so auto-refresh follows the
+            # newly selected job rather than the old one.
             self._tail_dialog.setWindowTitle(
                 f"Job Manager {PLUGIN_VERSION} - {job.name}: {job.log_file}"
             )
@@ -1154,12 +1095,9 @@ class JobsDialog(QDialog):
             from .runner import primary_output
             from .tail_file_dialog import TailFileDialog
 
-            # The calculation's own output, never the wrapper's log. This
-            # window exists for the file the program writes; the wrapper's log
-            # is what the Tail Log button already opens, and preselecting it
-            # here meant the one file this dialog is not for was the one
-            # offered. It stays in the list -- it is a real file on the host
-            # and asking for it deliberately is allowed -- just not first.
+            # The calculation's own output, never the wrapper's log -- that is
+            # what the Tail Log button already opens. Still in the list, since
+            # asking for it deliberately is allowed; just not preselected.
             dialog = TailFileDialog(
                 job.name,
                 filtered,
@@ -1244,9 +1182,8 @@ class JobsDialog(QDialog):
         dialog.show()
         # Held so Python does not collect the window the moment this returns.
         self._detail_dialogs.append(dialog)
-        # Discarded rather than removed: finished can arrive more than once for
-        # one window, and the second remove() raised ValueError out of a Qt
-        # slot -- which the host reports to the user as a plugin crash.
+        # finished can arrive more than once for one window; a second
+        # remove() raised ValueError out of a Qt slot, reported as a crash.
         dialog.finished.connect(lambda *_: self._forget_detail(dialog))
 
     def _forget_detail(self, dialog) -> None:
@@ -1272,9 +1209,8 @@ class JobsDialog(QDialog):
             ("Downloaded to", job.local_dir or "-"),
             ("Last error", job.last_error or "-"),
         ]
-        # The resources it was submitted with, from the snapshot taken at
-        # submit time rather than the named preset -- which may since have been
-        # edited or deleted, and would then describe a different job.
+        # The snapshot taken at submit time, not the named preset -- which may
+        # since have been edited or deleted.
         preset = job.preset or {}
         if preset:
             rows += [
@@ -1301,8 +1237,7 @@ class JobsDialog(QDialog):
             ]
         width = max(len(label) for label, _ in rows)
         lines = [f"{label.ljust(width)}  {value}".rstrip() for label, value in rows]
-        # The script last and in full: it is the answer to "what actually ran",
-        # and it is the thing worth copying into a terminal to try by hand.
+        # Last and in full: the thing worth copying into a terminal by hand.
         lines += ["", "--- script ---", job.command or "(not recorded)"]
         return "\n".join(lines)
 
@@ -1353,14 +1288,9 @@ class JobsDialog(QDialog):
             self.open_job_list(path)
 
     def _rebuild_from_folder(self) -> None:
-        """Make a job list out of results that are already on disk.
-
-        For calculations this plugin never saw: fetched by hand, copied off a
-        cluster, run before it was installed, or left behind by a list that was
-        cleared. The records it writes are marked reconstructed, in the file
-        itself, and nothing in such a list can be submitted or polled -- there
-        is no host behind any of it.
-        """
+        """Make a job list out of results already on disk, for calculations
+        this plugin never saw. Marked reconstructed; nothing in it can be
+        submitted or polled."""
         start = (
             self.service.store.get_pref("last_rebuild_dir", "")
             or self.service.store.download_root()
@@ -1375,8 +1305,7 @@ class JobsDialog(QDialog):
         from .folder_scan import scan_folder
 
         def work():
-            # On a worker: a folder on a network share takes real time to walk,
-            # and doing it here would freeze the window mid-scan.
+            # On a worker: a network-share folder takes real time to walk.
             return scan_folder(folder)
 
         def done(result) -> None:
@@ -1402,16 +1331,14 @@ class JobsDialog(QDialog):
             return
         counts = summarise(result)
         store = self.service.store
-        # Saved in the folder that was scanned, beside the results it describes:
-        # the list belongs to that folder, so copying or moving the folder takes
-        # it along, and opening it again there needs no scan at all.
+        # Saved beside the results it describes, so moving the folder takes
+        # the list along and reopening it there needs no rescan.
         name = f"rebuilt_{time.strftime('%Y%m%d_%H%M%S')}{JOB_EXTENSION}"
         path = os.path.join(folder, name)
         try:
             store.write_job_list(path, result.jobs, reconstructed=True)
         except OSError as exc:
-            # A folder on a read-only share is a perfectly ordinary place to
-            # find results, so falling back beats refusing.
+            # A read-only share is an ordinary place to find results.
             path = os.path.join(store.directory, name)
             try:
                 store.write_job_list(path, result.jobs, reconstructed=True)
@@ -1462,12 +1389,8 @@ class JobsDialog(QDialog):
             self.open_job_list(path)
 
     def open_job_list(self, path: str) -> bool:
-        """Open a job list: read-only if the file says it is archived.
-
-        The flag travels in the file, so a cleared list stays history after it
-        is moved, copied or mailed on. Anything not flagged -- an export, a
-        backup, a colleague's file -- becomes the list in use for this session.
-        """
+        """Open a job list: read-only if the file says it is archived (the
+        flag travels with the file, so a cleared list stays history)."""
         store = self.service.store
         jobs, archived = store.read_job_list(path)
         if not jobs:
@@ -1489,9 +1412,8 @@ class JobsDialog(QDialog):
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return False
-        # Leave the read-only view first, or the table goes on showing the
-        # archive -- with every button disabled -- while tracking and saving
-        # have already moved to the file just opened.
+        # Leave the read-only view first, or the table keeps showing the
+        # archive while tracking and saving have already moved on.
         self._exit_archive()
         count = store.use_jobs_file(path)
         self.service.jobs_changed.emit()
@@ -1588,18 +1510,15 @@ class JobsDialog(QDialog):
             return
         from .output_file_dialog import OutputFileSelectorDialog
 
-        # Check existing local files
         existing_local: List[str] = []
         for path in job.downloaded_files or []:
             if path and os.path.isfile(path) and path not in existing_local:
                 existing_local.append(os.path.normpath(path))
 
-        # If exactly 1 local file and no remote directory, open directly
         if len(existing_local) == 1 and not job.remote_dir:
             self.open_result_files(existing_local)
             return
 
-        # Otherwise open the output file selector dialog
         dialog = OutputFileSelectorDialog(
             self.service,
             job,
@@ -1645,20 +1564,16 @@ class JobsDialog(QDialog):
         path = urls[0].toLocalFile()
         if not path.lower().endswith(JOB_LIST_EXTENSIONS):
             return ""
-        # Normalised like the input-file path beside it: toLocalFile() hands
-        # back forward slashes on Windows, and two drop handlers on one window
-        # returning different spellings of the same path is a trap.
+        # toLocalFile() returns forward slashes on Windows; normalise once.
         return os.path.normpath(path)
 
     @staticmethod
     def _dropped_input_files(event) -> List[str]:
         """Local files that are not a job list, i.e. things to submit.
 
-        Dropping onto this window is unambiguous -- it is the job window --
-        which is why input extensions are not registered with the host
-        instead. Claiming ``.inp`` or ``.xyz`` application-wide would take
-        those files away from being *opened*, which is what a user dropping one
-        on the main window usually means.
+        Input extensions are not registered with the host application-wide:
+        that would take ``.inp``/``.xyz`` away from being *opened* on the
+        main window.
         """
         mime = event.mimeData()
         if not mime.hasUrls():
@@ -1684,29 +1599,22 @@ class JobsDialog(QDialog):
             event.acceptProposedAction()
             self.open_job_list(path)
             return
-        # Anything else that is a real file is treated as something to run:
-        # the wizard opens prefilled, so a drop is the whole way from "here is
-        # my input" to "which cluster, which command".
+        # Anything else that is a real file opens the wizard prefilled.
         files = self._dropped_input_files(event)
         if not files:
             event.ignore()
             return
         event.acceptProposedAction()
-        # Several files, dropped plainly, become that many separate jobs --
-        # the far more common reason to drop a pile of files here. Hold Shift
-        # while dropping for the one job every one of them used to become.
+        # Several files dropped plainly become that many separate jobs; hold
+        # Shift for the one-job case.
         batch = len(files) > 1 and not bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
         self.open_submit_dialog(files=files, batch=batch)
 
     # --- lifecycle ----------------------------------------------------------
 
     def _teardown(self) -> None:
-        """Let go of the service. Safe to call twice.
-
-        Deregisters too, so a reopened window is a fresh, live instance;
-        polling continues in the service, which outlives this dialog.
-        """
-        # Stop the elapsed ticker so it doesn't fire after the dialog is gone.
+        """Let go of the service and deregister. Safe to call twice; polling
+        continues in the service, which outlives this dialog."""
         if hasattr(self, "_ticker"):
             self._ticker.stop()
         self._disconnect_service()
@@ -1719,27 +1627,21 @@ class JobsDialog(QDialog):
 
     def reject(self) -> None:
         # Esc closes a QDialog through reject(), which never reaches
-        # closeEvent. Without this the window stayed connected to a service
-        # that outlives it: every poll reloaded a dead dialog's model, and each
-        # finished job opened its results once per window ever dismissed.
+        # closeEvent, so teardown must happen here too.
         self._teardown()
         super().reject()
 
     def closeEvent(self, event) -> None:
         self._teardown()
-        # Accepted rather than delegated: QDialog's own closeEvent calls
-        # reject(), and reject() now tears down as well -- doing both would
-        # recurse.
+        # Accepted, not delegated: QDialog's closeEvent calls reject(), which
+        # now tears down as well -- doing both would recurse.
         event.accept()
 
 
 def pick_primary_result(paths: List[str], log_file: str = "") -> str:
-    """The file to hand to the application, out of everything downloaded.
-
-    Ranked by what an analyzer plugin is most likely to claim, and never this
-    plugin's own wrapper log whatever else is there. Falls back to the first
-    path so a download of one unrecognised file still opens it.
-    """
+    """The file to hand to the application: ranked by what an analyzer plugin
+    is most likely to claim, never this plugin's own wrapper log, falling
+    back to the first path."""
     from .runner import primary_output
 
     return primary_output(paths, log_file) or (paths or [""])[0]
@@ -1748,20 +1650,13 @@ def pick_primary_result(paths: List[str], log_file: str = "") -> str:
 def clear_document(main_window) -> bool:
     """Empty the editor so a result opens onto a clean canvas.
 
-    Which of the two things used to happen depended entirely on the file's
-    extension. The built-in loaders for .xyz and .mol clear the whole document
-    themselves -- and with the unsaved-changes check skipped, so an auto-open
-    after a download threw away work with no prompt. A result claimed by an
-    analyzer plugin instead (.out, .log) cleared nothing, so the previous
-    molecule stayed on the 2D canvas beside a 3D view of the new one, two
-    different structures presented as one document.
+    Used to depend on the file's extension: built-in .xyz/.mol loaders
+    cleared with the unsaved-changes check skipped (silent data loss), while
+    an analyzer plugin (.out, .log) cleared nothing (two molecules on screen
+    at once). Cleared here for every route, *with* the check.
 
-    Cleared here for every route, and *with* the check: the host asks about
-    unsaved work as it would for File > New, and answering Cancel leaves both
-    the document and the result alone.
-
-    Returns True when the document is clear -- including when this host is too
-    old to have the manager, where the openers behave exactly as they did.
+    Returns True when the document is clear, including on a host too old to
+    have this manager.
     """
     manager = getattr(main_window, "edit_actions_manager", None)
     clear = getattr(manager, "clear_all", None)
@@ -1777,12 +1672,10 @@ def clear_document(main_window) -> bool:
 def open_in_host(path: str) -> bool:
     """Route a downloaded file through the application's own file openers.
 
-    Reuses ``MainWindow.init_manager.load_command_line_file``, which walks the
-    registered plugin file openers by priority (that is how the ORCA Result
-    Analyzer claims ``.out``) before falling back to the built-in loaders --
-    so no analyzer plugin needs to be hard-coded here.
-
-    The document is cleared first -- see :func:`clear_document`.
+    Reuses ``MainWindow.init_manager.load_command_line_file``, which walks
+    registered plugin openers by priority before the built-in loaders, so no
+    analyzer plugin needs to be hard-coded here. Clears the document first --
+    see :func:`clear_document`.
     """
     from . import get_context
 

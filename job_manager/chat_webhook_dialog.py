@@ -1,9 +1,7 @@
 """Where the chat webhook URL is typed, and tried.
 
-A URL that turns out to be wrong is only discovered hours later, when the job
-it was meant to report on ends and nothing arrives. So the test message is part
-of the dialog rather than something to remember to do, and it says what came
-back where the URL was typed instead of in a message box over the top of it.
+A wrong URL is otherwise only discovered hours later when a job ends and
+nothing arrives, so the test message is part of the dialog itself.
 """
 
 from __future__ import annotations
@@ -97,13 +95,9 @@ class ChatWebhookDialog(QDialog):
     # --- the test -----------------------------------------------------------
 
     def _send_test(self) -> None:
-        """Post off the GUI thread.
-
-        A chat service that has gone away answers slowly or not at all, and
-        this window is modal: posting inline would freeze MoleditPy behind a
-        dialog the user cannot dismiss. The callback is a bound method of this
-        dialog, so Qt drops it if the dialog is gone before the answer is.
-        """
+        """Post off the GUI thread: this dialog is modal, and a chat service
+        that has gone away would otherwise freeze it behind an unclickable
+        window."""
         url = self.edit_url.text().strip()
         if not webhook.is_supported(url):
             return
@@ -136,14 +130,11 @@ class ChatWebhookDialog(QDialog):
 
     def accept(self) -> None:
         # Saved even when it is not a URL at all: refusing to close on a typo
-        # traps somebody who was clearing the field, and an unusable value posts
-        # nothing rather than doing something wrong.
+        # would trap someone who was just clearing the field.
         url = self.edit_url.text().strip()
         self.store.set_pref("notify_webhook", url)
-        # Saving a URL never switches the posting on by itself: sending a job's
-        # name and host off this machine is the user's decision to make with the
-        # tick, not something configuring a room implies. Clearing the URL does
-        # switch it off -- there is nothing left to post to.
+        # Saving a URL never switches posting on by itself -- that is the
+        # tick's decision. Clearing the URL does switch it off.
         if not url:
             self.store.set_pref("notify_chat", False)
         super().accept()

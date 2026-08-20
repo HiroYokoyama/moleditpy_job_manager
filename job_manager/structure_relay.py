@@ -1,24 +1,12 @@
 """Point a new job's input at a file a previous job already produced.
 
-The case: an optimisation finishes, and the next job -- a frequency
-calculation, a single point at a better level of theory, a Gaussian job
-picking up where an old checkpoint left off -- should read something the
-first job wrote, without the user copying a path around by hand.
+Purely generic: this inserts a *filename*, nothing else. What it means to the
+program that reads it (an ORCA ``* xyzfile`` block, a Gaussian ``%oldchk``,
+...) is between the input and that program; this parses no chemistry.
 
-What this module does is entirely generic, on purpose: it inserts a
-*filename*, nothing else. What that filename means to the program that reads
-it -- an ORCA ``* xyzfile`` block, a Gaussian ``%oldchk``, anything else -- is
-between the input file and the program; this has no opinion on it and parses
-no chemistry. That is left to whichever plugin wrote the tag in the first
-place, which is also the one place that knows what its own program expects.
-
-The relay only ever happens between jobs on the *same host*. The file is
-moved there with a single remote command -- ``cp`` or ``Copy-Item`` -- so
-nothing is downloaded to this machine and re-uploaded; a relay across two
-different hosts is not offered, because there is no way to name a path on one
-host that means anything on the other without moving the bytes through here,
-which is a very different (and slower, and more failure-prone) operation this
-does not attempt.
+Only relays between jobs on the *same host*, via a single remote ``cp`` /
+``Copy-Item`` -- nothing is downloaded and re-uploaded, and cross-host is not
+supported since there's no way to name one host's path on another.
 """
 
 from __future__ import annotations
@@ -31,27 +19,17 @@ from typing import List
 
 from .models import STATE_DONE, Job
 
-#: Where a substituted copy of an input file is written before upload. Left
-#: on disk rather than cleaned up after: the upload happens on a worker
-#: thread dispatched well after this file is written, and there is no hook
-#: back to "the transfer is done" cheap enough to justify chasing it for a
-#: few kilobytes of text.
+#: Left on disk (not cleaned up): the upload runs on a worker thread with no
+#: cheap hook back to "the transfer is done".
 RELAY_DIRNAME = "moleditpy_job_manager_relay"
 
-#: What an input file writes in place of a filename, to be resolved from
-#: another job's result at submit time: ``[prevfile]`` alone, or
-#: ``[prevfile:.ext]`` naming which of that job's files is wanted. Square
-#: brackets rather than the curly braces {input}/{stem} already use: those
-#: are substituted into the *command line*, this into the *file content* --
-#: two different passes, and a shape that cannot be confused with either.
+#: ``[prevfile]`` or ``[prevfile:.ext]``, resolved from another job's result at
+#: submit time. Square brackets, not the {input}/{stem} braces: those are
+#: substituted into the command line, this into file *content*.
 #:
-#: A second, nested form -- ``[prevfile:.res/.xyz]`` -- is for the file that
-#: is not a sibling of the input at all but sits inside a directory of its
-#: own, wherever a particular workflow puts one: the extension before the
-#: slash names the folder, the one after names the file inside it, both still
-#: just an extension appended to the same stem, which is all this ever
-#: computes. Not a claim about what any one program does by default -- the
-#: plugin that writes the tag is the one that knows its own layout.
+#: The nested form ``[prevfile:.res/.xyz]`` is for a file inside its own
+#: subdirectory: extension before the slash names the folder, after names the
+#: file, both appended to the same stem.
 _EXT = r"\.[A-Za-z0-9]+"
 TAG_RE = re.compile(rf"\[prevfile(?::(?P<ext>{_EXT}(?:/{_EXT})?))?\]")
 
@@ -68,19 +46,10 @@ def candidate_jobs(jobs, host_id: str = "") -> List[Job]:
     """Jobs a relay could plausibly come from: finished successfully, or
     still going.
 
-    A job that has not finished yet is offered too, not only a DONE one --
-    relaying from it chains the new submission behind it and copies the file
-    once it is actually there (see :mod:`runner`), rather than making the
-    user come back to the wizard a second time once it has. A job that ended
-    badly (FAILED, CANCELLED, LOST) is not offered: there is nothing there
-    worth reading.
-
-    Excluded regardless of state if there is no remote directory yet -- a job
-    still UPLOADING has nowhere for a relay to point at.
-
-    Restricted to ``host_id`` when it is given -- a relay only ever moves a
-    file within one host, so a job on a different one is not a candidate at
-    all, not merely a worse one.
+    A still-active job is offered too: relaying from it chains the new
+    submission behind it (see :mod:`runner`) instead of making the user come
+    back later. Jobs with no remote directory yet, or on a different host when
+    ``host_id`` is given, are excluded.
     """
     found = [
         job
@@ -95,10 +64,8 @@ def candidate_jobs(jobs, host_id: str = "") -> List[Job]:
 def _stem_of(job: Job) -> str:
     """What a relayed file is most likely named after.
 
-    ORCA writes every output from the *input file's* own base name, whatever
-    the job is called in this plugin's table, so the uploaded input's stem is
-    tried first; a job resubmitted with no input file at all (work already on
-    the host) falls back to the job's own name, which is the best guess left.
+    ORCA (etc) writes outputs from the input file's own base name, so the
+    uploaded input's stem is tried first, falling back to the job's own name.
     """
     if job.input_files:
         return os.path.splitext(os.path.basename(job.input_files[0]))[0]
@@ -109,17 +76,9 @@ def resolve_filename(job: Job, ext: str) -> str:
     """The filename (or nested path) a relay for ``ext`` most likely
     resolves to.
 
-    Convention, not inspection: nothing here reads the old job's input to see
-    what it actually named its checkpoint, because a program-specific
-    directive is exactly the "software specific type" this module does not
-    parse. The guess is checked for real at submit time -- a remote copy of a
-    path that is not there fails with a clear message rather than silently
-    producing a job with nothing to read.
-
-    ``ext`` containing a ``/`` (``.res/.xyz``) names a file one directory
-    down, itself named after the same stem -- see :data:`TAG_RE`. The result
-    always uses ``/``, which every dialect here already accepts as a path
-    separator for the same reason ``remote_paths.join`` does.
+    A guess by convention, not inspection; checked for real at submit time, so
+    a missing file fails with a clear message rather than silently.
+    ``ext`` containing ``/`` (``.res/.xyz``) names a file one directory down.
     """
     stem = _stem_of(job)
     if "/" in ext:
@@ -131,10 +90,8 @@ def resolve_filename(job: Job, ext: str) -> str:
 def substitute_paths(text: str, job: Job) -> str:
     """Replace every ``[prevfile]`` / ``[prevfile:.ext]`` in ``text``.
 
-    Raises :class:`StructureRelayError` if the text names no tag at all, or if
-    a tag with no extension is used -- that form exists for a human editing
-    the input by hand and choosing the file themselves elsewhere; nothing here
-    can guess which file was meant without one.
+    Raises :class:`StructureRelayError` if there is no tag, or a tag with no
+    extension (that form is for manual editing; nothing here can guess).
     """
     matches = find_tags(text)
     if not matches:
@@ -157,12 +114,8 @@ def substitute_paths(text: str, job: Job) -> str:
 def relay_plan(text: str, job: Job) -> List[str]:
     """The filenames that have to be copied out of the source job's directory.
 
-    One per distinct extension the input asks for -- a Gaussian input naming
-    both ``.chk`` and something else in two tags copies two files, not one.
-    Relayed under the same name in both directories, so this is the file's
-    name relative to *either* job's own directory: where it comes from is
-    resolved once the new job's directory exists (see :mod:`runner`), and the
-    text substitution above already wrote this exact name into the input.
+    One per distinct extension the input asks for. Relayed under the same
+    name in both directories, matching what the text substitution wrote.
     """
     seen: List[str] = []
     for match in find_tags(text):
@@ -179,10 +132,8 @@ def materialize(local_path: str, job: Job) -> str:
     """A temporary copy of ``local_path`` with every tag replaced by a
     filename.
 
-    Same basename as the original, in a directory of its own, so nothing
-    else -- ``{input}``/``{stem}``, the fetch patterns, the job's default
-    name -- has to know a substitution happened; only its content differs.
-    The original is never written to.
+    Same basename, in a directory of its own, so nothing else needs to know a
+    substitution happened. The original is never written to.
     """
     try:
         with open(local_path, "r", encoding="utf-8", errors="replace") as handle:
@@ -191,13 +142,10 @@ def materialize(local_path: str, job: Job) -> str:
         raise StructureRelayError(f"Could not read {local_path}: {exc}") from exc
     filled = substitute_paths(text, job)
 
-    # One directory per call, not one per second per process. Keyed on the
-    # clock and the pid, two files materialised in the same second shared a
-    # directory -- and two inputs with the same basename, which is the ordinary
-    # case for a job assembled from several folders, resolved to one path: the
-    # second overwrote the first, and the job uploaded that one twice under
-    # both names. The timestamp stays in the prefix, because the directory is
-    # deliberately never cleaned up and wants to be readable by hand.
+    # One directory per call: keying on clock+pid alone let two same-second,
+    # same-basename inputs collide and overwrite each other. Timestamp stays
+    # in the prefix since the directory is never cleaned up and should be
+    # readable by hand.
     root = os.path.join(tempfile.gettempdir(), RELAY_DIRNAME)
     os.makedirs(root, exist_ok=True)
     directory = tempfile.mkdtemp(prefix=f"{int(time.time())}_{os.getpid()}_", dir=root)

@@ -1,19 +1,15 @@
 """Persistence for host profiles, submit presets and the job database.
 
-Both files live in ``~/.moleditpy/job_manager/`` -- *outside* the plugin folder.
-The Plugin Installer replaces the whole package directory on update and carries
-over only a file literally named ``settings.json``, so anything kept beside the
-code (the job list in particular) would be silently destroyed. A directory
-under the user's MoleditPy home survives updates, reinstalls and
-"Reset All Settings" alike.
+Both files live in ``~/.moleditpy/job_manager/`` -- outside the plugin folder,
+since the Plugin Installer replaces the whole package directory on update and
+carries over only a file literally named ``settings.json``.
 
 * ``settings.json`` -- hosts, presets and preferences.
-* ``jobs.pmejbs`` -- the tracked jobs. Global on purpose; HPC jobs outlive
-  both the open project and the application session. Ordinary JSON inside; the
-  extension is what makes it recognisable in a file dialog.
+* ``jobs.pmejbs`` -- the tracked jobs. Global on purpose; HPC jobs outlive both
+  the open project and the application session.
 
-Both are written atomically (temp file in the same directory + ``os.replace``)
-so a crash mid-write can never leave a truncated JSON behind.
+Both are written atomically (temp file + ``os.replace``) so a crash mid-write
+never leaves a truncated JSON behind.
 """
 
 from __future__ import annotations
@@ -40,10 +36,8 @@ from .models import (
 
 SETTINGS_FILENAME = "settings.json"
 
-#: MoleditPy's own extension for a saved job list, alongside .pmeprj for
-#: projects, and abbreviated the same way (pme + jbs).
-#: The contents are ordinary JSON; the extension is what makes the file
-#: recognisable, and what the open/save dialogs filter on.
+#: MoleditPy's extension for a saved job list, alongside .pmeprj for projects
+#: (pme + jbs). Ordinary JSON inside; the extension is what dialogs filter on.
 JOB_EXTENSION = ".pmejbs"
 JOBS_FILENAME = "jobs" + JOB_EXTENSION
 #: Written by versions before the extension existed; read once, then migrated.
@@ -87,52 +81,38 @@ DEFAULT_PREFS: Dict[str, Any] = {
     "poll_interval": DEFAULT_POLL_INTERVAL,
     "prune_days": DEFAULT_PRUNE_DAYS,
     "download_root": "",
-    #: Put a job's results in the directory its input came from, which is
-    #: where the user is already working. The central download root is the
-    #: fallback -- for a job with no local input to sit beside, and for
-    #: anyone who would rather keep results out of their project folders.
+    #: Results beside the job's input by default; download_root is the fallback.
     "download_beside_input": True,
     "auto_download": True,
     "download_all_outputs": True,
     "open_result_after_download": True,
-    #: Off by default: the application icon belongs to the host, not to a
-    #: plugin, and a badge is a change to how MoleditPy looks in the user's
-    #: task bar. The status bar counter is always there and costs nobody
-    #: anything, so this is opt-in.
+    #: Off by default: a badge changes how MoleditPy looks in the task bar;
+    #: the status bar counter is always there and costs nothing.
     "taskbar_badge": False,
-    #: On, unlike the badge: a notification is transient and describes an event
-    #: the user asked to be told about by submitting a job that runs for hours.
-    #: The badge is a persistent change to how MoleditPy looks; this is not.
+    #: On by default, unlike the badge: transient, not a persistent look change.
     "notify_on_finish": True,
-    #: An incoming-webhook URL for Slack, Discord, Teams or anything else that
-    #: takes a JSON POST. Empty by default: a job's name and host leave this
-    #: machine only once somebody has pasted a room's URL in on purpose.
+    #: Incoming-webhook URL (Slack/Discord/Teams/...). Empty until pasted in.
     "notify_webhook": "",
-    #: Whether to use it. Separate from the URL so that pausing the chat
-    #: messages for a week does not mean deleting a webhook that then has to be
-    #: fetched out of the workspace again; off until a URL is actually set.
+    #: Separate from the URL so pausing chat messages doesn't mean deleting
+    #: (and later re-fetching) the webhook itself.
     "notify_chat": False,
     "last_input_dir": "",
     #: Which file type the input picker opens on. Empty means the first one.
     "input_filter": "",
-    #: The last submission's settings, per host id: walltime, queue, modules,
-    #: command, fetch patterns and the rest. Everything in it describes the
-    #: site rather than the molecule, so it is worth restoring; what the input
-    #: file decides is not kept. {host_id: preset dict}.
+    #: The last submission's settings per host id (walltime, queue, modules,
+    #: command, fetch patterns, ...); what the input file decides is not kept.
     "last_preset": {},
-    #: Read the core count and memory request out of the input file. On,
-    #: because those numbers are already written there and the copy the queue
-    #: schedules on is the one that gets forgotten.
+    #: Read core count / memory request out of the input file. On, since that's
+    #: what the queue actually schedules on.
     "scan_resources": True,
     #: The user's own command templates: [{"label": ..., "command": ...}].
     "command_templates": [],
-    #: The command to use for an input extension, when the user has said which
-    #: one they mean: {".inp": {"command": ..., "fetch_globs": [...]}}. This is
-    #: how .inp stops being ambiguous -- ORCA, CP2K and GAMESS all write it, so
-    #: the wizard will not guess, but it will remember an answer.
+    #: Remembered command per input extension: {".inp": {"command": ...,
+    #: "fetch_globs": [...]}}. Disambiguates e.g. .inp (ORCA/CP2K/GAMESS all
+    #: use it) once the user has answered once.
     "default_commands": {},
-    #: Seconds between host-monitor samples, once the user has chosen. 0 means
-    #: "not chosen", and the per-backend default applies.
+    #: Seconds between host-monitor samples. 0 means "not chosen"; the
+    #: per-backend default applies.
     "host_monitor_interval": 0,
 }
 
@@ -146,9 +126,8 @@ def _stamp(value: float) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(value)) if value else ""
 
 
-#: States a worker thread owns while it is uploading or fetching. Nothing can
-#: still be in one after a restart, because the thread that would have moved it
-#: on died with the process.
+#: States a worker thread owns while uploading/fetching. Nothing can still be
+#: in one after a restart -- the thread that would move it on died with the process.
 INTERRUPTED_STATES = frozenset({STATE_UPLOADING, STATE_DOWNLOADING})
 
 
@@ -156,10 +135,7 @@ def resolve_interrupted(job: Job) -> bool:
     """Give a job stranded mid-transfer an honest final state. True if changed.
 
     Neither UPLOADING nor DOWNLOADING is active or terminal, so a job left in
-    one was invisible for good: the poller never looked at it again and prune
-    never aged it out. A download only ever starts once the queue is finished,
-    so the recorded exit code is the real outcome; an upload that never
-    returned never reached the queue at all.
+    one was invisible for good: neither polled nor pruned.
     """
     if job.state == STATE_UPLOADING:
         job.last_error = job.last_error or "Interrupted: MoleditPy closed during submission"
@@ -278,8 +254,7 @@ class JobStore:
 
         source = self.jobs_path
         if not os.path.exists(source) and os.path.exists(self.legacy_jobs_path):
-            # Written before .pmejbs existed. Read it here; the next save writes
-            # the new name, and the old file is left alone as a fallback copy.
+            # Written before .pmejbs existed; next save migrates to the new name.
             source = self.legacy_jobs_path
         jobs_doc = read_json(source, {}) or {}
         if not isinstance(jobs_doc, dict):
@@ -304,7 +279,7 @@ class JobStore:
 
     @staticmethod
     def _stat_key(path: str):
-        """Enough of a file's identity to notice somebody else rewriting it."""
+        """Enough of a file's identity to notice it being rewritten elsewhere."""
         try:
             info = os.stat(path)
         except OSError:
@@ -314,17 +289,9 @@ class JobStore:
     def _write_if_changed(self, path: str, document: Dict[str, Any], slot: str) -> bool:
         """Write ``document`` only when it differs from what is already there.
 
-        Every write here is a temp file, an ``fsync`` and a rename. That is the
-        right way to write a file that must never be found half-written, and
-        the wrong thing to do on every keystroke in a text field or every step
-        of a spin box -- which is what a preference saved on ``textChanged``
-        amounts to. Serialising and comparing costs microseconds and turns a
-        burst of identical saves into one.
-
-        The file's own timestamp and size are remembered alongside, so a file
-        that changed underneath us -- another window, or one truncated by
-        something else -- is rewritten rather than assumed to still hold what
-        we last put there.
+        Avoids a temp-file+fsync+rename on every keystroke in a text field.
+        The file's mtime/size are remembered too, so an external change (another
+        window, or truncation) forces a rewrite instead of being assumed unchanged.
         """
         serialised = json.dumps(document, indent=2, ensure_ascii=False, sort_keys=True)
         previous = self._written.get(slot)
@@ -355,15 +322,9 @@ class JobStore:
     def _merged_jobs(self, mine: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Ours, plus any job on disk that this session has never heard of.
 
-        Each write is atomic, but a read-modify-write across two processes is
-        not: two MoleditPy windows each hold the whole list in memory, so the
-        second to save wrote its own view straight over the first's, and the
-        first's jobs were simply gone -- along with the remote directory that
-        is often the only way back to results still sitting on the cluster.
-
-        Ours win wherever both know a job, so nothing here can overwrite a
-        state this session just observed. Jobs deliberately removed stay
-        removed; that is what ``_forgotten`` is for.
+        Two MoleditPy windows each hold the whole list in memory; without this,
+        the second to save overwrote the first's jobs entirely. Ours win where
+        both know a job. ``_forgotten`` keeps a deliberate removal removed.
         """
         disk = read_json(self.jobs_path, {}) or {}
         if not isinstance(disk, dict):
@@ -382,13 +343,8 @@ class JobStore:
     def _document(self, archived: bool, when: Optional[float] = None) -> Dict[str, Any]:
         """One job-list file.
 
-        ``archived`` is what makes a list history rather than working data, and
-        it travels *in the file* rather than being inferred from where the file
-        sits -- a list stays archived after it is moved, copied or mailed on.
-        ``reconstructed`` travels the same way and for the same reason: a list
-        built by reading a folder describes calculations nobody here submitted,
-        so nothing in it may be cancelled, polled or resubmitted -- and that has
-        to stay true after the file is closed, moved or opened somewhere else.
+        ``archived``/``reconstructed`` travel in the file itself, not inferred
+        from location, so both stay true after the file is moved or reopened.
         """
         document: Dict[str, Any] = {
             "version": 1,
@@ -416,9 +372,7 @@ class JobStore:
     def host_for_local_path(self, path: str) -> Optional[HostProfile]:
         """The enabled host whose local mirror holds ``path``, if any.
 
-        The most specific wins: two hosts mirroring ``/mnt`` and ``/mnt/hpc``
-        are both right about a file under the second, and the second is the
-        useful answer.
+        The most specific wins (e.g. ``/mnt/hpc`` over ``/mnt``).
         """
         matches = [
             host
@@ -449,17 +403,11 @@ class JobStore:
     def preferred_mirrored_host(self, remembered_id: str = "") -> Optional[HostProfile]:
         """The mirrored host a handoff from another plugin should open on.
 
-        A file written by an input generator lands wherever the user saved it,
-        which is usually *not* inside a mirror -- so
-        :meth:`host_for_local_path` finds nothing and the wizard falls back to
-        whichever host was used last, even when that one has no mirror and the
-        results will have to be downloaded one by one. A host that mirrors its
-        filesystem here is the better default for work arriving that way.
-
-        ``remembered_id`` wins whenever it is itself mirrored: the user's own
-        habit is a better answer than this ordering, and moving the selection
-        off a machine they submit to every day is exactly the surprise that
-        makes a job land on the wrong host.
+        A file from an input generator usually lands outside any mirror, so
+        :meth:`host_for_local_path` finds nothing; a mirrored host is the
+        better default than the last-used one, which may have no mirror.
+        ``remembered_id`` wins if it's itself mirrored -- the user's own habit
+        beats this ordering.
         """
         candidates = self.mirrored_hosts()
         if not candidates:
@@ -514,14 +462,11 @@ class JobStore:
     def chain_tail(self, host_id: str) -> Optional[Job]:
         """The job a new one should queue behind on this host, if any.
 
-        The tail of the chain, not whatever happens to be running: each job
-        waits for its predecessor, so appending to the newest active job is
-        what makes a third, fourth and fifth submission line up behind the
-        others instead of all starting at once.
+        The tail of the chain: appending to the newest active job makes
+        successive submissions line up instead of all starting at once.
         """
         candidates = [job for job in self.jobs.values() if job.host_id == host_id and job.is_active]
-        # A job that will never start is not something to queue behind: joining
-        # a chain that is already stranded strands the new job with it.
+        # Don't queue behind an already-stranded job -- that would strand this one too.
         runnable = [job for job in candidates if self.chain_blocker(job) is None]
         if not runnable:
             return None
@@ -538,9 +483,8 @@ class JobStore:
     def chain_lanes(self, host_id: str) -> List[List[Job]]:
         """The chains currently in flight on this host, oldest job first.
 
-        A "lane" is one dependency chain. With no queue to serialise anything,
-        the number of lanes *is* the number of calculations running at once, so
-        this is what a slot limit counts.
+        A "lane" is one dependency chain; with nothing else to serialise them,
+        the lane count is what a slot limit counts.
         """
         active = self.runnable_jobs(host_id)
         by_id = {job.id: job for job in active}
@@ -552,12 +496,8 @@ class JobStore:
                 continue
             chain = [tail]
             cursor = tail
-            # Stop at a job already in this chain. Nothing the plugin writes
-            # can point backwards -- a predecessor always exists before the job
-            # that names it -- but a job list is a file, and this one is opened
-            # by drag and drop from anywhere. A chain running into a cycle
-            # walked it for ever, on the GUI thread, which is a frozen
-            # application rather than a bad reading of a corrupt file.
+            # Guard against a cycle (a job list is a file, opened from anywhere)
+            # which would otherwise loop forever on the GUI thread.
             seen = {tail.id}
             while cursor.after_job_id in by_id and cursor.after_job_id not in seen:
                 cursor = by_id[cursor.after_job_id]
@@ -573,13 +513,9 @@ class JobStore:
     def chain_lane_tail(self, host_id: str, limit: int) -> Optional[Job]:
         """What a new job should queue behind to respect a slot limit.
 
-        None means "start now": either there is no limit, or a lane is free.
-        Otherwise the new job joins the *shortest* lane, which is what turns a
-        limit of two and seven submissions into two balanced queues rather than
-        one long chain and one job.
-
-        Nothing here needs a daemon or a running MoleditPy: the waiting is the
-        same dependency the scheduler (or the wrapper) already honours.
+        None means "start now" (no limit, or a free lane). Otherwise joins the
+        *shortest* lane, so submissions balance across lanes rather than piling
+        onto one chain.
         """
         if limit <= 0:
             return None
@@ -592,31 +528,20 @@ class JobStore:
     def chain_blocker(self, job: Job) -> Optional[Job]:
         """The dead job that will stop ``job`` ever starting, if any.
 
-        Under an ``afterok`` dependency a predecessor that fails or is
-        cancelled leaves everything behind it queued for ever: SLURM and PBS
-        keep reporting PENDING, which reads as "starting soon" and is the
-        opposite of the truth.
-
-        The whole chain is walked, not just the job in front. Only the first
-        job behind a failure used to count as blocked, so in A(failed) <- B <- C
-        the plugin called B blocked and C merely queued -- and C is exactly as
-        dead, since B will never start and so never end. That cost more than a
-        wrong label: C counted as a live lane, and held one of the host's slots
-        for the rest of the session.
-
-        ``chain_any`` is read at the link that meets the failure, not at the
-        job being asked about. A job chained behind one that *ended* badly is
-        released; a job chained behind one that never starts is not, however
-        loose its own dependency, because it never ends either.
+        Under ``afterok`` a failed/cancelled predecessor leaves everything
+        behind it PENDING forever. The whole chain is walked, not just the
+        immediate predecessor: in A(failed) <- B <- C, C is exactly as dead as
+        B (bug once had it counting as a live lane, holding a slot forever).
+        ``chain_any`` is read at the link that meets the failure: a job behind
+        one that *ended* badly is released, one behind a job that never starts
+        is not.
         """
         from .schedulers import get_scheduler
 
         if not job.is_active:
             return None
         cursor = job
-        # A job list is a file, and one can be opened by drag and drop from
-        # anywhere; a chain running into a cycle would walk it for ever on the
-        # GUI thread.
+        # Guard against a cycle (see chain_lanes) walking forever on the GUI thread.
         seen = {job.id}
         while cursor.after_job_id:
             predecessor = self.jobs.get(cursor.after_job_id)
@@ -639,18 +564,9 @@ class JobStore:
     def blocked_ids(self) -> frozenset:
         """Ids of every active job that will never start. Cached.
 
-        :meth:`chain_blocker` walks a chain and asks the scheduler registry a
-        question for each link, and the table asks it twice per visible row per
-        repaint -- once for the text and once for the colour -- on top of the
-        status bar counter and the host monitor doing the same for every job in
-        the list. Answering once per actual change and handing out the set is
-        the same answer for a fraction of the work.
-
-        Invalidated by :meth:`invalidate_chains`, which every write goes
-        through. A caller that changes a job's state without saving must say so
-        -- but every path in the plugin that changes one saves it in the same
-        breath, which is what makes a counter enough here rather than a
-        signature over the whole list recomputed on each repaint.
+        :meth:`chain_blocker` is not cheap, and the table calls it twice per
+        visible row per repaint. Computing once per actual change instead.
+        Invalidated by :meth:`invalidate_chains`, which every write goes through.
         """
         if self._blocked_key != self._revision:
             self._blocked_key = self._revision
@@ -664,11 +580,7 @@ class JobStore:
         self._revision += 1
 
     def dependents_of(self, job_id: str, recursive: bool = False) -> List[Job]:
-        """Every job chained behind this one.
-
-        Directly by default. ``recursive`` follows the chain to its end, which
-        is what "everything this failure has stranded" means.
-        """
+        """Every job chained behind this one. ``recursive`` follows to the end."""
         direct = [job for job in self.jobs.values() if job.after_job_id == job_id]
         if not recursive:
             return direct
@@ -699,9 +611,8 @@ class JobStore:
     def archive_jobs(self, when: Optional[float] = None) -> str:
         """Write the current list to ``old/jobs_<date>.json``; returns its path.
 
-        Clearing the table must never be the same thing as losing the record:
-        a job's remote directory is often the only way back to results that are
-        still on the cluster.
+        Clearing the table must not lose the record -- a job's remote
+        directory is often the only way back to results still on the cluster.
         """
         stamp = time.strftime("%Y%m%d_%H%M%S", time.localtime(when or time.time()))
         directory = self.archive_dir()
@@ -740,9 +651,7 @@ class JobStore:
         """Read a job list file. Returns (jobs, archived).
 
         ``archived`` decides how the caller shows it: an archived job's queue id
-        is stale and its remote directory may be long gone, so offering to
-        cancel or resubmit from one would be offering something that cannot
-        work. Anything else is working data and is merged into the live list.
+        is stale, so offering to cancel or resubmit it would not work.
         """
         payload = read_json(path, {}) or {}
         if not isinstance(payload, dict):
@@ -776,24 +685,20 @@ class JobStore:
     def use_jobs_file(self, path: str) -> int:
         """Make ``path`` the live job list. Returns how many jobs it holds.
 
-        Opening a list *switches* to it rather than merging: the file becomes
-        the one every later change is written to. The choice lasts for the
-        session only -- the next start comes back to the default list, so an
-        afternoon spent looking at someone else's file cannot quietly become
-        the permanent home of your own jobs. Pass an empty path to switch back.
+        Switches to it rather than merging, for this session only -- the next
+        start returns to the default list. Pass an empty path to switch back.
         """
         target = os.path.abspath(os.path.expanduser(path)) if path else ""
         self.jobs_path = target or self.default_jobs_path
-        # Read before the jobs, and never assumed: going back to the default
-        # list has to clear the flag as surely as opening a rebuilt one sets it.
+        # Never assumed: switching back to default must clear the flag too.
         self.reconstructed = (
             self.read_job_flags(self.jobs_path)["reconstructed"] if target else False
         )
         jobs, _archived = self.read_job_list(self.jobs_path)
         self.jobs = {job.id: job for job in jobs}
         self.invalidate_chains()
-        # Removals applied to the list being left, not to this one: carrying
-        # them over would silently drop a job from the file just opened.
+        # Applied to the list being left, not this one -- else a removal here
+        # would silently drop a job from the file just opened.
         self._forgotten = set()
         self._resolve_interrupted()
         return len(self.jobs)
@@ -814,8 +719,7 @@ class JobStore:
     def export_jobs_json(self, path: str) -> None:
         """The raw records, exactly as the live list holds them.
 
-        Not flagged archived: an export is a copy of working data, and opening
-        one puts its jobs back under tracking.
+        Not flagged archived: it's a copy of working data, still trackable.
         """
         atomic_write_json(path, self._document(archived=False))
 
@@ -928,9 +832,7 @@ class JobStore:
     ) -> None:
         """Save (or replace) one template. Persisted in settings.json.
 
-        The fetch patterns travel with the command: they describe the same
-        program, and a saved template that brings back the wrong files is not
-        much of a saving.
+        Fetch patterns travel with the command -- both describe the same program.
         """
         label = (label or "").strip()
         if not label:

@@ -95,10 +95,8 @@ class JobService(QObject):
     def list_remote_dir(self, host: HostProfile, path: str, on_done, on_error=None) -> None:
         """Names in a remote directory, or an error if it is not one.
 
-        For the wizard, where a job is about to be pointed at a directory the
-        user typed from memory. Being told now that it holds four files, or
-        that it is not there at all, is the difference between fixing a typo
-        and reading a failed job's log tomorrow.
+        For the wizard, when a job is about to be pointed at a directory the
+        user typed from memory.
         """
 
         def work() -> List[str]:
@@ -131,27 +129,16 @@ class JobService(QObject):
     ) -> Job:
         """Create the job record and start the upload/submit on a worker.
 
-        ``after_job`` chains this one behind another job on the same host: a
-        queue is told to hold it, the no-queue mode has the wrapper wait for
-        that job's process. ``chain_any`` makes the predecessor merely having
-        ended enough, instead of it having succeeded.
+        ``after_job`` chains this one behind another job on the same host;
+        ``chain_any`` accepts the predecessor merely ending, not succeeding.
+        ``remote_dir``/``remote_input`` run the job in a directory already on
+        the host rather than a new one. ``relay_source_dir``/``relay_filenames``
+        copy files from a previous job's directory into this one's first.
 
-        ``remote_dir`` runs the job in a directory already on the host, rather
-        than in a new one -- work the user staged there themselves, which
-        ``local_files`` need not (and usually does not) duplicate.
-        ``remote_input`` names a file in it for ``{input}``.
-
-        ``relay_source_dir``/``relay_filenames`` copy files from a previous
-        job's own directory into this one's before anything runs -- a
-        checkpoint or geometry that job produced, reused here with nothing
-        downloaded to this machine and re-uploaded.
-
-        ``upload_files`` is what actually goes to the host, when that is not
-        the same thing as ``local_files``: a relay uploads a substituted copy
-        written to a temp directory, while the job still belongs to the file
-        the user chose. Recording the copies instead put the job's results in
-        a temp folder -- ``_local_dir_for`` sits them beside their input --
-        and left Resubmit pointing at a scratch path.
+        ``upload_files``, when given, is what actually goes to the host instead
+        of ``local_files`` -- a relay uploads a substituted temp copy, but the
+        job still belongs to the file the user chose (so results land beside
+        that input, not the scratch copy).
         """
         job = Job(
             name=name or self._default_name(local_files, remote_input, remote_dir),
@@ -173,27 +160,22 @@ class JobService(QObject):
         job.touch(STATE_UPLOADING)
         self.store.add_job(job)
         self.jobs_changed.emit()
-        # The originals unless the caller says otherwise; the basename is the
-        # same either way, so {input} means the same thing for both.
+        # Basename is the same either way, so {input} means the same thing for both.
         to_upload = list(upload_files) if upload_files else list(local_files)
 
         def work() -> Job:
-            # Resolved here, not at dispatch: submitting twice in quick
-            # succession queues both workers before the first has a pid, and
-            # reading it too early chained the second job behind nothing at
-            # all -- so both ran at once, which is the one thing chaining is
-            # for.
+            # Resolved here, not at dispatch: reading the pid too early (before
+            # submission) chained the second of two quick submissions behind
+            # nothing, so both ran at once.
             #
-            # And *before* the transport is opened, not after: this waits for
-            # another job's submission, for up to two minutes, and needs no
-            # connection to do it. Opening first held an idle ssh -- and, with
-            # the OpenSSH backend, a ControlMaster process -- for the whole wait.
+            # And before opening the transport, not after: this can wait up to
+            # two minutes and needs no connection, so opening first held an
+            # idle ssh/ControlMaster the whole time.
             run_after = "" if host.uses_remote_runner else self._chain_pid(after_job)
             transport = self.transport_for(host)
             try:
                 if host.uses_remote_runner:
-                    # The runner takes the dependency by job id and resolves it
-                    # itself, so there is no pid to wait for here.
+                    # Takes the dependency by job id and resolves it itself.
                     return submit_to_runner(
                         transport,
                         host,
@@ -241,9 +223,8 @@ class JobService(QObject):
     def _chain_pid(self, after_job: Optional[Job], timeout: float = 120.0) -> str:
         """The predecessor's remote pid, waiting for its submission if needed.
 
-        Called from a worker thread, so blocking here is fine. A predecessor
-        that never gets a pid -- its own submission failed -- is not something
-        to wait for, and this job simply runs.
+        Called from a worker thread, so blocking is fine. If the predecessor's
+        own submission failed and it never gets a pid, this job simply runs.
         """
         if after_job is None:
             return ""
@@ -261,13 +242,8 @@ class JobService(QObject):
     def _local_dir_for(self, name: str, local_files: Optional[List[str]] = None) -> str:
         """Where this job's results will land.
 
-        Beside the input by default: that is the directory the user is already
-        working in, and hunting through a central store for the outputs of the
-        file you just submitted is a small indignity repeated every time.
-
-        Falls back to the download root whenever there is nothing to sit beside
-        -- a job resubmitted after its input moved, or an input directory that
-        is not writable.
+        Beside the input by default. Falls back to the download root when
+        there's nothing to sit beside, or that directory isn't writable.
         """
         if self.store.get_pref("download_beside_input", True):
             for path in local_files or []:
@@ -284,8 +260,7 @@ class JobService(QObject):
             stored.remote_dir = job.remote_dir
             stored.remote_job_id = job.remote_job_id
             stored.log_file = job.log_file
-            # Not cosmetic: the poller reads the sentinel by this name, and a
-            # stored job left on the shared default would look LOST for ever.
+            # The poller reads the sentinel by this name; wrong name reads as LOST.
             stored.script_name = job.script_name
             stored.sentinel_name = job.sentinel_name
             stored.command = job.command
@@ -293,8 +268,7 @@ class JobService(QObject):
             stored.touch(job.state)
         self.store.save_jobs()
         self.message.emit(f"Submitted {job.name} as {job.remote_job_id}")
-        # prime, not start: the first status query comes seconds later rather
-        # than a full interval later, so the table catches the job starting.
+        # prime, not start: the first status query comes seconds later, not a full interval.
         self.poller.prime(job.host_id)
         self.job_updated.emit(job.id)
         self.jobs_changed.emit()
@@ -316,18 +290,13 @@ class JobService(QObject):
         job = self.store.jobs.get(job_id)
         if job is None:
             return
-        # Everything that depends on the outcome happens *before* the download
-        # is started, because starting one moves this job to DOWNLOADING there
-        # and then. With auto-download on -- the default, and what every real
-        # job has -- job.is_terminal was already False by the time it was
-        # asked, so nothing was announced; and _warn_stranded went on to ask
-        # chain_blocker, which reads the predecessor's current state and saw a
-        # job that was no longer FAILED. The one warning that says a chain is
-        # dead is emitted once, in this window, so it was lost for good.
+        # Must run before download() starts, which moves the job to DOWNLOADING:
+        # with auto-download on, chain_blocker read a job that was no longer
+        # FAILED here, and the one chance to warn about a dead chain was lost.
         finished = state in TERMINAL_STATES
         if finished:
-            # Only from a poll: this is the transition the user is not watching.
-            # A submission that fails does so while they are still in the wizard.
+            # Only from a poll: a failed submission is caught while the user
+            # is still in the wizard, not here.
             self.job_finished.emit(job.id, state)
         if finished and state != STATE_DONE:
             self._warn_stranded(job)
@@ -337,14 +306,11 @@ class JobService(QObject):
     def _warn_stranded(self, job: Job) -> None:
         """Say so when a failure has left the jobs behind it unable to start.
 
-        Under ``afterok`` the queue keeps reporting those as PENDING for ever.
-        Nothing is cancelled automatically -- the user may well want to fix the
-        input and resubmit -- but they have to be told it will not happen.
+        Under ``afterok`` the queue keeps reporting those as PENDING forever;
+        nothing is cancelled automatically, but the user has to be told.
         """
-        # The whole chain, not just the job immediately behind: everything
-        # after that one is stranded by the same failure, and being told about
-        # the first while the rest sit silently at QUEUED is the half-truth
-        # this warning exists to avoid.
+        # The whole chain, recursively: everything after the first blocked job
+        # is stranded by the same failure, not just that one job.
         for dependent in self.store.dependents_of(job.id, recursive=True):
             if self.store.chain_blocker(dependent) is not None:
                 self.error.emit(
@@ -371,16 +337,13 @@ class JobService(QObject):
         def work() -> List[str]:
             transport = self.transport_for(host)
             try:
-                # As deep as a pattern could ever reach, not as deep as this
-                # job's patterns happen to go: the point of the tree is to
-                # show what is there, including the scratch directory nobody
-                # wrote a pattern for.
+                # As deep as a pattern could ever reach, so the tree shows
+                # everything, including directories no pattern covers.
                 names = list_remote_files(transport, job.remote_dir, MAX_FETCH_DEPTH)
             finally:
                 transport.close()
-            # The wrapper's log is listed, so it can be taken deliberately --
-            # it is never fetched by a pattern, and asking for it should not
-            # mean editing the patterns.
+            # The wrapper's log is listed too, so it can be picked deliberately
+            # without editing fetch patterns (it's never matched by one).
             return names
 
         run_async(self.pool, work, on_success=on_ok, on_error=on_error)
@@ -388,16 +351,12 @@ class JobService(QObject):
     def download(self, job: Job, into: str = "", names: Optional[Sequence[str]] = None) -> bool:
         """Fetch the job's outputs; emits ``results_ready`` when they land.
 
-        ``into`` is the folder the user picked for this download. Without it,
-        the automatic choice applies: beside the input, or the shared download
-        folder. A chosen folder is remembered on the job, so Open Result and a
-        second download go to the same place.
+        ``into`` is the folder the user picked; without it, the automatic
+        choice applies (beside the input, or the shared download folder).
 
-        Returns whether a download actually started. It does not when one is
-        already running for this job, and a caller that had wired itself to
-        ``results_ready`` for the answer would otherwise wait for a signal that
-        is never coming -- which is how the Open Result window sat on
-        "Downloading..." with its button disabled for the rest of the session.
+        Returns whether a download actually started -- False if one is already
+        running, so a caller need not wait forever on ``results_ready`` (bug
+        once left the Open Result window stuck on "Downloading...").
         """
         host = self.store.hosts.get(job.host_id)
         if host is None:
@@ -416,8 +375,7 @@ class JobService(QObject):
         def work() -> List[str]:
             transport = self.transport_for(host)
             try:
-                # An explicit set of names is exactly what the user ticked, so
-                # it is passed as the patterns: each name matches only itself.
+                # An explicit set of names is passed as patterns: each matches only itself.
                 return fetch_results(transport, job, local_dir, globs=names)
             finally:
                 transport.close()
@@ -480,11 +438,10 @@ class JobService(QObject):
     def cancel(self, job: Job, release_dependents: bool = True) -> None:
         """Cancel one job, and by default let the jobs behind it carry on.
 
-        Cancelling the middle job of a chain used to take the rest of the chain
-        with it: the helper queue sets aside anything waiting on a job that did
-        not exit 0, and a cancelled job leaves no exit code at all. Since the
-        user cancelled *one* job, the others are released -- on the host, so it
-        holds with MoleditPy closed -- unless the caller says otherwise.
+        Cancelling the middle job used to take the rest of the chain with it,
+        since a cancelled job leaves no exit code for the helper queue to
+        check. Dependents are released on the host, so it holds even with
+        MoleditPy closed, unless the caller says otherwise.
         """
         host = self.store.hosts.get(job.host_id)
         if host is None:
@@ -492,8 +449,8 @@ class JobService(QObject):
             return
         dependents = self.store.dependents_of(job.id) if release_dependents else []
         if dependents:
-            # Recorded before the cancel goes out: the flag is what stops the
-            # monitor calling them blocked, and it has to survive a restart.
+            # Recorded before the cancel: stops the monitor calling them
+            # blocked, and must survive a restart.
             for dependent in dependents:
                 dependent.chain_any = True
                 dependent.touch()

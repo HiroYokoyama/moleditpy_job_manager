@@ -1,21 +1,9 @@
-"""A line in a chat room when a job ends.
+"""A line in a chat room when a job ends: posts to Slack/Discord/Teams/etc via
+their incoming-webhook JSON POST, so a finished job reaches a phone.
 
-The desktop notification in :mod:`notify` reaches whoever is sitting at this
-machine. A six-hour calculation usually finishes when nobody is, which is the
-case this covers: the same sentence posted to Slack, Discord, Teams or anything
-else that accepts an incoming webhook, so it arrives on a phone.
-
-Nothing is installed for it. Every one of those services takes a JSON POST to a
-URL the user creates in their own workspace, which is `urllib` and no more --
-a chat notification is not worth a dependency, still less an SDK per service.
-
-Only the wording differs between them, so the URL decides the payload key:
-Discord reads ``content`` and ignores ``text``; Slack and Teams read ``text``
-and ignore ``content``. Sending both would be simpler and is not safe -- Discord
-rejects a body with fields it does not know.
-
-The post happens on a daemon thread. A chat service that has gone away answers
-slowly or not at all, and no notification is worth freezing MoleditPy over.
+The URL decides the payload key -- Discord reads ``content`` and rejects a
+body with fields it doesn't know, so both aren't sent. Posting runs on a
+daemon thread; a dead webhook must not freeze MoleditPy.
 """
 
 from __future__ import annotations
@@ -97,9 +85,7 @@ def post(url: str, title: str, message: str, timeout: float = TIMEOUT_SECONDS) -
         with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
             return 200 <= int(getattr(response, "status", 200) or 200) < 300
     except urllib.error.HTTPError as exc:
-        # The usual one is a webhook that has been deleted in the workspace,
-        # which is worth a line in the log and nothing louder: the job it was
-        # reporting on is unaffected.
+        # Usually a webhook deleted in the workspace; the job itself is unaffected.
         logging.warning("Job Manager: the chat webhook answered %s", exc.code)
         return False
     except Exception:

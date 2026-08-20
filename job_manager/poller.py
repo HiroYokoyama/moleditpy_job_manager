@@ -1,18 +1,11 @@
 """Background execution: one timer, a thread pool, and per-host backoff.
 
-Design rules, all of them deliberate:
+One status call per host per cycle, not per job. Failures log at ``warning``,
+not ``error`` -- the host pops a modal dialog per ``logging.error`` (app
+4.3.0+), which from a timer would storm the user.
 
-* **One status call per host per cycle**, never one per job. A user with 40
-  queued jobs still costs the login node a single ``squeue``.
-* **Slow by default.** 120 s, floored at 30 s; a shared login node is not a
-  status API. Errors back off exponentially to 15 minutes.
-* **The timer stops when nothing is active** and restarts on the next submit.
-* **In-flight guard per host**, so a slow poll can never stack up behind itself.
-* Failures log at ``warning``: the host pops a modal dialog for every
-  ``logging.error`` (app 4.3.0+), which from a timer slot would storm the user.
-
-The GUI thread is the only writer of the job store. Workers return plain data
-through signals; nothing touches Qt widgets off-thread.
+The GUI thread is the only writer of the job store; workers return plain data
+through signals.
 """
 
 from __future__ import annotations
@@ -33,11 +26,8 @@ from .transport.base import TransportError
 MAX_BACKOFF = 900
 #: A manual refresh may not be spammed faster than this.
 MANUAL_REFRESH_COOLDOWN = 10.0
-#: How soon a host is asked after a job has just been handed to it. The full
-#: interval is the right cadence for watching a queue for hours; it is the
-#: wrong one for the thirty seconds after a submission, when the user is
-#: watching to see their job start and the table says SUBMITTED either way.
-#: One extra query per submission is a user action, not a poll loop.
+#: How soon a host is asked after a job is handed to it, instead of waiting a
+#: full interval while the table still says SUBMITTED.
 FIRST_POLL_SECONDS = 5.0
 
 
@@ -77,21 +67,15 @@ class _PollTask(QRunnable):
             self.signals.failed.emit(self.host.id, str(exc))
             return
         finally:
-            # Every other caller closes its transport in a finally; this one runs
-            # on a timer, so skipping it leaked a ControlMaster socket directory
-            # (and a persistent ssh process) or an open paramiko connection on
-            # every single poll, for the life of the session.
+            # Must close here too: skipping it leaked a ControlMaster socket
+            # (or paramiko connection) on every poll for the life of the session.
             if transport is not None:
                 try:
                     transport.close()
                 except Exception:
                     logging.debug("Job Manager: poll transport close failed", exc_info=True)
-        # ``poll_host`` records the sentinel's exit code on the job it is given,
-        # and ``poll_runner`` records why a job the helper set aside never ran.
-        # Those are this task's private copies, so both are carried back as data
-        # and applied on the GUI thread with everything else -- the reason used
-        # to be written onto the copy and thrown away with it, so the one
-        # message explaining a job that never started reached nobody.
+        # These are private copies (pool thread), so carry results back as data
+        # for the GUI thread to apply -- writing onto the copy lost them silently.
         exit_codes = {job.id: job.rc for job in self.jobs if job.rc is not None}
         errors = {job.id: job.last_error for job in self.jobs if job.last_error}
         self.signals.finished.emit(self.host.id, updates, exit_codes, errors)
@@ -121,14 +105,12 @@ class JobPoller(QObject):
         self._backoff: Dict[str, float] = {}
         self._next_poll: Dict[str, float] = {}
         self._last_manual = 0.0
-        #: Fires once, soon after a submission; see :meth:`prime`. A member
-        #: rather than QTimer.singleShot so it can be stopped at shutdown and
-        #: cannot outlive this object.
+        #: Fires once, soon after a submission; see :meth:`prime`. A member (not
+        #: QTimer.singleShot) so it can be stopped at shutdown.
         self._kickoff = QTimer(self)
         self._kickoff.setSingleShot(True)
         self._kickoff.timeout.connect(self._on_kickoff)
-        #: Hosts a submission has just been made to, and the moment after which
-        #: the kickoff has covered them all.
+        #: Hosts a submission has just been made to.
         self._primed: set = set()
         self._kickoff_until = 0.0
         self.timer = QTimer(self)
@@ -165,17 +147,9 @@ class JobPoller(QObject):
     def prime(self, host_id: str = "") -> None:
         """Ask this host again shortly, whatever the interval says.
 
-        Called when a job has just been submitted. Without it the first status
-        query after a submission is a whole poll interval away -- two minutes
-        by default -- so a job that started at once still read SUBMITTED for
-        two minutes, and an empty list that has just been given its first job
-        showed nothing happening at all.
-
-        Every submission gets its own query, not just the first of a burst. A
-        job handed over while an earlier kickoff was still pending used to be
-        covered by that one alone, which could fire a moment after it was
-        submitted -- before the queue had any status to give -- leaving the real
-        first status a whole interval away again.
+        Called on submit, so the table doesn't sit on SUBMITTED for a whole
+        interval. Every submission re-primes, even during a pending kickoff --
+        otherwise a job handed over mid-kickoff could miss the query entirely.
         """
         if host_id:
             self._next_poll.pop(host_id, None)
@@ -187,9 +161,8 @@ class JobPoller(QObject):
             self._kickoff.start(int(FIRST_POLL_SECONDS * 1000))
 
     def _on_kickoff(self) -> None:
-        # A poll that has finished in the meantime put the host back on the
-        # normal interval, so being due again has to be re-asserted here or the
-        # second pass would skip the host the newest job was submitted to.
+        # Re-assert due-ness: a poll finished meanwhile put the host back on
+        # the normal interval, which would skip it here otherwise.
         for host_id in self._primed:
             self._next_poll.pop(host_id, None)
             self._backoff.pop(host_id, None)
@@ -236,8 +209,7 @@ class JobPoller(QObject):
                 continue
             self._in_flight[host_id] = True
             self.poll_started.emit(host_id)
-            # Copies, not the store's own records: the task runs on a pool
-            # thread, and the GUI thread is the only writer of the job store.
+            # Copies: the task runs on a pool thread, but the store is GUI-thread-only.
             task = _PollTask(
                 host, [Job.from_dict(job.to_dict()) for job in jobs], self.transport_factory
             )
@@ -277,10 +249,7 @@ class JobPoller(QObject):
         self._backoff.pop(host_id, None)
         self._schedule_next(host_id, float(self.store.poll_interval))
 
-        # Before the state loop, and not inside it: the exit code and the reason
-        # are worth recording for a job whose *state* has not changed as well --
-        # they were dropped for exactly those jobs, which is the resubmitted job
-        # that failed the same way twice.
+        # Recorded even when state is unchanged (e.g. resubmit fails the same way).
         recorded = False
         for job_id, code in (exit_codes or {}).items():
             job = self.store.jobs.get(job_id)
@@ -300,10 +269,8 @@ class JobPoller(QObject):
                 continue
             job.touch(state)
             applied.append((job_id, state))
-        # Persist before announcing. A listener reacts synchronously -- a
-        # finished job starts its auto-download, which moves the job to
-        # DOWNLOADING -- so saving afterwards wrote that transient state to
-        # disk in place of the real outcome.
+        # Persist before announcing: a listener reacts synchronously (auto-download
+        # moves the job to DOWNLOADING), so saving after would write that instead.
         if applied or recorded:
             self.store.save_jobs()
         for job_id, state in applied:

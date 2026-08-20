@@ -1,19 +1,8 @@
-"""A desktop notification when a job ends.
+"""A desktop notification when a job ends, via ``QSystemTrayIcon.showMessage``.
 
-The badge and the status bar counter both answer "how many are running", which
-is a number you have to go and look at. For a calculation that runs for six
-hours the useful event is the *transition* -- and by then MoleditPy is usually
-behind something else, or minimised.
-
-``QSystemTrayIcon.showMessage`` is the portable way to raise one: Notification
-Center on macOS, the action centre on Windows, and whatever the desktop
-implements on Linux. It needs a tray icon to hang the message on, so one is
-created lazily -- on first notification, never at import -- and removed again on
-shutdown, since a tray icon left behind outlives the plugin that put it there.
-
-Everything is guarded. A headless session, a desktop with no tray, and a
-platform plugin that refuses the call are all normal outcomes, not errors: the
-job is still tracked and the monitor still says so.
+The tray icon is created lazily on first notification (never at import) and
+removed on shutdown, since a leftover tray icon outlives the plugin. Everything
+is guarded: no tray, headless, or a refused call are normal, not errors.
 """
 
 from __future__ import annotations
@@ -41,8 +30,7 @@ def available() -> bool:
 def _icon():
     """The application's own icon, falling back to a stock one.
 
-    A tray icon with a null icon is invisible on some platforms and silently
-    drops the message on others, so there has to be something.
+    A null icon is invisible or drops the message on some platforms.
     """
     app = QApplication.instance()
     icon = app.windowIcon() if app is not None else None
@@ -59,8 +47,6 @@ def notify(title: str, message: str) -> bool:
     try:
         if _tray is None:
             _tray = QSystemTrayIcon(_icon())
-            # Named so a user looking at a tray full of icons can tell whose
-            # this is before clicking it.
             _tray.setToolTip("MoleditPy job manager")
             _tray.show()
         _tray.showMessage(title, message, _icon(), TIMEOUT_MS)

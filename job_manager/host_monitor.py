@@ -1,15 +1,9 @@
 """Live load and memory for every host, while the window is open.
 
-Deliberately not part of polling. A load average is worth a command every few
-seconds when somebody is watching it and worth nothing when nobody is, so the
-timer runs only while this window is open and stops the moment it closes --
-a Job Manager left open overnight touches no login node on its account.
-
-The transport is held open per host for the same reason it is not: at a
-two-second cadence, building and tearing down a connection each time would
-cost more than the measurement. paramiko then reuses one real SSH session;
-OpenSSH still spawns its own process per command, which is why the interval is
-adjustable and why nothing here runs unless the window is up.
+Deliberately not part of polling: sampling stops the moment this window
+closes, so a Job Manager left open overnight touches no login node. The
+transport is held open per host for the same reason -- rebuilding a
+connection every two seconds would cost more than the measurement.
 """
 
 from __future__ import annotations
@@ -66,13 +60,10 @@ from .tasks import run_async
 #: minutes of history, which is enough to see a job start.
 HISTORY = 60
 
-#: Two seconds is right for a backend that keeps its connection: paramiko
-#: reuses one SSH session, and the local backend runs a subprocess. It is far
-#: too fast for OpenSSH, which spawns a whole ssh process per command -- on
-#: Windows it cannot multiplex at all -- so every tick is a fresh TCP connect,
-#: handshake and authentication to the same machine. That costs more than the
-#: measurement, and a burst of them trips sshd's own connection throttling,
-#: which arrives here as a timeout on a host that is perfectly healthy.
+#: Two seconds suits a backend that keeps its connection (paramiko, local).
+#: OpenSSH spawns a fresh ssh process per command -- a fresh TCP connect,
+#: handshake and auth every tick -- and a burst of them trips sshd's own
+#: connection throttling, which shows up here as a timeout on a healthy host.
 DEFAULT_INTERVAL_SECONDS = 2
 OPENSSH_INTERVAL_SECONDS = 10
 
@@ -80,18 +71,14 @@ OPENSSH_INTERVAL_SECONDS = 10
 #: every tick for as long as the window is open.
 MAX_BACKOFF_TICKS = 16
 
-#: A real space that keeps a label its full height while it has nothing to say.
-#: Written as the character, never as ``&nbsp;``: a QLabel left on the default
-#: AutoText format decides between plain text and rich text by looking at the
-#: string, and "&nbsp;" does not look like markup -- so every card showed the
-#: entity itself where the load average belongs.
+#: A real space that keeps a label its full height while it has nothing to
+#: say. Written as the character, never ``&nbsp;``: QLabel's AutoText format
+#: does not recognise that entity as markup, so it showed the literal text.
 BLANK = "\u00a0"
 
-#: Waiting, drawn as the *white hourglass* rather than the emoji one. U+231B is
-#: an emoji codepoint: the platform substitutes a colour glyph from a font with
-#: different metrics, which sits crushed and off-baseline in a line of text.
-#: U+29D6 is a mathematical symbol, so it is drawn by the text font at the text
-#: size, like every other character on the line.
+#: Waiting, drawn as the *white hourglass* rather than the emoji one. The
+#: emoji codepoint (U+231B) renders as a crushed, off-baseline colour glyph;
+#: U+29D6 is a math symbol drawn by the text font at the text size instead.
 HOURGLASS = "\u29d6"
 
 #: Dark theme palette and styling definitions for the Host Monitor window.
@@ -273,22 +260,18 @@ QLineEdit:disabled, QComboBox:disabled {{
 """
 
 
-#: One colour per thing measured, and the bar and the graph under it share it:
-#: load green, memory blue. Colouring the bar by how full it was instead made
-#: the pair look like two unrelated readings, and a bar that changes hue as the
-#: value moves is harder to compare across cards than one that does not.
+#: One colour per thing measured, shared by the bar and the graph under it:
+#: load green, memory blue. A bar that changed hue with its value was harder
+#: to compare across cards.
 GRAPH_CPU = QColor(CY_GREEN)
 GRAPH_LOAD = GRAPH_CPU
 GRAPH_MEMORY = QColor(CY_ACCENT2)
 
 
 def primary_state_word(job) -> str:
-    """What a card calls a job that is not active any more.
-
-    Words rather than the canonical state names: the card is read at a glance
-    from across a desk, where "FAILED" beside a machine name reads as the
-    machine having failed.
-    """
+    """What a card calls a job that is not active any more: a lowercase word,
+    not the state name -- "FAILED" beside a machine name reads as the
+    machine having failed."""
     return {
         STATE_DONE: "finished",
         STATE_FAILED: "failed",
@@ -311,16 +294,12 @@ class Meter(QWidget):
         self.setMinimumWidth(67)
         self.setMaximumWidth(132)
         # The bar is the thing this card exists to show, so it takes whatever
-        # height the card has spare instead of leaving it blank underneath.
+        # height the card has spare.
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
 
     def sizeHint(self) -> QSize:
-        # Two lines of text sit under the bar, so a hint near the minimum left
-        # the bar itself barely taller than the caption below it -- and a bar
-        # that short cannot be compared across cards at a glance, which is the
-        # whole point of drawing one. Two thirds of the first attempt at that:
-        # a full-height column read as a wall of colour and cost a card that
-        # could otherwise share the window with the one below it.
+        # Tall enough to compare across cards at a glance, short enough that
+        # two cards still fit the window at once.
         return QSize(100, 140)
 
     def set_dark(self, dark: bool = False) -> None:
@@ -393,11 +372,9 @@ class Meter(QWidget):
 class Sparkline(QWidget):
     """History graph displaying samples over time.
 
-    Every sample is a fraction of the machine, so the top of the plot is always
-    100% of it and never the largest value seen -- a graph that rescaled itself
-    would make a quiet host look as busy as a full one. That ceiling is drawn
-    and labelled rather than left implied: without it, the same shape meant
-    "saturated" on one card and "barely ticking over" on the next.
+    The top of the plot is always 100% of the machine, never the largest
+    value seen -- a graph that rescaled itself would make a quiet host look
+    as busy as a full one. The ceiling is drawn and labelled, not implied.
     """
 
     def __init__(self, color: QColor, caption: str = "", parent: Optional[QWidget] = None) -> None:
@@ -406,11 +383,8 @@ class Sparkline(QWidget):
         self.caption = caption
         self.values: Deque[float] = deque(maxlen=HISTORY)
         self._dark = False
-        # Room for the label row above the plot as well as the plot itself.
-        # Generous rather than tight: the caption row and the four guide lines
-        # take a fixed share of whatever height there is, so at the old 86 the
-        # plot itself was a band barely taller than the text above it and the
-        # difference between a busy host and an idle one was a few pixels.
+        # Room for the label row above the plot as well as the plot itself;
+        # a tighter minimum left the plot barely taller than its caption.
         self.setMinimumHeight(110)
         self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
 
@@ -432,8 +406,8 @@ class Sparkline(QWidget):
     def paintEvent(self, event) -> None:  # noqa: N802
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        # The plot area starts below the labels, so the 100% line is drawn where
-        # the ceiling actually is rather than under the caption text.
+        # The plot area starts below the labels, so the 100% line sits at the
+        # actual ceiling rather than under the caption text.
         outer = self.rect().adjusted(0, 1, -1, -1)
         label_height = painter.fontMetrics().height()
         rect = outer.adjusted(0, label_height + 1, 0, 0)
@@ -446,8 +420,7 @@ class Sparkline(QWidget):
         for share in (0.25, 0.5, 0.75):
             y = int(rect.bottom() - share * rect.height())
             painter.drawLine(rect.left() + 2, y, rect.right() - 2, y)
-        # The ceiling, solid and a shade stronger than the quarter marks: it is
-        # the one line the shape below has to be read against.
+        # The ceiling, solid and a shade stronger than the quarter marks.
         ceiling = QColor(guide_color)
         ceiling.setAlpha(110)
         painter.setPen(QPen(ceiling, 1.0))
@@ -503,10 +476,9 @@ class Sparkline(QWidget):
 class _FixedLine(QLabel):
     """Exactly one line of text, whatever it says.
 
-    The card is a grid of identical shapes, and it stops being one the moment a
-    long job name wraps and makes its card a line taller than the card beside
-    it. This never wraps, keeps the height of one line, and takes no part in
-    deciding how wide the card is; text too long for the width is elided.
+    The card grid stops being uniform the moment a long job name wraps onto a
+    second line. This never wraps and takes no part in deciding card width;
+    text too long for the width is elided instead.
     """
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
@@ -549,10 +521,8 @@ class _FixedLine(QLabel):
             return
         metrics = self.fontMetrics()
         room = self.width() - metrics.horizontalAdvance(self._tail) - 4
-        # Only once the layout has given this label a width. Qt's default 100px
-        # is not one, and eliding against it leaves an ellipsis and nothing
-        # else until something forces a resize -- which re-renders anyway, so
-        # there is nothing to lose by waiting for it.
+        # Only once the layout has given this label a real width -- Qt's
+        # default 100px would elide down to nothing.
         laid_out = self.testAttribute(Qt.WidgetAttribute.WA_Resized)
         head = (
             metrics.elidedText(self._head, Qt.TextElideMode.ElideRight, room)
@@ -594,8 +564,7 @@ class HostCard(QFrame):
         self.lbl_target.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         outer.addWidget(self.lbl_target)
 
-        #: 1-minute load average, shown small and grey beside the target --
-        #: a second, coarser reading next to the instantaneous CPU meter below.
+        #: 1-minute load average, a coarser second reading beside the target.
         self.lbl_load_avg = QLabel("")
         font = self.lbl_load_avg.font()
         font.setPointSizeF(max(7.5, font.pointSizeF() * 0.85))
@@ -624,12 +593,9 @@ class HostCard(QFrame):
             widget.setVisible(False)
             outer.addWidget(widget, 1)
 
-        # What this host is doing: one line for the job, one for the counts.
-        # Two labels of one line each, never one label of two: a word-wrapping
-        # label reflows a long job name onto a second line and pushes the
-        # counts out of the fixed height, so one card in the grid silently
-        # loses a line the others have. Neither wraps; the name is elided to
-        # the width there is.
+        # One line for the job, one for the counts -- two labels, never one
+        # wrapping label, or a long job name would push the counts out of the
+        # card's fixed height.
         self._jobs: list = []
         self.lbl_job = _FixedLine(self)
         self.lbl_job_counts = _FixedLine(self)
@@ -642,13 +608,11 @@ class HostCard(QFrame):
         self.restyle()
 
     def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt's spelling
-        """Never shorter than the card asked to be.
+        """Never shorter than the card asked to be (height only -- width still
+        shrinks, since the labels elide).
 
-        Height only. The cards sit in a scroll area, which shrinks what it holds
-        all the way down to its minimum before it will show a scrollbar, so on
-        any window too short for every row at once the bars -- and the graphs
-        behind them -- were squeezed to a band barely taller than the text under
-        them. Width still shrinks: the labels elide.
+        The scroll area shrinks its contents to their minimum before showing
+        a scrollbar, which squeezed the bars to a sliver on a short window.
         """
         hint = super().minimumSizeHint()
         return QSize(hint.width(), max(hint.height(), self.sizeHint().height()))
@@ -702,22 +666,18 @@ class HostCard(QFrame):
         self.graph_memory.setVisible(expanded)
         self.meter_cpu.setVisible(not expanded)
         self.meter_memory.setVisible(not expanded)
-        # A hidden widget drops out of the layout, but the row holding the
-        # meters is a nested layout and does not: left with a stretch factor it
-        # would claim a share of the card's height for two invisible bars and
-        # push the graphs into the gap the bars used to leave.
+        # A hidden widget drops out of the layout, but the nested row holding
+        # it does not: left with a stretch factor it would still claim height
+        # for two invisible bars.
         self._outer.setStretchFactor(self._meter_row, 0 if expanded else 1)
 
     def show_jobs(self, jobs: list) -> None:
         """One line for what this host is doing, one for how far it has got.
 
-        The job named on the first line is chosen by state, not by the order the
-        list happens to be in: whatever is running, else whatever was submitted
-        most recently, else the last one to finish. Picking only from RUNNING is
-        what made a card go blank for the whole of a resubmission -- a job that
-        has been handed over but not yet started is in NEW, UPLOADING or
-        SUBMITTED, none of which was matched, so the host looked idle at exactly
-        the moment the user was waiting to see their job appear.
+        The named job is chosen by state, not list order: whatever is
+        running, else most recently submitted, else the last to finish.
+        Matching only RUNNING left a card blank for the whole of a
+        resubmission, since a handed-over job starts in NEW/UPLOADING first.
         """
         self._jobs = list(jobs)
         self._render_jobs()
@@ -731,17 +691,13 @@ class HostCard(QFrame):
 
         total = len(jobs)
         # Anything that has stopped for good, however it stopped -- the same
-        # measure the summary bar reports. Counting only DONE said "14/21 done"
-        # for a host with one job left to run and six that had failed or been
-        # cancelled: six jobs that will never finish read as still to come, and
-        # the card disagreed with the bar under it about the same list.
+        # measure the summary bar reports. Counting only DONE undercounted a
+        # host with failed/cancelled jobs as still having work to come.
         finished = [job for job in jobs if job.is_terminal]
-        # Cancelled is not a failure -- the user stopped it themselves and does
-        # not need telling. LOST is: nothing came back and the result is gone.
+        # Cancelled is not a failure -- the user stopped it themselves.
         failed = [job for job in finished if job.state in (STATE_FAILED, STATE_LOST)]
-        # Every state that is not terminal, not a hand-listed few: a job in
-        # DOWNLOADING was in neither half of this count and vanished from the
-        # card for as long as its results were being fetched.
+        # Every non-terminal state, not a hand-listed few: DOWNLOADING used
+        # to fall through both halves and vanish from the card.
         unfinished = [job for job in jobs if not job.is_terminal]
         starting = [job for job in jobs if job.state in (STATE_NEW, STATE_UPLOADING)]
         running = [job for job in jobs if job.state == STATE_RUNNING]
@@ -749,12 +705,9 @@ class HostCard(QFrame):
         fetching = [job for job in jobs if job.state == STATE_DOWNLOADING]
 
         def latest(candidates: list):
-            # By when the job was handed over, never by updated_at: a poll
-            # rewrites that on every job it touches, so the card would name a
-            # different one of two running jobs each time the queue answered.
-            # Ties are possible -- a batch submitted in the same second, and on
-            # Windows the clock moves in 15 ms steps -- so the id breaks them,
-            # arbitrarily but stably.
+            # By handover time, never updated_at: a poll rewrites that on
+            # every job it touches. Ties (a same-second batch, Windows'
+            # coarse clock) are broken by id, arbitrarily but stably.
             return max(candidates, key=lambda job: (job.started_at or job.submitted_at, job.id))
 
         if running:
@@ -789,8 +742,8 @@ class HostCard(QFrame):
         if not stats.ok:
             self.show_error(stats.summary)
             return
-        # Thread usability: load_fraction is computed against the thread
-        # (logical CPU) count now, not the physical core count underneath it.
+        # load_fraction is computed against thread (logical CPU) count, not
+        # the physical core count.
         cores = f"{stats.cores} cores" if stats.cores else ""
         if stats.threads and stats.cores and stats.threads > stats.cores > 0:
             cores += f", {stats.threads} threads"
@@ -850,9 +803,8 @@ class HostCard(QFrame):
 class HostMonitorDialog(QDialog):
     """A card per host, refreshed on a timer while this window is open."""
 
-    #: One card fits comfortably in this much width. Fewer, wider columns are
-    #: better than many cramped ones: a bar too short to read is worse than a
-    #: second row.
+    #: One card fits comfortably in this much width; fewer wide columns beat
+    #: many cramped ones.
     CARD_WIDTH = 320
 
     def __init__(self, service, parent: Optional[QWidget] = None) -> None:
@@ -860,9 +812,8 @@ class HostMonitorDialog(QDialog):
         self.service = service
         self.setWindowTitle(f"Job Manager {PLUGIN_VERSION} - Host Monitor")
         make_independent(self)
-        # Wide enough for two columns of cards from the start: one column looks
-        # like a list of three things, and two is where the layout reads as a
-        # panel you can compare machines across.
+        # Wide enough for two columns from the start: one column reads as a
+        # list, two as a panel you can compare machines across.
         self.resize(2 * self.CARD_WIDTH + 60, 660)
         self.cards: Dict[str, HostCard] = {}
         #: The palette this window was born with, so the dark toggle has
@@ -871,8 +822,8 @@ class HostMonitorDialog(QDialog):
         self._scroll: Optional[QScrollArea] = None
         #: Held open while this window is: see the module docstring.
         self._transports: Dict[str, object] = {}
-        #: Hosts with a probe still in flight, so a slow host does not queue up
-        #: one worker per tick until the pool is full of them.
+        #: Hosts with a probe still in flight, so a slow host does not queue
+        #: up one worker per tick.
         self._busy: set = set()
         #: Ticks still to skip for a host that failed, and the size of the
         #: skip it earned. Both cleared by a sample that works.
@@ -881,25 +832,19 @@ class HostMonitorDialog(QDialog):
         self._build_ui()
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._sample_all)
-        # The stored choice wins: the per-backend default is a starting point,
-        # not a correction to apply over the top of somebody's setting every
-        # time they open the window.
+        # The stored choice wins; the per-backend default is only a starting
+        # point, not a correction applied over the top of it.
         stored = int(self.service.store.get_pref("host_monitor_interval", 0) or 0)
-        # Blocked: setValue emits valueChanged, and letting that through here
-        # would record the backend's default as the user's own choice the
-        # moment the window opened -- so "not chosen yet" could never happen
-        # twice.
+        # Blocked: setValue emits valueChanged, which would record the
+        # backend's default as the user's own choice on open.
         self.spin_interval.blockSignals(True)
         self.spin_interval.setValue(stored or self._default_interval())
         self.spin_interval.blockSignals(False)
         self._timer.start(self.spin_interval.value() * 1000)
         if self.btn_history.isChecked():
             self._set_history(True)
-        # `setChecked` above happens before the signal connection, so the
-        # stored choice does not emit `toggled` during construction. Apply
-        # the complete window style explicitly for both modes; otherwise a
-        # freshly launched monitor has native/light chrome until the user
-        # toggles Dark once.
+        # `setChecked` above happens before the signal connection, so it
+        # never emitted `toggled`; apply the style explicitly here instead.
         self._set_dark(bool(self.btn_dark.isChecked()))
         self._sample_all()
 
@@ -988,12 +933,8 @@ class HostMonitorDialog(QDialog):
         self._request_card_refresh()
 
     def _request_card_refresh(self) -> None:
-        """Coalesce a burst of job signals into one pass over the cards.
-
-        A poll that resolves eight jobs emits eight ``job_updated`` and a
-        ``jobs_changed`` besides, and each one used to walk the whole job list
-        again for every card on screen.
-        """
+        """Coalesce a burst of job signals into one pass over the cards (a
+        poll resolving eight jobs used to walk the whole list eight times)."""
         if not self._refresh_pending.isActive():
             self._refresh_pending.start()
 
@@ -1001,9 +942,8 @@ class HostMonitorDialog(QDialog):
         """Push each host's jobs into its card's strip.
 
         Grouped by id and by name into separate maps: one map keyed by both
-        meant a host whose *name* matched another host's *id* could be handed
-        the wrong jobs, and a job appended under both keys was counted twice on
-        a card that fell back to the name.
+        risked a host's *name* colliding with another host's *id*, and a job
+        double-counted on a card that fell back to the name.
         """
         by_id: Dict[str, list] = {}
         by_name: Dict[str, list] = {}
@@ -1011,8 +951,8 @@ class HostMonitorDialog(QDialog):
             if job.host_id:
                 by_id.setdefault(job.host_id, []).append(job)
             elif job.host_name:
-                # Only as a fallback: a job that still knows its host id is
-                # placed by that alone, so renaming a host cannot split it.
+                # Fallback only: a job with a host id is placed by that alone,
+                # so renaming a host cannot split it.
                 by_name.setdefault(job.host_name, []).append(job)
         for card in self.cards.values():
             card.show_jobs(by_id.get(card.host.id) or by_name.get(card.host.name, []))
@@ -1025,12 +965,8 @@ class HostMonitorDialog(QDialog):
         )
 
     def _build_cards(self) -> None:
-        """Make one card per host, replacing whatever was there.
-
-        Called again whenever the host list changes underneath the window: a
-        host added in the Hosts dialog used to be invisible here until the
-        monitor was closed and opened again.
-        """
+        """Make one card per host, replacing whatever was there. Called again
+        whenever the host list changes underneath the window."""
         self._card_signature = self._host_signature()
         for card in self.cards.values():
             self.grid.removeWidget(card)
@@ -1043,10 +979,8 @@ class HostMonitorDialog(QDialog):
             if not getattr(host, "enabled", True):
                 card.setEnabled(False)
                 card.lbl_state.setText("disabled")
-                # HostCard paints its surface and labels with fixed colours,
-                # not through the palette, so setEnabled() alone leaves it
-                # looking identical to an enabled card. An opacity effect dims
-                # it regardless of how its colours are drawn.
+                # HostCard paints with fixed colours, not the palette, so
+                # setEnabled() alone would look identical to an enabled card.
                 effect = QGraphicsOpacityEffect(card)
                 effect.setOpacity(0.45)
                 card.setGraphicsEffect(effect)
@@ -1078,9 +1012,7 @@ class HostMonitorDialog(QDialog):
             self.grid.setColumnStretch(column, 1 if column < columns else 0)
         rows = (len(self.cards) + columns - 1) // columns
         for row in range(rows + 1):
-            # Everything after the last row of cards absorbs the spare height,
-            # so a card keeps the size it asked for instead of being stretched
-            # down the viewport.
+            # Spare height goes after the last row of cards, not into them.
             self.grid.setRowStretch(row, 0 if row < rows else 1)
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt's spelling
@@ -1104,11 +1036,9 @@ class HostMonitorDialog(QDialog):
         pal = dark_palette(self._light_palette) if dark else self._light_palette
         self.setPalette(pal)
 
-        # Both branches set an explicit stylesheet -- an empty one for "light"
-        # left buttons and fields on whatever native chrome the platform style
-        # drew, which is a different size than the dark-mode style's own
-        # padding, so toggling the button visibly changed size. _LIGHT_DIALOG_STYLE
-        # exists for exactly this and was previously unused.
+        # Both branches set an explicit stylesheet: an empty one for "light"
+        # left native chrome with different padding than dark mode's own,
+        # so toggling visibly changed widget sizes.
         self.setStyleSheet(_DARK_DIALOG_STYLE if dark else _LIGHT_DIALOG_STYLE)
         self.setAutoFillBackground(True)
         if self._scroll is not None:
@@ -1116,11 +1046,9 @@ class HostMonitorDialog(QDialog):
             self._scroll.viewport().setPalette(pal)
             if hasattr(self, "body") and self.body is not None:
                 self.body.setPalette(pal)
-        # Qt caches each widget's resolved style properties; a bare
-        # setStyleSheet() on the dialog does not always invalidate them on
-        # children that already painted once, which is what made a toggle look
-        # like it "stuck" on the previous mode until something else forced a
-        # repaint. unpolish/polish forces every child to recompute.
+        # Qt caches each widget's resolved style; setStyleSheet() alone does
+        # not always invalidate children that already painted, so a toggle
+        # could look "stuck". unpolish/polish forces a recompute.
         style = self.style()
         style.unpolish(self)
         style.polish(self)
@@ -1129,11 +1057,8 @@ class HostMonitorDialog(QDialog):
             style.polish(child)
             child.update()
         # polish() can synthesize palette roles from the stylesheet's own
-        # background-color (Qt keeps a QSS-styled widget's QPalette in sync
-        # with what it paints), which silently drifted the window's palette
-        # away from ``pal`` -- most visibly, toggling dark off no longer gave
-        # back the exact palette the window started with. Setting it again
-        # after polish is what actually makes it win.
+        # background-color, silently drifting the palette away from ``pal``;
+        # setting it again after polish is what actually makes it win.
         self.setPalette(pal)
         if self._scroll is not None:
             self._scroll.viewport().setPalette(pal)
@@ -1173,20 +1098,17 @@ class HostMonitorDialog(QDialog):
         return transport
 
     def _sample_all(self) -> None:
-        # Cheap: a tuple of the host list, compared. The alternative is a
-        # signal from the store, which does not exist for host edits.
+        # Cheap tuple comparison; there is no store signal for host edits.
         self._sync_cards()
         for host in self._hosts():
             if host.id in self._busy:
-                # Still waiting on the last one. Skipping a tick is the right
-                # answer for a host slower than the interval; stacking probes
-                # would fill the pool and make it slower still.
+                # Still waiting on the last probe; stacking more would only
+                # make a slow host slower.
                 continue
             waiting = self._skip_ticks.get(host.id, 0)
             if waiting:
-                # Backing off after a failure. Asking an unreachable host every
-                # tick for as long as the window is open is how a monitor turns
-                # into a denial of service against its own cluster.
+                # Backing off after a failure, so as not to hammer an
+                # unreachable host every tick.
                 self._skip_ticks[host.id] = waiting - 1
                 continue
             self._sample(host)
@@ -1198,10 +1120,8 @@ class HostMonitorDialog(QDialog):
         self._busy.add(host.id)
         command = host_stats.command_for(host.scheduler == SCHEDULER_WINDOWS)
         host_id = host.id
-        # Resolve the transport on the GUI thread before handing off to a
-        # worker. Reading/writing self._transports from multiple background
-        # threads concurrently (one per host) without a lock is a data race;
-        # resolving here means each worker gets a stable object to call into.
+        # Resolved on the GUI thread: concurrent workers reading/writing
+        # self._transports without a lock would be a data race.
         try:
             transport = self._transport_for(host)
         except Exception as exc:
@@ -1223,8 +1143,8 @@ class HostMonitorDialog(QDialog):
 
         def failed(message: str) -> None:
             self._busy.discard(host_id)
-            # A failed probe drops the connection: the next tick builds a new
-            # one rather than reusing a socket the far end has already closed.
+            # A failed probe drops the connection, so the next tick builds a
+            # new one instead of reusing an already-closed socket.
             self._close_transport(host_id)
             waited = min(MAX_BACKOFF_TICKS, max(1, self._backoff.get(host_id, 0) * 2 or 1))
             self._backoff[host_id] = waited
@@ -1238,17 +1158,10 @@ class HostMonitorDialog(QDialog):
     # --- teardown -----------------------------------------------------------
 
     def _close_transport(self, host_id: str) -> None:
-        """Hand a transport's teardown to the pool instead of closing it here.
-
-        paramiko's close() sends a disconnect over the socket and can block on
-        it -- normally milliseconds, but a host that has gone quiet (the exact
-        case that just made this probe fail, or that the window is closing on
-        with a probe still in flight) can leave it waiting on a stalled or
-        already-dead connection. Popped from ``self._transports`` immediately
-        either way, so a probe that is mid-flight for this host stops seeing
-        it as open the moment this returns; only the network teardown itself
-        moves off the GUI thread.
-        """
+        """Hand a transport's teardown to the pool instead of closing it here:
+        paramiko's close() can block on a host that has gone quiet. Popped
+        from ``self._transports`` immediately either way, so a probe stops
+        seeing it as open the moment this returns."""
         transport = self._transports.pop(host_id, None)
         if transport is None:
             return
@@ -1324,8 +1237,8 @@ class _ActiveJobsBar(QWidget):
         layout.addWidget(self._lbl_count)
         layout.addStretch(1)
 
-        # Coalesced for the same reason the cards are: one poll emits a signal
-        # per job it resolved, and each pass counts the whole list again.
+        # Coalesced for the same reason the cards are: one poll emits a
+        # signal per job resolved.
         self._pending = QTimer(self)
         self._pending.setSingleShot(True)
         self._pending.setInterval(120)

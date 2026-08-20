@@ -45,9 +45,7 @@ from .window_utils import make_independent
 from .service import JobService
 
 #: Offered by the file picker, in order. The first is the default until the
-#: user picks another, after which their choice is what opens next time: a
-#: person who submits Gaussian jobs all day should not scroll past every other
-#: program's extensions every time.
+#: user picks another, after which their choice opens next time.
 INPUT_FILTERS = (
     "Calculation inputs (*.inp *.com *.gjf *.in *.xyz *.sh *.slurm)",
     "ORCA / CP2K / GAMESS (*.inp)",
@@ -59,18 +57,14 @@ INPUT_FILTERS = (
 )
 INPUT_FILTER = ";;".join(INPUT_FILTERS)
 
-#: Base captions for the two boxes that disable each other. The reason a box
-#: is greyed is appended to its own caption, because Qt shows no tooltip for a
-#: disabled widget -- which is where the explanation used to live.
+#: Base captions for the two boxes that disable each other. Qt shows no
+#: tooltip for a disabled widget, so the reason is appended to the caption.
 RELAY_TITLE = "Reuse another job's file"
 BATCH_TEXT = "Submit each file as its own job"
 CHAIN_TEXT = "Run after the job already queued on this host"
 CHAIN_ANY_TEXT = "...even if that job fails"
-#: Why the two chain ticks above it are greyed. On the line beneath them
-#: rather than appended to their own labels, unlike every other reason in this
-#: wizard: "Run after the job already queued on this host" is long enough that
-#: a suffix on it set a minimum width wider than the window, which is the very
-#: thing that put the whole form behind a horizontal scrollbar.
+#: On its own line rather than appended to the chain labels above: a suffix
+#: there made the minimum width wider than the window.
 NOTHING_TO_FOLLOW = (
     "Nothing queued on this host yet, so there is nothing to run after: "
     "the ticks above are greyed and this job starts straight away."
@@ -80,21 +74,13 @@ BESIDE_INPUT_TEXT = "...next to the input file"
 
 
 def with_reason(text: str, reason: str) -> str:
-    """A control's own label, carrying why it is greyed.
-
-    Qt shows no tooltip for a disabled widget, so a reason kept only there is
-    unreachable exactly when it is wanted. Every control in this wizard that
-    greys itself says so on itself, in the same shape, rather than leaving the
-    user to work out which of the neighbouring hint lines was about it.
-    """
+    """A control's own label, carrying why it is greyed (Qt shows no tooltip
+    for a disabled widget)."""
     return f"{text} - {reason}" if reason else text
 
 
-#: What an unticked panel says in place of its own status line. Qt greys the
-#: contents of a checkable group box until its title is ticked, which reads as
-#: "this is unavailable to you" rather than "switch this on" -- especially on
-#: the submit wizard, where the box below it really is disabled and captioned
-#: with a reason. So each of them says which it is.
+#: What an unticked panel says in place of its own status line, so a greyed
+#: box reads as "switch this on" rather than "unavailable to you".
 REMOTE_HINT = "Tick the box above to run in a directory that is already on the host."
 RELAY_HINT = "Tick the box above to copy a file in from another job on this host."
 
@@ -114,22 +100,16 @@ class SubmitDialog(QDialog):
         self.store = service.store
         self.setWindowTitle(f"Job Manager {PLUGIN_VERSION} - Submit Job")
         make_independent(self)
-        # The one window that had never had it, so its buttons and fields were
-        # a different size and colour from every other window in the plugin.
         apply_theme(self)
         self.resize(760, self._preferred_height(640))
-        # Input files can be dropped straight onto the wizard.
         self.setAcceptDrops(True)
-        #: Set once the user picks a host from the dropdown themselves. Until
-        #: then the selection is only "whichever was used last", which an input
-        #: file living in a host's own mirror is a better answer than.
+        #: Set once the user picks a host themselves, so a later file-mirror
+        #: detection does not override a deliberate choice.
         self._host_chosen_by_user = False
         self._build_ui()
         self._reload_hosts()
-        # Once here, rather than only from add_files/prefill: the relay box is
-        # greyed from the moment the wizard opens -- there is no input file yet
-        # -- and until this ran it was greyed with a caption that gave no
-        # reason, which is the state most users see it in.
+        # So the relay box already shows its greyed-out reason on open, before
+        # any file has been added.
         self._update_relay_row()
 
     # --- prefilling ---------------------------------------------------------
@@ -145,36 +125,24 @@ class SubmitDialog(QDialog):
         batch: bool = False,
         handoff: bool = False,
     ) -> None:
-        """Populate the form from outside.
-
-        Used by the input-generator handoff (a file that was just written) and
-        by Resubmit (a previous job's host, preset and inputs). ``batch`` asks
-        for the "one job per file" checkbox to start ticked -- for a drop of
-        several files at once, where each is its own calculation rather than
-        one job's worth of inputs.
+        """Populate the form from outside: an input-generator handoff or Resubmit.
 
         ``handoff`` marks the call as another plugin's ``submit_file``, which
-        picks a host with a local mirror over whichever was used last -- see
-        :meth:`Store.preferred_mirrored_host`. Only that entry point sets it:
-        a drop onto this window is the user pointing at a file themselves,
-        and Resubmit names its host outright.
+        prefers a host with a local mirror over whichever was used last (see
+        :meth:`Store.preferred_mirrored_host`).
         """
         if remote_dir:
             self.box_remote.setChecked(True)
             self.txt_remote_dir.setText(remote_dir)
             self.txt_remote_input.setText(remote_input)
         if not host_id and files:
-            # An input written into the share that mirrors a host's filesystem
-            # is already on that host as far as the user is concerned, so that
-            # is the host to open on -- ahead of whichever one was used last.
+            # A file already inside a host's local mirror is already on that
+            # host, so open on it rather than whichever was used last.
             owner = self.store.host_for_local_path(files[0])
             if owner is not None:
                 host_id = owner.id
         guessed = False
         if not host_id and handoff:
-            # Nothing mirrors this file, but the work still came from another
-            # plugin with no host in mind: a machine reachable through a mirror
-            # is the better guess than the last one used.
             preferred = self.store.preferred_mirrored_host(
                 self.store.get_pref("last_host_id", "") or ""
             )
@@ -185,12 +153,9 @@ class SubmitDialog(QDialog):
             index = self.cmb_host.findData(host_id)
             if index >= 0:
                 self.cmb_host.setCurrentIndex(index)
-                # A host named by the caller -- Resubmit, or the detection just
-                # above -- is as deliberate as one picked from the dropdown, so
-                # adding a file later must not move it again. The mirrored-host
-                # preference is not: it is a guess made with no file to go on,
-                # and a file added afterwards that really does live in a mirror
-                # is better evidence than it.
+                # A named host is deliberate and must not move later; a guessed
+                # one is not -- real mirror evidence added afterwards can still
+                # override it.
                 self._host_chosen_by_user = not guessed
         if preset:
             self._apply_preset(SubmitPreset.from_dict(preset))
@@ -203,18 +168,12 @@ class SubmitDialog(QDialog):
             if first:
                 self.store.set_pref("last_input_dir", first)
             # After any preset above, so a resubmit keeps the numbers it ran
-            # with: the scan only fills a field still at its default. Without
-            # this the wizard read the input only when the file arrived through
-            # "Add files...", and every other way in -- a drop, the input
-            # generators' Submit to Cluster, Resubmit -- silently asked the
-            # queue for one core.
+            # with: the scan only fills a field still at its default.
             if not preset:
                 self._apply_scanned_resources(files[0])
         self._update_batch_row()
         self._update_relay_row()
         if batch:
-            # Only takes effect where it is enabled -- more than one file, and
-            # not "work already on the host", which names a single file.
             self.chk_batch.setChecked(True)
         if name:
             self.txt_job_name.setText(name)
@@ -236,12 +195,7 @@ class SubmitDialog(QDialog):
 
     @staticmethod
     def _preferred_height(wanted: int) -> int:
-        """``wanted``, or as much of the screen as there is.
-
-        A laptop at 1366x768 has less usable height than this dialog wants, and
-        a window taller than the screen puts Submit somewhere the mouse cannot
-        reach. The body scrolls, so a short window loses nothing.
-        """
+        """``wanted``, or as much of the screen as there is (the body scrolls)."""
         screen = QApplication.primaryScreen()
         if screen is None:
             return wanted
@@ -249,8 +203,7 @@ class SubmitDialog(QDialog):
 
     def _build_ui(self) -> None:
         outer = QVBoxLayout(self)
-        # Everything except the buttons scrolls: the resources tab alone is
-        # taller than some screens, and the Submit button must stay reachable.
+        # Everything except the buttons scrolls, so Submit stays reachable.
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
@@ -264,9 +217,8 @@ class SubmitDialog(QDialog):
         top = QFormLayout()
         self.cmb_host = QComboBox()
         self.cmb_host.currentIndexChanged.connect(self._on_host_changed)
-        # activated, not currentIndexChanged: it fires only for a choice the
-        # user made, so filling the list or detecting a host does not count as
-        # one and cannot silently switch off the detection below.
+        # activated, not currentIndexChanged: fires only for a user choice, not
+        # for filling the list or an automatic detection.
         self.cmb_host.activated.connect(self._on_host_picked_by_user)
         self.cmb_preset = QComboBox()
         self.cmb_preset.currentIndexChanged.connect(self._on_preset_changed)
@@ -276,11 +228,8 @@ class SubmitDialog(QDialog):
         top.addRow("Job name", self.txt_job_name)
         layout.addLayout(top)
 
-        # Short, because a group box is at least as wide as its title and this
-        # one was the widest thing in the wizard: it held the whole form above
-        # 800px, which the window is not, so everything under it sat behind a
-        # horizontal scrollbar. The sentence it used to carry is below instead,
-        # where wrapping costs nothing.
+        # Short title: a group box is at least as wide as its title, and a long
+        # one here forced a horizontal scrollbar on the whole form.
         files_box = QGroupBox("Input files to upload")
         files_box.setToolTip(
             "Optional. With none, the command runs on its own in a new directory on the host."
@@ -323,13 +272,11 @@ class SubmitDialog(QDialog):
         tabs.addTab(self._build_preview_tab(), "Script preview")
         layout.addWidget(tabs, 1)
         # Built with the resources tab, but shown up here: the command is what
-        # the job *is*, and behind a tab of queue settings it read as though a
-        # job were an input file and nothing else.
+        # the job *is*, not just a detail behind a tab of queue settings.
         top.addRow("Command", self.command_row)
 
-        # Its own line, outside the scroll area and above Submit: saving a
-        # preset is a different kind of act from submitting, and on one row with
-        # them it was a button you could hit while reaching for Submit.
+        # Its own line, outside the scroll area and above Submit, so it is not
+        # a button you could hit while reaching for Submit.
         preset_row = QHBoxLayout()
         self.btn_save_preset = QPushButton("Save as preset")
         self.btn_save_preset.clicked.connect(self._save_preset)
@@ -348,14 +295,7 @@ class SubmitDialog(QDialog):
         outer.addWidget(box)
 
     def _build_remote_box(self) -> QWidget:
-        """Point the job at work that is already on the host.
-
-        The case this exists for: the files were staged on the cluster days
-        ago -- generated there, copied with rsync, left over from a previous
-        run -- and what is wanted from MoleditPy is only the submitting and
-        the watching. Uploading a local copy of something already there is
-        both pointless and, if the two have drifted, wrong.
-        """
+        """Point the job at work already staged on the host, uploading nothing."""
         box = QGroupBox("Work already on the host")
         box.setCheckable(True)
         box.setChecked(False)
@@ -399,9 +339,8 @@ class SubmitDialog(QDialog):
         return box
 
     def _on_remote_toggled(self, checked: bool) -> None:
-        # Cleared on the way in as well as restored on the way out: the label is
-        # where Check writes what it found in the directory, and the hint would
-        # otherwise sit there until it did.
+        # Cleared on tick, restored on untick: Check writes its result into
+        # this label, which would otherwise keep showing a stale hint.
         self.lbl_remote.setText("" if checked else REMOTE_HINT)
         self._update_batch_row()
         self._update_relay_row()
@@ -411,15 +350,9 @@ class SubmitDialog(QDialog):
 
     def _build_structure_relay_box(self) -> QWidget:
         """Fill ``[prevfile]``/``[prevfile:.ext]`` tags with a previous job's
-        own files, copied in on the host itself.
-
-        What the tag means to the program that reads it -- an ORCA
-        ``* xyzfile``, a Gaussian ``%oldchk`` -- is between the input file and
-        that program; nothing here parses chemistry or knows which software
-        wrote either job. It only ever relays between two jobs on the *same*
-        host, with a single remote copy per file and nothing downloaded to
-        this machine and re-uploaded.
-        """
+        own files, copied in on the host itself (same host only, no download
+        and re-upload; the tag's meaning to the program is not this plugin's
+        concern)."""
         box = QGroupBox(RELAY_TITLE)
         box.setCheckable(True)
         box.setChecked(False)
@@ -438,9 +371,8 @@ class SubmitDialog(QDialog):
             "on the host', which have no single local file this could rewrite."
         )
         self.box_relay = box
-        # Nothing to relay onto until there is an input file; every later
-        # state is reached through _update_relay_row(), called from
-        # add_files/prefill/etc, none of which have run yet.
+        # Nothing to relay onto until there is an input file; _update_relay_row()
+        # (called from add_files/prefill/etc) refines this later.
         box.setEnabled(False)
         form = QFormLayout(box)
 
@@ -459,18 +391,11 @@ class SubmitDialog(QDialog):
     def _update_relay_row(self) -> None:
         """The relay box needs a local file and nothing exotic.
 
-        Reads ``chk_batch.isChecked()`` directly, not ``_batch_active()``:
-        that also asks whether the box is *enabled*, and the two rows disable
-        each other, so mid-toggle one of them is checked but momentarily
-        disabled -- exactly the state each row's own guard has to see through
-        to break the tie cleanly rather than leaving both re-enabled.
-
-        The reason it is greyed goes in the title, not only in the tooltip:
-        Qt does not show a tooltip for a disabled widget, so the explanation
-        was in the one place nobody could reach. This box is greyed the moment
-        the wizard opens -- there is no input file yet -- and a greyed panel
-        with no caption, directly under another one, reads as though the
-        greying belonged to the box above it.
+        Reads ``chk_batch.isChecked()`` directly, not ``_batch_active()``: the
+        two rows disable each other, so mid-toggle one is checked but
+        momentarily disabled, and the guard must see through that to break
+        the tie. The reason goes in the title, not only the tooltip, since Qt
+        shows no tooltip for a disabled widget.
         """
         if not self.selected_files():
             reason = "add an input file first"
@@ -488,19 +413,14 @@ class SubmitDialog(QDialog):
             self.box_relay.setChecked(False)
             self.box_relay.blockSignals(False)
         if not self.box_relay.isChecked():
-            # Usable but not ticked looks identical to unusable otherwise: both
-            # are a panel of dead fields. The title carries the reason when
-            # there is one, so this only speaks when there is not.
+            # The title already carries the reason when there is one.
             self.lbl_relay_status.setText(RELAY_HINT if allowed else "")
 
     def _on_relay_toggled(self, checked: bool) -> None:
         if checked:
             self._reload_relay_sources()
-        # Unconditionally, not only when ticked: the batch row is disabled
-        # *because* this box is, so unticking it has to release the batch
-        # checkbox again. It did not, so one tick and untick of this box left
-        # "Submit each file as its own job" greyed for the rest of the wizard,
-        # with nothing on screen still reusing anything.
+        # Unconditionally: the batch row is disabled because this box is, so
+        # unticking it must release the batch checkbox again.
         self._update_batch_row()
         self._refresh_preview()
 
@@ -527,7 +447,7 @@ class SubmitDialog(QDialog):
         return self.store.jobs.get(job_id) if job_id else None
 
     def _update_relay_status(self) -> None:
-        """What will actually be filled in, read from the input as it stands."""
+        """What will actually be filled in, read from the current input."""
         job = self.selected_relay_job()
         if job is None:
             self.lbl_relay_status.setText(
@@ -563,9 +483,8 @@ class SubmitDialog(QDialog):
     def _files_with_relay_tags(paths: Sequence[str]) -> List[str]:
         """Those of ``paths`` still carrying an unresolved ``[prevfile]`` tag.
 
-        Read rather than assumed: a file that cannot be opened is not reported,
-        because refusing to submit over a permissions error would be worse than
-        the tag it might not even contain.
+        A file that cannot be opened is not reported: refusing to submit over
+        a permissions error would be worse.
         """
         found: List[str] = []
         for path in paths or []:
@@ -688,7 +607,6 @@ class SubmitDialog(QDialog):
             lambda checked: self.store.set_pref("download_all_outputs", bool(checked))
         )
         self.chk_download_all.setEnabled(self.chk_auto_download.isChecked())
-
         self.chk_beside_input = QCheckBox(BESIDE_INPUT_TEXT)
         self.chk_beside_input.setToolTip(
             "Put the results next to the input file instead of in the download folder."
@@ -704,9 +622,8 @@ class SubmitDialog(QDialog):
         self.txt_download_root.setToolTip(
             "Default download directory when results are not placed next to the input file."
         )
-        # editingFinished, not textChanged: a preference is written to disk
-        # with an fsync, and saving one per keystroke is a write per character
-        # typed into this field.
+        # editingFinished, not textChanged: a preference write fsyncs, and
+        # textChanged would fire one per keystroke.
         self.txt_download_root.editingFinished.connect(
             lambda: self.store.set_pref("download_root", self.txt_download_root.text().strip())
         )
@@ -807,8 +724,6 @@ class SubmitDialog(QDialog):
         self.store.set_pref("auto_download", bool(checked))
         self.chk_download_all.setEnabled(checked)
         self.chk_beside_input.setEnabled(checked)
-        # Both are greyed by the box above them, which is a line they could
-        # easily have scrolled past.
         off = "" if checked else "needs automatic download"
         self.chk_download_all.setText(with_reason(DOWNLOAD_ALL_TEXT, off))
         self.chk_beside_input.setText(with_reason(BESIDE_INPUT_TEXT, off))
@@ -832,14 +747,8 @@ class SubmitDialog(QDialog):
     # --- data ---------------------------------------------------------------
 
     def _reload_hosts(self) -> None:
-        """Fill the host list, opening on the one submitted to last time.
-
-        Whichever host is alphabetically first is not a useful default: people
-        submit to the same machine for weeks at a time, and picking the wrong
-        one is not always obvious before pressing Submit. A prefilled host --
-        from Resubmit, or from an input generator's handoff -- still wins, since
-        that is applied after this.
-        """
+        """Fill the host list, opening on the one submitted to last time (a
+        prefilled host from Resubmit/handoff still wins, applied after this)."""
         self.cmb_host.blockSignals(True)
         self.cmb_host.clear()
         for host in self.store.host_list():
@@ -867,18 +776,15 @@ class SubmitDialog(QDialog):
         self._on_preset_changed()
         self._update_queue_fields()
         self._update_chain_row()
-        # Relay candidates are host-scoped, so a host change re-filters them
-        # even while the box is unchecked -- cheap, and it means the dropdown
-        # is never a tick behind by the time it is opened.
+        # Relay candidates are host-scoped; re-filter now so the dropdown is
+        # never stale by the time it is opened, even while unchecked.
         self._reload_relay_sources()
 
     def _update_queue_fields(self) -> None:
         """Grey the fields this host's scheduler has no queue to read.
 
-        A walltime typed for a machine with no queue is not enforced by
-        anything, and an account for a machine with no accounting is a line in
-        a script nobody reads. Cores and memory stay live: the helper queue
-        schedules on them, and the command template can spell them.
+        Cores and memory stay live: the helper queue schedules on them, and
+        the command template can spell them.
         """
         host = self.current_host()
         try:
@@ -927,13 +833,9 @@ class SubmitDialog(QDialog):
         limit = self.slot_limit()
 
         if host is not None and host.uses_remote_runner:
-            # There is a queue on that host already, and it schedules on cores
-            # and memory. Chaining on top of it fixes an order it would have
-            # worked out for itself, turns independent jobs into one line that
-            # a single cancellation breaks, and stops anything else starting
-            # while the job in front waits. So: off, and say why. It stays
-            # available for a sequence that really does depend on the one
-            # before it.
+            # The helper queue already schedules on cores and memory, so
+            # chaining is off by default here (it stays available for a
+            # sequence that really does depend on the job before it).
             self.chk_chain.setVisible(chainable)
             self.chk_chain.setEnabled(chainable and predecessor is not None)
             self.chk_chain.setChecked(False)
@@ -955,8 +857,8 @@ class SubmitDialog(QDialog):
         # host decides and the manual controls step aside.
         self.chk_chain.setVisible(chainable and not limit)
         self.chk_chain.setEnabled(chainable and not limit and predecessor is not None)
-        # Only worth offering where the two forms differ: SGE and the no-queue
-        # mode release on the predecessor ending whatever happened to it.
+        # Only offered where afterok/afterany differ: SGE and the no-queue
+        # mode already release on any predecessor outcome.
         conditional = chainable and not limit and not scheduler.chain_releases_on_failure
         self.chk_chain_any.setVisible(conditional)
         self.chk_chain_any.setEnabled(conditional and self.chk_chain.isEnabled())
@@ -989,17 +891,13 @@ class SubmitDialog(QDialog):
         )
 
     def chain_requested(self) -> bool:
-        """One predicate for both the preview and the submission.
-
-        They asked slightly different questions before, so the Script preview
-        could show a dependency that submitting would not actually apply.
-        """
+        """One predicate for both the preview and the submission, so the two
+        can never disagree about whether a dependency applies."""
         if self.slot_limit():
             return self.chain_predecessor() is not None
-        # isHidden(), not isVisible(): a widget on a tab the user has switched
-        # away from is not "visible", so reading isVisible() here dropped the
-        # dependency for anyone who checked the Script preview tab before
-        # pressing Submit -- which is precisely what that tab invites.
+        # isHidden(), not isVisible(): a widget on a tab the user switched away
+        # from reads as not "visible", which would drop the dependency for
+        # anyone checking Script preview before pressing Submit.
         return (
             not self.chk_chain.isHidden()
             and self.chk_chain.isEnabled()
@@ -1010,9 +908,8 @@ class SubmitDialog(QDialog):
     def chain_any_requested(self) -> bool:
         """True for an ``afterany`` dependency rather than ``afterok``."""
         if self.slot_limit():
-            # A slot limit serialises jobs that have nothing to do with each
-            # other. Holding them on afterok would let one failure strand a
-            # whole lane, which is the opposite of what a limit is for.
+            # afterok would let one failure strand a whole lane of otherwise
+            # unrelated jobs, which a slot limit is not meant to do.
             return self.chain_requested()
         return (
             self.chain_requested()
@@ -1034,8 +931,8 @@ class SubmitDialog(QDialog):
             return None
         limit = self.slot_limit()
         if limit:
-            # Join the shortest lane, so a limit of two and seven submissions
-            # becomes two balanced queues rather than one long chain.
+            # Join the shortest lane, so N submissions balance across the
+            # limit's lanes instead of forming one long chain.
             return self.store.chain_lane_tail(host.id, limit)
         return self.store.chain_tail(host.id)
 
@@ -1127,9 +1024,8 @@ class SubmitDialog(QDialog):
         self.cmb_template.insertSeparator(self.cmb_template.count())
         extension = extension_of(os.path.basename(files[0])) if files else ""
         if extension:
-            # The answer to an ambiguous extension. ORCA, CP2K and GAMESS all
-            # write .inp, so the wizard will not guess -- but it will remember
-            # which one this user means.
+            # ORCA, CP2K and GAMESS all write .inp, so the wizard will not
+            # guess -- but it will remember which one this user means.
             self.cmb_template.addItem(f"Use this command for every {extension}", _SET_DEFAULT)
         self.cmb_template.addItem("Save current command as...", _SAVE_TEMPLATE)
         if saved:
@@ -1155,13 +1051,7 @@ class SubmitDialog(QDialog):
     def _apply_template_globs(self, template: CommandTemplate) -> None:
         """Take the fetch patterns from the program that was just chosen.
 
-        A pattern list is about the program, not the molecule: ORCA writes
-        .gbw and .hess, Gaussian .chk and .fchk, VASP files with no extension
-        at all. The wizard's one-size list quietly downloaded nothing for half
-        of them.
-
-        Never over a list the user has edited away from what it was, for the
-        same reason the command is not: a filled field is a decision.
+        Never over a list the user has edited: a filled field is a decision.
         """
         if not template.fetch_globs:
             return
@@ -1202,9 +1092,6 @@ class SubmitDialog(QDialog):
         if not accepted or not label.strip():
             return
         globs = [g.strip() for g in self.txt_globs.text().split(",") if g.strip()]
-        # The patterns are part of what makes a template useful: a saved
-        # command for a program whose results you then have to re-list by hand
-        # is half a template.
         self.store.add_user_template(label.strip(), command, globs)
         self._reload_templates()
 
@@ -1234,8 +1121,7 @@ class SubmitDialog(QDialog):
             return
         filename = os.path.basename(files[0])
         ext = extension_of(filename)
-        # The user's own answer first: they have said which program writes
-        # this extension, which is more than the built-in list can know.
+        # The user's own answer first, ahead of the built-in guess list.
         stored = self.store.default_command_for(ext)
         if stored.get("command"):
             self.txt_command.setText(stored["command"])
@@ -1267,15 +1153,10 @@ class SubmitDialog(QDialog):
         """Why this job cannot fit on this host, or "" when it can.
 
         Only where the capacity is actually known: a host running the helper
-        queue, with the budget typed in rather than detected. A real cluster
-        enforces its own limits and this plugin has no idea how big its nodes
-        are, so nothing is refused there; and a host left on "detect" only
-        learns its numbers on the machine itself.
-
-        Asking for more than the whole budget is not a job that waits, it is a
-        job that can never be scheduled -- the helper clamps the request to the
-        machine and runs it alone, which quietly gives a calculation fewer
-        cores (or less memory) than it was told it had.
+        queue with a typed-in (not detected) budget. A real cluster enforces
+        its own limits, so nothing is refused there. Asking for more than the
+        whole budget is not a job that waits -- the helper clamps the request
+        and runs it anyway with fewer cores/memory than it was told it had.
         """
         if host is None or not host.uses_remote_runner or getattr(host, "runner_detect", False):
             return ""
@@ -1300,14 +1181,9 @@ class SubmitDialog(QDialog):
     def _detect_host_from_path(self, path: str) -> bool:
         """Switch to the host whose local mirror holds ``path``. True if moved.
 
-        A file written into the share that *is* a host's filesystem is already
-        on that host as far as the user is concerned, so that is the host to
-        offer -- ahead of whichever one happens to have been used last.
-
-        Never over a deliberate choice: once the user has picked a host from
-        the dropdown, adding a file does not move it. And never away from a
-        host that already owns the file, so two profiles mirroring the same
-        share do not fight over it.
+        Never over a deliberate choice, and never away from a host that
+        already owns the file (two profiles mirroring the same share should
+        not fight over it).
         """
         if self._host_chosen_by_user or not path:
             return False
@@ -1330,8 +1206,7 @@ class SubmitDialog(QDialog):
         start = self.store.get_pref("last_input_dir", "") or ""
         chosen = self.store.get_pref("input_filter", "") or INPUT_FILTERS[0]
         if chosen not in INPUT_FILTERS:
-            # A filter from a version that offered different ones. Qt would
-            # simply show nothing selected, so fall back rather than puzzle.
+            # A filter saved by a version that offered different ones.
             chosen = INPUT_FILTERS[0]
         paths, used = QFileDialog.getOpenFileNames(
             self, "Select input files", start, INPUT_FILTER, chosen
@@ -1341,18 +1216,13 @@ class SubmitDialog(QDialog):
         self.add_files(paths or [])
 
     def add_files(self, paths: Sequence[str], batch: Optional[bool] = None) -> None:
-        """Add input files from the picker or from a drop, and follow up.
-
-        The follow-up is the point: naming the job, offering the right command
-        template for the extension, and refreshing the preview are what make an
-        added file useful rather than just listed.
+        """Add input files from the picker or a drop, then name the job, pick
+        a command template and refresh the preview.
 
         ``batch`` sets the "one job per file" checkbox where it is not None --
-        used by a drop, which knows from the Shift key whether the files it
-        carried should become separate jobs. The file picker leaves it alone:
-        multi-selecting from a dialog is a deliberate act of building one job's
-        input list, not the "I dropped a pile of calculations" case batch mode
-        is for.
+        used by a drop (Shift decides). The file picker leaves it alone: a
+        multi-select there is building one job's input list, not a pile of
+        separate calculations.
         """
         added = [p for p in paths or [] if p and p not in self.selected_files()]
         for path in added:
@@ -1362,10 +1232,7 @@ class SubmitDialog(QDialog):
             if not self.txt_job_name.text().strip():
                 self.txt_job_name.setText(os.path.splitext(os.path.basename(added[0]))[0])
             # Before the resource scan, so the numbers are checked against the
-            # host the file actually belongs to. This used to run only in
-            # prefill(), so a file that arrived any other way -- "Add files...",
-            # a drop onto the open wizard -- never moved the host, and the
-            # mirror was only detected on the one route nobody takes by hand.
+            # host the file actually belongs to.
             self._detect_host_from_path(added[0])
             self._apply_scanned_resources(added[0])
         self._update_batch_row()
@@ -1379,18 +1246,9 @@ class SubmitDialog(QDialog):
     def _apply_scanned_resources(self, path: str) -> None:
         """Fill Memory and CPUs from what the input file already asks for.
 
-        The user has typed those numbers once, into the input. Asking for them
-        again is asking them to keep two copies of one fact in step -- and the
-        copy the queue schedules on is the one that gets forgotten, which is
-        how two 90 GB jobs end up on a 120 GB machine.
-
-        Only while the box under the two fields is ticked, and only into a
-        field that is still at its default: a value already there is a
-        decision, and a guess must not silently replace it. Untick the box to
-        keep the fields entirely by hand.
-
-        The command line is never touched by any of this, and neither is the
-        input file.
+        Only while the scan box is ticked, and only into a field still at its
+        default -- a value already there is a decision. Never touches the
+        command line or the input file.
         """
         if not self.chk_scan_resources.isChecked():
             return
@@ -1431,8 +1289,7 @@ class SubmitDialog(QDialog):
         mime = event.mimeData()
         if not mime.hasUrls():
             return []
-        # toLocalFile() returns forward slashes on Windows, which every path
-        # here is compared against, so normalise once.
+        # toLocalFile() returns forward slashes on Windows; normalise once.
         return [
             os.path.normpath(url.toLocalFile())
             for url in mime.urls()
@@ -1453,10 +1310,8 @@ class SubmitDialog(QDialog):
             event.ignore()
             return
         event.acceptProposedAction()
-        # Several files at once, dropped plainly, is a pile of separate
-        # calculations far more often than it is one job's worth of inputs --
-        # so that is the default, and Shift is held for the one job it used to
-        # always mean. A single file is unaffected either way.
+        # Several files dropped plainly default to separate calculations;
+        # hold Shift for the one-job case. A single file is unaffected.
         batch = None
         if len(paths) > 1:
             batch = not bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
@@ -1475,12 +1330,9 @@ class SubmitDialog(QDialog):
         return self.chk_batch.isEnabled() and self.chk_batch.isChecked()
 
     def _update_batch_row(self) -> None:
-        """Show the batch checkbox only where it means something.
-
-        More than one file, and not "work already on the host": that box names
-        one file already there for ``{input}``, and a batch has no single file
-        that could answer.
-        """
+        """Show the batch checkbox only where it means something: more than one
+        file, and not "work already on the host" (which names one file for
+        ``{input}``, which a batch has no single answer for)."""
         files = self.selected_files()
         if self.box_remote.isChecked():
             reason = "not with work already on the host"
@@ -1491,8 +1343,6 @@ class SubmitDialog(QDialog):
         allowed = len(files) > 1 and not reason
         self.chk_batch.setVisible(len(files) > 1)
         self.chk_batch.setEnabled(allowed)
-        # Why, on the control itself: a disabled checkbox shows no tooltip, so
-        # the explanation was unreachable exactly when it was needed.
         self.chk_batch.setText(BATCH_TEXT if allowed else f"{BATCH_TEXT} - {reason}")
         if not allowed and self.chk_batch.isChecked():
             self.chk_batch.blockSignals(True)
@@ -1502,10 +1352,8 @@ class SubmitDialog(QDialog):
 
     def _on_batch_toggled(self, checked: bool) -> None:
         if checked and self.chk_chain.isChecked():
-            # A batch exists to run several calculations independently; a
-            # chain would serialise it into the very thing batch mode is for
-            # avoiding. Off by default, not forced -- a batch that really
-            # should queue one after another is still one tick away.
+            # A batch runs calculations independently; chaining would
+            # serialise it. Off by default, not forced.
             self.chk_chain.setChecked(False)
         self.btn_submit.setText(
             f"Submit {len(self.selected_files())} Jobs" if checked else "Submit"
@@ -1531,8 +1379,7 @@ class SubmitDialog(QDialog):
             )
         input_name = self.remote_input() or (os.path.basename(files[0]) if files else "")
         if not input_name and not self.remote_dir():
-            # Nothing chosen yet: show what a job with an input would look
-            # like, rather than a script with an empty command in it.
+            # Nothing chosen yet: show a job with an input, not an empty command.
             input_name = "input.inp"
         try:
             scheduler = get_scheduler(host.scheduler)
@@ -1542,8 +1389,7 @@ class SubmitDialog(QDialog):
         predecessor = self.chain_predecessor() if self.chain_requested() else None
         name = self.txt_job_name.text().strip() or "moleditpy_job"
         if self._batch_active() and files:
-            # The name a batch job actually gets: its own file's stem, not
-            # whatever happens to be in the Job name field.
+            # A batch job is named after its own file's stem, not the field.
             name = os.path.splitext(os.path.basename(files[0]))[0]
         script = scheduler.build_script(
             name,
@@ -1553,11 +1399,9 @@ class SubmitDialog(QDialog):
             run_after=(predecessor.remote_job_id if predecessor else ""),
             run_after_any=self.chain_any_requested(),
             start_after=self.selected_start_time(),
-            # Built the same way submitting will build it, so the preview shows
-            # the directory the script really cds into (bar the timestamp).
+            # Same construction submitting uses, so the preview shows the real
+            # cd target (bar the timestamp).
             remote_dir=self.remote_dir() or make_remote_dir(host, name),
-            # The preview is worth having only if it is the script that runs,
-            # and the host's environment setup is part of that script.
             preamble=host.environment_commands(),
         )
         self.txt_preview.setPlainText(script)
@@ -1607,8 +1451,7 @@ class SubmitDialog(QDialog):
             )
             return
         if not files and not self.remote_input() and references_input(preset.command_template):
-            # The template still names an input this job does not have, so it
-            # would substitute to `orca  > .out` and fail on the host. Caught
+            # Would substitute to `orca  > .out` and fail on the host; caught
             # here rather than in tomorrow's log.
             QMessageBox.warning(
                 self,
@@ -1619,8 +1462,8 @@ class SubmitDialog(QDialog):
             )
             return
         if not files and not remote_dir:
-            # Not an error -- a command that needs no input of its own is a
-            # real job -- but it is far more often a forgotten file.
+            # Not an error -- an input-less command is a real job -- but far
+            # more often a forgotten file.
             confirm = QMessageBox.question(
                 self,
                 "Submit",
@@ -1631,10 +1474,8 @@ class SubmitDialog(QDialog):
                 return
         batch = self._batch_active() and len(files) > 1
         if batch and remote_dir:
-            # Guarded against in the UI by disabling one box while the other
-            # is checked; asserted here too in case a caller drives the model
-            # directly. "Work already on the host" names one file for
-            # {input}, and a batch has no single file that could answer.
+            # Guarded in the UI already; asserted here too in case a caller
+            # drives the model directly.
             QMessageBox.warning(
                 self,
                 "Submit",
@@ -1645,13 +1486,9 @@ class SubmitDialog(QDialog):
             return
         if not ensure_password(self.service, host, self):
             return
-        # Above the batch branch, not beside the relay one: batch mode excludes
-        # the relay box altogether, so every tagged file in a batch shipped
-        # verbatim with nothing to substitute it. Unticked, the tag reaches the
-        # host as a literal filename and the program reads "[prevfile:.xyz]" --
-        # nothing failed until the calculation did, an hour later on the
-        # cluster. This is also the path Resubmit takes, since it reopens the
-        # wizard on the original file rather than on the substituted copy.
+        # Checked before the batch branch: batch mode excludes the relay box
+        # altogether, so an unticked tag would ship verbatim and only fail an
+        # hour later on the cluster. Also the path Resubmit takes.
         if not self.box_relay.isChecked() and self._files_with_relay_tags(files):
             QMessageBox.warning(
                 self,
@@ -1672,10 +1509,8 @@ class SubmitDialog(QDialog):
         relay_job: Optional[Job] = None
         upload_files: Optional[List[str]] = None
         if self.box_relay.isChecked():
-            # Original paths are what the duplicate check above just looked
-            # at; the substituted copies -- same basenames, a resolved
-            # filename in place of each tag -- are what actually get
-            # uploaded, so this happens last.
+            # Original paths are what the duplicate check just looked at; the
+            # substituted copies are what actually get uploaded, so this runs last.
             relay_job = self.selected_relay_job()
             if relay_job is None:
                 QMessageBox.warning(self, "Submit", "Choose a job to reuse a file from.")
@@ -1692,8 +1527,7 @@ class SubmitDialog(QDialog):
                             if filename not in relay_filenames:
                                 relay_filenames.append(filename)
                 # Uploaded instead of the originals, but the job still belongs
-                # to the files the user picked: recording these scratch copies
-                # as its input put the results beside *them*, in a temp folder.
+                # to the files the user picked, not to these scratch copies.
                 upload_files = [structure_relay.materialize(path, relay_job) for path in files]
             except (structure_relay.StructureRelayError, OSError) as exc:
                 QMessageBox.warning(self, "Submit", str(exc))
@@ -1703,10 +1537,8 @@ class SubmitDialog(QDialog):
         after = self.chain_predecessor() if self.chain_requested() else None
         chain_any = self.chain_any_requested()
         if after is None and relay_job is not None and relay_job.is_active:
-            # The relay source has not finished yet; the copy embedded in the
-            # script only produces a real file once it has, so this job must
-            # not start before then. afterok, not afterany: a relay source
-            # that fails leaves nothing worth copying.
+            # Must not start before the relay source finishes; afterok, not
+            # afterany, since a failed source leaves nothing worth copying.
             after = relay_job
             chain_any = False
         self.service.submit(
@@ -1729,13 +1561,10 @@ class SubmitDialog(QDialog):
     def _submit_batch(self, host: HostProfile, preset: SubmitPreset, files: List[str]) -> None:
         """Submit each file as its own job, named after itself.
 
-        Chaining, when the user has asked for it, is resolved fresh for every
-        file: :meth:`chain_predecessor` reads the store, so a job this same
-        loop just added becomes the predecessor for the next one -- which is
-        what lets "batch" and "run one after another" compose with nothing
-        special-cased here. Each submission's own message ("Submitted X as Y")
-        is what reports progress; there is nothing else to summarise once this
-        returns, since the wizard closes right after.
+        Chaining is resolved fresh per file: :meth:`chain_predecessor` reads
+        the store, so a job this loop just added becomes the predecessor for
+        the next one -- letting "batch" and "run one after another" compose
+        with nothing special-cased here.
         """
         for path in files:
             name = os.path.splitext(os.path.basename(path))[0]
@@ -1752,17 +1581,12 @@ class SubmitDialog(QDialog):
         self._remember(host, preset)
 
     def _remember(self, host: HostProfile, preset: SubmitPreset) -> None:
-        """Keep this submission's settings as the starting point for the next.
-
-        Presets are the named, deliberate version of this; a person who submits
-        the same kind of job every day should not have to name one to stop
-        retyping the walltime, the modules and the fetch patterns each time.
-        """
+        """Keep this submission's settings as the starting point for the next
+        (presets are the named, deliberate version of this)."""
         remembered = dict(self.store.get_pref("last_preset", {}) or {})
         remembered[host.id] = preset.to_dict()
         self.store.set_pref("last_preset", remembered)
-        # Which host, as well as what was asked of it: the next submission
-        # opens on this one rather than on whichever sorts first.
+        # The next submission opens on this host, not whichever sorts first.
         self.store.set_pref("last_host_id", host.id)
 
     def _apply_remembered(self, host: HostProfile) -> None:
@@ -1772,20 +1596,16 @@ class SubmitDialog(QDialog):
             return
         self._apply_preset(SubmitPreset.from_dict(data))
         if self.chk_scan_resources.isChecked():
-            # Those two describe the molecule, not the site: with the box
-            # ticked they come from the input file, so they are put back to
-            # their defaults for the scan to fill. Unticked, last time's
-            # numbers are exactly what was wanted.
+            # Cores/memory describe the molecule, not the site: reset to
+            # defaults so the scan refills them from the input file.
             self.spin_cpus.setValue(1)
             self.txt_memory.setText("")
 
     def _confirm_duplicate(self, files: List[str]) -> bool:
         """Warn when this input has been submitted before. False cancels.
 
-        Not for Resubmit, which is somebody asking for exactly that. This is
-        the accident: the same file sent twice from the wizard, which on a
-        no-queue host means two copies of one calculation fighting over the
-        same cores, and on a cluster means paying twice for one answer.
+        Not for Resubmit, which is somebody asking for exactly that -- this
+        catches the accidental double submission.
         """
         wanted = {os.path.abspath(path) for path in files if path}
         if not wanted:
