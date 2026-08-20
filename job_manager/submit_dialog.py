@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QTabWidget,
     QVBoxLayout,
@@ -63,6 +64,31 @@ INPUT_FILTER = ";;".join(INPUT_FILTERS)
 #: disabled widget -- which is where the explanation used to live.
 RELAY_TITLE = "Reuse another job's file"
 BATCH_TEXT = "Submit each file as its own job"
+CHAIN_TEXT = "Run after the job already queued on this host"
+CHAIN_ANY_TEXT = "...even if that job fails"
+#: Why the two chain ticks above it are greyed. On the line beneath them
+#: rather than appended to their own labels, unlike every other reason in this
+#: wizard: "Run after the job already queued on this host" is long enough that
+#: a suffix on it set a minimum width wider than the window, which is the very
+#: thing that put the whole form behind a horizontal scrollbar.
+NOTHING_TO_FOLLOW = (
+    "Nothing queued on this host yet, so there is nothing to run after: "
+    "the ticks above are greyed and this job starts straight away."
+)
+DOWNLOAD_ALL_TEXT = "Download all output files"
+BESIDE_INPUT_TEXT = "...next to the input file"
+
+
+def with_reason(text: str, reason: str) -> str:
+    """A control's own label, carrying why it is greyed.
+
+    Qt shows no tooltip for a disabled widget, so a reason kept only there is
+    unreachable exactly when it is wanted. Every control in this wizard that
+    greys itself says so on itself, in the same shape, rather than leaving the
+    user to work out which of the neighbouring hint lines was about it.
+    """
+    return f"{text} - {reason}" if reason else text
+
 
 #: What an unticked panel says in place of its own status line. Qt greys the
 #: contents of a checkable group box until its title is ticked, which reads as
@@ -250,13 +276,21 @@ class SubmitDialog(QDialog):
         top.addRow("Job name", self.txt_job_name)
         layout.addLayout(top)
 
-        files_box = QGroupBox(
-            "Input files to upload - optional (the first one is passed to the command)"
-        )
+        # Short, because a group box is at least as wide as its title and this
+        # one was the widest thing in the wizard: it held the whole form above
+        # 800px, which the window is not, so everything under it sat behind a
+        # horizontal scrollbar. The sentence it used to carry is below instead,
+        # where wrapping costs nothing.
+        files_box = QGroupBox("Input files to upload")
         files_box.setToolTip(
             "Optional. With none, the command runs on its own in a new directory on the host."
         )
         files_layout = QVBoxLayout(files_box)
+        files_note = QLabel("Optional. The first one is passed to the command as {input}.")
+        files_note.setWordWrap(True)
+        files_note.setStyleSheet("color: palette(mid);")
+        files_note.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        files_layout.addWidget(files_note)
         self.list_files = QListWidget()
         files_layout.addWidget(self.list_files)
         row = QHBoxLayout()
@@ -356,8 +390,8 @@ class SubmitDialog(QDialog):
 
         form.addRow("Directory", self.txt_remote_dir)
         form.addRow("Input file there", self.txt_remote_input)
-        form.addRow("", check_row)
-        form.addRow("", self.lbl_remote)
+        form.addRow(check_row)
+        form.addRow(self.lbl_remote)
 
         box.toggled.connect(self._on_remote_toggled)
         self.txt_remote_dir.textChanged.connect(self._refresh_preview)
@@ -417,7 +451,7 @@ class SubmitDialog(QDialog):
         self.lbl_relay_status = QLabel("")
         self.lbl_relay_status.setWordWrap(True)
         self.lbl_relay_status.setStyleSheet("color: palette(mid);")
-        form.addRow("", self.lbl_relay_status)
+        form.addRow(self.lbl_relay_status)
 
         box.toggled.connect(self._on_relay_toggled)
         return box
@@ -645,7 +679,7 @@ class SubmitDialog(QDialog):
         self.chk_auto_download.setChecked(bool(self.store.get_pref("auto_download", True)))
         self.chk_auto_download.toggled.connect(self._on_auto_download_toggled)
 
-        self.chk_download_all = QCheckBox("Download all output files")
+        self.chk_download_all = QCheckBox(DOWNLOAD_ALL_TEXT)
         self.chk_download_all.setToolTip(
             "Fetch everything the job produced, ignoring the patterns above."
         )
@@ -655,7 +689,7 @@ class SubmitDialog(QDialog):
         )
         self.chk_download_all.setEnabled(self.chk_auto_download.isChecked())
 
-        self.chk_beside_input = QCheckBox("...next to the input file")
+        self.chk_beside_input = QCheckBox(BESIDE_INPUT_TEXT)
         self.chk_beside_input.setToolTip(
             "Put the results next to the input file instead of in the download folder."
         )
@@ -689,12 +723,12 @@ class SubmitDialog(QDialog):
         dl_root_layout.addWidget(self.txt_download_root, 1)
         dl_root_layout.addWidget(self.btn_browse_download_root)
 
-        self.chk_chain = QCheckBox("Run after the job already queued on this host")
+        self.chk_chain = QCheckBox(CHAIN_TEXT)
         self.chk_chain.setToolTip(
             "Hold this job until the one already queued on this host has finished."
         )
         self.chk_chain.setChecked(True)
-        self.chk_chain_any = QCheckBox("...even if that job fails")
+        self.chk_chain_any = QCheckBox(CHAIN_ANY_TEXT)
         self.chk_chain_any.setToolTip(
             "Release it when that job ends, however it ended, rather than only on success."
         )
@@ -740,8 +774,8 @@ class SubmitDialog(QDialog):
         form.addRow("Tasks", self.spin_ntasks)
         form.addRow("CPUs per task", self.spin_cpus)
         form.addRow("Memory", self.txt_memory)
-        form.addRow("", self.chk_scan_resources)
-        form.addRow("", self.lbl_scanned)
+        form.addRow(self.chk_scan_resources)
+        form.addRow(self.lbl_scanned)
         form.addRow("Modules", self.txt_modules)
         form.addRow("Pre-commands", self.txt_pre)
         form.addRow("Extra directives", self.txt_extra)
@@ -751,14 +785,14 @@ class SubmitDialog(QDialog):
         command_layout.addWidget(self.txt_command, 1)
         command_layout.addWidget(self.cmb_template)
         form.addRow("Fetch patterns", self.txt_globs)
-        form.addRow("", self.chk_auto_download)
-        form.addRow("", self.chk_download_all)
-        form.addRow("", self.chk_beside_input)
+        form.addRow(self.chk_auto_download)
+        form.addRow(self.chk_download_all)
+        form.addRow(self.chk_beside_input)
         form.addRow("Default download dir", dl_root_row)
-        form.addRow("", self.chk_chain)
-        form.addRow("", self.chk_chain_any)
-        form.addRow("", self.lbl_chain)
-        form.addRow("", start_row)
+        form.addRow(self.chk_chain)
+        form.addRow(self.chk_chain_any)
+        form.addRow(self.lbl_chain)
+        form.addRow(start_row)
         return page
 
     def _browse_download_root(self) -> None:
@@ -773,6 +807,11 @@ class SubmitDialog(QDialog):
         self.store.set_pref("auto_download", bool(checked))
         self.chk_download_all.setEnabled(checked)
         self.chk_beside_input.setEnabled(checked)
+        # Both are greyed by the box above them, which is a line they could
+        # easily have scrolled past.
+        off = "" if checked else "needs automatic download"
+        self.chk_download_all.setText(with_reason(DOWNLOAD_ALL_TEXT, off))
+        self.chk_beside_input.setText(with_reason(BESIDE_INPUT_TEXT, off))
         self.txt_download_root.setEnabled(checked)
         self.btn_browse_download_root.setEnabled(checked)
 
@@ -901,10 +940,14 @@ class SubmitDialog(QDialog):
             self.chk_chain_any.setVisible(False)
             self.lbl_chain.setVisible(True)
             waiting = len(self.store.runnable_jobs(host.id))
+            tail = (
+                "Tick above only if this job needs the previous one to finish first."
+                if predecessor is not None
+                else NOTHING_TO_FOLLOW
+            )
             self.lbl_chain.setText(
                 f"The queue on {host.name} decides when this starts: it runs what fits "
-                f"in the cores and memory it has ({waiting} job(s) there now). "
-                "Tick above only if this job needs the previous one to finish first."
+                f"in the cores and memory it has ({waiting} job(s) there now). " + tail
             )
             return
 
@@ -936,7 +979,7 @@ class SubmitDialog(QDialog):
             return
 
         if predecessor is None:
-            self.lbl_chain.setText("Nothing queued on this host: this job starts straight away.")
+            self.lbl_chain.setText(NOTHING_TO_FOLLOW)
             return
         how = self._CHAIN_MECHANISM.get(host.scheduler, "") if host else ""
         self.lbl_chain.setText(

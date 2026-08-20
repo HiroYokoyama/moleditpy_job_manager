@@ -347,6 +347,53 @@ def test_the_relay_box_says_why_it_is_greyed_on_opening(service, qapp):
     assert "input file" in dlg.box_relay.title()
 
 
+def test_a_greyed_chain_tick_is_explained_under_it(service, qapp, tmp_path):
+    # Not on the label: that text is long enough that a suffix set a minimum
+    # width wider than the window and clipped the whole form.
+    from job_manager.submit_dialog import CHAIN_TEXT
+
+    service.store.add_host(HostProfile(id="h1", name="Host1"))
+    dlg = SubmitDialog(service)
+    dlg.add_files(_two_inputs(tmp_path)[:1])
+
+    assert not dlg.chk_chain.isEnabled()
+    assert dlg.chk_chain.text() == CHAIN_TEXT
+    assert dlg.lbl_chain.isVisibleTo(dlg)
+    assert "greyed" in dlg.lbl_chain.text()
+    assert dlg.lbl_chain.wordWrap()
+
+
+def test_the_download_dependants_say_what_they_need(service, qapp, tmp_path):
+    from job_manager.submit_dialog import BESIDE_INPUT_TEXT, DOWNLOAD_ALL_TEXT
+
+    service.store.add_host(HostProfile(id="h1", name="Host1"))
+    dlg = SubmitDialog(service)
+
+    dlg.chk_auto_download.setChecked(False)
+    assert not dlg.chk_download_all.isEnabled()
+    assert "needs automatic download" in dlg.chk_download_all.text()
+    assert "needs automatic download" in dlg.chk_beside_input.text()
+
+    dlg.chk_auto_download.setChecked(True)
+    assert dlg.chk_download_all.text() == DOWNLOAD_ALL_TEXT
+    assert dlg.chk_beside_input.text() == BESIDE_INPUT_TEXT
+
+
+def test_a_tick_that_is_usable_carries_no_reason(service, qapp, tmp_path):
+    # The reason has to come off again, or the label keeps an explanation for a
+    # state the control is no longer in.
+    from job_manager.models import Job
+    from job_manager.submit_dialog import CHAIN_TEXT
+
+    service.store.add_host(HostProfile(id="h1", name="Host1"))
+    service.store.add_job(Job(id="j0", name="earlier", host_id="h1", state="RUNNING"))
+    dlg = SubmitDialog(service)
+    dlg.add_files(_two_inputs(tmp_path)[:1])
+
+    assert dlg.chk_chain.isEnabled()
+    assert dlg.chk_chain.text() == CHAIN_TEXT
+
+
 def test_an_unticked_panel_says_it_is_waiting_to_be_ticked(service, qapp, tmp_path):
     # Qt greys the contents of a checkable group box until its title is ticked.
     # Next to a box that is genuinely disabled and captioned with a reason, that

@@ -624,7 +624,11 @@ class JobsDialog(QDialog):
         )
         actions.addWidget(self.chk_chat)
 
-        self.btn_chat = QPushButton("Chat alerts...")
+        # Just the ellipsis: this row already carries three long checkboxes, and
+        # a fourth control with a word in it pushed the window's minimum width
+        # past what a laptop screen gives it.
+        self.btn_chat = QPushButton("...")
+        self.btn_chat.setMaximumWidth(36)
         self.btn_chat.setToolTip(
             "Also post to Slack, Discord or Teams when a job ends, so the news "
             "reaches you away from this machine."

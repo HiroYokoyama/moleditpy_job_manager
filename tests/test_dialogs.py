@@ -653,10 +653,24 @@ class TestSubmitDialog(DialogTestCase):
         self.assertTrue(self.dialog.txt_command.isVisibleTo(self.dialog))
 
     def test_the_file_list_says_it_is_optional(self):
-        from PyQt6.QtWidgets import QGroupBox
+        # On a line inside the box rather than in its title: a group box is at
+        # least as wide as its title, and this sentence there held the whole
+        # wizard wider than its own window.
+        from PyQt6.QtWidgets import QGroupBox, QLabel
 
-        titles = [box.title() for box in self.dialog.findChildren(QGroupBox)]
-        self.assertTrue(any("optional" in title for title in titles if title.startswith("Input")))
+        box = next(b for b in self.dialog.findChildren(QGroupBox) if b.title().startswith("Input"))
+        said = " ".join(label.text() for label in box.findChildren(QLabel))
+        self.assertIn("Optional", said)
+        self.assertIn("{input}", said)
+
+    def test_the_wizard_fits_the_window_it_opens_in(self):
+        # Everything below the widest row used to sit behind a horizontal
+        # scrollbar, because one group box title and a column of full-width
+        # checkboxes set a floor wider than the window.
+        from PyQt6.QtWidgets import QScrollArea
+
+        body = self.dialog.findChild(QScrollArea).widget()
+        self.assertLessEqual(body.minimumSizeHint().width(), self.dialog.width())
 
     def test_save_as_preset_has_a_line_of_its_own(self):
         from PyQt6.QtWidgets import QDialogButtonBox, QPushButton, QScrollArea
