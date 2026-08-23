@@ -82,8 +82,8 @@ class ScriptContractMixin:
         # and the job would be reported LOST instead of FAILED.
         script = self.build()
         self.assertIn(
-            f"""trap '__moleditpy_rc=$?; echo "$__moleditpy_rc" > {SENTINEL_NAME}.tmp"""
-            f""" && mv -f {SENTINEL_NAME}.tmp {SENTINEL_NAME}' EXIT""",
+            'trap \'__moleditpy_rc=$?; echo "$__moleditpy_rc" > "$__moleditpy_sentinel.tmp"'
+            ' && mv -f "$__moleditpy_sentinel.tmp" "$__moleditpy_sentinel"\' EXIT',
             script,
         )
 
@@ -91,8 +91,8 @@ class ScriptContractMixin:
         # `>` truncates before it writes, and the reading side cannot tell an
         # empty sentinel from a missing one: it would call a finished job LOST.
         script = self.build()
-        self.assertNotIn(f'"$__moleditpy_rc" > {SENTINEL_NAME}\'', script)
-        self.assertIn(f"mv -f {SENTINEL_NAME}.tmp {SENTINEL_NAME}", script)
+        self.assertNotIn('"$__moleditpy_rc" > "$__moleditpy_sentinel"\'', script)
+        self.assertIn('mv -f "$__moleditpy_sentinel.tmp" "$__moleditpy_sentinel"', script)
 
     def test_the_trap_is_armed_before_the_payload_runs(self):
         script = self.build()
@@ -105,7 +105,7 @@ class ScriptContractMixin:
     def test_stale_sentinel_is_removed_before_the_run(self):
         script = self.build()
         self.assertLess(
-            script.index(f"rm -f {SENTINEL_NAME}"),
+            script.index('rm -f "$__moleditpy_sentinel"'),
             script.index("run mol.inp"),
         )
 
@@ -115,7 +115,7 @@ class ScriptContractMixin:
         # be reported as having finished with that earlier attempt's status.
         script = self.build()
         self.assertLess(
-            script.index(f"rm -f {SENTINEL_NAME}"),
+            script.index('rm -f "$__moleditpy_sentinel"'),
             script.index("trap '__moleditpy_rc"),
         )
 
@@ -127,7 +127,7 @@ class ScriptContractMixin:
             for line in self.build().splitlines()
             if line.strip().startswith(("rm ", "rm -"))
         ]
-        self.assertEqual(removals, [f"rm -f {SENTINEL_NAME}"])
+        self.assertEqual(removals, ['rm -f "$__moleditpy_sentinel"'])
 
     def test_job_name_is_sanitized_into_the_directives(self):
         # A raw name with a space would break every directive syntax.
@@ -172,8 +172,18 @@ class ScriptContractMixin:
 
     def test_the_cd_comes_before_the_sentinel_and_the_payload(self):
         script = self.build_in("/scratch/j")
-        self.assertLess(script.index("cd /scratch/j"), script.index(f"rm -f {SENTINEL_NAME}"))
+        self.assertLess(script.index("cd /scratch/j"), script.index("__moleditpy_sentinel="))
         self.assertLess(script.index("cd /scratch/j"), script.index("run mol.inp"))
+
+    def test_the_sentinel_path_is_absolute_via_a_variable(self):
+        # Not spelled out twice inside the trap's own quoting -- an absolute
+        # path needing shell-quoting (spaces, or a Windows-style local root)
+        # would otherwise nest single quotes inside it, which POSIX has no way
+        # to escape.
+        script = self.build_in("/scratch/j")
+        self.assertIn(f"__moleditpy_sentinel=/scratch/j/{SENTINEL_NAME}", script)
+        self.assertIn('rm -f "$__moleditpy_sentinel"', script)
+        self.assertIn('"$__moleditpy_sentinel.tmp"', script)
 
     def test_without_a_job_directory_it_falls_back_to_the_queue_s_own_variable(self):
         # Only the wizard's preview builds a script before the directory

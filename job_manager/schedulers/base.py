@@ -29,6 +29,7 @@ from ..models import (
     SubmitPreset,
     sanitize_name,
 )
+from ..remote_paths import join as join_path
 from ..remote_paths import quote
 
 # One spelling of the core request, shared with the helper queue that reads it.
@@ -235,6 +236,13 @@ class Scheduler(ABC):
         finished at submit time is there by the time this runs either way.
         """
         sentinel = sentinel or SENTINEL_NAME
+        # Absolute, not the bare name: a payload is free to `cd` elsewhere
+        # without restoring it (a plain `cd there; run_it`, no subshell), and
+        # the EXIT trap then runs in whatever directory that leaves behind. A
+        # relative sentinel path followed the payload there, was written, and
+        # the job directory this poller actually reads was left with nothing
+        # in it -- a real failure reported as LOST.
+        sentinel_path = join_path(remote_dir, sentinel) if remote_dir else sentinel
         # Once, here: the directive block was already sanitising while {name}
         # was not, so the preview and the submitted script could disagree
         # about what the job is called -- and a caller passing an unsanitised
@@ -250,7 +258,15 @@ class Scheduler(ABC):
         lines += [
             "",
             self.cd_to_job_dir(remote_dir),
-            f"rm -f {quote(sentinel)}",
+            # A variable, not the quoted path spelled out twice more below: an
+            # absolute path needing its own quoting (a Windows-style local
+            # root has both backslashes and a colon) would otherwise nest
+            # single quotes inside the trap's own single-quoted body, which
+            # POSIX has no way to escape -- it closed the trap's quoting early
+            # and broke the script, which is a subtler way to reach the same
+            # LOST as the two bugs described below.
+            f"__moleditpy_sentinel={quote(sentinel_path)}",
+            'rm -f "$__moleditpy_sentinel"',
             # An EXIT trap, not a trailing echo: a payload that calls `exit`
             # itself (or a pre-command that fails under `set -e`) would never
             # reach a trailing line, and the job would look LOST rather than
@@ -259,8 +275,8 @@ class Scheduler(ABC):
             # `>` truncates first, so a poll landing between the truncation and
             # the write reads an empty file -- which the reading side cannot
             # tell from a missing one, and reports a finished job as LOST.
-            f'trap \'__moleditpy_rc=$?; echo "$__moleditpy_rc" > {quote(sentinel + ".tmp")}'
-            f" && mv -f {quote(sentinel + '.tmp')} {quote(sentinel)}' EXIT",
+            'trap \'__moleditpy_rc=$?; echo "$__moleditpy_rc" > "$__moleditpy_sentinel.tmp"'
+            ' && mv -f "$__moleditpy_sentinel.tmp" "$__moleditpy_sentinel"\' EXIT',
             # Without these, a job the scheduler kills -- walltime exceeded,
             # preemption, scancel, node drain -- reaches the EXIT trap with $?
             # still 0 and is recorded as a clean success. Each killing signal

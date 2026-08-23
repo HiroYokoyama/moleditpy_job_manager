@@ -85,14 +85,26 @@ poller.
 
 ## How a job's completion is detected
 
-The generated run script writes the payload's exit code to `.moleditpy_rc`:
+The generated run script writes the payload's exit code to `.moleditpy_rc`, at
+an absolute path baked into a variable rather than the bare name:
 
 ```bash
-trap '__moleditpy_rc=$?; echo "$__moleditpy_rc" > .moleditpy_rc.tmp && mv -f .moleditpy_rc.tmp .moleditpy_rc' EXIT
+__moleditpy_sentinel=/path/to/job/dir/.moleditpy_rc
+trap '__moleditpy_rc=$?; echo "$__moleditpy_rc" > "$__moleditpy_sentinel.tmp" && mv -f "$__moleditpy_sentinel.tmp" "$__moleditpy_sentinel"' EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
 trap 'exit 129' HUP
 ```
+
+Absolute, and via a variable rather than repeating the quoted path: a command
+template that `cd`s elsewhere without returning changes the directory the trap
+runs in too, and a relative sentinel path would follow it there instead of
+landing where the poller looks -- reporting a real failure as LOST. A literal
+absolute path repeated inside the trap's own single-quoted body has the same
+problem one level down: a local Windows root has both backslashes and a colon,
+which forces `shlex.quote` to wrap it in single quotes that close the trap's
+quoting early. The variable is quoted once, outside the trap, and referenced
+by name inside it.
 
 A job that has disappeared from the queue is then resolved by reading that one
 file, which avoids depending on `sacct` (frequently disabled) or on parsing

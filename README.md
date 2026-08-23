@@ -227,11 +227,18 @@ A login node is not a status API, so:
 Every generated script installs these traps before running your command:
 
 ```bash
-trap '__moleditpy_rc=$?; echo "$__moleditpy_rc" > .moleditpy_rc.tmp && mv -f .moleditpy_rc.tmp .moleditpy_rc' EXIT
+__moleditpy_sentinel=/path/to/job/dir/.moleditpy_rc
+trap '__moleditpy_rc=$?; echo "$__moleditpy_rc" > "$__moleditpy_sentinel.tmp" && mv -f "$__moleditpy_sentinel.tmp" "$__moleditpy_sentinel"' EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
 trap 'exit 129' HUP
 ```
+
+The sentinel path is absolute, not the job directory's own name: a command
+template that `cd`s elsewhere without returning (no subshell) leaves the trap
+running there too, and a relative path would follow it — reporting a real
+failure as LOST because the poller looked for the sentinel in the job's actual
+directory and found nothing.
 
 When a job disappears from the queue, the plugin reads that one file: an exit
 code means finished (0 → DONE, anything else → FAILED with the code shown);

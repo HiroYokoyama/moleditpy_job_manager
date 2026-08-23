@@ -326,13 +326,20 @@ class TestTheWindowsWrapper(unittest.TestCase):
         )
 
     def test_the_default_is_still_the_shared_name(self):
-        self.assertIn(f"'{SENTINEL_NAME}'", self.script())
+        self.assertIn(f"'C:/runs/mol42/{SENTINEL_NAME}'", self.script())
 
     def test_a_per_job_sentinel_is_used_throughout(self):
         script = self.script(f"{SENTINEL_NAME}_ab12")
-        self.assertIn(f"'{SENTINEL_NAME}_ab12'", script)
-        self.assertIn(f"'{SENTINEL_NAME}_ab12.tmp'", script)
-        self.assertNotIn(f"'{SENTINEL_NAME}'", script)
+        self.assertIn(f"'C:/runs/mol42/{SENTINEL_NAME}_ab12'", script)
+        self.assertIn(f"'C:/runs/mol42/{SENTINEL_NAME}_ab12.tmp'", script)
+        self.assertNotIn(f"'C:/runs/mol42/{SENTINEL_NAME}'", script)
+
+    def test_the_sentinel_path_is_absolute_not_bare(self):
+        # A payload that Set-Location's elsewhere without returning must not
+        # be able to drag the sentinel write along with it.
+        script = self.script()
+        self.assertNotIn(f" '{SENTINEL_NAME}'", script)
+        self.assertNotIn(f"-Path '{SENTINEL_NAME}", script)
 
 
 class TestTheExistenceCheck(unittest.TestCase):

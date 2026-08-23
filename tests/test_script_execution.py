@@ -59,6 +59,28 @@ class TestGeneratedScriptSemantics(unittest.TestCase):
         _proc, recorded, _ = self.run_script("definitely_not_a_real_command_xyz")
         self.assertEqual(recorded, "127")
 
+    def test_a_payload_that_cds_elsewhere_still_records_in_the_job_dir(self):
+        # A command template of `cd somewhere; run_it` -- no subshell -- leaves
+        # the shell in `somewhere` when the EXIT trap fires. A relative
+        # sentinel path followed it there instead of landing in the job's own
+        # directory, and a real failure read back as LOST.
+        job_dir = tempfile.mkdtemp(prefix="jobdir_")
+        elsewhere = tempfile.mkdtemp(prefix="elsewhere_")
+        script = get_scheduler("shell").build_script(
+            "t",
+            SubmitPreset(command_template=f"cd {elsewhere}; definitely_not_a_real_command_xyz"),
+            "mol.inp",
+            "job.log",
+            remote_dir=job_dir,
+        )
+        path = os.path.join(job_dir, "run.sh")
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(script)
+        subprocess.run([BASH, path], capture_output=True, timeout=60, cwd=job_dir)
+        with open(os.path.join(job_dir, SENTINEL_NAME), encoding="utf-8") as handle:
+            self.assertEqual(handle.read().strip(), "127")
+        self.assertFalse(os.path.exists(os.path.join(elsewhere, SENTINEL_NAME)))
+
     def test_the_payload_actually_runs(self):
         _proc, _recorded, workdir = self.run_script("echo hello > {stem}.out")
         with open(os.path.join(workdir, "mol.out"), encoding="utf-8") as handle:

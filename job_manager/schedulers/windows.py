@@ -36,6 +36,7 @@ import time
 from typing import Dict, Iterable, List, Sequence
 
 from ..models import SubmitPreset, sanitize_name
+from ..remote_paths import join as join_path
 from .base import (
     CORES_TAG,
     MEMORY_TAG,
@@ -112,6 +113,12 @@ class WindowsScheduler(Scheduler):
 
         # Per job wherever the directory is shared; see Scheduler.build_script.
         sentinel = sentinel or SENTINEL_NAME
+        # Absolute, not the bare name: a payload is free to Set-Location
+        # elsewhere without returning (no equivalent of a subshell in a plain
+        # command template), and the sentinel would then be written wherever
+        # that leaves the wrapper -- reporting a real failure as LOST, the
+        # same bug fixed the same way in the bash wrapper (see base.py).
+        sentinel_path = join_path(remote_dir, sentinel) if remote_dir else sentinel
         # And sanitised here for the same reason it is there: {name} reaches a
         # command line, and the preview must show the name the job will have.
         job_name = sanitize_name(job_name)
@@ -137,7 +144,7 @@ class WindowsScheduler(Scheduler):
             # how a sentinel once ended up somewhere nobody read it.
             lines.append(f"Set-Location -LiteralPath {ps_quote(remote_dir)}")
         lines.append("if (-not $?) { exit 1 }")
-        lines.append(f"Remove-Item -Force -ErrorAction SilentlyContinue {ps_quote(sentinel)}")
+        lines.append(f"Remove-Item -Force -ErrorAction SilentlyContinue {ps_quote(sentinel_path)}")
         lines += self._start_time_block(start_after)
         lines += self._predecessor_wait_block(run_after)
         lines += [
@@ -190,10 +197,10 @@ class WindowsScheduler(Scheduler):
             # writes, and a poll landing in that window reads an empty file --
             # indistinguishable from a missing one, so a finished job would be
             # reported LOST. Move-Item -Force replaces in one step.
-            f"    Set-Content -Path {ps_quote(sentinel + '.tmp')} "
+            f"    Set-Content -Path {ps_quote(sentinel_path + '.tmp')} "
             "-Value $__moleditpy_rc -Encoding ascii",
-            f"    Move-Item -LiteralPath {ps_quote(sentinel + '.tmp')} "
-            f"-Destination {ps_quote(sentinel)} -Force",
+            f"    Move-Item -LiteralPath {ps_quote(sentinel_path + '.tmp')} "
+            f"-Destination {ps_quote(sentinel_path)} -Force",
             "}",
             "exit $__moleditpy_rc",
             "",
