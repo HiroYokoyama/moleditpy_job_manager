@@ -81,7 +81,7 @@ class TestInitializeContract(unittest.TestCase):
         self.addCleanup(setattr, job_manager, "_context", None)
 
     def test_menu_actions_are_registered(self):
-        self.assertEqual(len(self.context.menu_actions), 3)
+        self.assertEqual(len(self.context.menu_actions), 4)
 
     def test_actions_live_under_the_extensions_menu(self):
         # A top-level menu of its own, which the host creates on demand --

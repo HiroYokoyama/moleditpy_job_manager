@@ -114,6 +114,14 @@ DEFAULT_PREFS: Dict[str, Any] = {
     #: Seconds between host-monitor samples. 0 means "not chosen"; the
     #: per-backend default applies.
     "host_monitor_interval": 0,
+    #: Off, and nothing listens until it is switched on. The API lets any
+    #: process running as this user submit jobs to the user's clusters, which
+    #: is not a power to grant by default -- it is granted deliberately, once,
+    #: under Extensions > Job Manager > Local API...
+    "api_enabled": False,
+    #: Port for that API on 127.0.0.1. A port already in use falls back to one
+    #: the OS picks, which the endpoint file names either way.
+    "api_port": 8765,
 }
 
 

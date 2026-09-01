@@ -79,7 +79,10 @@ class TestImportHygiene(unittest.TestCase):
 
     def test_pure_python_modules_stay_qt_free(self):
         # These are the modules the headless suite relies on.
-        for name in ("models", "store", "runner", "remote_paths"):
+        # api_core and api_client are here for a second reason: the client is
+        # meant to be copied next to a program that is not MoleditPy, and the
+        # core is what the pytest-only CI job exercises the whole API through.
+        for name in ("models", "store", "runner", "remote_paths", "api_core", "api_client"):
             source = open(os.path.join(PACKAGE_DIR, f"{name}.py"), encoding="utf-8").read()
             self.assertNotIn("PyQt6", source, f"{name}.py must not import Qt")
 

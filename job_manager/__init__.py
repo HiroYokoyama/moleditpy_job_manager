@@ -16,7 +16,7 @@ import logging
 from typing import Any, Optional
 
 PLUGIN_NAME = "Job Manager"
-PLUGIN_VERSION = "1.2.0"
+PLUGIN_VERSION = "1.3.0"
 PLUGIN_AUTHOR = "HiroYokoyama"
 
 PLUGIN_DESCRIPTION = (
@@ -35,7 +35,8 @@ PLUGIN_DESCRIPTION = (
     "of its own that schedules on physical cores and memory, so two large jobs "
     "never share a machine that cannot hold both, chains jobs with each "
     "scheduler's own dependency flag, holds a job until a chosen time, and "
-    "outlives MoleditPy."
+    "outlives MoleditPy. Other programs on the same machine can submit and "
+    "track jobs through a local HTTP API, off until you switch it on."
 )
 PLUGIN_CATEGORY = "Utility"
 PLUGIN_TAGS = ["hpc", "ssh", "job", "Utility"]
@@ -61,6 +62,7 @@ HOST_MONITOR_WINDOW_KEY = "job_manager_host_monitor"
 _context: Optional[Any] = None
 _service: Optional[Any] = None
 _status_widget: Optional[Any] = None
+_api_server: Optional[Any] = None
 
 
 def get_context() -> Optional[Any]:
@@ -86,6 +88,66 @@ def get_service(create: bool = True, store: Optional[Any] = None) -> Optional[An
         _service.job_finished.connect(_notify_finished)
         _install_status_widget(_service)
     return _service
+
+
+def get_api_server(create: bool = True) -> Optional[Any]:
+    """The local API server object, whether or not it is listening.
+
+    Building one starts nothing: it owns a socket only after :func:`start_api`.
+    """
+    global _api_server
+    if _api_server is None and create:
+        from .api_server import JobApiServer
+
+        _api_server = JobApiServer(get_service())
+    return _api_server
+
+
+def start_api(port: int = 0) -> int:
+    """Start listening on 127.0.0.1. Returns the port, or 0 if it failed.
+
+    Never called on its own initiative -- only from the preference being on at
+    load, or the user switching it on. See :func:`_resume_api`.
+    """
+    server = get_api_server()
+    if server is None:
+        return 0
+    if server.running:
+        return server.port
+    try:
+        return server.start(port or int(_service.store.get_pref("api_port", 0) or 0))
+    except Exception as exc:
+        logging.exception("Job Manager: the local API could not start")
+        if _context is not None:
+            _context.show_status_message(f"Job Manager API: {exc}", 5000)
+        return 0
+
+
+def stop_api() -> None:
+    """Stop listening, and take the endpoint file with it."""
+    if _api_server is not None:
+        try:
+            _api_server.stop()
+        except Exception:
+            logging.debug("Job Manager: the local API did not stop cleanly", exc_info=True)
+
+
+def api_is_running() -> bool:
+    return bool(_api_server is not None and _api_server.running)
+
+
+def _resume_api(store: Optional[Any] = None) -> None:
+    """Start the API at load when the user has switched it on before.
+
+    Takes the store the startup peek already read rather than reading it
+    again: two JobStores at launch parse both files twice and leave two views
+    of the same jobs. A session with the API off still builds no service.
+    """
+    store = store if store is not None else (_service.store if _service is not None else None)
+    if store is None or not store.get_pref("api_enabled", False):
+        return
+    get_service(store=store)
+    start_api()
 
 
 def _finished_words() -> dict:
@@ -150,7 +212,22 @@ def _install_status_widget(service) -> None:
         logging.debug("Job Manager: no status bar indicator", exc_info=True)
 
 
-def _resume_tracking() -> None:
+def _startup_store() -> Optional[Any]:
+    """The job list, read once at load for everything that has to peek at it.
+
+    Reading it costs nothing that would not be paid anyway, and an empty list
+    still means not a single byte of network traffic.
+    """
+    try:
+        from .store import JobStore
+
+        return JobStore()
+    except Exception:
+        logging.debug("Job Manager: could not read the job list at startup", exc_info=True)
+        return None
+
+
+def _resume_tracking(store: Optional[Any] = None) -> None:
     """Start polling at launch when jobs from a previous session are running.
 
     The service used to be built only by opening the monitor, so a restart with
@@ -159,16 +236,7 @@ def _resume_tracking() -> None:
     store is read either way, so peeking at it first costs nothing -- and an
     empty job list still means not a single byte of network traffic.
     """
-    if _service is not None:
-        return
-    try:
-        from .store import JobStore
-
-        store = JobStore()
-        if not store.active_jobs():
-            return
-    except Exception:
-        logging.debug("Job Manager: could not read the job list at startup", exc_info=True)
+    if _service is not None or store is None or not store.active_jobs():
         return
     # The store just read is the one the service adopts, rather than parsing
     # both files again a line later.
@@ -238,6 +306,10 @@ def initialize(context) -> None:
         "Extensions/Job Manager/Host Monitor", lambda: show_host_monitor_standalone(context)
     )
     context.add_menu_action("Extensions/Job Manager/Submit Job...", lambda: show_submit(context))
+    # Its own entry rather than a tick in the monitor's preferences row: this
+    # is where the token is read from, and a user following the API
+    # documentation should not have to open a job window to find it.
+    context.add_menu_action("Extensions/Job Manager/Local API...", lambda: show_api_dialog(context))
 
     from .store import JOB_EXTENSION
 
@@ -255,7 +327,13 @@ def initialize(context) -> None:
     except AttributeError:
         logging.debug("Job Manager: this host has no register_drop_handler")
 
-    _resume_tracking()
+    # One store for both peeks: each used to build its own, which parses both
+    # files twice at every launch.
+    store = _startup_store()
+    _resume_tracking(store)
+    # After tracking, so an API that is on adopts the service that resume
+    # already built rather than making a second one.
+    _resume_api(store)
 
 
 def run(mw) -> None:
@@ -374,9 +452,47 @@ def submit_file(paths, name: str = "") -> bool:
     return True
 
 
+def show_api_dialog(context=None) -> None:
+    """Open the Local API window: the switch, the port, and the token."""
+    context = context or _context
+    if context is None:
+        return
+    try:
+        from .api_dialog import ApiDialog
+
+        ApiDialog(get_service(), parent=None).exec()
+    except Exception as exc:
+        logging.exception("Job Manager: could not open the API window")
+        context.show_status_message(f"Job Manager: {exc}", 5000)
+
+
+def submit_job(request: dict) -> dict:
+    """Submit a job from a dict, with no wizard and no user interaction.
+
+    **Public API**, and the same one the HTTP route serves -- a plugin running
+    inside MoleditPy calls this instead of going out over a socket to reach the
+    process it is already in. ``request`` takes the fields documented in
+    docs/API.md (``host`` plus ``command`` or ``preset``, ``files``, ...);
+    the job record comes back as a dict.
+
+    Raises :class:`~job_manager.api_core.ApiError` for a request that cannot be
+    served, whose ``message`` is written to be shown to a user as it is.
+
+    Must be called on the GUI thread, like every other writer of the job store.
+    """
+    from .api_core import JobApi
+
+    return JobApi(get_service()).submit(request)["job"]
+
+
 def shutdown() -> None:
     """Stop polling and release worker threads (called on plugin reload)."""
-    global _service, _status_widget
+    global _service, _status_widget, _api_server
+    # First: the socket is the one thing that can still bring in work, and a
+    # request arriving while the service is being torn down would find half a
+    # plugin. Unconditional, since a listening server outlives a reload.
+    stop_api()
+    _api_server = None
     if _status_widget is not None:
         try:
             _status_widget.detach()
