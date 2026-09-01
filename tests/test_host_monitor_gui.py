@@ -1021,3 +1021,26 @@ class TestClosingItOnlyTearsDownOnce(HostMonitorTestCase):
         with unittest.mock.patch.object(dialog, "_save_settings") as saved:
             dialog.close()
         self.assertEqual(saved.call_count, 1)
+
+    def test_a_window_never_shown_still_stops_sampling(self):
+        # QDialog::closeEvent only calls reject() when the dialog is visible,
+        # so done() alone does not cover this: a monitor built and closed
+        # without ever being shown would keep its timer and go on asking every
+        # host over SSH for the rest of the session.
+        dialog = self.monitor()
+        self.assertTrue(dialog._timer.isActive())
+        dialog.close()
+        self.assertFalse(dialog._timer.isActive())
+
+    def test_a_window_never_shown_hands_its_transports_back(self):
+        dialog = self.monitor()
+        dialog._sample_all()
+        self.assertTrue(dialog._transports)
+        dialog.close()
+        self.assertFalse(dialog._transports)
+
+    def test_tearing_down_twice_is_harmless(self):
+        dialog = self.monitor()
+        dialog.close()
+        dialog.reject()
+        self.assertFalse(dialog._timer.isActive())

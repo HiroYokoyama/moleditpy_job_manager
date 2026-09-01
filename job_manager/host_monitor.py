@@ -820,6 +820,8 @@ class HostMonitorDialog(QDialog):
         #: something exact to go back to.
         self._light_palette = QPalette(self.palette())
         self._scroll: Optional[QScrollArea] = None
+        #: Set by :meth:`_teardown`, which several close routes reach.
+        self._torn_down = False
         #: Held open while this window is: see the module docstring.
         self._transports: Dict[str, object] = {}
         #: Hosts with a probe still in flight, so a slow host does not queue
@@ -1183,23 +1185,40 @@ class HostMonitorDialog(QDialog):
         except Exception:
             pass
 
-    def done(self, r: int) -> None:
-        """Stop the timer, save settings, and hand every connection back.
+    def _teardown(self) -> None:
+        """Stop sampling, save settings, and hand every connection back.
 
-        The one place it happens, because every route out of a QDialog arrives
-        here: accept() and reject() both call done(), and closeEvent() calls
-        reject(). Overriding all four ran the whole teardown three times on a
-        close -- three settings writes and three passes over the transports --
-        and left four copies of it to keep in step. Nothing is overridden above
-        this point, so ``finished`` is still emitted the usual way, which is
-        what deregisters the window.
+        Written once and guarded, rather than repeated in each of the four ways
+        a dialog closes. Every route used to carry its own copy, and since
+        closeEvent() calls reject() and both reject() and accept() call done(),
+        closing a visible window ran the whole sequence three times: three
+        settings writes, three disconnect sweeps, three passes over the open
+        transports.
         """
+        if self._torn_down:
+            return
+        self._torn_down = True
         self._timer.stop()
         self._save_settings()
         self._disconnect_signals()
         for host_id in list(self._transports):
             self._close_transport(host_id)
+
+    def done(self, r: int) -> None:
+        # Where accept(), reject() and a close on a *visible* window all arrive.
+        self._teardown()
         super().done(r)
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt's spelling
+        # And the one case done() does not cover: QDialog::closeEvent only
+        # calls reject() when the dialog is visible, so a window closed without
+        # ever being shown would otherwise keep its timer -- and go on sampling
+        # every host over SSH for the rest of the session, which is the one
+        # thing this window promises not to do.
+        self._teardown()
+        # Delegated, not accepted: this is what reaches reject() and so emits
+        # ``finished``, which is what deregisters the window key.
+        super().closeEvent(event)
 
 
 class _ActiveJobsBar(QWidget):
