@@ -313,6 +313,12 @@ class JobStore:
         a process died, and settling it as FAILED would be a live job declared
         dead from the next window along.
         """
+        if not os.path.exists(self.jobs_path):
+            # An empty document is a list somebody cleared, and dropping our
+            # jobs to match is right. A file that is not there at all is not
+            # that: it has been moved, renamed or not written yet, and reading
+            # it as "everything was removed" would empty the table over it.
+            return JobsReload()
         disk_jobs, _archived = self.read_job_list(self.jobs_path)
         added = updated = removed = 0
         on_disk = set()
