@@ -555,12 +555,12 @@ class HostsDialog(QDialog):
                 break
         self.list.blockSignals(False)
 
-    def closeEvent(self, event) -> None:  # noqa: N802 - Qt's spelling
-        """A window closed by its own button, or by the window manager."""
-        if not self._confirm_discard():
-            event.ignore()
-            return
-        super().closeEvent(event)
+    # No closeEvent override on purpose. QDialog's own calls reject(), then
+    # ignores the event if the dialog is still visible -- which is exactly the
+    # veto one here was written to perform, and asking first meant asking
+    # twice: closing a dirty profile and choosing Discard put the same question
+    # straight back up, because discarding leaves the form dirty and the
+    # delegated reject() then asked about it again.
 
     def accept(self) -> None:
         if not self._confirm_discard():

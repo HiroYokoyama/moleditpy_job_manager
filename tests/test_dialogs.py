@@ -1828,3 +1828,56 @@ class TestTheHostsDialogOpensBigEnough(DialogTestCase):
         screen = QApplication.primaryScreen()
         if screen is not None:
             self.assertLessEqual(dialog.height(), screen.availableGeometry().height())
+
+
+class TestClosingADirtyHostProfileAsksOnce(DialogTestCase):
+    """The unsaved-changes question, on every way out of the window.
+
+    It used to be asked twice. closeEvent() confirmed and then delegated to
+    QDialog's, which calls reject() -- which confirmed again. Choosing Discard
+    leaves the form dirty, so the same question came straight back up; only
+    Save happened to hide it, by making the second check find nothing to ask
+    about.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.dialog = HostsDialog(self.service)
+        self.addCleanup(self.dialog.deleteLater)
+        self.dialog.show()
+        self.dialog.txt_name.setText("a different name")
+        self.assertTrue(self.dialog._is_dirty())
+
+    def answer(self, button, route="close"):
+        with patch.object(QMessageBox, "question", return_value=button) as question:
+            getattr(self.dialog, route)()
+        return question.call_count
+
+    def test_discarding_asks_once(self):
+        self.assertEqual(self.answer(QMessageBox.StandardButton.Discard), 1)
+        self.assertFalse(self.dialog.isVisible())
+
+    def test_saving_asks_once(self):
+        self.assertEqual(self.answer(QMessageBox.StandardButton.Save), 1)
+        self.assertEqual(self.store.hosts[self.host.id].name, "a different name")
+
+    def test_cancelling_asks_once_and_keeps_the_window(self):
+        # The veto still has to work: this is the whole reason the question
+        # exists, and Qt's own closeEvent re-ignores the event for us when
+        # reject() declines to close.
+        self.assertEqual(self.answer(QMessageBox.StandardButton.Cancel), 1)
+        self.assertTrue(self.dialog.isVisible())
+        self.assertTrue(self.dialog._is_dirty())
+
+    def test_escape_asks_once_too(self):
+        # Esc reaches reject() with no closeEvent at all.
+        self.assertEqual(self.answer(QMessageBox.StandardButton.Discard, route="reject"), 1)
+
+    def test_escape_can_be_cancelled(self):
+        self.assertEqual(self.answer(QMessageBox.StandardButton.Cancel, route="reject"), 1)
+        self.assertTrue(self.dialog.isVisible())
+
+    def test_a_clean_profile_closes_without_a_question(self):
+        self.dialog._save_current()
+        self.assertEqual(self.answer(QMessageBox.StandardButton.Discard), 0)
+        self.assertFalse(self.dialog.isVisible())
