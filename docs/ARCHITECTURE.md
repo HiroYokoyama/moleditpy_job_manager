@@ -263,7 +263,7 @@ working in, so a transfer cut off half way would otherwise leave a truncated
 
 | Module | Responsibility |
 |---|---|
-| `__init__.py` | plugin entry point, menu actions, the public `submit_file()` handoff |
+| `__init__.py` | plugin entry point, menu actions, the public `submit_file()` and `submit_job()` handoffs |
 | `models.py` | `HostProfile`, `SubmitPreset`, `Job`, canonical states. Pure stdlib |
 | `store.py` | JSON persistence, preferences, pruning |
 | `service.py` | session-scoped coordinator; owns the store, poller and passwords |
@@ -282,6 +282,9 @@ working in, so a transfer cut off half way would otherwise leave a truncated
 | `taskbar.py` | the same count on the application icon (Dock / task bar / launcher) |
 | `notify.py` | the desktop notification raised when a job ends |
 | `webhook.py` | the same line posted to a chat room (Slack, Discord, generic JSON) |
+| `api_core.py` | what an API request *means*: routing, validation, serialisation. Pure stdlib |
+| `api_server.py` | the loopback HTTP server, the token, and the hop onto the GUI thread |
+| `api_client.py` | the client another program uses, and its command line. Pure stdlib |
 | `input_scan.py` | the memory and core request stated in an input file |
 | `*_dialog.py` | the windows |
 
@@ -300,6 +303,39 @@ correctly treated as absent. ORCA and Gaussian Input Generator Pro use it for
 their **Submit to Cluster...** buttons; see `cluster_link.py` in either repo for
 the ~40-line pattern. The name and signature are a contract and will not change
 without a major version.
+
+## The local API
+
+Off unless the `api_enabled` preference is set, in which case `_resume_api()`
+starts it at load, the same way `_resume_tracking()` starts polling.
+
+```
+   another program ──HTTP──▶ api_server (socket thread)
+                                  │ queued signal, blocking
+                                  ▼
+                             api_core.JobApi ─────▶ JobService.submit(...)
+                              (GUI thread)
+```
+
+Two constraints shape it, and neither is about HTTP:
+
+**The store has one writer thread.** Every handler runs on the GUI thread,
+reached through a queued signal, while the socket thread waits. A handler that
+touched the store from the socket thread would race the poller.
+
+**A handler must not block the GUI thread.** Anything that has to reach the
+cluster — a log tail, a directory listing, a download the caller asked to wait
+for — returns a `Deferred` instead. The GUI thread returns immediately; the
+socket thread waits on it, so a slow cluster delays one client rather than
+freezing MoleditPy.
+
+An API submission is not a second submission path: `JobApi.submit` builds a
+`SubmitPreset` and calls the same `JobService.submit` the wizard calls, so
+polling, chaining, auto-download and notifications are the code that was
+already there. `job_manager.submit_job(request)` is that same handler, for a
+plugin in this process that would otherwise talk to itself over a socket.
+
+See [API.md](API.md) for the routes and the security model.
 
 ## Testing
 

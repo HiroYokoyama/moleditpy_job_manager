@@ -39,6 +39,9 @@ clones the main app — so a change that passes only on this machine is not done
 | `schedulers/` | One module per queue system; `base.py` builds the run script |
 | `transport/` | `openssh`, `paramiko`, `local` — run a command, move a file |
 | `remote_runner*.py` | The helper queue for hosts with no scheduler (bash / PowerShell) |
+| `api_core.py` | what an API request means. Pure stdlib, so the pytest-only CI job covers it |
+| `api_server.py` | the loopback socket, the token, and the queued hop onto the GUI thread |
+| `api_client.py` | the client another program uses. Pure stdlib, and meant to be copyable |
 | `*_dialog.py` | Qt only. No logic that is worth testing lives here |
 
 ## Things that have bitten, and must not again
@@ -64,6 +67,12 @@ clones the main app — so a change that passes only on this machine is not done
 - **Two runner flavours must not drift.** `remote_runner.py` (bash) and
   `remote_runner_ps.py` (PowerShell) implement the same protocol; there are
   tests that compare them, and a change to one usually belongs in both.
+- **The local API is off by default and binds `127.0.0.1` only.** Both are
+  security properties with tests holding them (`test_api_core.py`,
+  `test_api_server.py`); neither is a default to "improve". Every API handler
+  runs on the GUI thread through a queued signal, because the store has one
+  writer thread — anything that has to reach the host returns a `Deferred` for
+  the socket thread to wait on instead of blocking there.
 - **Tests that drive a real shell take real time.** They are worth it — text
   assertions passed while a generated script was semantically broken — but keep
   poll intervals short and never let a test wait out a timeout on the happy

@@ -133,6 +133,38 @@ Other plugins can do the same by calling `job_manager.submit_file(paths,
 name="")`, found through the host's plugin list. It is a public API: the name
 and signature will not change without a major version.
 
+### Submitting from another program
+
+A program that is not a MoleditPy plugin — a script, a pipeline, another
+application — can submit jobs and collect the results through a small HTTP API
+on `127.0.0.1`.
+
+It is **off until you switch it on**, under **Extensions ▸ Job Manager ▸ Local
+API...**. Nothing listens on a machine where the plugin is merely installed.
+
+```bash
+python -m job_manager.api_client submit h2o.inp     --host mycluster     --command "/opt/orca/orca {input} > {stem}.out" --cpus 8 --memory 16GB
+
+python -m job_manager.api_client wait <job id> --download
+```
+
+```python
+from job_manager.api_client import JobManagerClient
+
+client = JobManagerClient()          # finds the running MoleditPy itself
+job = client.submit(host="mycluster", files=["h2o.inp"],
+                    command="/opt/orca/orca {input} > {stem}.out")
+final = client.wait(job["id"])
+```
+
+A submission that arrives this way is not a second submission path: it builds
+the same preset the wizard builds and hands it to the same service, so it is
+polled, chained, downloaded and announced exactly like one you typed in. The
+client is standard library only and imports nothing else from the plugin, so it
+can be copied next to whatever program needs it.
+
+Every route, every field and the security model: [docs/API.md](docs/API.md).
+
 ### What it does not do
 
 **No workflow graph.** Chaining is a straight line: each job waits for one
@@ -147,6 +179,7 @@ directives* — Job Manager passes them through and tracks the jobs normally.
 | [docs/WORKFLOW.md](docs/WORKFLOW.md) | the standard path end to end, command templates, reading job states, troubleshooting |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | layers, threading, polling, the sentinel, persistence, the `submit_file()` handoff |
 | [docs/RUNNER.md](docs/RUNNER.md) | the queue that runs on a machine with no scheduler: layout, safety rules, core and memory budgets |
+| [docs/API.md](docs/API.md) | the local HTTP API another program submits through: routes, fields, the client, the token |
 | [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) | what is stored and where, how keys and passwords are handled, host-key policy, trust boundaries |
 
 ## Requirements
@@ -319,6 +352,11 @@ On Windows, create a shortcut to either `.bat` file for one-click desktop access
 - `archived/jobs_<date>.pmejbs` — lists written out by **Clear List**. Clearing
   never deletes: delete these yourself when you want them gone
 - `downloads/` — fetched results, one directory per job
+- `api_token` — the local API's shared secret, written on first use and read
+  only by you. Only relevant if you switched the API on; see
+  [docs/API.md](docs/API.md)
+- `api.json` — where the local API is listening, written while it runs and
+  deleted when it stops. This is how a client finds it
 
 A job list carries an `archived` flag inside the file. An archived list opens
 read-only; any other one — an export, a backup, a file from a colleague — can be

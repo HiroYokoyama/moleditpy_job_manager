@@ -5,8 +5,10 @@ a remote machine. For reporting a vulnerability, see [SECURITY.md](../SECURITY.m
 
 ## The short version
 
-* **No secret is ever written to disk by this plugin.** Not passwords, not key
-  material, not agent handles.
+* **No credential of yours is ever written to disk by this plugin.** Not
+  passwords, not key material, not agent handles. (The one secret it does write
+  is one it generates itself: the local API's token, and only if you switch
+  that API on. See [`api_token`](#api_token-and-apijson).)
 * **Keys stay where SSH already keeps them.** The plugin stores a *path* at
   most, and usually not even that — it lets your `~/.ssh/config`, your agent and
   your `known_hosts` do their jobs.
@@ -63,6 +65,30 @@ Clearing the table writes the current list here first rather than deleting it.
 Same contents, same absence of credentials. Exports you make yourself (`.pmejbs`
 or `.csv`) contain the same fields — including remote directory paths and
 usernames, which is worth remembering before mailing one to anybody.
+
+### `api_token` and `api.json`
+
+Only written if you switch the local API on (**Extensions > Job Manager > Local
+API...**); it is off by default and nothing listens until then.
+
+`api_token` holds 32 random bytes, generated on first use and reused across
+restarts, created with mode `0600` — the mode is set when the file is created,
+not afterwards, so the secret is never briefly world-readable. On Windows the
+file inherits the ACL of the directory, which is inside your own profile.
+
+`api.json` is written while the API is listening and deleted when it stops. It
+carries the port and the same token, and exists so a client can find the API
+without being configured.
+
+The token is a credential in the same sense the chat webhook is: **anything
+running as you can read it**, and can then submit to your clusters exactly as
+you could. That is the honest trust boundary — the API is a convenience for
+programs you run, not a sandbox around them. The socket binds `127.0.0.1` and
+the bind address is not configurable; a request carrying a browser `Origin` is
+refused, so a web page cannot make your browser submit a job on your behalf.
+*New token* in that window invalidates every client using the old one.
+
+Full detail: [API.md](API.md).
 
 ### Nowhere
 
@@ -174,6 +200,7 @@ path.
 | You are trusting | Because |
 |---|---|
 | the remote host | you gave it a shell command to run |
+| every program running as your user, if the local API is on | it can read the API token and submit as you |
 | your `~/.ssh` config, keys and agent | both backends use them |
 | the plugin's generated script | preview it before submitting |
 | result files you download | they are handed to the host app's file openers, which is how the ORCA/Gaussian analyzers claim `.out` |
