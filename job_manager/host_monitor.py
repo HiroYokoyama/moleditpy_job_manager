@@ -1183,33 +1183,17 @@ class HostMonitorDialog(QDialog):
         except Exception:
             pass
 
-    def closeEvent(self, event) -> None:  # noqa: N802 - Qt's spelling
-        """Stop the timer, save settings, and hand every connection back."""
-        self._timer.stop()
-        self._save_settings()
-        self._disconnect_signals()
-        for host_id in list(self._transports):
-            self._close_transport(host_id)
-        super().closeEvent(event)
-
-    def reject(self) -> None:
-        # Esc / Close button closes dialog without a closeEvent.
-        self._timer.stop()
-        self._save_settings()
-        self._disconnect_signals()
-        for host_id in list(self._transports):
-            self._close_transport(host_id)
-        super().reject()
-
-    def accept(self) -> None:
-        self._timer.stop()
-        self._save_settings()
-        self._disconnect_signals()
-        for host_id in list(self._transports):
-            self._close_transport(host_id)
-        super().accept()
-
     def done(self, r: int) -> None:
+        """Stop the timer, save settings, and hand every connection back.
+
+        The one place it happens, because every route out of a QDialog arrives
+        here: accept() and reject() both call done(), and closeEvent() calls
+        reject(). Overriding all four ran the whole teardown three times on a
+        close -- three settings writes and three passes over the transports --
+        and left four copies of it to keep in step. Nothing is overridden above
+        this point, so ``finished`` is still emitted the usual way, which is
+        what deregisters the window.
+        """
         self._timer.stop()
         self._save_settings()
         self._disconnect_signals()

@@ -9,6 +9,7 @@ connection every couple of seconds.
 from __future__ import annotations
 
 import unittest
+import unittest.mock
 
 import pytest
 
@@ -967,3 +968,56 @@ class TestThreadScaledMeter(HostMonitorTestCase):
         self.assertIn("16 threads", card.lbl_state.text())
         self.assertAlmostEqual(card.meter_cpu.fraction, 0.5)
         self.assertIn("16 threads", card.meter_cpu.toolTip())
+
+
+class TestClosingItOnlyTearsDownOnce(HostMonitorTestCase):
+    """Every route out of a QDialog funnels through done().
+
+    closeEvent() calls reject(), and reject() and accept() both call done(), so
+    overriding all four ran the whole teardown three times on a single close --
+    three settings writes, three disconnect sweeps, three passes over the open
+    transports. Nothing broke, because each step happens to be idempotent, but
+    it was four copies of one sequence with nothing keeping them in step.
+    """
+
+    def teardown_count(self, route: str):
+        from job_manager.host_monitor import HostMonitorDialog
+
+        calls = []
+        original = HostMonitorDialog._disconnect_signals
+
+        def counted(dialog_self):
+            calls.append(1)
+            original(dialog_self)
+
+        dialog = self.monitor()
+        dialog.show()
+        finished = []
+        dialog.finished.connect(lambda *_: finished.append(1))
+        with unittest.mock.patch.object(HostMonitorDialog, "_disconnect_signals", counted):
+            getattr(dialog, route)()
+        return len(calls), len(finished)
+
+    def test_closing_it_tears_down_once(self):
+        self.assertEqual(self.teardown_count("close")[0], 1)
+
+    def test_rejecting_it_tears_down_once(self):
+        self.assertEqual(self.teardown_count("reject")[0], 1)
+
+    def test_accepting_it_tears_down_once(self):
+        self.assertEqual(self.teardown_count("accept")[0], 1)
+
+    def test_finished_still_fires(self):
+        # What deregisters the window key, so the next open builds a live one
+        # rather than raising a dialog whose signals are already torn down.
+        # Swallowing the close event to save a teardown would have cost this.
+        for route in ("close", "reject", "accept"):
+            with self.subTest(route=route):
+                self.assertEqual(self.teardown_count(route)[1], 1)
+
+    def test_the_settings_are_written_once(self):
+        dialog = self.monitor()
+        dialog.show()
+        with unittest.mock.patch.object(dialog, "_save_settings") as saved:
+            dialog.close()
+        self.assertEqual(saved.call_count, 1)
