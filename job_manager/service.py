@@ -41,7 +41,7 @@ from .runner import (
     tail_log,
     tail_remote_file,
 )
-from .store import JobStore
+from .store import JobsReload, JobStore
 from .tasks import run_async
 from .transport import create_transport
 
@@ -523,6 +523,20 @@ class JobService(QObject):
     def remove_job(self, job_id: str) -> None:
         self.store.remove_job(job_id)
         self.jobs_changed.emit()
+
+    def reload_jobs(self) -> JobsReload:
+        """Re-read the job file and announce what another instance changed.
+
+        GUI thread only, like every other writer of the store.
+        """
+        result = self.store.reload_jobs()
+        if result.total:
+            self.jobs_changed.emit()
+            # A job that arrived from the other instance is active and nothing
+            # here is asking its host about it yet. start() stops the timer
+            # instead when the reload left nothing active.
+            self.poller.start()
+        return result
 
     def shutdown(self) -> None:
         self.poller.shutdown()

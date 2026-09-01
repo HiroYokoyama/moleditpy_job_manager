@@ -20,7 +20,7 @@ import logging
 import os
 import tempfile
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 from .models import (
     STATE_DONE,
@@ -150,6 +150,31 @@ def resolve_interrupted(job: Job) -> bool:
     return False
 
 
+class JobsReload(NamedTuple):
+    """What re-reading the job file off disk changed in this session."""
+
+    added: int = 0
+    updated: int = 0
+    removed: int = 0
+
+    @property
+    def total(self) -> int:
+        return self.added + self.updated + self.removed
+
+    def summary(self) -> str:
+        """One line for the monitor's log strip."""
+        if not self.total:
+            return "The job list is already up to date."
+        parts = []
+        if self.added:
+            parts.append(f"{self.added} new")
+        if self.updated:
+            parts.append(f"{self.updated} changed")
+        if self.removed:
+            parts.append(f"{self.removed} removed elsewhere")
+        return "Reloaded the job list: " + ", ".join(parts) + "."
+
+
 def default_data_dir() -> str:
     """``~/.moleditpy/job_manager`` -- outside the replaceable plugin folder."""
     override = os.environ.get(DATA_DIR_ENV)
@@ -267,6 +292,56 @@ class JobStore:
             self.jobs[job.id] = job
         self.invalidate_chains()
         self._resolve_interrupted()
+
+    def reload_jobs(self) -> JobsReload:
+        """Take in what another Job Manager has done to the same job file.
+
+        Two instances -- a second MoleditPy window, or the standalone monitor
+        beside the plugin -- each hold the whole list in memory and only meet on
+        *save*, where :meth:`_merged_jobs` keeps what the other one wrote. So a
+        job submitted, finished or removed over there stays invisible here until
+        somebody asks. This is that ask.
+
+        Ours wins only where the disk copy is not newer, so a state the other
+        instance polled is taken and a local edit made since is not overwritten.
+
+        Two things are deliberately left alone. A job this session has mid
+        transfer keeps its record: the worker thread moving it owns that state,
+        and the file cannot know what it is about to become. And
+        :func:`resolve_interrupted` is *not* run over what was just read --
+        UPLOADING there means another instance is uploading right now, not that
+        a process died, and settling it as FAILED would be a live job declared
+        dead from the next window along.
+        """
+        disk_jobs, _archived = self.read_job_list(self.jobs_path)
+        added = updated = removed = 0
+        on_disk = set()
+        for job in disk_jobs:
+            if not job.id or job.id in self._forgotten:
+                continue
+            on_disk.add(job.id)
+            mine = self.jobs.get(job.id)
+            if mine is None:
+                self.jobs[job.id] = job
+                added += 1
+            elif mine.state in INTERRUPTED_STATES:
+                continue
+            elif job.updated_at > mine.updated_at:
+                self.jobs[job.id] = job
+                updated += 1
+        for job_id in [j for j in self.jobs if j not in on_disk]:
+            # Not ours to keep: the other instance removed, cleared or archived
+            # it. Except one we are still transferring -- add_job() writes before
+            # the worker starts, so absence there would be the other instance
+            # having removed it mid-upload, and dropping it would strand the
+            # thread's own job record.
+            if self.jobs[job_id].state in INTERRUPTED_STATES:
+                continue
+            del self.jobs[job_id]
+            removed += 1
+        if added or updated or removed:
+            self.invalidate_chains()
+        return JobsReload(added, updated, removed)
 
     def _resolve_interrupted(self) -> int:
         """Settle any job left mid-transfer by a previous session."""

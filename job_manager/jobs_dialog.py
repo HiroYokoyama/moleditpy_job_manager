@@ -381,7 +381,15 @@ class JobsDialog(QDialog):
         self.btn_hosts = QPushButton("Hosts...")
         self.btn_hosts.clicked.connect(self.open_hosts_dialog)
         self.btn_refresh = QPushButton("Refresh Now")
+        self.btn_refresh.setToolTip("Ask every host with active jobs for their status now.")
         self.btn_refresh.clicked.connect(self._refresh_now)
+        self.btn_reload = QPushButton("Reload List")
+        self.btn_reload.setToolTip(
+            "Re-read the job file from disk, picking up whatever another Job "
+            "Manager window has submitted, finished or removed. Nothing is "
+            "asked of any host."
+        )
+        self.btn_reload.clicked.connect(self._reload_jobs)
         self.btn_host_monitor = QPushButton("Host Monitor...")
         self.btn_host_monitor.setToolTip(
             "Live load and memory per host, sampled only while that window is open."
@@ -390,6 +398,7 @@ class JobsDialog(QDialog):
         toolbar.addWidget(self.btn_new)
         toolbar.addWidget(self.btn_hosts)
         toolbar.addWidget(self.btn_refresh)
+        toolbar.addWidget(self.btn_reload)
         toolbar.addWidget(self.btn_host_monitor)
         toolbar.addStretch(1)
         toolbar.addWidget(QLabel("Poll every"))
@@ -766,6 +775,9 @@ class JobsDialog(QDialog):
                 self.btn_tail,
                 self.btn_tail_file,
                 self.btn_resubmit,
+                # Nothing else writes a rebuilt list, so there is nothing to
+                # take in from it.
+                self.btn_reload,
             ):
                 button.setEnabled(False)
             self.btn_open.setEnabled(bool(job and job.downloaded_files))
@@ -775,7 +787,11 @@ class JobsDialog(QDialog):
                 button.setEnabled(True)
             return
         self.btn_new.setEnabled(True)
+        self.btn_reload.setEnabled(True)
         if self.viewing_archive():
+            # The table is showing a fixed list, so a count of what changed in
+            # the live one behind it would describe nothing on screen.
+            self.btn_reload.setEnabled(False)
             # An archived job's queue id and remote directory may be gone, so
             # every action that would act on one is off.
             for button in (
@@ -936,6 +952,31 @@ class JobsDialog(QDialog):
     def _refresh_now(self) -> None:
         if not self.service.poller.refresh_now():
             self._append_message("Refresh is rate limited; try again in a few seconds.")
+
+    def _reload_jobs(self) -> None:
+        """Take in what another Job Manager instance changed on disk.
+
+        Separate from Refresh Now, which asks the *hosts*: two windows share one
+        job file and never see each other's writes until one of them re-reads
+        it. Not rate limited -- this is a file read, not a login node.
+        """
+        selected = self.selected_job()
+        selected_id = selected.id if selected is not None else ""
+        result = self.service.reload_jobs()
+        self._append_message(result.summary())
+        if selected_id:
+            # jobs_changed resets the model, which drops the selection; put it
+            # back so a reload does not lose the row the user was working on.
+            self._select_job(selected_id)
+
+    def _select_job(self, job_id: str) -> None:
+        """Re-select ``job_id`` if it is still in the table."""
+        row = self.model.row_of(job_id)
+        if row < 0:
+            return
+        index = self.proxy.mapFromSource(self.model.index(row, 0))
+        if index.isValid():
+            self.table.selectRow(index.row())
 
     def _cancel_selected(self) -> None:
         job = self.selected_job()
