@@ -580,6 +580,21 @@ about; against your own workstation it is fine.
 
 **Refresh Now** forces a cycle immediately (rate limited to once every 10 s).
 
+**Reload List** is the other button, and asks a different question. Two Job
+Managers open at once — a second MoleditPy window, or the standalone monitor
+beside the plugin — share one `jobs.pmejbs`, and each holds the whole list in
+memory. Saving merges, so neither loses the other's jobs, but neither *sees*
+them either until it re-reads the file. Reload List is that re-read: a job
+submitted, finished or removed in the other window appears here. Refresh Now
+does not help, because a job this window has never heard of is not in the list
+it asks the hosts about.
+
+It costs no network at all, so it is not rate limited. A job either window is
+still uploading or downloading is left exactly as it is — the window doing the
+transfer owns that record until it lands. The button is off while an archive or
+a rebuilt list is on screen, where a count of what changed in the live list
+behind it would describe nothing you can see.
+
 Every submission is also asked about once, about 5 s after it is handed over,
 whatever the interval says — that is the query that catches a job starting, or
 finding out it never did, instead of leaving it reading SUBMITTED for the first

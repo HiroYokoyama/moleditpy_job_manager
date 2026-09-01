@@ -168,6 +168,12 @@ python -m job_manager
 python __main__.py
 ```
 
+Standalone is the full plugin minus the MoleditPy window: the same job list in
+`~/.moleditpy/job_manager/`, the same polling, the same automatic downloads —
+and the same notifications when a job ends, on this desktop and in your chat
+room. Opening a result is the one thing it cannot do, since there is no editor
+to open it into.
+
 ### Launch via Batch File (.bat) & Desktop Shortcut
 
 If you want to launch Job Manager with a single double-click from your desktop, create a `.bat` file (e.g. `launch_job_manager.bat`):
@@ -220,7 +226,9 @@ A login node is not a status API, so:
   the login node;
 - the timer stops entirely when no job is active;
 - a host that errors backs off exponentially, up to 15 minutes;
-- **Refresh Now** is there when you actually need an answer immediately.
+- **Refresh Now** is there when you actually need an answer immediately;
+- **Reload List** re-reads the job file, so a job another Job Manager window
+  submitted, finished or removed shows up here. No host is contacted.
 
 ## How completion is detected
 
