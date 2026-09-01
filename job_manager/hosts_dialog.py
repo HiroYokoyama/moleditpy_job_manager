@@ -57,6 +57,16 @@ from .transport.base import HostKeyRejected
 #: the safer one, which is the part users tend not to be told: no prompt on
 #: every session, and the default OpenSSH backend then works with no extra
 #: package at all.
+EQUAL_PATH_TIP = (
+    "Set this when the host's filesystem is also reachable from this "
+    "machine directly -- a Samba/CIFS share, a mapped drive, an sshfs "
+    "or NFS mount -- rooted at the same place as 'Remote root' above.\n\n"
+    "With it set, Open Result reads a job's files straight from here "
+    "instead of downloading them first: the remote path and this local "
+    "one are treated as the same files, just reached two different "
+    "ways. Leave it empty if there is no such mirror."
+)
+
 KEY_TIP = (
     "An SSH key is usually less work than a password, not more.\n\n"
     "Once, on this machine:\n"
@@ -190,15 +200,6 @@ class HostsDialog(QDialog):
         self.txt_equal_path = QLineEdit()
         self.txt_equal_path.setPlaceholderText(
             "optional - e.g. \\\\server\\share or /mnt/cluster, mirroring Remote root"
-        )
-        EQUAL_PATH_TIP = (
-            "Set this when the host's filesystem is also reachable from this "
-            "machine directly -- a Samba/CIFS share, a mapped drive, an sshfs "
-            "or NFS mount -- rooted at the same place as 'Remote root' above.\n\n"
-            "With it set, Open Result reads a job's files straight from here "
-            "instead of downloading them first: the remote path and this local "
-            "one are treated as the same files, just reached two different "
-            "ways. Leave it empty if there is no such mirror."
         )
         self.txt_equal_path.setToolTip(EQUAL_PATH_TIP)
         equal_path_browse = QPushButton("...")
@@ -668,8 +669,18 @@ class HostsDialog(QDialog):
             return
         # A local host's remote root already is a path on this machine, so a
         # second local path standing in for it would be the same directory
-        # under two names.
+        # under two names. The host uses its own root for everything equal_path
+        # buys a remote one (HostProfile.local_root), so there is nothing to
+        # fill in -- which the greyed box now says, rather than leaving it
+        # looking like a field that ought to work and does not.
         self.txt_equal_path.setEnabled(backend != BACKEND_LOCAL)
+        self.txt_equal_path.setToolTip(
+            "Not needed for a host that is this machine: its Remote root above "
+            "is already a directory here, so results open from it directly and "
+            "an input saved inside it selects this host by itself."
+            if backend == BACKEND_LOCAL
+            else EQUAL_PATH_TIP
+        )
         # Only where a password is actually on offer; the other backends never
         # ask for one, so the advice would be noise.
         self.lbl_key_tip.setVisible(backend == BACKEND_PARAMIKO)

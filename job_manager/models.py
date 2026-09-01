@@ -267,6 +267,41 @@ class HostProfile:
             return "this machine"
         return f"{self.username}@{self.hostname}" if self.username else self.hostname
 
+    def _mirror_root(self) -> str:
+        """The local directory :attr:`equal_path` names.
+
+        Kept as the user spelled it where that is already absolute. It is a
+        local path but may use POSIX spelling while the plugin runs on Windows
+        (for example ``/mnt/cluster``), and resolving that through ``abspath``
+        would silently turn it into ``G:\\mnt\\cluster``. Only a relative root
+        is resolved.
+        """
+        expanded_root = os.path.expanduser(self.equal_path)
+        is_absolute = (
+            os.path.isabs(expanded_root)
+            or posixpath.isabs(expanded_root)
+            or ntpath.isabs(expanded_root)
+        )
+        return expanded_root if is_absolute else os.path.abspath(expanded_root)
+
+    def local_root(self) -> str:
+        """The directory on *this* machine holding this host's jobs, or "".
+
+        ``equal_path`` for a host reached over a network. For a host that *is*
+        this machine it is the host's own ``remote_root``: a local backend's
+        job directory is already a path here, so it needs no mirror configured
+        to be one -- which is why the Hosts dialog does not offer the field for
+        it, and why nothing used to treat a local host as owning its own files.
+
+        WSL is deliberately excluded although it is ``is_local``: its remote
+        root is a path inside the distribution's own filesystem, not one this
+        side can open by that name.
+        """
+        if self.backend == BACKEND_LOCAL:
+            root = os.path.expanduser(str(self.remote_root or ""))
+            return os.path.abspath(root) if root else ""
+        return self._mirror_root() if self.equal_path else ""
+
     def mirrored_path(self, relative_path: str) -> str:
         """The local path ``relative_path`` (posix-separated, under the job's
         remote directory) maps to under :attr:`equal_path`, or "" if this host
@@ -274,30 +309,22 @@ class HostProfile:
         if not self.equal_path or not relative_path:
             return ""
         parts = [p for p in relative_path.replace("\\", "/").split("/") if p]
-        expanded_root = os.path.expanduser(self.equal_path)
-        # ``equal_path`` is local, but it may use POSIX spelling while the
-        # plugin runs on Windows (for example ``/mnt/cluster``).  Resolving
-        # that through ``abspath`` would silently turn it into ``G:\mnt\cluster``.
-        # Preserve all absolute spellings and resolve only relative roots.
-        is_absolute = (
-            os.path.isabs(expanded_root)
-            or posixpath.isabs(expanded_root)
-            or ntpath.isabs(expanded_root)
-        )
-        mirror_root = expanded_root if is_absolute else os.path.abspath(expanded_root)
+        mirror_root = self._mirror_root()
         return os.path.join(mirror_root, *parts) if parts else mirror_root
 
     def owns_local_path(self, path: str) -> bool:
-        """True when ``path`` is inside this host's local mirror.
+        """True when ``path`` is inside the directory this host keeps jobs in.
 
         A file the user has just written into the share that *is* the cluster's
         filesystem is, as far as they are concerned, already on the cluster --
-        so that is the host to offer them.
+        so that is the host to offer them. The same is true, and more plainly
+        so, of a file already inside a local host's own job root.
         """
-        if not self.equal_path or not path:
+        root = self.local_root()
+        if not root or not path:
             return False
         try:
-            root = os.path.abspath(os.path.expanduser(self.equal_path))
+            root = os.path.abspath(os.path.expanduser(root))
             target = os.path.abspath(os.path.expanduser(path))
             return os.path.commonpath([root, target]) == root
         except (OSError, ValueError):
@@ -305,20 +332,34 @@ class HostProfile:
             return False
 
     def mirrored_job_dir(self, remote_dir: str) -> str:
-        """Map a remote job directory below ``remote_root`` to its mirror."""
-        if not self.equal_path or not remote_dir or not self.remote_root:
+        """The directory on this machine holding this job's files, or "".
+
+        For a local host that is the job directory itself: it ran here, so its
+        outputs are already on this disk under exactly that name. Without this
+        a local job's own results were listed as "On Host (Not Downloaded)" and
+        had to be copied to a second place before they could be opened -- and
+        ``equal_path``, the way round it, is not offered for a local host
+        precisely because its root is already local.
+        """
+        if not remote_dir:
+            return ""
+        if self.backend == BACKEND_LOCAL:
+            return os.path.abspath(os.path.expanduser(str(remote_dir)))
+        if not self.equal_path or not self.remote_root:
             return ""
         remote = str(remote_dir).replace("\\", "/").rstrip("/") or "/"
         root = str(self.remote_root).replace("\\", "/").rstrip("/") or "/"
         remote_norm = posixpath.normpath(remote)
         root_norm = posixpath.normpath(root)
         if remote_norm == root_norm:
-            relative = ""
-        elif remote_norm.startswith(root_norm.rstrip("/") + "/"):
-            relative = remote_norm[len(root_norm.rstrip("/")) :].lstrip("/")
-        else:
+            # The job runs in the root itself, which is the mirror root. Taken
+            # from _mirror_root rather than through mirrored_path(""), which
+            # answers "" for a path with no segments -- so this branch used to
+            # compute an empty relative path and then throw the answer away.
+            return self._mirror_root()
+        if not remote_norm.startswith(root_norm.rstrip("/") + "/"):
             return ""
-        return self.mirrored_path(relative)
+        return self.mirrored_path(remote_norm[len(root_norm.rstrip("/")) :].lstrip("/"))
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
