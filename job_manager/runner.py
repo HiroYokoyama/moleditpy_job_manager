@@ -471,7 +471,7 @@ def set_queue_paused(transport: Transport, host: HostProfile, paused: bool) -> b
 
 
 def probe_resources(transport: Transport, host: HostProfile) -> tuple:
-    """Ask the host what it has: ``(cores, memory_mb)``, 0 where unknown.
+    """Ask the host what it has: ``(cores, memory_mb, threads)``, 0 where unknown.
 
     The same question the helper answers for itself when a budget is left at
     "detect" -- asked out loud, so the user can see the numbers, keep them, or

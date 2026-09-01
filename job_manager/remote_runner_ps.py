@@ -65,10 +65,21 @@ _PS_SHELL = (
 
 
 def _join(*parts: str) -> str:
-    """Join a Windows path, tolerating either separator on the way in."""
-    cleaned = [str(part).replace("/", "\\").strip("\\") for part in parts if part]
-    head = str(parts[0]).replace("/", "\\").rstrip("\\")
-    return "\\".join([head] + cleaned[1:]) if len(cleaned) > 1 else head
+    """Join a Windows path, tolerating either separator on the way in.
+
+    The head is taken from what survives the empty-segment filter, not from
+    ``parts[0]``: reading it from the raw arguments while numbering the rest
+    from the filtered list meant an empty first part silently swallowed the
+    segment after it -- ``_join("", "status", "e.ps1")`` gave ``\\e.ps1``, a
+    queue status file addressed to the root of the drive. No caller passes one
+    today, which is exactly why it would have gone unnoticed.
+    """
+    kept = [str(part).replace("/", "\\") for part in parts if part]
+    if not kept:
+        return ""
+    # Only the head may keep a leading separator, or a drive-absolute path
+    # would be turned into a relative one.
+    return "\\".join([kept[0].rstrip("\\")] + [part.strip("\\") for part in kept[1:]])
 
 
 def build_job_script(

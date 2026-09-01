@@ -17,6 +17,8 @@ import tempfile
 import time
 import unittest
 
+from job_manager.remote_runner_ps import _join
+
 from job_manager.remote_runner import (
     CORES_NAME,
     VERSION_NAME,
@@ -602,3 +604,32 @@ class TestTheProbeAgreesWithBash(unittest.TestCase):
             remote_runner.parse_probe(from_bash)[:1],
             remote_runner.parse_probe(from_ps)[:1],
         )
+
+
+class TestTheWindowsPathJoiner(unittest.TestCase):
+    """``_join`` builds every path the PowerShell queue addresses."""
+
+    def test_it_joins_the_ordinary_case(self):
+        self.assertEqual(_join("C:/jobs", "status", "e.ps1"), r"C:\jobs\status\e.ps1")
+
+    def test_it_accepts_either_separator(self):
+        self.assertEqual(_join(r"C:\jobs", "queue/e.ps1"), r"C:\jobs\queue\e.ps1")
+
+    def test_a_trailing_separator_is_not_doubled(self):
+        self.assertEqual(_join("C:/jobs/", "queue"), r"C:\jobs\queue")
+
+    def test_an_empty_first_part_does_not_eat_the_next_one(self):
+        # It used to: the head was read from parts[0] while the rest were
+        # numbered from the filtered list, so "status" disappeared and the
+        # queue's status file was addressed to the root of the drive.
+        self.assertEqual(_join("", "status", "e.ps1"), r"status\e.ps1")
+
+    def test_an_empty_middle_part_is_dropped(self):
+        self.assertEqual(_join("a", "", "c"), r"a\c")
+
+    def test_nothing_at_all_is_not_a_crash(self):
+        self.assertEqual(_join(), "")
+        self.assertEqual(_join(""), "")
+
+    def test_an_absolute_head_stays_absolute(self):
+        self.assertEqual(_join(r"\server\share", "queue"), r"\server\share\queue")

@@ -158,7 +158,10 @@ def suggest(filename: str) -> Optional[CommandTemplate]:
     if len(matching) == 1:
         return matching[0]
     if extension in (".gjf", ".com"):
-        return TEMPLATES[1]  # Gaussian 16 is default for .gjf / .com
+        # By name, not by index: TEMPLATES is ordered for the dropdown, so a
+        # template inserted above this one would quietly change which program
+        # every .gjf is submitted to.
+        return next((t for t in TEMPLATES if t.label == "Gaussian 16"), None)
     return None
 
 
