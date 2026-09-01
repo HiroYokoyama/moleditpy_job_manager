@@ -50,9 +50,18 @@ POSIX_COMMAND = (
     "else "
     "echo load=$(uptime 2>/dev/null | sed -n 's/.*load averages*:[ ]*//p' | tr -d ','); "
     "fi; "
+    # MemAvailable is the honest number -- it counts reclaimable cache, which
+    # MemFree does not -- but it is not everywhere: the kernel gained it in
+    # 3.14, and Git Bash's emulated /proc/meminfo on Windows offers MemTotal
+    # and MemFree only. Reading MemAvailable alone left mem_free unset on both,
+    # and a host that reports a total with no free is drawn as an empty memory
+    # bar with "15.6 GB total" beside it. Collected in one pass and decided at
+    # the end so the better answer still wins wherever it exists.
     "if [ -r /proc/meminfo ]; then "
-    'awk \'/^MemTotal:/{printf "mem_total=%d\\n", int($2/1024)} '
-    '/^MemAvailable:/{printf "mem_free=%d\\n", int($2/1024)}\' /proc/meminfo; '
+    "awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} /^MemFree:/{f=$2} "
+    'END{if (t) printf "mem_total=%d\\n", int(t/1024); '
+    'if (a) printf "mem_free=%d\\n", int(a/1024); '
+    'else if (f) printf "mem_free=%d\\n", int(f/1024)}\' /proc/meminfo; '
     "elif command -v sysctl >/dev/null 2>&1; then "
     "echo mem_total=$(( $(sysctl -n hw.memsize 2>/dev/null || echo 0) / 1048576 )); "
     "fi"
