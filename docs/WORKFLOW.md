@@ -120,6 +120,14 @@ used when that host is itself mirrored. Pick a host yourself and it stays
 picked; add a file that really does live in a mirror and that host wins, as it
 always does.
 
+A host that *is* this machine counts as mirrored without being told so. Its
+**Remote root** is already a directory here, so the equal-path box is greyed
+out for it — there is nothing to fill in. An input saved anywhere inside that
+root selects the local host by itself, and its results open straight from the
+job directory rather than being copied somewhere else first. WSL is the one
+local backend this does not apply to: its root is a path inside the
+distribution's own filesystem, which Windows cannot open under that name.
+
 Everything that describes the *site* rather than the molecule comes back the
 next time you submit to the same host: queue, account, walltime, nodes, tasks,
 modules, pre-commands, extra directives, the command, the fetch patterns and
