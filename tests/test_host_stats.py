@@ -118,14 +118,14 @@ class TestTheProbeRunsForReal(unittest.TestCase):
         }
         for flavour, line in samples.items():
             result = subprocess.run(
-                [BASH, "-c", f"echo load=$(echo {line!r} | {pipeline})"],
+                [BASH, "-c", f"echo loadavg=$(echo {line!r} | {pipeline})"],
                 capture_output=True,
                 text=True,
                 timeout=60,
             )
             stats = host_stats.parse(result.stdout)
-            self.assertEqual(len(stats.load), 3, f"{flavour}: {result.stdout!r}")
-            self.assertGreater(stats.load[0], 0, flavour)
+            self.assertEqual(len(stats.loadavg), 3, f"{flavour}: {result.stdout!r}")
+            self.assertGreater(stats.loadavg[0], 0, flavour)
 
 
 if __name__ == "__main__":
@@ -191,3 +191,48 @@ class TestInstantaneousCPUStatParsing(unittest.TestCase):
         stats = host_stats.parse("cores=4\nload=3.60 1.20 0.80\n")
         self.assertEqual(stats.load[0], 3.60)
         self.assertAlmostEqual(stats.load_fraction, 0.90)
+
+
+class TestTheThreeLoadAverages(unittest.TestCase):
+    """The 1, 5 and 15 minute averages, kept apart from the CPU meter's reading."""
+
+    SAMPLE = "cores=4\nload=3.60\nloadavg=0.35 0.44 0.51\n"
+
+    def test_all_three_are_read(self):
+        stats = host_stats.parse(self.SAMPLE)
+        self.assertEqual(stats.loadavg, (0.35, 0.44, 0.51))
+        # The meter still draws the instantaneous reading, not the average.
+        self.assertEqual(stats.load, (3.60,))
+
+    def test_the_summary_says_both(self):
+        stats = host_stats.parse(self.SAMPLE)
+        self.assertIn("CPU 3.60", stats.summary)
+        self.assertIn("load avg 0.35 0.44 0.51", stats.summary)
+
+    def test_a_host_with_no_instant_reading_falls_back_to_the_average(self):
+        # No /proc/stat, so no load= line at all: the meter would read zero on
+        # a busy machine if it did not borrow the 1-minute average.
+        stats = host_stats.parse("cores=4\nloadavg=2.00 1.00 0.50\n")
+        self.assertEqual(stats.load, (2.00,))
+        self.assertAlmostEqual(stats.load_fraction, 0.5)
+
+    def test_windows_reports_no_average(self):
+        # Windows keeps no run-queue average, so the card shows none.
+        stats = host_stats.parse("cores=4\nthreads=8\nload=4.00\n")
+        self.assertEqual(stats.loadavg, ())
+        self.assertNotIn("load avg", stats.summary)
+
+    def test_the_instant_reading_is_no_longer_spliced_into_the_triple(self):
+        # It used to print `load=$inst <5min> <15min>`, which made the first
+        # of three "load averages" a number that was never one.
+        self.assertNotIn("echo load=$inst $(cut", host_stats.POSIX_COMMAND)
+        self.assertIn("echo loadavg=$(cut -d' ' -f1-3 /proc/loadavg)", host_stats.POSIX_COMMAND)
+
+    @unittest.skipUnless(BASH, "needs a bash")
+    def test_the_real_probe_answers_with_three(self):
+        result = subprocess.run(
+            [BASH, "-c", host_stats.POSIX_COMMAND], capture_output=True, text=True, timeout=60
+        )
+        stats = host_stats.parse(result.stdout)
+        if stats.loadavg:  # Git Bash on Windows has neither source.
+            self.assertEqual(len(stats.loadavg), 3, result.stdout)

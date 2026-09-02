@@ -43,13 +43,18 @@ POSIX_COMMAND = (
     'inst=$(awk -v du="$du" -v dt="$dt" -v t="$t" \'BEGIN {printf "%.2f", (du/dt)*t}\' 2>/dev/null); '
     "fi; "
     "fi; "
-    'if [ -n "$inst" ]; then '
-    "echo load=$inst $(cut -d' ' -f2-3 /proc/loadavg 2>/dev/null); "
-    "elif [ -r /proc/loadavg ]; then "
-    "echo load=$(cut -d' ' -f1-3 /proc/loadavg); "
+    # Two readings, reported separately rather than spliced into one triple.
+    # `load` is the instantaneous CPU busy fraction scaled to threads, which is
+    # what the meter draws; `loadavg` is the kernel's own 1/5/15 minute
+    # run-queue averages, which is what the three numbers under the target say.
+    # Putting the instant reading in the 1-minute slot -- as this did -- made
+    # the first of the three a number that was never a load average at all.
+    "if [ -r /proc/loadavg ]; then "
+    "echo loadavg=$(cut -d' ' -f1-3 /proc/loadavg); "
     "else "
-    "echo load=$(uptime 2>/dev/null | sed -n 's/.*load averages*:[ ]*//p' | tr -d ','); "
+    "echo loadavg=$(uptime 2>/dev/null | sed -n 's/.*load averages*:[ ]*//p' | tr -d ','); "
     "fi; "
+    'if [ -n "$inst" ]; then echo load=$inst; fi; '
     # MemAvailable is the honest number -- it counts reclaimable cache, which
     # MemFree does not -- but it is not everywhere: the kernel gained it in
     # 3.14, and Git Bash's emulated /proc/meminfo on Windows offers MemTotal
@@ -95,8 +100,13 @@ class HostStats:
     #: Hardware threads, which is what `nproc` counts. Reported separately so a
     #: user who knows the machine as "12 threads" sees why the bar says 6.
     threads: int = 0
-    #: One, five and fifteen minute load averages, as the host reported them.
+    #: The instantaneous CPU reading the meter draws, scaled to threads. A
+    #: one-element tuple where the host answered with /proc/stat; on a host
+    #: with no such counter it falls back to the 1-minute load average.
     load: tuple = ()
+    #: One, five and fifteen minute load averages, as the host reported them.
+    #: Empty on Windows, which keeps no such average.
+    loadavg: tuple = ()
     mem_total_mb: int = 0
     mem_free_mb: int = 0
     #: Empty when the sample was taken; otherwise why it was not.
@@ -147,6 +157,8 @@ class HostStats:
         parts = []
         if self.load:
             parts.append("CPU " + " ".join(f"{value:.2f}" for value in self.load))
+        if self.loadavg:
+            parts.append("load avg " + " ".join(f"{value:.2f}" for value in self.loadavg))
         if self.cores:
             cores = f"{self.cores} cores"
             if self.threads > self.cores:
@@ -163,6 +175,12 @@ class HostStats:
 
 def command_for(powershell: bool) -> str:
     return POWERSHELL_COMMAND if powershell else POSIX_COMMAND
+
+
+def _numbers(text: str) -> tuple:
+    """Every number on one value line, comma- or space-separated, up to three."""
+    parsed = [_first_number(part) for part in text.replace(",", " ").split()]
+    return tuple(n for n in parsed if n is not None)[:3]
 
 
 def _first_number(text: str) -> Optional[float]:
@@ -190,8 +208,9 @@ def parse(text: str) -> HostStats:
             number = _first_number(value)
             stats.cores = int(number) if number else 0
         elif key == "load":
-            numbers = [_first_number(part) for part in value.replace(",", " ").split()]
-            stats.load = tuple(n for n in numbers if n is not None)[:3]
+            stats.load = _numbers(value)
+        elif key == "loadavg":
+            stats.loadavg = _numbers(value)
         elif key == "threads":
             number = _first_number(value)
             stats.threads = int(number) if number else 0
@@ -201,6 +220,11 @@ def parse(text: str) -> HostStats:
         elif key == "mem_free":
             number = _first_number(value)
             stats.mem_free_mb = int(number) if number else 0
+    # A host with no /proc/stat reports no instantaneous CPU at all, and the
+    # meter would read zero on a busy machine. Its 1-minute average is the
+    # closest true reading, so the meter borrows it.
+    if not stats.load and stats.loadavg:
+        stats.load = stats.loadavg[:1]
     return stats
 
 

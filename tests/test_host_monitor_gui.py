@@ -970,6 +970,34 @@ class TestThreadScaledMeter(HostMonitorTestCase):
         self.assertIn("16 threads", card.meter_cpu.toolTip())
 
 
+class TestTheThreeLoadAverages(HostMonitorTestCase):
+    """The card shows 1, 5 and 15 minutes, not one number standing for all three."""
+
+    def card_for(self, output: str):
+        self.transports[self.host.id] = CountingTransport(output=output)
+        dialog = self.monitor()
+        return dialog.cards[self.host.id]
+
+    def test_all_three_are_on_the_card(self):
+        card = self.card_for(
+            "cores=8\nthreads=8\nload=1.60\nloadavg=0.35 0.44 0.51\n"
+            "mem_total=64000\nmem_free=16000\n"
+        )
+        self.assertEqual(card.lbl_load_avg.text(), "load avg 0.35  0.44  0.51")
+        self.assertIn("1, 5 and 15", card.lbl_load_avg.toolTip())
+
+    def test_the_meter_still_reads_the_instant_value(self):
+        # The averages are a second reading beside the meter, not its source.
+        card = self.card_for("cores=8\nthreads=8\nload=4.00\nloadavg=0.35 0.44 0.51\n")
+        self.assertAlmostEqual(card.meter_cpu.fraction, 0.5)
+
+    def test_a_host_that_reports_none_shows_none(self):
+        # Windows keeps no load average; an invented one would be worse than a
+        # blank line.
+        card = self.card_for("cores=8\nthreads=8\nload=4.00\n")
+        self.assertNotIn("load avg", card.lbl_load_avg.text())
+
+
 class TestClosingItOnlyTearsDownOnce(HostMonitorTestCase):
     """Every route out of a QDialog funnels through done().
 

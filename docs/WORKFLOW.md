@@ -687,9 +687,14 @@ webhook you can revoke in the workspace.
 ### Hosts at work
 
 **Hosts at Work...**, beside *Refresh Now*, opens a live panel: one card per
-host with its load average, its memory, and a graph of each over the last
-couple of minutes. The load graph is full when the load equals the core count,
-which is what a full machine means — not some arbitrary hundred.
+host with its CPU use, its memory, and a graph of each over the last couple of
+minutes. The CPU graph is full when the machine is, which is what a full
+machine means — not some arbitrary hundred.
+
+Under the host's address each card also prints the three load averages the
+machine itself keeps — the last 1, 5 and 15 minutes — so a busy host tells you
+whether it is ramping up or winding down, which the single instantaneous
+reading above it cannot. Windows hosts keep no such average and show none.
 
 Each card shows two bars by default -- load against the core count, memory
 against the machine -- because the question the panel is opened for is "is

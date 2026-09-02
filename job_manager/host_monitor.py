@@ -564,7 +564,9 @@ class HostCard(QFrame):
         self.lbl_target.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         outer.addWidget(self.lbl_target)
 
-        #: 1-minute load average, a coarser second reading beside the target.
+        #: The 1, 5 and 15 minute load averages -- a coarser second reading
+        #: beside the target, where one number could not say whether a busy
+        #: machine is ramping up or winding down.
         self.lbl_load_avg = QLabel("")
         font = self.lbl_load_avg.font()
         font.setPointSizeF(max(7.5, font.pointSizeF() * 0.85))
@@ -765,10 +767,14 @@ class HostCard(QFrame):
                 0.0, f"{load:.2f}", "CPU", "the host did not report its threads"
             )
 
-        if stats.load:
-            self.lbl_load_avg.setText(f"load avg {stats.load[0]:.2f}")
-            self.lbl_load_avg.setToolTip("1-minute load average, as the host reports it.")
+        if stats.loadavg:
+            averages = "  ".join(f"{value:.2f}" for value in stats.loadavg)
+            self.lbl_load_avg.setText(f"load avg {averages}")
+            self.lbl_load_avg.setToolTip(
+                "Load averages over the last 1, 5 and 15 minutes, as the host reports them."
+            )
         else:
+            # Windows keeps no load average; the CPU reading above is all there is.
             self.lbl_load_avg.setText(BLANK)
             self.lbl_load_avg.setToolTip("")
 

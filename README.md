@@ -114,8 +114,9 @@ fetch, open.
 - **Tail Remote Logs & Outputs with Tree Picker** — choose any remote file across
   the calculation directory via an interactive tree browser with instant filtering,
   featuring auto-refresh (5s for Paramiko/Local, 10s for OpenSSH) enabled by default.
-- **Host Monitor Dashboard** — live visual load/memory gauges, CPU sparklines, running
-  job names and overall progress indicators (`task X/Y done`) with persistent preferences.
+- **Host Monitor Dashboard** — live visual CPU/memory gauges, the host's own 1, 5
+  and 15 minute load averages, CPU sparklines, running job names and overall
+  progress indicators (`task X/Y done`) with persistent preferences.
 - **Resubmit** a job with one click: same host, same inputs, same resources.
 - **Save** the list as a `.pmejbs` file or **export** it as CSV, **clear** it (the old list
   is archived, never deleted), and **reopen** any saved list — from the button,
