@@ -611,7 +611,7 @@ class TestHostEnabledAndEqualPath(DialogTestCase):
         self.dialog.cmb_scheduler.setCurrentIndex(
             self.dialog.cmb_scheduler.findData(SCHEDULER_SHELL)
         )
-        with patch("job_manager.hosts_dialog.sys.platform", "win32"):
+        with patch("job_manager.hosts_dialog._running_on_windows", return_value=True):
             index = self.dialog.cmb_backend.findData(BACKEND_LOCAL)
             self.dialog.cmb_backend.setCurrentIndex(index)
         self.assertEqual(self.dialog.cmb_scheduler.currentData(), SCHEDULER_WINDOWS)
@@ -622,7 +622,7 @@ class TestHostEnabledAndEqualPath(DialogTestCase):
         self.dialog.cmb_scheduler.setCurrentIndex(
             self.dialog.cmb_scheduler.findData(SCHEDULER_SHELL)
         )
-        with patch("job_manager.hosts_dialog.sys.platform", "linux"):
+        with patch("job_manager.hosts_dialog._running_on_windows", return_value=False):
             index = self.dialog.cmb_backend.findData(BACKEND_LOCAL)
             self.dialog.cmb_backend.setCurrentIndex(index)
         self.assertEqual(self.dialog.cmb_scheduler.currentData(), SCHEDULER_SHELL)
@@ -635,7 +635,7 @@ class TestHostEnabledAndEqualPath(DialogTestCase):
 
         self.host.backend = BACKEND_LOCAL
         self.host.scheduler = SCHEDULER_SHELL
-        with patch("job_manager.hosts_dialog.sys.platform", "win32"):
+        with patch("job_manager.hosts_dialog._running_on_windows", return_value=True):
             self.dialog._reloading = True
             try:
                 self.dialog._load_selected()

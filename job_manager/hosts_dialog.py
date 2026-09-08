@@ -54,6 +54,18 @@ from .transport.local import INSTALL_HINT as LOCAL_INSTALL_HINT
 from .transport.local import POWERSHELL_HINT, SHELL_POSIX, SHELL_POWERSHELL
 from .transport.base import HostKeyRejected
 
+
+def _running_on_windows() -> bool:
+    """Indirection so a test can pretend otherwise without touching ``sys``.
+
+    ``sys`` here is the one real, process-wide module: patching its
+    ``platform`` attribute changes it for Qt and for every test sharing the
+    interpreter, which under xdist crashed whole workers rather than failing
+    one assertion.
+    """
+    return sys.platform == "win32"
+
+
 #: Shown wherever a password is on offer. Keys are the easier option as well as
 #: the safer one, which is the part users tend not to be told: no prompt on
 #: every session, and the default OpenSSH backend then works with no extra
@@ -672,7 +684,7 @@ class HostsDialog(QDialog):
         deliberately set up with the bash scheduler is never rewritten under
         them.
         """
-        if sys.platform != "win32":
+        if not _running_on_windows():
             return
         if self.cmb_backend.currentData() != BACKEND_LOCAL:
             return
