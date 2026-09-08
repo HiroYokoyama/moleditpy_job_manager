@@ -76,6 +76,42 @@ class TestRemoteDir(unittest.TestCase):
         self.assertEqual(runner.effective_root(host), "~/moleditpy_jobs")
 
 
+class TestTheRunnerDirectoryIsResolvedToo(unittest.TestCase):
+    """make_remote_dir was only half of it.
+
+    The submission that failed did so on ``chmod``, inside the helper queue's
+    own directory -- a second path, built from the same root by
+    ``remote_runner.runner_dir`` at seven separate call sites. Fixing only the
+    job directory would have left every one of them still handing bash a "~"
+    to expand on its own.
+    """
+
+    def commands_for(self, call):
+        host = make_host(backend=BACKEND_LOCAL, remote_root="~/moleditpy_jobs")
+        transport = FakeTransport(host)
+        call(transport, host)
+        self.assertTrue(transport.commands, "the call sent nothing to assert on")
+        return transport.commands
+
+    def test_reading_the_pause_flag_sends_no_tilde(self):
+        for cmd in self.commands_for(runner.queue_paused):
+            self.assertNotIn("~", cmd)
+
+    def test_setting_the_pause_flag_sends_no_tilde(self):
+        for cmd in self.commands_for(lambda t, h: runner.set_queue_paused(t, h, True)):
+            self.assertNotIn("~", cmd)
+
+    def test_applying_queue_limits_sends_no_tilde(self):
+        for cmd in self.commands_for(runner.apply_queue_limits):
+            self.assertNotIn("~", cmd)
+
+    def test_a_remote_host_still_lets_its_own_shell_expand(self):
+        host = make_host(remote_root="~/moleditpy_jobs")
+        transport = FakeTransport(host)
+        runner.queue_paused(transport, host)
+        self.assertTrue(any("~" in cmd for cmd in transport.commands))
+
+
 class TestShortId(unittest.TestCase):
     def test_strips_the_host_suffix(self):
         self.assertEqual(runner.short_id("58231.head.cluster"), "58231")
