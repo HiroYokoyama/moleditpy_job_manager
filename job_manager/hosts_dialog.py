@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from typing import Optional
 
 from PyQt6.QtCore import Qt
@@ -161,6 +162,7 @@ class HostsDialog(QDialog):
         self.cmb_backend.addItem("This machine (no SSH)", BACKEND_LOCAL)
         self.cmb_backend.addItem("This machine, inside WSL (no SSH)", BACKEND_WSL)
         self.cmb_backend.currentIndexChanged.connect(self._update_backend_hint)
+        self.cmb_backend.currentIndexChanged.connect(self._suggest_local_scheduler)
 
         # Editable: a distribution installed after this dialog opened can still
         # be typed in, and the list is only a convenience.
@@ -473,8 +475,14 @@ class HostsDialog(QDialog):
         self.txt_hostname.setText(host.hostname)
         self.txt_username.setText(host.username)
         self.spin_port.setValue(int(host.port or 22))
+        # Blocked: setting this while restoring a saved host must not trigger
+        # _suggest_local_scheduler, or a host someone deliberately set up with
+        # backend=local + scheduler=shell would have its scheduler silently
+        # rewritten to the PowerShell one every time this dialog opens.
+        self.cmb_backend.blockSignals(True)
         index = self.cmb_backend.findData(host.backend)
         self.cmb_backend.setCurrentIndex(max(0, index))
+        self.cmb_backend.blockSignals(False)
         index = self.cmb_scheduler.findData(host.scheduler)
         self.cmb_scheduler.setCurrentIndex(max(0, index))
         self.txt_key.setText(host.key_path)
@@ -645,6 +653,34 @@ class HostsDialog(QDialog):
             self.cmb_distro.addItem(name)
         self.cmb_distro.setCurrentText(current)
         self.cmb_distro.blockSignals(False)
+
+    def _suggest_local_scheduler(self) -> None:
+        """Nudge a fresh switch to "This machine" toward the scheduler that
+        needs nothing installed.
+
+        The bash-based scheduler is what ``HostProfile`` defaults to, and on
+        Windows that means Git Bash or WSL has to already be on the machine --
+        the plugin's own PowerShell scheduler needs neither, and exists
+        precisely for this case, but a user who never opens the Scheduler
+        dropdown never finds it, and instead hits a shell-not-found or (worse,
+        where Git Bash unpredictably $HOME's it) a "no such file or directory"
+        the first time they submit. Suggesting it here, once, at the moment
+        the backend becomes local, is cheap and easy to override.
+
+        Only on an actual change to *this* combo: ``_load_selected`` blocks
+        its signals while restoring a saved host, so reopening one someone
+        deliberately set up with the bash scheduler is never rewritten under
+        them.
+        """
+        if sys.platform != "win32":
+            return
+        if self.cmb_backend.currentData() != BACKEND_LOCAL:
+            return
+        if self.cmb_scheduler.currentData() != SCHEDULER_SHELL:
+            return
+        index = self.cmb_scheduler.findData(SCHEDULER_WINDOWS)
+        if index >= 0:
+            self.cmb_scheduler.setCurrentIndex(index)
 
     def _update_backend_hint(self) -> None:
         backend = self.cmb_backend.currentData()

@@ -605,6 +605,44 @@ class TestHostEnabledAndEqualPath(DialogTestCase):
     def test_equal_path_is_enabled_for_a_remote_host(self):
         self.assertTrue(self.dialog.txt_equal_path.isEnabled())
 
+    def test_switching_to_local_on_windows_suggests_the_powershell_scheduler(self):
+        from job_manager.models import BACKEND_LOCAL, SCHEDULER_SHELL, SCHEDULER_WINDOWS
+
+        self.dialog.cmb_scheduler.setCurrentIndex(
+            self.dialog.cmb_scheduler.findData(SCHEDULER_SHELL)
+        )
+        with patch("job_manager.hosts_dialog.sys.platform", "win32"):
+            index = self.dialog.cmb_backend.findData(BACKEND_LOCAL)
+            self.dialog.cmb_backend.setCurrentIndex(index)
+        self.assertEqual(self.dialog.cmb_scheduler.currentData(), SCHEDULER_WINDOWS)
+
+    def test_the_suggestion_does_not_apply_off_windows(self):
+        from job_manager.models import BACKEND_LOCAL, SCHEDULER_SHELL
+
+        self.dialog.cmb_scheduler.setCurrentIndex(
+            self.dialog.cmb_scheduler.findData(SCHEDULER_SHELL)
+        )
+        with patch("job_manager.hosts_dialog.sys.platform", "linux"):
+            index = self.dialog.cmb_backend.findData(BACKEND_LOCAL)
+            self.dialog.cmb_backend.setCurrentIndex(index)
+        self.assertEqual(self.dialog.cmb_scheduler.currentData(), SCHEDULER_SHELL)
+
+    def test_reopening_a_saved_bash_local_host_is_not_rewritten(self):
+        """A host someone deliberately set up with backend=local +
+        scheduler=shell must not have that choice overwritten just by
+        reopening the dialog on a Windows machine."""
+        from job_manager.models import BACKEND_LOCAL, SCHEDULER_SHELL
+
+        self.host.backend = BACKEND_LOCAL
+        self.host.scheduler = SCHEDULER_SHELL
+        with patch("job_manager.hosts_dialog.sys.platform", "win32"):
+            self.dialog._reloading = True
+            try:
+                self.dialog._load_selected()
+            finally:
+                self.dialog._reloading = False
+        self.assertEqual(self.dialog.cmb_scheduler.currentData(), SCHEDULER_SHELL)
+
 
 class TestSubmitDialog(DialogTestCase):
     def setUp(self):
