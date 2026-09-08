@@ -23,7 +23,7 @@ from job_manager.api_server import JobApiServer  # noqa: E402
 from job_manager.models import STATE_DONE, STATE_RUNNING, HostProfile, Job  # noqa: E402
 from job_manager.store import JobStore  # noqa: E402
 
-from .api_support import FakeService, in_thread  # noqa: E402
+from .api_support import FakeService, in_thread, when_ready  # noqa: E402
 
 
 class ClientTestCase(unittest.TestCase):
@@ -144,15 +144,24 @@ class TestTheClientRoutes(ClientTestCase):
 
     def test_download_waiting_returns_the_paths(self):
         job = self.add_job(name="one", state=STATE_DONE)
-        self.later(80, lambda: self.service.results_ready.emit(job.id, ["/tmp/one.out"]))
+        when_ready(
+            lambda: self.service.results_ready.slots,
+            lambda: self.service.results_ready.emit(job.id, ["/tmp/one.out"]),
+        )
         reply = in_thread(lambda: self.client.download(job.id, wait=True))
         self.assertEqual(reply["files"], ["/tmp/one.out"])
 
     def test_log_and_files(self):
         job = self.add_job(name="one", state=STATE_RUNNING, remote_dir="/scratch/one")
-        self.later(60, lambda: self.service._tail_done("...tail..."))
+        when_ready(
+            lambda: self.service._tail_done,
+            lambda: self.service._tail_done("...tail..."),
+        )
         self.assertEqual(in_thread(lambda: self.client.log(job.id, lines=5)), "...tail...")
-        self.later(60, lambda: self.service._list_ok(["one.out"]))
+        when_ready(
+            lambda: self.service._list_ok,
+            lambda: self.service._list_ok(["one.out"]),
+        )
         self.assertEqual(in_thread(lambda: self.client.files(job.id)), ["one.out"])
 
     def test_forget(self):

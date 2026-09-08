@@ -90,6 +90,33 @@ class FakeService:
         self.store.remove_job(job_id)
 
 
+def when_ready(is_ready: Callable[[], Any], fn: Callable[[], Any], timeout: float = 10.0) -> None:
+    """Run *fn* on the GUI thread as soon as *is_ready()* holds.
+
+    These tests have to complete a request the handler is still waiting on,
+    and the waiter does not exist until the request has crossed a socket and
+    been marshalled onto the GUI thread. A fixed delay guesses how long that
+    takes; on a loaded CI runner the guess is wrong, ``fn`` fires into a
+    signal nothing is connected to yet, the reply never comes, and the test
+    fails as a 15-second hang nowhere near its cause. Waiting for the
+    condition instead of the clock removes the guess entirely.
+
+    Bounded on purpose: an unbounded chain of singleShots would outlive a
+    test that never satisfies the condition and fire into the next one.
+    """
+    from PyQt6.QtCore import QTimer
+
+    deadline = time.monotonic() + timeout
+
+    def poll() -> None:
+        if is_ready():
+            fn()
+        elif time.monotonic() < deadline:
+            QTimer.singleShot(0, poll)
+
+    QTimer.singleShot(0, poll)
+
+
 def in_thread(fn: Callable[[], Any], timeout: float = 15.0) -> Any:
     """Run ``fn`` off the main thread while the main thread pumps Qt events.
 

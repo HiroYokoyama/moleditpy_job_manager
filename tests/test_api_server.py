@@ -23,7 +23,7 @@ from job_manager.api_server import JobApiServer, port_is_free  # noqa: E402
 from job_manager.models import STATE_DONE, STATE_RUNNING, HostProfile, Job  # noqa: E402
 from job_manager.store import JobStore  # noqa: E402
 
-from .api_support import FakeService, in_thread  # noqa: E402
+from .api_support import FakeService, in_thread, when_ready  # noqa: E402
 
 
 class ServerTestCase(unittest.TestCase):
@@ -189,12 +189,15 @@ class TestTheRoundTrip(ServerTestCase):
     def test_a_deferred_reply_waits_for_the_host_without_freezing_the_gui(self):
         job = self.add_job(name="j", state=STATE_RUNNING, log_file="job.log")
 
-        from PyQt6.QtCore import QTimer
-
-        # Answers a moment later, from the GUI thread, exactly as the real
-        # tail does: if the GUI thread were blocked on the request this would
-        # never fire and the test would time out.
-        QTimer.singleShot(50, lambda: self.service._tail_done("...tail..."))
+        # Answers from the GUI thread once the handler has actually asked for
+        # a tail, exactly as the real one does: if the GUI thread were blocked
+        # on the request this would never run and the test would time out.
+        # Waiting for the callback rather than for 50ms is what keeps that a
+        # statement about the GUI thread instead of about the runner's load.
+        when_ready(
+            lambda: self.service._tail_done,
+            lambda: self.service._tail_done("...tail..."),
+        )
         status, payload = self.call("GET", f"/jobs/{job.id}/log?lines=10")
         self.assertEqual(status, 200)
         self.assertEqual(payload["text"], "...tail...")
