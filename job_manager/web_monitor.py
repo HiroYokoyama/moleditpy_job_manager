@@ -1,0 +1,338 @@
+"""The Host Monitor, read-only, on a port a browser can open.
+
+Binds 127.0.0.1 and nothing else. Reaching it from a phone or from a laptop
+somewhere else is ``tailscale serve``'s job::
+
+    tailscale serve --bg 8770
+
+which puts the same page on ``https://<machine>.<tailnet>.ts.net/`` with
+Tailscale's own identity in front of it. Keeping the exposure there rather
+than here is the whole point: this process never has to bind a routable
+address, never has to decide whose certificate to trust, and never has to
+grow an authentication story of its own beyond the token below.
+
+Read-only on purpose. There is no route that cancels, submits, downloads or
+deletes anything -- a link that leaks costs the reader a look at what is
+running, not the run itself.
+
+No Qt. The GUI thread hands over a finished snapshot through :meth:`publish`
+and this module only ever reads it, so nothing here touches a widget from
+the HTTP thread -- which is what a request handler reaching into a Qt object
+would otherwise do on every hit.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import secrets
+import shutil
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any, Dict, Optional
+from urllib.parse import parse_qs, urlsplit
+
+#: Deliberately not the API's 8765: running both at once is ordinary, and
+#: sharing a number would make whichever started second fall back to a random
+#: port that the copied command no longer names.
+DEFAULT_PORT = 8770
+
+BIND_HOST = "127.0.0.1"
+
+#: The cookie the tokenised URL leaves behind, so a reload -- or a phone
+#: reopening the tab tomorrow -- does not need the token in the address again.
+COOKIE_NAME = "jm_monitor"
+
+
+def tailscale_command(port: int) -> str:
+    """The command that puts this port on the tailnet."""
+    return f"tailscale serve --bg {int(port)}"
+
+
+def tailscale_available() -> bool:
+    """Whether the CLI is on PATH, for wording the hint rather than gating it."""
+    return shutil.which("tailscale") is not None
+
+
+class _Server(ThreadingHTTPServer):
+    daemon_threads = True
+    #: Same reasoning as the job API's: rebinding a port another MoleditPy is
+    #: still serving would quietly show that one's hosts under this one's URL.
+    allow_reuse_address = False
+    monitor: Any = None
+
+
+class _Handler(BaseHTTPRequestHandler):
+    server_version = "MoleditPyJobMonitor/1.0"
+
+    def log_message(self, fmt: str, *args: Any) -> None:
+        # The default writes every hit to stderr, which is MoleditPy's console.
+        logging.debug("Job Manager web monitor: " + fmt, *args)
+
+    # --- helpers ------------------------------------------------------------
+
+    def _send(self, code: int, body: bytes, content_type: str, cookie: str = "") -> None:
+        self.send_response(code)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        # The page is a live view of a private machine; a proxy or a phone
+        # keeping yesterday's copy of it would be worse than a slow reload.
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        # Nothing here loads a script, a font or an image from anywhere, so the
+        # strictest policy that still renders the page is the correct one.
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'",
+        )
+        if cookie:
+            self.send_header("Set-Cookie", cookie)
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except OSError:
+            # A phone that locked its screen mid-response is not an error the
+            # user can do anything about.
+            logging.debug("Job Manager web monitor: the client went away")
+
+    def _token_offered(self) -> str:
+        query = parse_qs(urlsplit(self.path).query)
+        supplied = query.get("token", [""])[0]
+        if supplied:
+            return supplied
+        for chunk in (self.headers.get("Cookie") or "").split(";"):
+            name, _, value = chunk.strip().partition("=")
+            if name == COOKIE_NAME:
+                return value
+        return ""
+
+    def _authorised(self) -> bool:
+        monitor = getattr(self.server, "monitor", None)
+        expected = monitor.token if monitor is not None else ""
+        # compare_digest, not ==: a plain comparison returns faster the sooner
+        # it finds a wrong byte, which over enough tries is a way to read the
+        # secret one character at a time.
+        return bool(expected) and secrets.compare_digest(self._token_offered(), expected)
+
+    # --- routes -------------------------------------------------------------
+
+    def do_GET(self) -> None:  # noqa: N802 - http.server's spelling
+        path = urlsplit(self.path).path.rstrip("/") or "/"
+        if not self._authorised():
+            self._send(
+                401,
+                b"Unauthorised. Open the link the Host Monitor gave you.",
+                "text/plain; charset=utf-8",
+            )
+            return
+        # Set on any authorised hit, so the token can leave the address bar
+        # after the first load. Not Secure-flagged: tailscale serve terminates
+        # TLS in front of us and forwards plain HTTP, so a Secure cookie would
+        # be dropped for the http://127.0.0.1 case and never sent back.
+        cookie = f"{COOKIE_NAME}={self.server.monitor.token}; Path=/; HttpOnly; SameSite=Strict"
+        if path == "/api/status":
+            body = json.dumps(self.server.monitor.snapshot(), default=str).encode("utf-8")
+            self._send(200, body, "application/json; charset=utf-8", cookie)
+            return
+        if path == "/":
+            self._send(200, PAGE.encode("utf-8"), "text/html; charset=utf-8", cookie)
+            return
+        self._send(404, b"No such page.", "text/plain; charset=utf-8")
+
+
+class WebMonitorServer:
+    """Owns the socket and the last snapshot the GUI thread published."""
+
+    def __init__(self, token: str = "") -> None:
+        self._token = token or secrets.token_urlsafe(16)
+        self._server: Optional[_Server] = None
+        self._thread: Optional[threading.Thread] = None
+        self._port = 0
+        self._lock = threading.Lock()
+        self._snapshot: Dict[str, Any] = {"hosts": [], "jobs": [], "generated": ""}
+
+    # --- state --------------------------------------------------------------
+
+    @property
+    def token(self) -> str:
+        return self._token
+
+    @property
+    def port(self) -> int:
+        return self._port
+
+    @property
+    def running(self) -> bool:
+        return self._server is not None
+
+    def url(self, host: str = BIND_HOST) -> str:
+        """The address to paste, token included so the first load authorises."""
+        if not self._port:
+            return ""
+        return f"http://{host}:{self._port}/?token={self._token}"
+
+    def tailscale_url(self, machine: str = "") -> str:
+        """What the same page looks like once ``tailscale serve`` is on."""
+        name = machine or "<machine>.<tailnet>.ts.net"
+        return f"https://{name}/?token={self._token}"
+
+    # --- data ---------------------------------------------------------------
+
+    def publish(self, snapshot: Dict[str, Any]) -> None:
+        """Replace the served snapshot. Called from the GUI thread."""
+        with self._lock:
+            self._snapshot = snapshot
+
+    def snapshot(self) -> Dict[str, Any]:
+        with self._lock:
+            return self._snapshot
+
+    # --- lifetime -----------------------------------------------------------
+
+    def start(self, port: int = DEFAULT_PORT) -> int:
+        if self.running:
+            return self._port
+        server = self._bind(int(port or 0))
+        server.monitor = self
+        self._server = server
+        self._port = server.server_address[1]
+        self._thread = threading.Thread(
+            # Not the 0.5 s default: this is how long stop() blocks the GUI
+            # thread when the window closes.
+            target=lambda: server.serve_forever(poll_interval=0.05),
+            name="job-manager-web-monitor",
+            daemon=True,
+        )
+        self._thread.start()
+        logging.info("Job Manager: web monitor listening on http://%s:%s", BIND_HOST, self._port)
+        return self._port
+
+    @staticmethod
+    def _bind(port: int) -> _Server:
+        try:
+            return _Server((BIND_HOST, port), _Handler)
+        except OSError as exc:
+            if not port:
+                raise
+            # A taken port is not worth refusing to start over: the dialog
+            # shows whichever number was bound, and the copied command takes
+            # it from there rather than from the constant.
+            logging.warning(
+                "Job Manager: web monitor port %s is not available (%s); taking a free one",
+                port,
+                exc,
+            )
+            return _Server((BIND_HOST, 0), _Handler)
+
+    def stop(self) -> None:
+        server, thread = self._server, self._thread
+        self._server = self._thread = None
+        self._port = 0
+        if server is None:
+            return
+        server.shutdown()
+        server.server_close()
+        if thread is not None:
+            thread.join(timeout=2.0)
+
+
+#: One file, no external anything: the CSP above forbids fetching a script or a
+#: stylesheet, and a monitor that needs the internet to render would be useless
+#: on exactly the flaky connection someone checks it from.
+PAGE = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Job Manager - Host Monitor</title>
+<style>
+  :root { color-scheme: dark; --bg:#14171c; --card:#1d2128; --line:#2c313a;
+          --text:#e6e9ef; --dim:#9aa3b2; --ok:#4ac47a; --warn:#e0b341; --bad:#e05b4b; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  header { padding:14px 16px; border-bottom:1px solid var(--line);
+           display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; }
+  h1 { font-size:16px; margin:0; font-weight:600; }
+  #age { color:var(--dim); font-size:12px; }
+  main { padding:16px; display:grid; gap:12px;
+         grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
+  .name { font-weight:600; margin-bottom:2px; }
+  .sub { color:var(--dim); font-size:12px; margin-bottom:10px; word-break:break-word; }
+  .meter { margin:8px 0; }
+  .meter .label { display:flex; justify-content:space-between; font-size:12px; color:var(--dim); }
+  .bar { height:7px; background:#0f1216; border-radius:4px; overflow:hidden; margin-top:3px; }
+  .fill { height:100%; background:var(--ok); transition:width .3s; }
+  .fill.warn { background:var(--warn); } .fill.bad { background:var(--bad); }
+  .err { color:var(--bad); font-size:12px; }
+  table { width:100%; border-collapse:collapse; margin-top:10px; font-size:12px; }
+  td { padding:3px 0; vertical-align:top; }
+  td.state { color:var(--dim); text-align:right; white-space:nowrap; padding-left:8px; }
+  .none { color:var(--dim); font-size:12px; }
+  footer { padding:0 16px 20px; color:var(--dim); font-size:12px; }
+</style>
+</head>
+<body>
+<header><h1>Host Monitor</h1><span id="age">connecting...</span></header>
+<main id="cards"></main>
+<footer id="foot"></footer>
+<script>
+const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g,
+  c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+function meter(label, fraction, detail) {
+  const pct = Math.round(Math.max(0, Math.min(1, fraction || 0)) * 100);
+  const cls = pct >= 90 ? "bad" : pct >= 70 ? "warn" : "";
+  return `<div class="meter"><div class="label"><span>${esc(label)}</span>
+    <span>${esc(detail)}</span></div>
+    <div class="bar"><div class="fill ${cls}" style="width:${pct}%"></div></div></div>`;
+}
+
+function card(h) {
+  const jobs = (h.jobs || []).map(j =>
+    `<tr><td>${esc(j.name)}</td><td class="state">${esc(j.state)}</td></tr>`).join("");
+  return `<div class="card">
+    <div class="name">${esc(h.name)}</div>
+    <div class="sub">${esc(h.summary || "")}</div>
+    ${h.error ? `<div class="err">${esc(h.error)}</div>`
+      : meter("CPU", h.load_fraction, h.load_detail || "") +
+        meter("Memory", h.memory_fraction, h.memory_detail || "")}
+    ${jobs ? `<table>${jobs}</table>` : `<div class="none">No active jobs</div>`}
+  </div>`;
+}
+
+async function tick() {
+  try {
+    const r = await fetch("api/status", { credentials: "same-origin" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const d = await r.json();
+    const hosts = d.hosts || [];
+    document.getElementById("cards").innerHTML =
+      hosts.length ? hosts.map(card).join("")
+                   : `<div class="none">No hosts are being monitored.</div>`;
+    document.getElementById("age").textContent = "updated " + (d.generated || "");
+    document.getElementById("foot").textContent =
+      "Read-only view. " + hosts.length + " host(s).";
+  } catch (e) {
+    // Kept on screen rather than blanked: the last good reading is still the
+    // most useful thing here while a phone reconnects.
+    document.getElementById("age").textContent = "reconnecting...";
+  }
+}
+tick();
+setInterval(tick, 4000);
+</script>
+</body>
+</html>
+"""
+
+
+__all__ = [
+    "COOKIE_NAME",
+    "DEFAULT_PORT",
+    "PAGE",
+    "WebMonitorServer",
+    "tailscale_available",
+    "tailscale_command",
+]

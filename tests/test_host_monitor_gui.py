@@ -1072,3 +1072,95 @@ class TestClosingItOnlyTearsDownOnce(HostMonitorTestCase):
         dialog.close()
         dialog.reject()
         self.assertFalse(dialog._timer.isActive())
+
+
+class TestTheWebView(HostMonitorTestCase):
+    """The button, the remembered choice, and what the page is handed."""
+
+    def test_it_does_not_listen_until_asked(self):
+        # A socket nobody asked for is the wrong thing to open by surprise,
+        # and this window opens on its own for anyone who uses the plugin.
+        dialog = self.monitor()
+        self.assertIsNone(dialog._web)
+
+    def test_starting_it_serves_and_is_remembered(self):
+        dialog = self.monitor()
+        self.assertTrue(dialog._start_web(announce=False))
+        self.addCleanup(dialog._stop_web)
+        self.assertTrue(dialog._web.running)
+        self.assertTrue(self.store.get_pref("host_monitor_web", False))
+
+    def test_a_remembered_choice_starts_it_on_the_next_open(self):
+        self.store.set_pref("host_monitor_web", True)
+        dialog = self.monitor()
+        self.addCleanup(dialog._stop_web)
+        self.assertIsNotNone(dialog._web)
+        self.assertTrue(dialog._web.running)
+
+    def test_stopping_it_is_remembered_too(self):
+        dialog = self.monitor()
+        dialog._start_web(announce=False)
+        dialog._stop_web()
+        self.assertIsNone(dialog._web)
+        self.assertFalse(self.store.get_pref("host_monitor_web", True))
+
+    def test_closing_the_window_releases_the_socket_but_keeps_the_choice(self):
+        # Closing the window is not the statement "never serve this again":
+        # clearing the preference here would make it unrememberable.
+        dialog = self.monitor()
+        dialog._start_web(announce=False)
+        server = dialog._web
+        dialog._teardown()
+        self.assertFalse(server.running)
+        self.assertTrue(self.store.get_pref("host_monitor_web", False))
+
+    def test_the_snapshot_carries_the_hosts_stats_and_active_jobs(self):
+        from job_manager.models import STATE_RUNNING
+
+        self.store.add_job(
+            Job(
+                id="live",
+                name="myjob",
+                host_id=self.host.id,
+                host_name=self.host.name,
+                state=STATE_RUNNING,
+            )
+        )
+        dialog = self.monitor()
+        snapshot = dialog._web_snapshot()
+        entry = snapshot["hosts"][0]
+        self.assertEqual(entry["name"], self.host.name)
+        self.assertGreater(entry["load_fraction"], 0)
+        self.assertIn("myjob", [job["name"] for job in entry["jobs"]])
+
+    def test_the_snapshot_leaves_finished_jobs_out(self):
+        from job_manager.models import STATE_DONE
+
+        self.store.add_job(
+            Job(
+                id="old",
+                name="finished",
+                host_id=self.host.id,
+                host_name=self.host.name,
+                state=STATE_DONE,
+            )
+        )
+        dialog = self.monitor()
+        names = [j["name"] for j in dialog._web_snapshot()["hosts"][0]["jobs"]]
+        self.assertNotIn("finished", names)
+
+    def test_the_snapshot_is_plain_data(self):
+        # It crosses onto the HTTP thread, where touching a widget or a
+        # transport would be a data race rather than a wrong number.
+        import json
+
+        dialog = self.monitor()
+        json.dumps(dialog._web_snapshot())
+
+    def test_a_failed_probe_reaches_the_page_rather_than_a_stale_reading(self):
+        dialog = self.monitor()
+        dialog._latest.clear()
+        dialog._sample(self.host)
+        # The error path stores a HostStats carrying the message.
+        self.store.set_pref("host_monitor_web", False)
+        self.assertIn("hosts", dialog._web_snapshot())

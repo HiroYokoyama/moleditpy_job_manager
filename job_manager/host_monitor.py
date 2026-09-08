@@ -8,6 +8,7 @@ connection every two seconds would cost more than the measurement.
 
 from __future__ import annotations
 
+import logging
 from collections import deque
 from typing import Deque, Dict, List, Optional
 
@@ -21,6 +22,7 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -42,6 +44,7 @@ from .models import (
     STATE_NEW,
     STATE_RUNNING,
     STATE_UPLOADING,
+    TERMINAL_STATES,
     HostProfile,
 )
 from .theme import (
@@ -837,6 +840,10 @@ class HostMonitorDialog(QDialog):
         #: skip it earned. Both cleared by a sample that works.
         self._skip_ticks: Dict[str, int] = {}
         self._backoff: Dict[str, int] = {}
+        #: The last good sample per host, kept because the web view is served
+        #: from a thread that must not read a widget to find out what it says.
+        self._latest: Dict[str, object] = {}
+        self._web = None
         self._build_ui()
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._sample_all)
@@ -854,6 +861,12 @@ class HostMonitorDialog(QDialog):
         # `setChecked` above happens before the signal connection, so it
         # never emitted `toggled`; apply the style explicitly here instead.
         self._set_dark(bool(self.btn_dark.isChecked()))
+        # Off the first time this window is ever opened, on every time after
+        # that if it was left on: a listening socket nobody asked for is the
+        # wrong thing to start by surprise, but asking twice for the same
+        # answer is the wrong thing to do to someone who uses it daily.
+        if self.service.store.get_pref("host_monitor_web", False):
+            self._start_web(announce=False)
         self._sample_all()
 
     def _build_ui(self) -> None:
@@ -891,6 +904,14 @@ class HostMonitorDialog(QDialog):
         self.btn_dark.setChecked(bool(self.service.store.get_pref("host_monitor_dark", False)))
         self.btn_dark.toggled.connect(self._set_dark)
         top.addWidget(self.btn_dark)
+
+        self.btn_web = QPushButton("Web...")
+        self.btn_web.setToolTip(
+            "Serve this view, read-only, on 127.0.0.1 for a browser -- and show the\n"
+            "tailscale serve command that puts it on your tailnet."
+        )
+        self.btn_web.clicked.connect(self._open_web_dialog)
+        top.addWidget(self.btn_web)
         layout.addLayout(top)
 
         scroll = QScrollArea()
@@ -1146,8 +1167,11 @@ class HostMonitorDialog(QDialog):
             self._busy.discard(host_id)
             self._backoff.pop(host_id, None)
             self._skip_ticks.pop(host_id, None)
+            parsed = host_stats.parse(text)
+            self._latest[host_id] = parsed
             if host_id in self.cards:
-                self.cards[host_id].show_stats(host_stats.parse(text))
+                self.cards[host_id].show_stats(parsed)
+            self._publish_web()
 
         def failed(message: str) -> None:
             self._busy.discard(host_id)
@@ -1160,8 +1184,99 @@ class HostMonitorDialog(QDialog):
             if host_id in self.cards:
                 seconds = waited * max(1, self.spin_interval.value())
                 self.cards[host_id].show_error(f"{message} - retrying in {seconds}s")
+            self._latest[host_id] = host_stats.HostStats(error=message)
+            self._publish_web()
 
         run_async(self.service.pool, work, on_success=ok, on_error=failed, quiet=True)
+
+    # --- the web view -------------------------------------------------------
+
+    def _web_snapshot(self) -> dict:
+        """Everything the page shows, as plain data.
+
+        Built on the GUI thread and handed over finished. The HTTP thread gets
+        a dict and never a widget, a transport or a store cursor -- reading any
+        of those from a request handler is the bug this shape exists to make
+        impossible.
+        """
+        import time
+
+        by_host: Dict[str, list] = {}
+        for job in self.service.store.job_list():
+            # Excluding TERMINAL_STATES, not "not in ACTIVE_STATES": that set
+            # is about which jobs the poller must still contact the host for,
+            # and leaves out DOWNLOADING, QUEUED and BLOCKED -- all of which
+            # are exactly what someone opens this page to look at.
+            if job.state in TERMINAL_STATES:
+                continue
+            by_host.setdefault(job.host_id, []).append(
+                {"name": job.name, "state": primary_state_word(job)}
+            )
+
+        hosts = []
+        for host in self.service.store.host_list():
+            if host.id not in self.cards:
+                continue
+            stats = self._latest.get(host.id)
+            entry = {
+                "name": host.name,
+                "jobs": by_host.get(host.id, []),
+                "summary": "",
+                "error": "",
+                "load_fraction": 0.0,
+                "memory_fraction": 0.0,
+                "load_detail": "",
+                "memory_detail": "",
+            }
+            if stats is not None:
+                entry["summary"] = stats.summary
+                entry["error"] = stats.error
+                entry["load_fraction"] = stats.load_fraction
+                entry["memory_fraction"] = stats.memory_fraction
+                if stats.load:
+                    entry["load_detail"] = f"{stats.load[0]:.2f}"
+                if stats.mem_total_mb and stats.mem_free_mb:
+                    entry["memory_detail"] = (
+                        f"{stats.mem_used_mb / 1024:.1f}/{stats.mem_total_mb / 1024:.1f} GB"
+                    )
+            hosts.append(entry)
+        return {"hosts": hosts, "generated": time.strftime("%H:%M:%S")}
+
+    def _publish_web(self) -> None:
+        if self._web is not None and self._web.running:
+            self._web.publish(self._web_snapshot())
+
+    def _start_web(self, announce: bool = True) -> bool:
+        from .web_monitor import DEFAULT_PORT, WebMonitorServer
+
+        if self._web is not None and self._web.running:
+            return True
+        server = WebMonitorServer()
+        try:
+            server.start(int(self.service.store.get_pref("host_monitor_web_port", DEFAULT_PORT)))
+        except OSError as exc:
+            self._web = None
+            if announce:
+                QMessageBox.warning(self, "Web Monitor", f"Could not start: {exc}")
+            else:
+                logging.warning("Job Manager: web monitor did not start: %s", exc)
+            return False
+        self._web = server
+        self.service.store.set_pref("host_monitor_web", True)
+        self._publish_web()
+        return True
+
+    def _stop_web(self) -> None:
+        if self._web is not None:
+            self._web.stop()
+        self._web = None
+        self.service.store.set_pref("host_monitor_web", False)
+
+    def _open_web_dialog(self) -> None:
+        from .web_monitor_dialog import WebMonitorDialog
+
+        dialog = WebMonitorDialog(self, parent=self)
+        dialog.exec()
 
     # --- teardown -----------------------------------------------------------
 
@@ -1205,6 +1320,12 @@ class HostMonitorDialog(QDialog):
             return
         self._torn_down = True
         self._timer.stop()
+        # The socket goes, the preference stays: closing the window is not the
+        # same statement as "do not serve this again", and clearing it here
+        # would make the remembered choice unrememberable.
+        if self._web is not None:
+            self._web.stop()
+            self._web = None
         self._save_settings()
         self._disconnect_signals()
         for host_id in list(self._transports):
