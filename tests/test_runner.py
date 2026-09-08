@@ -5,6 +5,7 @@ import unittest
 
 from job_manager import runner
 from job_manager.models import (
+    BACKEND_LOCAL,
     SENTINEL_NAME,
     STATE_CANCELLED,
     STATE_DONE,
@@ -37,6 +38,42 @@ class TestRemoteDir(unittest.TestCase):
     def test_name_cannot_escape_the_root(self):
         path = runner.make_remote_dir(make_host(), "../../etc", when=0)
         self.assertNotIn("..", path)
+
+    def test_a_local_host_resolves_the_tilde_itself(self):
+        """A leading ``~`` must not survive into the path handed to the shell.
+
+        LocalTransport runs shell commands (mkdir, cd, chmod) through bash and
+        moves files (upload/download) through Python's own os.path calls. Each
+        would otherwise expand a bare "~/moleditpy_jobs" through its own
+        resolver -- bash's $HOME, Python's os.path.expanduser -- and the two
+        need not agree. Resolving it here, once, is what keeps mkdir/upload and
+        cd/chmod looking at the same directory regardless of whether they do.
+        """
+        host = make_host(backend=BACKEND_LOCAL, remote_root="~/moleditpy_jobs")
+        path = runner.make_remote_dir(host, "my job", when=0)
+        self.assertNotIn("~", path)
+        self.assertTrue(os.path.isabs(path.replace("/", os.sep)))
+        expected_root = os.path.abspath(os.path.expanduser("~/moleditpy_jobs")).replace("\\", "/")
+        self.assertTrue(path.startswith(expected_root + "/"))
+
+    def test_a_local_host_normalises_backslashes(self):
+        """The root may come back from local_root() with native separators.
+
+        Everything downstream (dialect quoting, posixpath joins, pattern
+        matching) assumes forward slashes; a stray backslash is one more way
+        for the string a shell command embeds to stop matching the file that
+        is actually there.
+        """
+        host = make_host(backend=BACKEND_LOCAL, remote_root=r"C:\jobs\mine")
+        path = runner.effective_root(host)
+        self.assertNotIn("\\", path)
+
+    def test_a_remote_host_is_left_for_the_remote_shell_to_expand(self):
+        """Only a local host is special-cased: a real host's own $HOME is the
+        only sensible resolver for a path that lives on a machine this process
+        never touches directly."""
+        host = make_host(remote_root="~/moleditpy_jobs")
+        self.assertEqual(runner.effective_root(host), "~/moleditpy_jobs")
 
 
 class TestShortId(unittest.TestCase):

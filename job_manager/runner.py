@@ -17,6 +17,7 @@ from typing import Dict, Iterable, List, Optional, Sequence
 
 from . import PLUGIN_VERSION, dialect, remote_paths, remote_runner
 from .models import (
+    BACKEND_LOCAL,
     SENTINEL_NAME,
     STATE_CANCELLED,
     STATE_DONE,
@@ -41,6 +42,34 @@ PARTIAL_SUFFIX = ".moleditpy-part"
 _SENTINEL_MARK = "@@MOLEDITPY@@"
 
 
+def effective_root(host: HostProfile) -> str:
+    """The remote root to actually build paths from.
+
+    For every real remote host this is just ``host.remote_root``. For a local
+    host it is resolved to an absolute path first: a leading ``~`` there would
+    otherwise be expanded twice, by two resolvers not guaranteed to agree --
+    bash's own ``$HOME`` for every command ``LocalTransport.run()`` sends, and
+    Python's ``os.path.expanduser()`` for every file ``upload()``/``download()``
+    moves. Where they differ -- ``$HOME`` set explicitly, a profile that
+    redirects it, anything short of the ordinary case -- ``mkdir`` and upload
+    land in one directory while ``cd`` and ``chmod`` look in another that
+    happens to exist, and submission fails on every job with "No such file or
+    directory" for a script that really is on disk, just not where the shell
+    was told to look for it. Resolving it once, here, with the same call the
+    transport itself uses, means both sides are always given the identical
+    absolute path.
+    """
+    root = host.remote_root or "~/moleditpy_jobs"
+    if host.backend == BACKEND_LOCAL:
+        root = host.local_root() or os.path.abspath(os.path.expanduser(root))
+        # Forward slashes throughout: the path is about to be embedded in
+        # shell commands built by posixpath, and a mix of separators is one
+        # more way for the shell's idea of the path and the file that is
+        # actually there to quietly stop being the same string.
+        root = root.replace("\\", "/")
+    return root
+
+
 def make_remote_dir(
     host: HostProfile, job_name: str, when: Optional[float] = None, job_id: str = ""
 ) -> str:
@@ -59,7 +88,7 @@ def make_remote_dir(
     name = f"{stamp}_{sanitize_name(job_name)}"
     if job_id:
         name = f"{name}_{sanitize_name(job_id, fallback='')}"
-    return remote_paths.join(host.remote_root or "~/moleditpy_jobs", name)
+    return remote_paths.join(effective_root(host), name)
 
 
 def input_name_for(job: Job, local_files: Sequence[str]) -> str:
@@ -307,7 +336,7 @@ def submit_to_runner(
     job_script_name = script_name_for(job, scheduler)
     _upload_text(transport, script, remote_paths.join(job.remote_dir, job_script_name))
 
-    directory = remote_runner.runner_dir(host.remote_root)
+    directory = remote_runner.runner_dir(effective_root(host))
     setup = transport.run(
         flavour.setup_command(
             directory,
@@ -394,7 +423,7 @@ def poll_runner(transport: Transport, host: HostProfile, jobs: Sequence[Job]) ->
     if not tracked:
         return {}
 
-    directory = remote_runner.runner_dir(host.remote_root)
+    directory = remote_runner.runner_dir(effective_root(host))
     result = transport.run(remote_runner.flavour_for(host).list_command(directory))
     where = remote_runner.parse_listing(result.stdout)
 
@@ -441,7 +470,7 @@ def _blocked_entries(transport: Transport, directory: str, jobs: Sequence[Job]) 
 
 def queue_paused(transport: Transport, host: HostProfile) -> bool:
     """Whether the host's runner is currently holding its queue."""
-    directory = remote_runner.runner_dir(host.remote_root)
+    directory = remote_runner.runner_dir(effective_root(host))
     result = transport.run(remote_runner.flavour_for(host).is_paused_command(directory))
     # A runner that has never been set up prints nothing at all, and "no queue
     # yet" is not "the queue is held".
@@ -456,7 +485,7 @@ def set_queue_paused(transport: Transport, host: HostProfile, paused: bool) -> b
     leaves the flag behind for the next one to find.
     """
     flavour = remote_runner.flavour_for(host)
-    directory = remote_runner.runner_dir(host.remote_root)
+    directory = remote_runner.runner_dir(effective_root(host))
     # The flag lives in the runner directory, which need not exist yet: pausing
     # a host before its first submission has to be allowed, or the only way to
     # hold a queue would be to start it first.
@@ -489,7 +518,7 @@ def apply_queue_limits(transport: Transport, host: HostProfile) -> None:
     user no longer needs it.
     """
     flavour = remote_runner.flavour_for(host)
-    directory = remote_runner.runner_dir(host.remote_root)
+    directory = remote_runner.runner_dir(effective_root(host))
     transport.run(
         flavour.setup_command(
             directory,
@@ -507,7 +536,7 @@ def cancel_in_runner(transport: Transport, host: HostProfile, job: Job) -> None:
     chained lanes cannot do, since there the successor is bound to a specific
     predecessor.
     """
-    directory = remote_runner.runner_dir(host.remote_root)
+    directory = remote_runner.runner_dir(effective_root(host))
     transport.run(remote_runner.flavour_for(host).cancel_command(directory, job.remote_job_id))
 
 
@@ -520,7 +549,7 @@ def release_in_runner(transport: Transport, host: HostProfile, job: Job) -> None
     """
     if not job.remote_job_id:
         return
-    directory = remote_runner.runner_dir(host.remote_root)
+    directory = remote_runner.runner_dir(effective_root(host))
     transport.run(remote_runner.flavour_for(host).release_command(directory, job.remote_job_id))
 
 
@@ -891,6 +920,7 @@ __all__ = [
     "STATE_RUNNING",
     "apply_queue_limits",
     "cancel_job",
+    "effective_root",
     "fetch_results",
     "input_name_for",
     "is_plugin_file",
