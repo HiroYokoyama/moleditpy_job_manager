@@ -901,6 +901,9 @@ helper is running — it only ever reads what is under `.moleditpy_runner/`.
 | `command not found` for something that works when you ssh in | See below — it is almost always the guard at the top of `~/.bashrc` |
 | "SSH authentication failed" on a host that needs a password | The OpenSSH backend cannot answer a prompt. Switch that host to paramiko — see below |
 | Hosts at Work times out, or the host drops in and out | OpenSSH opens a new connection per sample and the far end throttles them. Raise the interval or use paramiko — see below |
+| Web monitor: **Run** reports Tailscale is not ready, or used to sit there | HTTPS is not enabled for your tailnet, so `tailscale serve` has no certificate to obtain. Enable it once: admin console ▸ DNS ▸ HTTPS Certificates ([kb/1153](https://tailscale.com/kb/1153/enabling-https)). Tailnet-wide, so it needs an admin of that tailnet |
+| Web monitor page says "reconnecting…" and never loads data | Fixed in 1.5.1. The page's own `fetch` was blocked by its Content-Security-Policy, so no poll ever left the browser. Update the plugin |
+| Web monitor is not reachable from another machine | Expected until you publish it: the socket is `127.0.0.1` only. `tailscale serve --bg <port>`, or the **Run** button, is what exposes it |
 
 ### OpenSSH or paramiko?
 

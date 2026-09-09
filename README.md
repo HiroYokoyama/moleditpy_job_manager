@@ -196,6 +196,14 @@ process never binds a routable address, never decides whose certificate to
 trust, and never grows an authentication story beyond the token in the link.
 Nothing here needs Tailscale to serve on your own machine.
 
+> **Serve needs HTTPS enabled on your tailnet — enable it once, before Run
+> will work.** Admin console ▸ **DNS** ▸ **HTTPS Certificates**
+> ([how](https://tailscale.com/kb/1153/enabling-https)). It is a tailnet-wide
+> setting, so it takes an admin of that tailnet, and `tailscale serve` cannot
+> obtain a certificate without it. The dialog checks this first and tells you
+> so; without the check, Serve simply waits, which looked like Run hanging.
+> Serving on `127.0.0.1` needs none of this — only the tailnet link does.
+
 It is **off the first time the window opens** and remembered afterwards, so a
 listening socket is never something you get by surprise, and never something
 you have to ask for twice.

@@ -233,7 +233,11 @@ load leaves behind (`HttpOnly`, `SameSite=Strict`). It is compared with
 with a page you paste into a phone would hand a full-control credential to a
 browser history.
 
-Reaching the page from elsewhere is `tailscale serve --bg <port>`. That is a
+Reaching the page from elsewhere is `tailscale serve --bg <port>`, which
+requires HTTPS to be enabled for the tailnet (admin console ▸ DNS ▸ HTTPS
+Certificates). The plugin checks that before running anything: without it
+Serve has no certificate to obtain and simply waits, which is indistinguishable
+from a hang. That is a
 deliberate hand-off: exposure, TLS and identity are Tailscale's, governed by
 your tailnet ACLs, and this process never binds a routable address or decides
 whose certificate to trust. Anyone your ACLs let reach the machine can read
