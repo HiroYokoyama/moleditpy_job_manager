@@ -5,6 +5,7 @@
 [![GitHub tag](https://img.shields.io/github/v/tag/HiroYokoyama/moleditpy_job_manager?label=version)](https://github.com/HiroYokoyama/moleditpy_job_manager/tags)
 [![GitHub Downloads](https://img.shields.io/github/downloads/HiroYokoyama/moleditpy_job_manager/total)](https://github.com/HiroYokoyama/moleditpy_job_manager/releases)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22671687.svg)](https://doi.org/10.5281/zenodo.22671687)
 
 Repo: [https://github.com/HiroYokoyama/moleditpy_job_manager/](https://github.com/HiroYokoyama/moleditpy_job_manager/)
 
