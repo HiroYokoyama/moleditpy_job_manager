@@ -79,12 +79,24 @@ class TestRunningCommands(unittest.TestCase):
         self.assertEqual(transport.run("echo $MOLEDITPY_X").stdout.strip(), "set")
 
     def test_a_timeout_is_reported(self):
-        # The sleep is only just longer than the timeout: subprocess kills the
-        # shell but still waits for the pipes the child inherited, so a payload
-        # of `sleep 5` costs this test five seconds rather than one.
-        with self.assertRaises(TransportError) as caught:
-            self.transport.run("sleep 2", timeout=1)
-        self.assertIn("timed out", str(caught.exception))
+        # The payload closes the pipes it inherited before sleeping. subprocess
+        # kills the shell on timeout but then waits for those pipes, which is
+        # why this used to sleep for only just longer than the timeout -- and
+        # a two-second sleep against a one-second limit is a second of margin,
+        # which a loaded Windows runner lost often enough to fail CI. Closed,
+        # the kill returns at once: the sleep can be thirty times the timeout
+        # with no race left to lose, and the test is faster than it was.
+        try:
+            result = self.transport.run("exec 1>&- 2>&-; sleep 30", timeout=1)
+        except TransportError as exc:
+            self.assertIn("timed out", str(exc))
+        else:
+            # Never silently "not raised": if the shell exits on its own the
+            # reason is worth seeing, because it is not a timing question.
+            self.fail(
+                f"the shell returned instead of timing out: rc={result.rc} "
+                f"stdout={result.stdout!r} stderr={result.stderr!r}"
+            )
 
     def test_test_connection_names_the_machine(self):
         self.assertTrue(self.transport.test_connection())
