@@ -197,7 +197,13 @@ class TestTheCommandLine(ClientTestCase):
 
         def go():
             with redirect_stdout(buffer):
-                code = main(["--url", self.server.url(), "--token", self.server.token(), *argv])
+                # "--token=x", not "--token", "x": token_urlsafe draws from the
+                # base64url alphabet, so about one token in sixty-four begins
+                # with "-" and argparse then reads it as an option name --
+                # "argument --token: expected one argument". Passed separately,
+                # every CLI test here was a 1.5% coin flip, which is why a
+                # different one of them failed every few CI runs.
+                code = main([f"--url={self.server.url()}", f"--token={self.server.token()}", *argv])
             return code, buffer.getvalue()
 
         return in_thread(go)

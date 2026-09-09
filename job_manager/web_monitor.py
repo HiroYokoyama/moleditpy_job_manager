@@ -33,6 +33,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional
 from urllib.parse import parse_qs, urlsplit
 
+from .api_core import new_token
+
 #: Deliberately not the API's 8765: running both at once is ordinary, and
 #: sharing a number would make whichever started second fall back to a random
 #: port that the copied command no longer names.
@@ -255,7 +257,7 @@ class WebMonitorServer:
     """Owns the socket and the last snapshot the GUI thread published."""
 
     def __init__(self, token: str = "") -> None:
-        self._token = token or secrets.token_urlsafe(16)
+        self._token = token or new_token(16)
         self._server: Optional[_Server] = None
         self._thread: Optional[threading.Thread] = None
         self._port = 0

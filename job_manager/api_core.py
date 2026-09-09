@@ -150,12 +150,29 @@ def read_token(directory: str) -> str:
         return ""
 
 
+def new_token(length: int = 32) -> str:
+    """A secret that is safe to hand to a command line.
+
+    ``token_urlsafe`` draws from the base64url alphabet, so about one token in
+    sixty-four begins with "-". Every one of those breaks
+    ``--token <value>``: argparse reads the leading hyphen as an option name
+    and refuses with "expected one argument", which says nothing about the
+    real problem and cannot be worked around without knowing to write
+    ``--token=<value>`` instead. Rerolling costs nothing and the entropy is
+    unchanged -- the first character is simply drawn from a smaller set.
+    """
+    while True:
+        token = secrets.token_urlsafe(length)
+        if not token.startswith("-"):
+            return token
+
+
 def ensure_token(directory: str, renew: bool = False) -> str:
     """The shared secret, generating and storing one on first use."""
     existing = "" if renew else read_token(directory)
     if existing:
         return existing
-    token = secrets.token_urlsafe(32)
+    token = new_token(32)
     _write_private(token_path(directory), token + "\n")
     return token
 
@@ -695,6 +712,7 @@ __all__ = [
     "JobApi",
     "endpoint_path",
     "ensure_token",
+    "new_token",
     "host_payload",
     "job_payload",
     "preset_payload",

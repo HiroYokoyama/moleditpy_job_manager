@@ -8,6 +8,7 @@ runs this file, so nothing in it may import PyQt6.
 
 import json
 import os
+import shutil
 import stat
 import tempfile
 import unittest
@@ -472,3 +473,42 @@ class TestThePreferences(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheTokenIsSafeOnACommandLine(unittest.TestCase):
+    """The shipped CLI takes --token, so the secret has to survive argparse.
+
+    token_urlsafe draws from the base64url alphabet, and roughly one token in
+    sixty-four begins with "-". argparse reads that as an option name and
+    refuses the whole command with "argument --token: expected one argument",
+    which names neither the token nor the fix.
+    """
+
+    def test_a_generated_token_never_starts_with_a_hyphen(self):
+        # Sixty-four thousand draws: at the 1-in-64 natural rate this would
+        # see roughly a thousand of them if the guard were removed.
+        self.assertFalse(any(api_core.new_token(32).startswith("-") for _ in range(64000)))
+
+    def test_it_is_still_a_secret_of_the_expected_size(self):
+        # The guard must reroll, not truncate or rewrite the first character.
+        token = api_core.new_token(32)
+        self.assertGreaterEqual(len(token), 40)
+        self.assertEqual(len(set(api_core.new_token(32) for _ in range(500))), 500)
+
+    def test_the_stored_token_goes_through_the_same_guard(self):
+        directory = tempfile.mkdtemp(prefix="jm_token_")
+        self.addCleanup(shutil.rmtree, directory, True)
+        self.assertFalse(api_core.ensure_token(directory).startswith("-"))
+
+    def test_argparse_accepts_a_generated_token_as_a_separate_argument(self):
+        # The shape the CLI is actually invoked with. Asserting the property
+        # through argparse itself, rather than only through a string check,
+        # is what ties the guard to the reason it exists.
+        import argparse
+
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--token")
+        parser.add_argument("cmd")
+        for _ in range(2000):
+            parsed = parser.parse_args(["--token", api_core.new_token(32), "ping"])
+            self.assertTrue(parsed.token)
