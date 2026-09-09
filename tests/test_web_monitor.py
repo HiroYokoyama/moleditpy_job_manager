@@ -755,17 +755,19 @@ class TestThePageHasAnIcon(ServerTestCase):
         self.assertIn('<link rel="icon"', page)
         self.assertNotIn("__ICON__", page)
 
-    def test_it_is_inline_rather_than_a_second_request(self):
-        # A route to fetch it would be one more thing to authorise, and one
-        # more thing to fail on a flaky connection.
-        self.assertIn('href="data:image/svg+xml,', self.page())
+    def test_it_is_fetched_from_a_route(self):
+        # Inline was tried first, on the reasoning that a route would be one
+        # more thing to authorise. It is -- but Safari ignores a data: favicon
+        # and iOS refuses one as an apple-touch-icon, so inlining bought a
+        # tidy page and an icon that appeared in Chrome only.
+        self.assertIn('href="icon.svg"', self.page())
 
     def test_the_policy_allows_it(self):
         # default-src 'none' covers img-src too, so without an explicit
         # allowance the browser blocks the icon and the tab stays blank --
         # exactly the way it blocked the page's own fetch once already.
         _, _, headers = self.get("/", token=self.server.token)
-        self.assertIn("img-src data:", headers["Content-Security-Policy"])
+        self.assertIn("img-src 'self'", headers["Content-Security-Policy"])
 
     def test_it_carries_the_apps_own_accent(self):
         # An icon that looked like nothing else in MoleditPy would be worse
@@ -794,33 +796,55 @@ class TestThePageHasAnIcon(ServerTestCase):
 
 
 class TestTheIconReachesEveryBrowser(ServerTestCase):
-    """SVG favicons are a Chrome/Firefox feature. Safari renders none, and
-    Safari on a phone is what this page is mostly opened in."""
+    """It has to be a URL, not a payload.
+
+    Inlining the icon as a data: URI worked in Chrome and nowhere else: Safari
+    ignores a data: favicon entirely, and iOS will not accept one as an
+    apple-touch-icon at all -- so the icon was missing on precisely the device
+    this page exists to be read from.
+    """
 
     def page(self):
         return self.get("/", token=self.server.token)[1].decode()
 
-    def test_svg_and_png_are_both_offered(self):
+    def test_the_page_points_at_urls_not_payloads(self):
         page = self.page()
-        self.assertIn('type="image/svg+xml"', page)
-        self.assertIn('type="image/png"', page)
+        head = page.split("</head>", 1)[0]
+        self.assertIn('href="icon.svg"', head)
+        self.assertIn('href="icon.png"', head)
+        self.assertIn('href="apple-touch-icon.png"', head)
+        self.assertNotIn("data:image", head)
 
-    def test_there_is_a_home_screen_icon(self):
-        # Watching a long run from a phone means adding it to the home screen;
-        # without this iOS uses a screenshot of the page as the tile.
-        self.assertIn('rel="apple-touch-icon"', self.page())
+    def test_every_icon_is_reachable_without_the_token(self):
+        # A browser fetching an icon need not send the cookie, and an
+        # apple-touch-icon fetch in particular does not. Gating these would
+        # 401 them and show nothing, which is the whole failure being fixed.
+        for path in sorted(web_monitor.ICON_ROUTES):
+            status, body, headers = self.get(path)
+            self.assertEqual(status, 200, path)
+            self.assertTrue(body, path)
+            self.assertTrue(headers["Content-Type"].startswith("image/"), path)
 
-    def test_none_of_them_needs_a_second_request(self):
-        # Every route here is behind the token, and a browser fetching an icon
-        # need not send the cookie -- a served icon would 401 and show nothing.
-        page = self.page()
-        for link in page.split("<link")[1:]:
-            head = link.split(">", 1)[0]
-            self.assertIn("data:", head, head)
+    def test_ios_probes_the_root_and_finds_something(self):
+        # iOS asks for these whether or not the page names them.
+        for path in ("/apple-touch-icon.png", "/apple-touch-icon-precomposed.png"):
+            self.assertEqual(self.get(path)[0], 200, path)
 
-    def test_the_policy_permits_them(self):
+    def test_opening_the_icons_did_not_open_anything_else(self):
+        # The icons are public because the drawing is; nothing else may be.
+        for path in ("/", "/api/status", "/anything"):
+            self.assertEqual(self.get(path)[0], 401, path)
+
+    def test_the_policy_allows_them_from_this_origin(self):
         _, _, headers = self.get("/", token=self.server.token)
-        self.assertIn("img-src data:", headers["Content-Security-Policy"])
+        self.assertIn("img-src 'self'", headers["Content-Security-Policy"])
+
+    def test_the_svg_route_is_served_as_svg(self):
+        # A PNG body under an image/svg+xml type, or the reverse, renders as
+        # nothing; nosniff means the browser will not rescue it either.
+        _, body, headers = self.get("/icon.svg")
+        self.assertEqual(headers["Content-Type"], "image/svg+xml")
+        self.assertTrue(body.startswith(b"<svg"))
 
     def test_the_pngs_are_real_pngs(self):
         import base64

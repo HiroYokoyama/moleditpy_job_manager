@@ -23,6 +23,7 @@ would otherwise do on every hit.
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -360,7 +361,7 @@ class _Handler(BaseHTTPRequestHandler):
         # answering every request perfectly.
         self.send_header(
             "Content-Security-Policy",
-            "default-src 'none'; connect-src 'self'; img-src data:; "
+            "default-src 'none'; connect-src 'self'; img-src 'self'; "
             "style-src 'unsafe-inline'; script-src 'unsafe-inline'",
         )
         if cookie:
@@ -396,6 +397,18 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802 - http.server's spelling
         path = urlsplit(self.path).path.rstrip("/") or "/"
+        # Icons first, and without the token. They have to be real URLs rather
+        # than data: URIs -- Safari ignores a data: favicon completely, and iOS
+        # will not take one as an apple-touch-icon at all, which is how the
+        # icon came to work in Chrome and nowhere else. A browser fetching an
+        # icon need not send the cookie, so gating these would 401 them; there
+        # is nothing to gate anyway, since the drawing is the same in every
+        # install and already public in the repository.
+        served = ICON_ROUTES.get(path)
+        if served is not None:
+            body, content_type = served()
+            self._send(200, body, content_type)
+            return
         if not self._authorised():
             self._send(
                 401,
@@ -416,6 +429,29 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(200, PAGE.encode("utf-8"), "text/html; charset=utf-8", cookie)
             return
         self._send(404, b"No such page.", "text/plain; charset=utf-8")
+
+
+def _icon_png() -> "tuple[bytes, str]":
+    return base64.b64decode(FAVICON_PNG_B64), "image/png"
+
+
+def _icon_touch() -> "tuple[bytes, str]":
+    return base64.b64decode(TOUCH_ICON_PNG_B64), "image/png"
+
+
+def _icon_svg() -> "tuple[bytes, str]":
+    return FAVICON_SVG.encode("utf-8"), "image/svg+xml"
+
+
+#: Every path an icon is asked for, including the two iOS probes for at the
+#: site root whether or not the page names them.
+ICON_ROUTES = {
+    "/icon.svg": _icon_svg,
+    "/icon.png": _icon_png,
+    "/favicon.ico": _icon_png,
+    "/apple-touch-icon.png": _icon_touch,
+    "/apple-touch-icon-precomposed.png": _icon_touch,
+}
 
 
 class WebMonitorServer:
@@ -536,9 +572,9 @@ PAGE = """<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Job Manager - Host Monitor</title>
-<link rel="icon" type="image/svg+xml" href="__ICON__">
-<link rel="icon" type="image/png" sizes="32x32" href="data:image/png;base64,__ICON32__">
-<link rel="apple-touch-icon" href="data:image/png;base64,__ICON180__">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="icon.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <style>
   /* Light is the default and dark is the override, so a browser that does not
      report a preference at all gets a readable page rather than a dark one on
@@ -724,14 +760,12 @@ schedule();
 
 # Substituted once at import: the page is full of literal "%" and of braces,
 # so neither %-formatting nor an f-string can be used on it.
-PAGE = PAGE.replace("__ICON__", FAVICON_DATA_URI)
-PAGE = PAGE.replace("__ICON32__", FAVICON_PNG_B64).replace("__ICON180__", TOUCH_ICON_PNG_B64)
 
 
 __all__ = [
     "COOKIE_NAME",
     "DEFAULT_PORT",
-    "FAVICON_DATA_URI",
+    "ICON_ROUTES",
     "FAVICON_PNG_B64",
     "TOUCH_ICON_PNG_B64",
     "FAVICON_SVG",
