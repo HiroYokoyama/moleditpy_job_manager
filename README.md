@@ -1,5 +1,3 @@
-<img src="img/icon.png" width="88" alt="">
-
 # Job Manager
 
 [![Tests](https://github.com/HiroYokoyama/moleditpy_job_manager/actions/workflows/tests.yml/badge.svg)](https://github.com/HiroYokoyama/moleditpy_job_manager/actions/workflows/tests.yml)
@@ -20,6 +18,8 @@ fetch, open.
 
 ![job manager](img/job-manager.png)
 ![host monitor](img/host-monitor.png)
+
+<img src="img/icon.png" width="88" alt="">
 
 ## What it does
 
