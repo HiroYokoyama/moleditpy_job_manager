@@ -96,5 +96,11 @@ def test_service_tail_file(service, temp_store, qapp):
     with patch.object(service, "transport_for", return_value=mock_transport):
         results = []
         service.tail_file(job, "calc.out", lines=100, on_done=lambda txt: results.append(txt))
-        qapp.processEvents()
+        # No processEvents(). The service fixture swaps in SyncPool, whose
+        # start() calls run_sync() inline, so on_done has already fired by the
+        # time tail_file returns -- pumping the queue added nothing to this
+        # assertion and only drained whatever the rest of the suite had left
+        # in it. That is a global side effect in a test that is about one
+        # function, and it crashed the Windows job with an access violation,
+        # intermittently, because xdist varies what ran before it.
         assert results == ["specific tail contents"]
