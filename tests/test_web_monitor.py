@@ -280,7 +280,9 @@ class TestRunningTheTailscaleCommand(unittest.TestCase):
             with unittest.mock.patch.object(web_monitor.subprocess, "run", run):
                 ok, _ = web_monitor.serve_on_tailnet(8770)
         self.assertTrue(ok)
-        self.assertEqual(calls[0][0], ["/usr/bin/tailscale", "serve", "--bg", "8770"])
+        # Not calls[0]: the readiness check runs first now, so the serve call
+        # is asserted by presence rather than by position.
+        self.assertIn(["/usr/bin/tailscale", "serve", "--bg", "8770"], [c[0] for c in calls])
 
     def test_the_command_is_a_list_so_no_shell_re_splits_it(self):
         run, calls = self._fake_run()
@@ -370,3 +372,118 @@ class TestTheTailnetName(unittest.TestCase):
         url = server.tailscale_url("mybox.tail1234.ts.net")
         self.assertNotIn("<", url)
         self.assertIn(server.token, url)
+
+
+class TestThePageCanActuallyReachItsOwnData(ServerTestCase):
+    """The regression behind "reconnecting..." for ever.
+
+    connect-src falls back to default-src, so `default-src 'none'` blocked the
+    page's own fetch of /api/status. The server answered every request
+    correctly; the browser never sent one. Asserting the header *contains*
+    "default-src 'none'" passed throughout -- it checked the text and not the
+    rule -- so these parse the policy and ask the question the browser asks.
+    """
+
+    def policy(self):
+        _, _, headers = self.get("/", token=self.server.token)
+        directives = {}
+        for part in headers["Content-Security-Policy"].split(";"):
+            name, _, value = part.strip().partition(" ")
+            if name:
+                directives[name] = value.strip()
+        return directives
+
+    def test_the_page_is_allowed_to_fetch_from_its_own_origin(self):
+        policy = self.policy()
+        effective = policy.get("connect-src", policy.get("default-src", ""))
+        self.assertNotEqual(
+            effective,
+            "'none'",
+            "connect-src resolves to 'none', so the page cannot poll /api/status",
+        )
+        self.assertIn("'self'", effective)
+
+    def test_the_policy_is_still_closed_by_default(self):
+        # The fix must not become "allow everything": only connect-src was
+        # ever needed.
+        self.assertEqual(self.policy().get("default-src"), "'none'")
+
+    def test_the_page_fetches_a_same_origin_path(self):
+        # 'self' only helps if the URL really is same-origin; an absolute URL
+        # to somewhere else would be blocked again, and silently.
+        _, body, _ = self.get("/", token=self.server.token)
+        text = body.decode()
+        target = text.split('fetch("', 1)[1].split('"', 1)[0]
+        self.assertFalse(target.startswith(("http://", "https://", "//")), target)
+
+
+class TestTailscaleIsAskedBeforeItIsTold(unittest.TestCase):
+    """The other half of the report: "Tailscale did not answer in time"."""
+
+    def _status_run(self, payload, serve_result=(0, "", "")):
+        calls = []
+
+        def run(args, **kwargs):
+            calls.append(args)
+
+            class Done:
+                pass
+
+            done = Done()
+            if "status" in args:
+                done.returncode, done.stdout, done.stderr = 0, json.dumps(payload), ""
+            else:
+                done.returncode, done.stdout, done.stderr = serve_result
+            return done
+
+        return run, calls
+
+    def test_a_tailnet_without_https_is_told_so_instead_of_timing_out(self):
+        # CertDomains empty means serve has no certificate to obtain, so it
+        # waits -- and a twenty-second pause says nothing about the one
+        # setting that fixes it.
+        run, calls = self._status_run({"BackendState": "Running", "CertDomains": None})
+        with unittest.mock.patch.object(web_monitor.shutil, "which", return_value="/ts"):
+            with unittest.mock.patch.object(web_monitor.subprocess, "run", run):
+                ok, message = web_monitor.serve_on_tailnet(8770)
+        self.assertFalse(ok)
+        self.assertIn("HTTPS is not enabled", message)
+        self.assertIn(web_monitor.HTTPS_HELP_URL, message)
+        # And it never got as far as the command that would have hung.
+        self.assertTrue(all("serve" not in args for args in calls), calls)
+
+    def test_a_disconnected_tailscale_is_named_as_such(self):
+        run, _ = self._status_run({"BackendState": "Stopped", "CertDomains": ["x"]})
+        with unittest.mock.patch.object(web_monitor.shutil, "which", return_value="/ts"):
+            with unittest.mock.patch.object(web_monitor.subprocess, "run", run):
+                ok, message = web_monitor.serve_on_tailnet(8770)
+        self.assertFalse(ok)
+        self.assertIn("not connected", message)
+
+    def test_a_ready_tailnet_goes_on_to_serve(self):
+        run, calls = self._status_run(
+            {"BackendState": "Running", "CertDomains": ["box.tail1.ts.net"]}
+        )
+        with unittest.mock.patch.object(web_monitor.shutil, "which", return_value="/ts"):
+            with unittest.mock.patch.object(web_monitor.subprocess, "run", run):
+                ok, _ = web_monitor.serve_on_tailnet(8770)
+        self.assertTrue(ok)
+        self.assertIn(["/ts", "serve", "--bg", "8770"], calls)
+
+    def test_no_command_can_sit_waiting_on_an_answer_nobody_can_see(self):
+        # capture_output hides any prompt, so stdin must be closed or the
+        # process blocks until the timeout with no clue why.
+        seen = {}
+
+        def run(args, **kwargs):
+            seen.update(kwargs)
+
+            class Done:
+                returncode, stdout, stderr = 0, "{}", ""
+
+            return Done()
+
+        with unittest.mock.patch.object(web_monitor.shutil, "which", return_value="/ts"):
+            with unittest.mock.patch.object(web_monitor.subprocess, "run", run):
+                web_monitor.stop_serving_on_tailnet()
+        self.assertEqual(seen.get("stdin"), web_monitor.subprocess.DEVNULL)

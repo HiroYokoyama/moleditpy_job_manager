@@ -72,6 +72,11 @@ def _run_tailscale(*args: str, timeout: int = 20) -> "tuple[bool, str]":
             text=True,
             timeout=timeout,
             check=False,
+            # Closed, not inherited: `serve` asks for confirmation on some
+            # paths, and with the output captured that question is invisible.
+            # It then waited for an answer nobody could see it wanting, and
+            # the only symptom was "Tailscale did not answer in time".
+            stdin=subprocess.DEVNULL,
         )
     except subprocess.TimeoutExpired:
         return False, "Tailscale did not answer in time."
@@ -102,9 +107,48 @@ def tailscale_dns_name() -> str:
     return name.rstrip(".")
 
 
+#: Where HTTPS is turned on. Serve cannot work without it, and the setting is
+#: a tailnet-wide one that only an admin of that tailnet can change.
+HTTPS_HELP_URL = "https://tailscale.com/kb/1153/enabling-https"
+
+
+def tailnet_https_ready() -> "tuple[bool, str]":
+    """Whether this tailnet can issue the certificate ``serve`` needs.
+
+    Checked before running anything, because the failure it prevents is not a
+    quick error: without HTTPS enabled, ``serve`` has no certificate to get and
+    waits -- so the symptom was a twenty-second pause and "Tailscale did not
+    answer in time", which says nothing about the one setting that fixes it.
+    """
+    ok, output = _run_tailscale("status", "--json", timeout=10)
+    if not ok:
+        return False, output
+    try:
+        status = json.loads(output)
+    except ValueError:
+        return True, ""  # Unreadable is not the same as "known to be off".
+    if status.get("BackendState") != "Running":
+        return False, f"Tailscale is not connected (state: {status.get('BackendState')})."
+    if not status.get("CertDomains"):
+        return False, (
+            "HTTPS is not enabled for this tailnet, and Tailscale Serve needs it "
+            "to get a certificate.\n\n"
+            "Enable it once, in the admin console under DNS > HTTPS Certificates:\n"
+            f"{HTTPS_HELP_URL}\n\n"
+            "Serving on this machine works without it -- only the tailnet link does not."
+        )
+    return True, ""
+
+
 def serve_on_tailnet(port: int) -> "tuple[bool, str]":
     """Publish ``port`` to the tailnet. Equivalent to :func:`tailscale_command`."""
-    return _run_tailscale("serve", "--bg", str(int(port)))
+    ready, why = tailnet_https_ready()
+    if not ready:
+        return False, why
+    # Longer than the rest: the first serve on a machine provisions a
+    # certificate, which is a round trip to Let's Encrypt rather than a local
+    # call to the daemon.
+    return _run_tailscale("serve", "--bg", str(int(port)), timeout=90)
 
 
 def stop_serving_on_tailnet() -> "tuple[bool, str]":
@@ -142,10 +186,15 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
         # Nothing here loads a script, a font or an image from anywhere, so the
-        # strictest policy that still renders the page is the correct one.
+        # strictest policy that still renders the page is the correct one --
+        # but connect-src has to be granted explicitly. It falls back to
+        # default-src, so 'none' blocked the page's own poll of /api/status and
+        # left it saying "reconnecting..." for ever, against a server that was
+        # answering every request perfectly.
         self.send_header(
             "Content-Security-Policy",
-            "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'",
+            "default-src 'none'; connect-src 'self'; "
+            "style-src 'unsafe-inline'; script-src 'unsafe-inline'",
         )
         if cookie:
             self.send_header("Set-Cookie", cookie)
@@ -397,6 +446,7 @@ __all__ = [
     "WebMonitorServer",
     "serve_on_tailnet",
     "stop_serving_on_tailnet",
+    "tailnet_https_ready",
     "tailscale_available",
     "tailscale_command",
     "tailscale_dns_name",

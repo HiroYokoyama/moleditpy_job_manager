@@ -1275,3 +1275,82 @@ class TestTheWebDialog(HostMonitorTestCase):
         window = self.dialog_for(monitor)
         self.assertFalse(window.btn_serve.isEnabled())
         self.assertEqual(window.row_tailnet.field.text(), "")
+
+
+class TestTheRunButtonDoesNotFreezeTheWindow(HostMonitorTestCase):
+    """The reported hang: pressing Run locked the whole application.
+
+    tailscale serve waits on a certificate the first time, and the readiness
+    check is a subprocess of its own, so neither can happen on the GUI thread.
+    """
+
+    def setUp(self):
+        super().setUp()
+        for name, value in (
+            ("tailscale_available", lambda: True),
+            ("tailscale_dns_name", lambda: "mybox.tail1234.ts.net"),
+        ):
+            patcher = unittest.mock.patch(f"job_manager.web_monitor_dialog.{name}", value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def dialog(self):
+        from job_manager.web_monitor_dialog import WebMonitorDialog
+
+        monitor = self.monitor()
+        monitor._start_web(announce=False)
+        self.addCleanup(monitor._stop_web)
+        window = WebMonitorDialog(monitor, parent=None)
+        self.addCleanup(window.deleteLater)
+        return window
+
+    def test_the_work_is_handed_to_the_pool_not_called_inline(self):
+        window = self.dialog()
+        dispatched = {}
+
+        def fake_run_async(pool, fn, on_success=None, on_error=None, **kwargs):
+            dispatched["fn"] = fn
+
+        with (
+            unittest.mock.patch("job_manager.web_monitor_dialog.run_async", fake_run_async),
+            unittest.mock.patch(
+                "job_manager.web_monitor_dialog.serve_on_tailnet",
+                lambda port: self.fail("serve ran on the GUI thread"),
+            ),
+        ):
+            window.btn_serve.click()
+        self.assertIn("fn", dispatched)
+
+    def test_unpublish_goes_off_thread_too(self):
+        window = self.dialog()
+        dispatched = {}
+
+        with (
+            unittest.mock.patch(
+                "job_manager.web_monitor_dialog.run_async",
+                lambda pool, fn, **kw: dispatched.setdefault("fn", fn),
+            ),
+            unittest.mock.patch(
+                "job_manager.web_monitor_dialog.stop_serving_on_tailnet",
+                lambda: self.fail("reset ran on the GUI thread"),
+            ),
+        ):
+            window.btn_unserve.setEnabled(True)
+            window.btn_unserve.click()
+        self.assertIn("fn", dispatched)
+
+    def test_a_second_press_while_one_is_in_flight_is_ignored(self):
+        # Two overlapping `tailscale serve` calls is not a thing to allow, and
+        # the button is what stops it.
+        window = self.dialog()
+        started = []
+
+        with unittest.mock.patch(
+            "job_manager.web_monitor_dialog.run_async",
+            lambda pool, fn, **kw: started.append(fn),
+        ):
+            window.btn_serve.click()
+            window.btn_serve.click()
+        self.assertEqual(len(started), 1)
+        self.assertTrue(window._busy)
+        self.assertFalse(window.btn_serve.isEnabled())

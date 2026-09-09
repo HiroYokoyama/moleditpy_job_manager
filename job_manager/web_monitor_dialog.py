@@ -2,16 +2,16 @@
 to reach it from somewhere else: the URL, and the ``tailscale serve`` command
 that publishes it to the tailnet.
 
-The command is shown rather than run. Serving a machine onto a network is the
-user's decision to make with their own tailnet's ACLs in view, and a plugin
-that silently ran it would be making that decision for them.
+Running it is one press, but never on the GUI thread: the first serve waits on
+a certificate, and blocking here froze the whole application for as long as it
+took. Publishing stays an explicit press either way -- putting a machine on a
+network is the user's decision, not something to do on their behalf.
 """
 
 from __future__ import annotations
 
 from typing import Optional
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
 )
 
 from . import PLUGIN_VERSION
+from .tasks import run_async
 from .web_monitor import (
     serve_on_tailnet,
     stop_serving_on_tailnet,
@@ -80,6 +81,8 @@ class WebMonitorDialog(QDialog):
         #: serving something else, which is not ours to withdraw.
         self._served = False
         self._dns = None
+        #: A Tailscale call is in flight; the buttons stay off until it lands.
+        self._busy = False
         self.setWindowTitle(f"Job Manager {PLUGIN_VERSION} - Web Monitor")
         self.setMinimumWidth(560)
 
@@ -162,41 +165,61 @@ class WebMonitorDialog(QDialog):
             self.monitor._start_web()
         self._refresh()
 
-    def _serve_on_tailnet(self) -> None:
-        """One click: run the command shown, then say what happened."""
-        if not self._running():
-            return
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            ok, message = serve_on_tailnet(self._server().port)
-        finally:
-            # In a finally: a Tailscale that hangs to its timeout would
-            # otherwise leave the whole application stuck showing a wait
-            # cursor with no way back.
-            QApplication.restoreOverrideCursor()
-        if ok:
-            self._served = True
+    def _run_off_thread(self, work, done) -> None:
+        """Run a Tailscale call on the pool and answer back on the GUI thread.
+
+        Never inline: the first serve waits on a certificate, and even the
+        quick failures are a subprocess. Doing that here froze the whole
+        application -- window unredrawable, no cancel -- for as long as it took,
+        which is what "the Run button hangs" was.
+        """
+        self._busy = True
+        self._refresh()
+
+        def finished(result) -> None:
+            self._busy = False
+            done(*result)
+
+        def failed(message: str) -> None:
+            self._busy = False
             self._refresh()
-            QMessageBox.information(
-                self,
-                "Published",
-                "The monitor is now on your tailnet.\n\n"
-                "Open the link below on any device signed in to the same "
-                "tailnet. Use Unpublish to withdraw it.",
-            )
-        else:
             QMessageBox.warning(self, "Tailscale", message)
 
+        run_async(self.monitor.service.pool, work, on_success=finished, on_error=failed, quiet=True)
+
+    def _serve_on_tailnet(self) -> None:
+        """One click: run the command shown, then say what happened."""
+        if not self._running() or self._busy:
+            return
+        port = self._server().port
+
+        def done(ok: bool, message: str) -> None:
+            self._served = bool(ok)
+            self._refresh()
+            if ok:
+                QMessageBox.information(
+                    self,
+                    "Published",
+                    "The monitor is now on your tailnet.\n\n"
+                    "Open the link below on any device signed in to the same "
+                    "tailnet. Use Unpublish to withdraw it.",
+                )
+            else:
+                QMessageBox.warning(self, "Tailscale", message)
+
+        self._run_off_thread(lambda: serve_on_tailnet(port), done)
+
     def _stop_tailnet(self) -> None:
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        try:
-            ok, message = stop_serving_on_tailnet()
-        finally:
-            QApplication.restoreOverrideCursor()
-        self._served = False
-        self._refresh()
-        if not ok:
-            QMessageBox.warning(self, "Tailscale", message)
+        if self._busy:
+            return
+
+        def done(ok: bool, message: str) -> None:
+            self._served = False
+            self._refresh()
+            if not ok:
+                QMessageBox.warning(self, "Tailscale", message)
+
+        self._run_off_thread(stop_serving_on_tailnet, done)
 
     def _refresh(self) -> None:
         server = self._server()
@@ -225,8 +248,9 @@ class WebMonitorDialog(QDialog):
         for row in (self.row_url, self.row_cmd, self.row_tailnet):
             row.setEnabled(running)
             row.button.setText("Copy")
-        self.btn_serve.setEnabled(running and available)
-        self.btn_unserve.setEnabled(running and available and self._served)
+        self.btn_serve.setEnabled(running and available and not self._busy)
+        self.btn_unserve.setEnabled(running and available and self._served and not self._busy)
+        self.btn_serve.setText("Working..." if self._busy else "Run")
         if not available:
             self.lbl_tailnet.setText(
                 (self.lbl_tailnet.text() + "\n\n" if running else "")
