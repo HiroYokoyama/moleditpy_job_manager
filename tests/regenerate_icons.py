@@ -24,6 +24,11 @@ import textwrap
 SIZES = {"FAVICON_PNG_B64": 32, "TOUCH_ICON_PNG_B64": 180}
 SOURCE = pathlib.Path(__file__).resolve().parents[1] / "job_manager" / "web_monitor.py"
 
+#: The copy the README shows. A file, not a data: URI: GitHub strips those out
+#: of markdown, so an inlined icon renders as nothing there.
+README_ICON = pathlib.Path(__file__).resolve().parents[1] / "img" / "icon.png"
+README_ICON_SIZE = 128
+
 #: Held here, not in a local. `QApplication.instance() or QApplication([])`
 #: leaves the new one unreferenced, Python collects it, and the next QPixmap
 #: dies with "Must construct a QGuiApplication before a QPixmap".
@@ -66,6 +71,11 @@ def main() -> int:
         text = pattern.sub(f"{name} = (\n{wrapped}\n)", text)
     SOURCE.write_text(text, encoding="utf-8")
     print(f"rewrote {', '.join(SIZES)} in {SOURCE.name}")
+
+    import base64 as _base64
+
+    README_ICON.write_bytes(_base64.b64decode(render_png_base64(FAVICON_SVG, README_ICON_SIZE)))
+    print(f"wrote {README_ICON.relative_to(README_ICON.parents[1])}")
     return 0
 
 

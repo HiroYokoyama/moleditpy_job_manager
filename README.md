@@ -1,3 +1,5 @@
+<img src="img/icon.png" width="88" alt="">
+
 # Job Manager
 
 [![Tests](https://github.com/HiroYokoyama/moleditpy_job_manager/actions/workflows/tests.yml/badge.svg)](https://github.com/HiroYokoyama/moleditpy_job_manager/actions/workflows/tests.yml)

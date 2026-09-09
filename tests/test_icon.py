@@ -159,3 +159,42 @@ class TestThePngFallbacksMatchTheSvg(IconTestCase):
         for a, b in zip(self.signature(stored), self.signature(self.render(180))):
             for x, y in zip(a, b):
                 self.assertLess(abs(x - y), 12, "the touch icon no longer matches the SVG")
+
+
+class TestTheReadmeIcon(IconTestCase):
+    """The README shows a file, because GitHub strips data: URIs out of
+    markdown -- so there is a third copy of the drawing to keep in step."""
+
+    def path(self):
+        import pathlib
+
+        return pathlib.Path(__file__).resolve().parents[1] / "img" / "icon.png"
+
+    def test_it_exists_and_is_a_png(self):
+        raw = self.path().read_bytes()
+        self.assertTrue(raw.startswith(b"\x89PNG\r\n\x1a\n"))
+        self.assertEqual(int.from_bytes(raw[16:20], "big"), 128)
+        self.assertEqual(int.from_bytes(raw[20:24], "big"), 128)
+
+    def test_the_readme_points_at_it(self):
+        import pathlib
+
+        readme = (pathlib.Path(__file__).resolve().parents[1] / "README.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("img/icon.png", readme)
+
+    def test_it_is_still_the_same_drawing(self):
+        # Regenerate with `python -m tests.regenerate_icons` after editing the
+        # SVG; this is what catches forgetting to.
+        from PyQt6.QtGui import QImage
+
+        stored = QImage()
+        self.assertTrue(stored.loadFromData(self.path().read_bytes(), "PNG"))
+        rendered = TestThePngFallbacksMatchTheSvg.render(self, 128)
+        for a, b in zip(
+            TestThePngFallbacksMatchTheSvg.signature(self, stored),
+            TestThePngFallbacksMatchTheSvg.signature(self, rendered),
+        ):
+            for x, y in zip(a, b):
+                self.assertLess(abs(x - y), 12, "img/icon.png no longer matches the SVG")
