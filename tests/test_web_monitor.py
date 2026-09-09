@@ -773,7 +773,7 @@ class TestThePageHasAnIcon(ServerTestCase):
         # An icon that looked like nothing else in MoleditPy would be worse
         # than none: the bottom unit is the application's blue.
         svg = web_monitor.FAVICON_SVG
-        self.assertIn("#1e5fd0", svg)
+        self.assertIn("#3577f7", svg)
         self.assertIn("<circle", svg)
 
     def test_the_indicator_dots_are_oversized_on_purpose(self):

@@ -35,7 +35,7 @@ class TestTheIcon(IconTestCase):
     def test_it_is_the_same_drawing_the_page_uses(self):
         # One definition. Two would drift, and the tab and the task bar would
         # stop being recognisably the same plugin.
-        self.assertIn("#1e5fd0", FAVICON_SVG)
+        self.assertIn("#3577f7", FAVICON_SVG)
         self.assertIn("<rect", FAVICON_SVG)
         self.assertIs(plugin_icon_module.FAVICON_SVG, FAVICON_SVG)
 
