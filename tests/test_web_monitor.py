@@ -692,3 +692,53 @@ class TestTheTokenOutlivesTheWindow(unittest.TestCase):
 
         self.assertEqual(status("second-token"), 200)
         self.assertEqual(status("first-token"), 401)
+
+
+class TestTheHeaderControlsStayPut(ServerTestCase):
+    """They were laid out so that "Refresh" appeared to name the theme button,
+    and on a phone the group split across two rows and shifted as the reading
+    changed width."""
+
+    def page(self):
+        return self.get("/", token=self.server.token)[1].decode()
+
+    def test_the_label_sits_with_the_control_it_names(self):
+        import re
+
+        header = self.page().split("<header>", 1)[1].split("</header>", 1)[0]
+        order = re.findall(r'id="theme"|for="every"|id="every"', header)
+        self.assertEqual(order, ['id="theme"', 'for="every"', 'id="every"'])
+
+    def test_they_are_one_group(self):
+        self.assertIn('class="controls"', self.page())
+
+    def test_the_group_never_splits_across_lines(self):
+        page = self.page()
+        style = page.split("<style>", 1)[1].split("</style>", 1)[0]
+        controls = style.split(".controls", 1)[1].split("}", 1)[0]
+        self.assertIn("flex-wrap:nowrap", controls)
+        self.assertIn("white-space:nowrap", controls)
+
+    def test_it_always_gets_a_row_of_its_own(self):
+        # Not "beside the title when there is room": that made the controls
+        # jump between the first line and the second as the clock text
+        # changed length, which on a phone is under the thumb reaching for
+        # them. A full-width basis pins the row at every width.
+        style = self.page().split("<style>", 1)[1].split("</style>", 1)[0]
+        controls = style.split(".controls", 1)[1].split("}", 1)[0]
+        self.assertIn("flex:0 0 100%", controls)
+
+    def test_the_clock_gives_way_rather_than_the_controls(self):
+        # #age grows and truncates; the controls are fixed. The other way
+        # round, a longer timestamp would push them off the line.
+        style = self.page().split("<style>", 1)[1].split("</style>", 1)[0]
+        age = style.split("#age", 1)[1].split("}", 1)[0]
+        self.assertIn("text-overflow:ellipsis", age)
+        self.assertIn("min-width:0", age)
+        controls = style.split(".controls", 1)[1].split("}", 1)[0]
+        self.assertIn("flex:0 0 100%", controls)
+
+    def test_nothing_references_the_removed_spacer(self):
+        page = self.page()
+        self.assertNotIn('class="spacer"', page)
+        self.assertNotIn(".spacer", page)

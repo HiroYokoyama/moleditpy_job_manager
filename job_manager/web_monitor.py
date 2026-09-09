@@ -435,9 +435,17 @@ PAGE = """<!doctype html>
   body { margin:0; background:var(--bg); color:var(--text);
          font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
   header { padding:14px 16px; border-bottom:1px solid var(--line);
-           display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; }
+           display:flex; align-items:center; gap:8px 12px; flex-wrap:wrap; }
+  /* Its own row, always, at every width. Letting it sit beside the title
+     when there happened to be room meant the controls jumped between the
+     first line and the second as the clock text changed length -- on a phone,
+     under the thumb already reaching for them. A row that is always there
+     costs one line and never moves. */
+  .controls { display:flex; align-items:center; gap:8px;
+              flex:0 0 100%; flex-wrap:nowrap; white-space:nowrap; }
   h1 { font-size:16px; margin:0; font-weight:600; }
-  #age { color:var(--dim); font-size:12px; }
+  #age { color:var(--dim); font-size:12px; flex:1 1 auto; min-width:0;
+         overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   main { padding:16px; display:grid; gap:12px;
          grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); }
   .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
@@ -454,7 +462,7 @@ PAGE = """<!doctype html>
   td.state { color:var(--dim); text-align:right; white-space:nowrap; padding-left:8px; }
   .none { color:var(--dim); font-size:12px; }
   footer { padding:0 16px 20px; color:var(--dim); font-size:12px; }
-  .spacer { flex:1 1 auto; }
+  h1 { flex:0 0 auto; }
   header label { color:var(--dim); font-size:12px; }
   select, button { background:var(--card); color:var(--text);
            border:1px solid var(--line); border-radius:6px; padding:3px 8px;
@@ -466,8 +474,7 @@ PAGE = """<!doctype html>
 </head>
 <body>
 <header><h1>Host Monitor</h1><span id="age">connecting...</span>
-<span class="spacer"></span>
-<label for="every">Refresh</label>
+<div class="controls">
 <button id="theme" type="button" aria-label="Toggle theme" title="Light or dark">
   <svg class="sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -480,6 +487,7 @@ PAGE = """<!doctype html>
        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
 </button>
+<label for="every">Refresh</label>
 <select id="every">
   <option value="2">2 s</option>
   <option value="4">4 s</option>
@@ -489,6 +497,7 @@ PAGE = """<!doctype html>
   <option value="300">5 min</option>
   <option value="0">Paused</option>
 </select>
+</div>
 </header>
 <main id="cards"></main>
 <footer id="foot"></footer>
