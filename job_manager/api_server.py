@@ -86,6 +86,9 @@ class _GuiBridge(QObject):
 
 
 class _Handler(BaseHTTPRequestHandler):
+    #: Whether anything has taken responsibility for the request body yet.
+    #: A refusal decided before it is read has to drain it first.
+    _body_seen = False
     """One request. ``server.api_hook`` does everything that is not HTTP."""
 
     server_version = "MoleditPyJobManager"
@@ -108,6 +111,7 @@ class _Handler(BaseHTTPRequestHandler):
     # --- the request --------------------------------------------------------
 
     def _serve(self, method: str) -> None:
+        self._body_seen = False
         try:
             status, payload = self._dispatch(method)
         except ApiError as exc:
@@ -115,7 +119,26 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001 - never take the server down
             logging.exception("Job Manager API: request failed")
             status, payload = 500, {"error": str(exc), "status": 500}
+        if status >= 400:
+            # The same reasoning the 413 path already had, applied to every
+            # refusal: origin and token are checked before the body is read,
+            # so answering here would close the socket while the client is
+            # still writing. The client then sees a connection reset instead
+            # of the 401 telling it the token was wrong -- and on Windows that
+            # is a ConnectionAbortedError, which is how this first showed up.
+            self._drain_unread()
         self._reply(status, payload)
+
+    def _drain_unread(self) -> None:
+        """Consume a body nothing has read yet, so the reply can be delivered."""
+        if self._body_seen:
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0") or 0)
+        except ValueError:
+            return
+        if length > 0:
+            self._drain(length)
 
     def _dispatch(self, method: str) -> Tuple[int, Any]:
         hook = getattr(self.server, "api_hook", None)
@@ -160,6 +183,8 @@ class _Handler(BaseHTTPRequestHandler):
             )
 
     def _body(self) -> Dict[str, Any]:
+        # Whatever happens below, this method owns the body from here on.
+        self._body_seen = True
         try:
             length = int(self.headers.get("Content-Length", "0") or 0)
         except ValueError as exc:

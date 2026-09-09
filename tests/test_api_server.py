@@ -243,3 +243,43 @@ class TestMalformedRequests(ServerTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestARefusalStillReachesTheClient(ServerTestCase):
+    """A refusal decided before the body is read has to drain it first.
+
+    Origin and token are checked before _body() runs, so replying immediately
+    leaves the client writing into a socket the server is closing. With a
+    small body it fits the socket buffer and nothing shows; past that the
+    client gets a reset instead of the JSON saying what was wrong -- on
+    Windows a ConnectionAbortedError, which is how this surfaced in CI.
+    """
+
+    #: Comfortably past a socket buffer, so the race is certain rather than
+    #: occasional. Under MAX_BODY_BYTES so nothing else refuses it first.
+    BIG = 400_000
+
+    def big_body(self):
+        return self.submit_body(pad="p" * self.BIG)
+
+    def test_a_bad_token_is_answered_not_dropped(self):
+        status, payload = self.call("POST", "/jobs", body=self.big_body(), token="wrong")
+        self.assertEqual(status, 401)
+        self.assertIn("token", payload["error"].lower())
+
+    def test_a_refused_origin_is_answered_not_dropped(self):
+        status, payload = self.call(
+            "POST",
+            "/jobs",
+            body=self.big_body(),
+            headers={"Origin": "https://evil.example"},
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(self.service.submitted, [])
+
+    def test_a_small_refused_body_still_works(self):
+        # The case that always passed; kept so the fix cannot regress it.
+        status, _ = self.call(
+            "POST", "/jobs", body=self.submit_body(), headers={"Origin": "https://evil.example"}
+        )
+        self.assertEqual(status, 403)
