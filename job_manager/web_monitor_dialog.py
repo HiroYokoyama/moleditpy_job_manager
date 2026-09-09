@@ -140,6 +140,12 @@ class WebMonitorDialog(QDialog):
         self.btn_toggle = QPushButton()
         self.btn_toggle.clicked.connect(self._toggle)
         buttons.addWidget(self.btn_toggle)
+        self.btn_renew = QPushButton("New link...")
+        self.btn_renew.setToolTip(
+            "Replace the token, so every link and cookie already handed out stops working."
+        )
+        self.btn_renew.clicked.connect(self._renew)
+        buttons.addWidget(self.btn_renew)
         buttons.addStretch(1)
         layout.addLayout(buttons)
 
@@ -221,6 +227,22 @@ class WebMonitorDialog(QDialog):
 
         self._run_off_thread(stop_serving_on_tailnet, done)
 
+    def _renew(self) -> None:
+        confirm = QMessageBox.question(
+            self,
+            "New link",
+            "Replace the token?\n\n"
+            "Every link already saved on another device, and every browser "
+            "still holding the cookie, stops working at once. You will need to "
+            "copy the new link across again.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        self.monitor._renew_web_token()
+        self._refresh()
+
     def _refresh(self) -> None:
         server = self._server()
         running = self._running()
@@ -251,6 +273,7 @@ class WebMonitorDialog(QDialog):
         self.btn_serve.setEnabled(running and available and not self._busy)
         self.btn_unserve.setEnabled(running and available and self._served and not self._busy)
         self.btn_serve.setText("Working..." if self._busy else "Run")
+        self.btn_renew.setEnabled(running and not self._busy)
         if not available:
             self.lbl_tailnet.setText(
                 (self.lbl_tailnet.text() + "\n\n" if running else "")

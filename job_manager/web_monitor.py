@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import secrets
 import shutil
 import subprocess
@@ -34,7 +35,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import parse_qs, urlsplit
 
 from . import PLUGIN_VERSION
-from .api_core import new_token
+from .api_core import new_token, write_private_file
 
 #: Deliberately not the API's 8765: running both at once is ordinary, and
 #: sharing a number would make whichever started second fall back to a random
@@ -46,6 +47,45 @@ BIND_HOST = "127.0.0.1"
 #: The cookie the tokenised URL leaves behind, so a reload -- or a phone
 #: reopening the tab tomorrow -- does not need the token in the address again.
 COOKIE_NAME = "jm_monitor"
+
+#: Kept beside the job API's token and read back on every start.
+#:
+#: Its own file, not the API's token: that one grants full control, and a
+#: read-only page is not a reason to paste a full-control secret into a phone's
+#: browser history.
+#:
+#: Persisted rather than minted per session, which is what it used to be. The
+#: link is meant to be saved on another device, and a token that changed every
+#: time the Host Monitor window was closed made that bookmark dead by the next
+#: morning -- while the window itself came back automatically, so nothing
+#: looked wrong from this side.
+WEB_TOKEN_FILENAME = "web_monitor_token"
+
+
+def web_token_path(directory: str) -> str:
+    return os.path.join(directory, WEB_TOKEN_FILENAME)
+
+
+def read_web_token(directory: str) -> str:
+    try:
+        with open(web_token_path(directory), "r", encoding="utf-8") as handle:
+            return handle.read().strip()
+    except OSError:
+        return ""
+
+
+def ensure_web_token(directory: str, renew: bool = False) -> str:
+    """The page's secret, generated once and kept.
+
+    ``renew=True`` mints a new one, which is how a link that has got away from
+    you is cut off -- every saved bookmark and cookie stops working at once.
+    """
+    existing = "" if renew else read_web_token(directory)
+    if existing:
+        return existing
+    token = new_token(16)
+    write_private_file(web_token_path(directory), token + "\n")
+    return token
 
 
 def tailscale_command(port: int) -> str:
@@ -292,6 +332,14 @@ class WebMonitorServer:
 
     # --- data ---------------------------------------------------------------
 
+    def set_token(self, token: str) -> None:
+        """Replace the secret on a running server.
+
+        Every saved link and every cookie stops working the moment this
+        returns, which is the entire point of offering it.
+        """
+        self._token = str(token)
+
     def publish(self, snapshot: Dict[str, Any]) -> None:
         """Replace the served snapshot. Called from the GUI thread."""
         with self._lock:
@@ -370,15 +418,19 @@ PAGE = """<!doctype html>
      a white phone. The bar colours are picked per scheme, not shared: the dark
      set is muted so it does not glare, and those same muted tones on white are
      too pale to read a warning from across a desk. */
-  :root { color-scheme: light dark;
+  :root { color-scheme: light;
           --bg:#f6f8fa; --card:#ffffff; --line:#d0d7de;
           --text:#1f2328; --dim:#59636e; --track:#eaeef2;
           --ok:#1a7f37; --warn:#9a6700; --bad:#cf222e; }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg:#14171c; --card:#1d2128; --line:#2c313a;
-            --text:#e6e9ef; --dim:#9aa3b2; --track:#0f1216;
-            --ok:#4ac47a; --warn:#e0b341; --bad:#e05b4b; }
-  }
+  /* One class, the way the Plugin Explorer page does it: the system
+     preference only decides the starting state, and after that the button
+     is the whole answer. A media query as well would fight the class on a
+     device whose OS disagrees with what the user just pressed. */
+  :root.dark {
+    color-scheme: dark;
+    --bg:#14171c; --card:#1d2128; --line:#2c313a;
+    --text:#e6e9ef; --dim:#9aa3b2; --track:#0f1216;
+    --ok:#4ac47a; --warn:#e0b341; --bad:#e05b4b; }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--text);
          font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
@@ -404,14 +456,30 @@ PAGE = """<!doctype html>
   footer { padding:0 16px 20px; color:var(--dim); font-size:12px; }
   .spacer { flex:1 1 auto; }
   header label { color:var(--dim); font-size:12px; }
-  select { background:var(--card); color:var(--text); border:1px solid var(--line);
-           border-radius:6px; padding:3px 6px; font-size:12px; }
+  select, button { background:var(--card); color:var(--text);
+           border:1px solid var(--line); border-radius:6px; padding:3px 8px;
+           font-size:12px; font-family:inherit; cursor:pointer; }
+  #theme { display:inline-flex; align-items:center; justify-content:center; padding:4px; }
+  :root.dark #theme .moon { display:none; }
+  :root:not(.dark) #theme .sun { display:none; }
 </style>
 </head>
 <body>
 <header><h1>Host Monitor</h1><span id="age">connecting...</span>
 <span class="spacer"></span>
 <label for="every">Refresh</label>
+<button id="theme" type="button" aria-label="Toggle theme" title="Light or dark">
+  <svg class="sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+       stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line>
+    <line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.2" y1="4.2" x2="5.6" y2="5.6"></line>
+    <line x1="18.4" y1="18.4" x2="19.8" y2="19.8"></line><line x1="1" y1="12" x2="3" y2="12"></line>
+    <line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.2" y1="19.8" x2="5.6" y2="18.4"></line>
+    <line x1="18.4" y1="5.6" x2="19.8" y2="4.2"></line></svg>
+  <svg class="moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+       stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+</button>
 <select id="every">
   <option value="2">2 s</option>
   <option value="4">4 s</option>
@@ -460,7 +528,8 @@ async function tick() {
                    : `<div class="none">No hosts are being monitored.</div>`;
     document.getElementById("age").textContent = "updated " + (d.generated || "");
     document.getElementById("foot").textContent =
-      hosts.length + " host(s) · Job Manager " + (d.version || "");
+      "MoleditPy Job Manager version " + (d.version || "?")
+      + " · " + hosts.length + " host(s)";
   } catch (e) {
     // Kept on screen rather than blanked: the last good reading is still the
     // most useful thing here while a phone reconnects.
@@ -471,6 +540,24 @@ async function tick() {
 // connection pays, and the person holding it is the only one who knows
 // whether this tab is being watched or left open all afternoon. Kept in
 // localStorage so a reload does not silently put it back to four seconds.
+// The system preference decides where this starts and nothing more: after
+// the first press the stored choice is the answer, on every device and
+// whatever the OS later switches to. Same shape as the Plugin Explorer page.
+const themeButton = document.getElementById("theme");
+const root = document.documentElement;
+
+function setTheme(dark) {
+  root.classList.toggle("dark", dark);
+  try { localStorage.setItem("jm_theme", dark ? "dark" : "light"); } catch (e) {}
+}
+
+let saved = null;
+try { saved = localStorage.getItem("jm_theme"); } catch (e) {}
+const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+root.classList.toggle("dark", saved === "dark" || (!saved && prefersDark));
+
+themeButton.addEventListener("click", () => setTheme(!root.classList.contains("dark")));
+
 const every = document.getElementById("every");
 let timer = null;
 
@@ -505,6 +592,9 @@ __all__ = [
     "DEFAULT_PORT",
     "PAGE",
     "WebMonitorServer",
+    "ensure_web_token",
+    "read_web_token",
+    "web_token_path",
     "serve_on_tailnet",
     "stop_serving_on_tailnet",
     "tailnet_https_ready",

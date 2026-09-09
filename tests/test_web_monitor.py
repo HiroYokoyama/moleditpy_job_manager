@@ -506,42 +506,50 @@ class TestTheBarsWarnByColour(ServerTestCase):
         for name in ("--ok:", "--warn:", "--bad:"):
             self.assertIn(name, page)
 
-    def test_the_warning_colours_are_defined_for_both_schemes(self):
-        # A colour defined only in the dark block is missing on a white phone,
-        # which is where a warning is least likely to be noticed by accident.
-        page = self.page()
-        dark = page.split("prefers-color-scheme: dark", 1)[1]
-        light = page.split("prefers-color-scheme: dark", 1)[0]
-        for name in ("--ok:", "--warn:", "--bad:", "--bg:", "--text:", "--track:"):
-            self.assertIn(name, light, f"{name} missing from the light scheme")
-            self.assertIn(name, dark, f"{name} missing from the dark scheme")
 
+class TestTheThemeToggle(ServerTestCase):
+    """Two states and a button, the way the Plugin Explorer page does it."""
 
-class TestItFollowsTheBrowsersScheme(ServerTestCase):
     def page(self):
         return self.get("/", token=self.server.token)[1].decode()
 
-    def test_light_is_the_default_and_dark_is_the_override(self):
-        # A browser that reports no preference at all should get the readable
-        # page, not a dark one on a white screen.
+    def test_there_is_a_button_with_both_icons(self):
         page = self.page()
-        self.assertLess(
-            page.index("--bg:#f6f8fa"),
-            page.index("prefers-color-scheme: dark"),
-            "the light values must come first, as the default",
-        )
+        self.assertIn('id="theme"', page)
+        self.assertIn('class="sun"', page)
+        self.assertIn('class="moon"', page)
 
-    def test_both_schemes_are_announced_to_the_browser(self):
-        # Without color-scheme, form controls and scrollbars stay light even
-        # when everything drawn around them is dark.
-        self.assertIn("color-scheme: light dark", self.page())
-
-    def test_nothing_is_left_hard_coded_past_the_variables(self):
-        # The track behind each bar was a literal dark hex, invisible as a
-        # light-mode groove.
+    def test_the_system_preference_only_decides_where_it_starts(self):
+        # Read once, at load. A media query on the variables as well would
+        # fight the class every time the OS disagreed with the last press.
         page = self.page()
-        body = page.split("</style>", 1)[0].split("prefers-color-scheme", 1)[0]
-        self.assertNotIn("#0f1216", body)
+        self.assertIn('matchMedia("(prefers-color-scheme: dark)")', page)
+        style = page.split("<style>", 1)[1].split("</style>", 1)[0]
+        self.assertNotIn("prefers-color-scheme", style)
+
+    def test_the_choice_is_remembered(self):
+        page = self.page()
+        self.assertIn('localStorage.setItem("jm_theme"', page)
+        self.assertIn('localStorage.getItem("jm_theme")', page)
+
+    def test_a_stored_choice_beats_the_system_preference(self):
+        # Otherwise the button appears to do nothing on the next visit from a
+        # device whose OS says the opposite.
+        self.assertIn('saved === "dark" || (!saved && prefersDark)', self.page())
+
+    def test_both_schemes_define_every_colour(self):
+        # A variable defined only in one block is a missing colour in the
+        # other -- worst for the amber and red that are meant to warn.
+        page = self.page()
+        style = page.split("<style>", 1)[1].split("</style>", 1)[0]
+        light = style.split(":root.dark", 1)[0]
+        dark = style.split(":root.dark", 1)[1]
+        for name in ("--ok:", "--warn:", "--bad:", "--bg:", "--text:", "--track:", "--card:"):
+            self.assertIn(name, light, f"{name} missing from light")
+            self.assertIn(name, dark, f"{name} missing from dark")
+
+    def test_storage_being_unavailable_does_not_stop_the_toggle(self):
+        self.assertIn('try { localStorage.setItem("jm_theme"', self.page())
 
 
 class TestTheFooterNamesTheVersion(ServerTestCase):
@@ -610,3 +618,77 @@ class TestTheRefreshIntervalIsThePagesToChoose(ServerTestCase):
         page = self.page()
         self.assertIn("try { localStorage.setItem", page)
         self.assertGreaterEqual(page.count("catch (e) {}"), 2)
+
+
+class TestTheTokenOutlivesTheWindow(unittest.TestCase):
+    """The link is meant to be saved on a phone.
+
+    It used to be minted per WebMonitorServer, so closing and reopening the
+    Host Monitor invalidated every bookmark and cookie already handed out --
+    while the server itself came back on its own, so nothing looked wrong
+    from the desktop side.
+    """
+
+    def setUp(self):
+        import shutil as _shutil
+        import tempfile
+
+        self.directory = tempfile.mkdtemp(prefix="jm_webtoken_")
+        self.addCleanup(_shutil.rmtree, self.directory, True)
+
+    def test_it_is_the_same_across_sessions(self):
+        first = web_monitor.ensure_web_token(self.directory)
+        self.assertEqual(web_monitor.ensure_web_token(self.directory), first)
+
+    def test_renewing_replaces_it(self):
+        first = web_monitor.ensure_web_token(self.directory)
+        self.assertNotEqual(web_monitor.ensure_web_token(self.directory, renew=True), first)
+
+    def test_it_is_not_the_api_token(self):
+        # That one grants full control; this page is read-only, and pasting a
+        # full-control secret into a phone's browser history is not the price
+        # of looking at a load average.
+        from job_manager import api_core
+
+        self.assertNotEqual(
+            web_monitor.ensure_web_token(self.directory),
+            api_core.ensure_token(self.directory),
+        )
+        self.assertNotEqual(
+            web_monitor.web_token_path(self.directory), api_core.token_path(self.directory)
+        )
+
+    def test_it_is_written_where_only_this_user_can_read_it(self):
+        import os
+        import stat
+
+        web_monitor.ensure_web_token(self.directory)
+        mode = os.stat(web_monitor.web_token_path(self.directory)).st_mode
+        if os.name == "nt":  # pragma: no cover - POSIX bits are not meaningful here
+            self.skipTest("file modes are an ACL matter on Windows")
+        self.assertFalse(mode & (stat.S_IRGRP | stat.S_IROTH))
+
+    def test_a_running_server_can_be_handed_a_new_one(self):
+        server = web_monitor.WebMonitorServer("first-token")
+        self.addCleanup(server.stop)
+        server.start(0)
+        server.set_token("second-token")
+        self.assertEqual(server.token, "second-token")
+        self.assertIn("second-token", server.url())
+
+    def test_the_old_link_stops_working_once_it_is_renewed(self):
+        server = web_monitor.WebMonitorServer("first-token")
+        port = server.start(0)
+        self.addCleanup(server.stop)
+        server.set_token("second-token")
+
+        def status(token):
+            request = urllib.request.Request(f"http://127.0.0.1:{port}/?token={token}")
+            try:
+                with urllib.request.urlopen(request, timeout=5) as reply:
+                    return reply.status
+            except urllib.error.HTTPError as exc:
+                return exc.code
+
+        self.assertEqual(status("second-token"), 200)
+        self.assertEqual(status("first-token"), 401)

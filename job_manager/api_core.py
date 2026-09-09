@@ -119,7 +119,7 @@ def endpoint_path(directory: str) -> str:
     return os.path.join(directory, ENDPOINT_FILENAME)
 
 
-def _write_private(path: str, text: str) -> None:
+def write_private_file(path: str, text: str) -> None:
     """Write a file only this user can read.
 
     The mode is applied when the temp file is *created*, before any content is
@@ -173,14 +173,14 @@ def ensure_token(directory: str, renew: bool = False) -> str:
     if existing:
         return existing
     token = new_token(32)
-    _write_private(token_path(directory), token + "\n")
+    write_private_file(token_path(directory), token + "\n")
     return token
 
 
 def write_endpoint_file(directory: str, port: int, token: str) -> str:
     """Publish where the server is listening, for a client to discover."""
     path = endpoint_path(directory)
-    _write_private(
+    write_private_file(
         path,
         json.dumps(
             {
@@ -713,6 +713,7 @@ __all__ = [
     "endpoint_path",
     "ensure_token",
     "new_token",
+    "write_private_file",
     "host_payload",
     "job_payload",
     "preset_payload",

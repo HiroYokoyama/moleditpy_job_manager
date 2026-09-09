@@ -16,7 +16,7 @@ import logging
 from typing import Any, Optional
 
 PLUGIN_NAME = "Job Manager"
-PLUGIN_VERSION = "1.5.2"
+PLUGIN_VERSION = "1.5.3"
 PLUGIN_AUTHOR = "HiroYokoyama"
 
 PLUGIN_DESCRIPTION = (

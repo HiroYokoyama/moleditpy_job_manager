@@ -1247,11 +1247,13 @@ class HostMonitorDialog(QDialog):
             self._web.publish(self._web_snapshot())
 
     def _start_web(self, announce: bool = True) -> bool:
-        from .web_monitor import DEFAULT_PORT, WebMonitorServer
+        from .web_monitor import DEFAULT_PORT, WebMonitorServer, ensure_web_token
 
         if self._web is not None and self._web.running:
             return True
-        server = WebMonitorServer()
+        # Read from disk, not minted here: a link saved on a phone has to keep
+        # working after this window is closed and reopened.
+        server = WebMonitorServer(ensure_web_token(self.service.store.directory))
         try:
             server.start(int(self.service.store.get_pref("host_monitor_web_port", DEFAULT_PORT)))
         except OSError as exc:
@@ -1271,6 +1273,15 @@ class HostMonitorDialog(QDialog):
             self._web.stop()
         self._web = None
         self.service.store.set_pref("host_monitor_web", False)
+
+    def _renew_web_token(self) -> str:
+        """Mint a new secret, cutting off every link and cookie already out."""
+        from .web_monitor import ensure_web_token
+
+        token = ensure_web_token(self.service.store.directory, renew=True)
+        if self._web is not None:
+            self._web.set_token(token)
+        return token
 
     def _open_web_dialog(self) -> None:
         from .web_monitor_dialog import WebMonitorDialog

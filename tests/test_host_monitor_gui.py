@@ -1354,3 +1354,60 @@ class TestTheRunButtonDoesNotFreezeTheWindow(HostMonitorTestCase):
         self.assertEqual(len(started), 1)
         self.assertTrue(window._busy)
         self.assertFalse(window.btn_serve.isEnabled())
+
+
+class TestTheLinkSurvivesTheWindowClosing(HostMonitorTestCase):
+    """What the persisted token buys, from the dialog's side."""
+
+    def setUp(self):
+        super().setUp()
+        for name, value in (
+            ("tailscale_available", lambda: True),
+            ("tailscale_dns_name", lambda: "mybox.tail1234.ts.net"),
+        ):
+            patcher = unittest.mock.patch(f"job_manager.web_monitor_dialog.{name}", value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_reopening_the_window_keeps_the_same_link(self):
+        first = self.monitor()
+        first._start_web(announce=False)
+        token = first._web.token
+        first._teardown()
+
+        second = self.monitor()
+        second._start_web(announce=False)
+        self.addCleanup(second._stop_web)
+        self.assertEqual(second._web.token, token)
+
+    def test_renewing_changes_it_on_the_running_server(self):
+        monitor = self.monitor()
+        monitor._start_web(announce=False)
+        self.addCleanup(monitor._stop_web)
+        before = monitor._web.token
+        after = monitor._renew_web_token()
+        self.assertNotEqual(after, before)
+        self.assertEqual(monitor._web.token, after)
+
+    def test_the_dialog_asks_before_cutting_old_links_off(self):
+        from job_manager.web_monitor_dialog import WebMonitorDialog
+        from PyQt6.QtWidgets import QMessageBox
+
+        monitor = self.monitor()
+        monitor._start_web(announce=False)
+        self.addCleanup(monitor._stop_web)
+        window = WebMonitorDialog(monitor, parent=None)
+        self.addCleanup(window.deleteLater)
+        before = monitor._web.token
+
+        with unittest.mock.patch.object(
+            QMessageBox, "question", return_value=QMessageBox.StandardButton.No
+        ):
+            window.btn_renew.click()
+        self.assertEqual(monitor._web.token, before, "declining still replaced the token")
+
+        with unittest.mock.patch.object(
+            QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes
+        ):
+            window.btn_renew.click()
+        self.assertNotEqual(monitor._web.token, before)

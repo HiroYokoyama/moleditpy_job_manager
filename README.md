@@ -204,6 +204,16 @@ Nothing here needs Tailscale to serve on your own machine.
 > so; without the check, Serve simply waits, which looked like Run hanging.
 > Serving on `127.0.0.1` needs none of this — only the tailnet link does.
 
+The page carries its own controls: a **light/dark button** (it starts from the
+device's own preference, then remembers what you pressed) and a **refresh
+interval**. The footer names the version answering the request.
+
+The link's token is kept in `~/.moleditpy/job_manager/web_monitor_token`, so a
+link saved on a phone keeps working across restarts. It is **not** the API
+token — that one grants full control, and this page is read-only. **New link...**
+in the dialog replaces it, which cuts off every link and cookie already handed
+out.
+
 **What it costs.** The page polls for a fresh snapshot on a timer you set from
 the page itself — **2 s to 5 min, or Paused** — and the choice is remembered in
 that browser. Measured over loopback, per poll:
