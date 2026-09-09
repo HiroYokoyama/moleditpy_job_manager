@@ -204,6 +204,24 @@ Nothing here needs Tailscale to serve on your own machine.
 > so; without the check, Serve simply waits, which looked like Run hanging.
 > Serving on `127.0.0.1` needs none of this — only the tailnet link does.
 
+**What it costs.** The page polls for a fresh snapshot on a timer you set from
+the page itself — **2 s to 5 min, or Paused** — and the choice is remembered in
+that browser. Measured over loopback, per poll:
+
+| Watching | Data per poll | At 4 s | Per hour |
+|---|---|---|---|
+| 1 host, no jobs | ~940 B | 236 B/s | 0.8 MiB |
+| 1 host, 3 jobs | ~1.1 kB | 271 B/s | 0.9 MiB |
+| 3 hosts, 5 jobs each | ~2.1 kB | 514 B/s | 1.8 MiB |
+| 8 hosts, 10 jobs each | ~6.1 kB | 1.5 kB/s | 5.3 MiB |
+
+The page itself is 4.5 KiB, once per load. HTTP headers are most of each
+exchange — the JSON is only 262 B for one idle host — so raising the interval
+saves nearly in proportion: 10 s costs 2.5× less than 4 s, and Paused costs
+nothing. Over Tailscale, add TLS and WireGuard overhead: budget roughly 1.5–2×
+these figures, so a small setup left open on 4G is around 35–50 MiB a day at
+the 4 s default, or under 15 MiB at 10 s.
+
 It is **off the first time the window opens** and remembered afterwards, so a
 listening socket is never something you get by surprise, and never something
 you have to ask for twice.

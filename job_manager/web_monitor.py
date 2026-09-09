@@ -33,6 +33,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional
 from urllib.parse import parse_qs, urlsplit
 
+from . import PLUGIN_VERSION
 from .api_core import new_token
 
 #: Deliberately not the API's 8765: running both at once is ordinary, and
@@ -298,7 +299,12 @@ class WebMonitorServer:
 
     def snapshot(self) -> Dict[str, Any]:
         with self._lock:
-            return self._snapshot
+            snapshot = dict(self._snapshot)
+        # Stamped here rather than by the publisher: it is constant for the
+        # life of the process, and filling it in at the point of service means
+        # the number shown is always the code that answered.
+        snapshot["version"] = PLUGIN_VERSION
+        return snapshot
 
     # --- lifetime -----------------------------------------------------------
 
@@ -359,8 +365,20 @@ PAGE = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Job Manager - Host Monitor</title>
 <style>
-  :root { color-scheme: dark; --bg:#14171c; --card:#1d2128; --line:#2c313a;
-          --text:#e6e9ef; --dim:#9aa3b2; --ok:#4ac47a; --warn:#e0b341; --bad:#e05b4b; }
+  /* Light is the default and dark is the override, so a browser that does not
+     report a preference at all gets a readable page rather than a dark one on
+     a white phone. The bar colours are picked per scheme, not shared: the dark
+     set is muted so it does not glare, and those same muted tones on white are
+     too pale to read a warning from across a desk. */
+  :root { color-scheme: light dark;
+          --bg:#f6f8fa; --card:#ffffff; --line:#d0d7de;
+          --text:#1f2328; --dim:#59636e; --track:#eaeef2;
+          --ok:#1a7f37; --warn:#9a6700; --bad:#cf222e; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14171c; --card:#1d2128; --line:#2c313a;
+            --text:#e6e9ef; --dim:#9aa3b2; --track:#0f1216;
+            --ok:#4ac47a; --warn:#e0b341; --bad:#e05b4b; }
+  }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--text);
          font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
@@ -375,7 +393,7 @@ PAGE = """<!doctype html>
   .sub { color:var(--dim); font-size:12px; margin-bottom:10px; word-break:break-word; }
   .meter { margin:8px 0; }
   .meter .label { display:flex; justify-content:space-between; font-size:12px; color:var(--dim); }
-  .bar { height:7px; background:#0f1216; border-radius:4px; overflow:hidden; margin-top:3px; }
+  .bar { height:7px; background:var(--track); border-radius:4px; overflow:hidden; margin-top:3px; }
   .fill { height:100%; background:var(--ok); transition:width .3s; }
   .fill.warn { background:var(--warn); } .fill.bad { background:var(--bad); }
   .err { color:var(--bad); font-size:12px; }
@@ -384,10 +402,26 @@ PAGE = """<!doctype html>
   td.state { color:var(--dim); text-align:right; white-space:nowrap; padding-left:8px; }
   .none { color:var(--dim); font-size:12px; }
   footer { padding:0 16px 20px; color:var(--dim); font-size:12px; }
+  .spacer { flex:1 1 auto; }
+  header label { color:var(--dim); font-size:12px; }
+  select { background:var(--card); color:var(--text); border:1px solid var(--line);
+           border-radius:6px; padding:3px 6px; font-size:12px; }
 </style>
 </head>
 <body>
-<header><h1>Host Monitor</h1><span id="age">connecting...</span></header>
+<header><h1>Host Monitor</h1><span id="age">connecting...</span>
+<span class="spacer"></span>
+<label for="every">Refresh</label>
+<select id="every">
+  <option value="2">2 s</option>
+  <option value="4">4 s</option>
+  <option value="10">10 s</option>
+  <option value="30">30 s</option>
+  <option value="60">1 min</option>
+  <option value="300">5 min</option>
+  <option value="0">Paused</option>
+</select>
+</header>
 <main id="cards"></main>
 <footer id="foot"></footer>
 <script>
@@ -426,15 +460,40 @@ async function tick() {
                    : `<div class="none">No hosts are being monitored.</div>`;
     document.getElementById("age").textContent = "updated " + (d.generated || "");
     document.getElementById("foot").textContent =
-      "Read-only view. " + hosts.length + " host(s).";
+      hosts.length + " host(s) · Job Manager " + (d.version || "");
   } catch (e) {
     // Kept on screen rather than blanked: the last good reading is still the
     // most useful thing here while a phone reconnects.
     document.getElementById("age").textContent = "reconnecting...";
   }
 }
+// The interval is the page's alone: it is what a phone on a metered
+// connection pays, and the person holding it is the only one who knows
+// whether this tab is being watched or left open all afternoon. Kept in
+// localStorage so a reload does not silently put it back to four seconds.
+const every = document.getElementById("every");
+let timer = null;
+
+function schedule() {
+  if (timer !== null) { clearInterval(timer); timer = null; }
+  const seconds = Number(every.value);
+  try { localStorage.setItem("jm_every", String(seconds)); } catch (e) {}
+  if (seconds > 0) { timer = setInterval(tick, seconds * 1000); }
+  else { document.getElementById("age").textContent = "paused"; }
+}
+
+try {
+  const saved = localStorage.getItem("jm_every");
+  // Only if the saved value is still one this page offers: a stored 4 that no
+  // longer appears in the list would leave the box blank and the timer unset.
+  if (saved !== null && [...every.options].some(o => o.value === saved)) {
+    every.value = saved;
+  }
+} catch (e) {}
+
+every.addEventListener("change", () => { schedule(); if (Number(every.value) > 0) tick(); });
 tick();
-setInterval(tick, 4000);
+schedule();
 </script>
 </body>
 </html>

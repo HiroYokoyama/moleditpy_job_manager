@@ -137,7 +137,11 @@ class TestThereIsNoWayToChangeAnything(ServerTestCase):
 
     def send(self, method):
         url = f"http://127.0.0.1:{self.port}/?token={self.server.token}"
-        request = urllib.request.Request(url, data=b"{}", method=method)
+        # No body. BaseHTTPRequestHandler answers 501 without reading one and
+        # then closes, so a request that is still writing gets the connection
+        # shut under it -- WinError 10053, intermittently, on the very test
+        # that is supposed to prove the method was refused.
+        request = urllib.request.Request(url, method=method)
         try:
             with urllib.request.urlopen(request, timeout=5) as reply:
                 return reply.status
@@ -487,3 +491,122 @@ class TestTailscaleIsAskedBeforeItIsTold(unittest.TestCase):
             with unittest.mock.patch.object(web_monitor.subprocess, "run", run):
                 web_monitor.stop_serving_on_tailnet()
         self.assertEqual(seen.get("stdin"), web_monitor.subprocess.DEVNULL)
+
+
+class TestTheBarsWarnByColour(ServerTestCase):
+    """A stressed machine is meant to be obvious without reading the number."""
+
+    def page(self):
+        return self.get("/", token=self.server.token)[1].decode()
+
+    def test_it_goes_green_then_yellow_then_red(self):
+        page = self.page()
+        self.assertIn('pct >= 90 ? "bad"', page)
+        self.assertIn('pct >= 70 ? "warn"', page)
+        for name in ("--ok:", "--warn:", "--bad:"):
+            self.assertIn(name, page)
+
+    def test_the_warning_colours_are_defined_for_both_schemes(self):
+        # A colour defined only in the dark block is missing on a white phone,
+        # which is where a warning is least likely to be noticed by accident.
+        page = self.page()
+        dark = page.split("prefers-color-scheme: dark", 1)[1]
+        light = page.split("prefers-color-scheme: dark", 1)[0]
+        for name in ("--ok:", "--warn:", "--bad:", "--bg:", "--text:", "--track:"):
+            self.assertIn(name, light, f"{name} missing from the light scheme")
+            self.assertIn(name, dark, f"{name} missing from the dark scheme")
+
+
+class TestItFollowsTheBrowsersScheme(ServerTestCase):
+    def page(self):
+        return self.get("/", token=self.server.token)[1].decode()
+
+    def test_light_is_the_default_and_dark_is_the_override(self):
+        # A browser that reports no preference at all should get the readable
+        # page, not a dark one on a white screen.
+        page = self.page()
+        self.assertLess(
+            page.index("--bg:#f6f8fa"),
+            page.index("prefers-color-scheme: dark"),
+            "the light values must come first, as the default",
+        )
+
+    def test_both_schemes_are_announced_to_the_browser(self):
+        # Without color-scheme, form controls and scrollbars stay light even
+        # when everything drawn around them is dark.
+        self.assertIn("color-scheme: light dark", self.page())
+
+    def test_nothing_is_left_hard_coded_past_the_variables(self):
+        # The track behind each bar was a literal dark hex, invisible as a
+        # light-mode groove.
+        page = self.page()
+        body = page.split("</style>", 1)[0].split("prefers-color-scheme", 1)[0]
+        self.assertNotIn("#0f1216", body)
+
+
+class TestTheFooterNamesTheVersion(ServerTestCase):
+    def test_the_snapshot_carries_it(self):
+        from job_manager import PLUGIN_VERSION
+
+        _, body, _ = self.get("/api/status", token=self.server.token)
+        self.assertEqual(json.loads(body)["version"], PLUGIN_VERSION)
+
+    def test_the_page_shows_what_the_server_reports(self):
+        # Read from the response rather than baked into the HTML: a browser
+        # holding a cached page would otherwise name the version it was built
+        # with, not the one answering.
+        page = self.get("/", token=self.server.token)[1].decode()
+        self.assertIn("d.version", page)
+
+    def test_publishing_a_snapshot_cannot_overwrite_it(self):
+        # The publisher is the GUI thread, which has no business deciding what
+        # version the server answering the request is.
+        from job_manager import PLUGIN_VERSION
+
+        self.server.publish({"hosts": [], "generated": "x", "version": "9.9.9"})
+        self.assertEqual(self.server.snapshot()["version"], PLUGIN_VERSION)
+
+
+class TestTheRefreshIntervalIsThePagesToChoose(ServerTestCase):
+    """A phone on a metered connection pays for every poll, and only the
+    person holding it knows whether the tab is watched or left open."""
+
+    def page(self):
+        return self.get("/", token=self.server.token)[1].decode()
+
+    def test_the_choice_is_offered_on_the_page(self):
+        page = self.page()
+        self.assertIn('id="every"', page)
+        for seconds in ("2", "4", "10", "30", "60", "300"):
+            self.assertIn(f'value="{seconds}"', page)
+
+    def test_pausing_is_one_of_the_choices(self):
+        # The cheapest setting of all, and the honest one for a tab someone
+        # leaves open on a train.
+        page = self.page()
+        self.assertIn('value="0"', page)
+        self.assertIn("Paused", page)
+
+    def test_zero_stops_the_timer_rather_than_polling_immediately(self):
+        # setInterval(fn, 0) is not "off" -- it is as fast as the browser will
+        # run it, which on a metered link is the opposite of what was asked.
+        page = self.page()
+        self.assertIn("if (seconds > 0)", page)
+        self.assertIn("clearInterval", page)
+
+    def test_the_choice_survives_a_reload(self):
+        page = self.page()
+        self.assertIn('localStorage.setItem("jm_every"', page)
+        self.assertIn('localStorage.getItem("jm_every")', page)
+
+    def test_a_stored_value_the_page_no_longer_offers_is_ignored(self):
+        # Otherwise a select with no matching option shows blank, and the
+        # timer is never scheduled at all.
+        self.assertIn("every.options].some", self.page())
+
+    def test_storage_being_unavailable_is_not_fatal(self):
+        # Private browsing on iOS throws on localStorage rather than returning
+        # null, and an uncaught error there would leave the page never polling.
+        page = self.page()
+        self.assertIn("try { localStorage.setItem", page)
+        self.assertGreaterEqual(page.count("catch (e) {}"), 2)
