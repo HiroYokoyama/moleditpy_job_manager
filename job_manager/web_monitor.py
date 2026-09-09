@@ -116,6 +116,99 @@ FAVICON_SVG = (
     "</svg>"
 )
 
+#: The same drawing as a PNG, because Safari renders no SVG favicon at all
+#: -- and Safari on a phone is the browser this page is mostly opened in.
+#: Chrome and Firefox take the SVG above and never fetch this one.
+#:
+#: Inlined rather than served from a route on purpose: every route here is
+#: behind the token, and a browser fetching an icon -- an apple-touch-icon
+#: especially -- need not send the cookie, so the icon would 401.
+#:
+#: Generated from FAVICON_SVG by `python -m tests.regenerate_icons`.
+#: test_icon.py re-renders the SVG and compares, so the two cannot drift.
+FAVICON_PNG_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAACXBIWXMAAA7EAAAOxAGVKw4bAAACcUlEQVRYhe2X"
+    "z0tUURzFP/eN4+SM+aOghYVKjTNF2KJ2tVEUDJEgJFe18i8IXAhl0LgZ+hPaChGCtKlH7gahVVhZqyRrRoLSEJtx"
+    "3qsn+b4tZqw3706rNz03nt393sf3HM699/C+4IGItIlIRkRWRKQsjUO52jMjIm3Ug4gMi0ihgaT/QkFEhuuRh40h"
+    "ACUVS94B3XWt+X9YB/oNYOoAyKlyTikRWQEueHfy+TymaWJZVkOYEokEo6Oj9Pb2+rdWlIiUgYSXfGBgANu2keYI"
+    "v84eoylfQpWcQCLi8Ti5XM4vomx4yQFM06yQt0bZfnyN73NjbD0dZ+90RyABtm1jmqa/3Gr4K/u2O4Pd7J2pkEp7"
+    "jB830oEEeHt7oQnYR6RQql3ni4EF1EOTv5BKpQCIvv3G0TtLOGNJoq83aFlYDUyWTusuKhERb8F1Xaanp5mfn8e2"
+    "7cCkULmAExMTZLNZDKPWdE1A2NCOAELNAd2BkHNAfwUh54Au4DAHDnMgbNTNgcLmLovLRSxnryEkiViEkUvt9Jxo"
+    "1vY0Bwqbu1ydeY/tuMSiivM9cda+/KRoBRMTjxk8n01rIrRXsLhcxHZcWlsiPLuf4sndJEsPzpHsOhJIgO24LC7r"
+    "L0nPgartIxfb6KuSdiQi3Bw8HkiAt7dfQE06KBQAnzZ2az78+DVYFHt7e1BuAtbw/JQmu2IAvPpgcfvhOtcvd/Jy"
+    "1eJRbiuwgL6TMX9pTYlIBpjZr7gC9+Y+s/BiG9txA5NC5QKOX+kkc+sURq0Jswc5mBSAfkMpVQImQyYHmFRK7fxZ"
+    "SbjD6VBdSfJ3PH8jIjsNJN2p9tTG898naDbTSw8QUQAAAABJRU5ErkJggg=="
+)
+
+#: For "Add to Home Screen", which is what someone watching a long run from
+#: a phone actually does with this. Without it iOS uses a page screenshot.
+TOUCH_ICON_PNG_B64 = (
+    "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"
+)
+
 FAVICON_DATA_URI = "data:image/svg+xml," + quote(FAVICON_SVG, safe="")
 
 
@@ -443,7 +536,9 @@ PAGE = """<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Job Manager - Host Monitor</title>
-<link rel="icon" href="__ICON__">
+<link rel="icon" type="image/svg+xml" href="__ICON__">
+<link rel="icon" type="image/png" sizes="32x32" href="data:image/png;base64,__ICON32__">
+<link rel="apple-touch-icon" href="data:image/png;base64,__ICON180__">
 <style>
   /* Light is the default and dark is the override, so a browser that does not
      report a preference at all gets a readable page rather than a dark one on
@@ -630,12 +725,15 @@ schedule();
 # Substituted once at import: the page is full of literal "%" and of braces,
 # so neither %-formatting nor an f-string can be used on it.
 PAGE = PAGE.replace("__ICON__", FAVICON_DATA_URI)
+PAGE = PAGE.replace("__ICON32__", FAVICON_PNG_B64).replace("__ICON180__", TOUCH_ICON_PNG_B64)
 
 
 __all__ = [
     "COOKIE_NAME",
     "DEFAULT_PORT",
     "FAVICON_DATA_URI",
+    "FAVICON_PNG_B64",
+    "TOUCH_ICON_PNG_B64",
     "FAVICON_SVG",
     "PAGE",
     "WebMonitorServer",

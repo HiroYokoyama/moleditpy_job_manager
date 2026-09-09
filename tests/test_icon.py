@@ -92,3 +92,70 @@ class TestEveryIndependentWindowGetsIt(IconTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestThePngFallbacksMatchTheSvg(IconTestCase):
+    """Safari renders no SVG favicon, so the drawing ships twice -- and two
+    copies of anything drift. Regenerate with `python -m tests.regenerate_icons`.
+    """
+
+    def decode(self, b64: str):
+        import base64
+
+        from PyQt6.QtGui import QImage
+
+        image = QImage()
+        self.assertTrue(image.loadFromData(base64.b64decode(b64), "PNG"), "not a PNG")
+        return image
+
+    def render(self, size: int):
+        from PyQt6.QtCore import QByteArray, Qt
+        from PyQt6.QtGui import QPainter, QPixmap
+        from PyQt6.QtSvg import QSvgRenderer
+
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        QSvgRenderer(QByteArray(FAVICON_SVG.encode())).render(painter)
+        painter.end()
+        return pixmap.toImage()
+
+    def signature(self, image):
+        """Mean colour of each quadrant. Compared instead of raw bytes: two
+        PNG encoders, or two Qt builds, produce different files from identical
+        pixels, and a byte comparison would fail for no reason anyone can act
+        on."""
+        w, h = image.width(), image.height()
+        out = []
+        for qx in (0, 1):
+            for qy in (0, 1):
+                total = [0, 0, 0]
+                count = 0
+                for x in range(qx * w // 2, (qx + 1) * w // 2, 2):
+                    for y in range(qy * h // 2, (qy + 1) * h // 2, 2):
+                        c = image.pixelColor(x, y)
+                        total[0] += c.red()
+                        total[1] += c.green()
+                        total[2] += c.blue()
+                        count += 1
+                out.append(tuple(v // max(1, count) for v in total))
+        return out
+
+    def test_the_small_one_is_the_svg(self):
+        from job_manager.web_monitor import FAVICON_PNG_B64
+
+        stored = self.decode(FAVICON_PNG_B64)
+        self.assertEqual((stored.width(), stored.height()), (32, 32))
+        for a, b in zip(self.signature(stored), self.signature(self.render(32))):
+            for x, y in zip(a, b):
+                self.assertLess(abs(x - y), 12, "the PNG no longer matches the SVG")
+
+    def test_the_touch_icon_is_the_svg_too(self):
+        from job_manager.web_monitor import TOUCH_ICON_PNG_B64
+
+        stored = self.decode(TOUCH_ICON_PNG_B64)
+        self.assertEqual((stored.width(), stored.height()), (180, 180))
+        for a, b in zip(self.signature(stored), self.signature(self.render(180))):
+            for x, y in zip(a, b):
+                self.assertLess(abs(x - y), 12, "the touch icon no longer matches the SVG")

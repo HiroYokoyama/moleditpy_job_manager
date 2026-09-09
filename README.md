@@ -225,7 +225,7 @@ that browser. Measured over loopback, per poll:
 | 3 hosts, 5 jobs each | ~2.1 kB | 514 B/s | 1.8 MiB |
 | 8 hosts, 10 jobs each | ~6.1 kB | 1.5 kB/s | 5.3 MiB |
 
-The page itself is 4.5 KiB, once per load. HTTP headers are most of each
+The page itself is about 16 KiB, once per load — most of that is the icon, inlined in three formats so it works in Safari and on an iOS home screen without a second request that the token would refuse. HTTP headers are most of each
 exchange — the JSON is only 262 B for one idle host — so raising the interval
 saves nearly in proportion: 10 s costs 2.5× less than 4 s, and Paused costs
 nothing. Over Tailscale, add TLS and WireGuard overhead: budget roughly 1.5–2×

@@ -791,3 +791,39 @@ class TestThePageHasAnIcon(ServerTestCase):
         # an arc in it on dark browser chrome.
         self.assertIn('<rect width="32" height="32"', web_monitor.FAVICON_SVG)
         self.assertIn('fill="#ffffff"', web_monitor.FAVICON_SVG)
+
+
+class TestTheIconReachesEveryBrowser(ServerTestCase):
+    """SVG favicons are a Chrome/Firefox feature. Safari renders none, and
+    Safari on a phone is what this page is mostly opened in."""
+
+    def page(self):
+        return self.get("/", token=self.server.token)[1].decode()
+
+    def test_svg_and_png_are_both_offered(self):
+        page = self.page()
+        self.assertIn('type="image/svg+xml"', page)
+        self.assertIn('type="image/png"', page)
+
+    def test_there_is_a_home_screen_icon(self):
+        # Watching a long run from a phone means adding it to the home screen;
+        # without this iOS uses a screenshot of the page as the tile.
+        self.assertIn('rel="apple-touch-icon"', self.page())
+
+    def test_none_of_them_needs_a_second_request(self):
+        # Every route here is behind the token, and a browser fetching an icon
+        # need not send the cookie -- a served icon would 401 and show nothing.
+        page = self.page()
+        for link in page.split("<link")[1:]:
+            head = link.split(">", 1)[0]
+            self.assertIn("data:", head, head)
+
+    def test_the_policy_permits_them(self):
+        _, _, headers = self.get("/", token=self.server.token)
+        self.assertIn("img-src data:", headers["Content-Security-Policy"])
+
+    def test_the_pngs_are_real_pngs(self):
+        import base64
+
+        for b64 in (web_monitor.FAVICON_PNG_B64, web_monitor.TOUCH_ICON_PNG_B64):
+            self.assertTrue(base64.b64decode(b64).startswith(b"\x89PNG\r\n\x1a\n"))
