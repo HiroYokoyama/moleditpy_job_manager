@@ -310,6 +310,10 @@ def initialize(context) -> None:
     # is where the token is read from, and a user following the API
     # documentation should not have to open a job window to find it.
     context.add_menu_action("Extensions/Job Manager/Local API...", lambda: show_api_dialog(context))
+    # Last, and the only entry that reaches nothing on a host: which version is
+    # running is what a bug report needs, and once the plugin is installed the
+    # Installer's listing is no longer in front of anyone.
+    context.add_menu_action("Extensions/Job Manager/About...", lambda: show_about(context))
 
     from .store import JOB_EXTENSION
 
@@ -464,6 +468,19 @@ def show_api_dialog(context=None) -> None:
     except Exception as exc:
         logging.exception("Job Manager: could not open the API window")
         context.show_status_message(f"Job Manager: {exc}", 5000)
+
+
+def show_about(context=None) -> None:
+    """Open the About window: name, version, and where to report a problem."""
+    context = context or _context
+    try:
+        from .about_dialog import AboutDialog
+
+        AboutDialog(parent=None).exec()
+    except Exception as exc:
+        logging.exception("Job Manager: could not open the About window")
+        if context is not None:
+            context.show_status_message(f"Job Manager: {exc}", 5000)
 
 
 def submit_job(request: dict) -> dict:

@@ -34,6 +34,7 @@ class TestInitialize(PluginEntryTestCase):
                 "Extensions/Job Manager/Host Monitor",
                 "Extensions/Job Manager/Submit Job...",
                 "Extensions/Job Manager/Local API...",
+                "Extensions/Job Manager/About...",
             ],
         )
 
