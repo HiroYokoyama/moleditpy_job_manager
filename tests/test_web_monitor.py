@@ -742,3 +742,52 @@ class TestTheHeaderControlsStayPut(ServerTestCase):
         page = self.page()
         self.assertNotIn('class="spacer"', page)
         self.assertNotIn(".spacer", page)
+
+
+class TestThePageHasAnIcon(ServerTestCase):
+    """A browser tab with no icon is hard to find among twenty others."""
+
+    def page(self):
+        return self.get("/", token=self.server.token)[1].decode()
+
+    def test_the_link_is_there_and_filled_in(self):
+        page = self.page()
+        self.assertIn('<link rel="icon"', page)
+        self.assertNotIn("__ICON__", page)
+
+    def test_it_is_inline_rather_than_a_second_request(self):
+        # A route to fetch it would be one more thing to authorise, and one
+        # more thing to fail on a flaky connection.
+        self.assertIn('href="data:image/svg+xml,', self.page())
+
+    def test_the_policy_allows_it(self):
+        # default-src 'none' covers img-src too, so without an explicit
+        # allowance the browser blocks the icon and the tab stays blank --
+        # exactly the way it blocked the page's own fetch once already.
+        _, _, headers = self.get("/", token=self.server.token)
+        self.assertIn("img-src data:", headers["Content-Security-Policy"])
+
+    def test_it_carries_the_apps_own_accent(self):
+        # An icon that looked like nothing else in MoleditPy would be worse
+        # than none: the bottom unit is the application's blue.
+        svg = web_monitor.FAVICON_SVG
+        self.assertIn("#1e5fd0", svg)
+        self.assertIn("<circle", svg)
+
+    def test_the_indicator_dots_are_oversized_on_purpose(self):
+        # It is a 16 px drawing before it is anything else. A realistic LED is
+        # one pale pixel at tab size, and the icon collapses into three grey
+        # bars; r=2 against a 6.5-high unit is what keeps them visible.
+        svg = web_monitor.FAVICON_SVG
+        self.assertEqual(svg.count('r="2"'), 3)
+        self.assertIn('fill="#00e676"', svg)
+
+    def test_it_reads_as_a_stack_of_machines(self):
+        # Three units, not one box: the plugin is about several hosts.
+        self.assertEqual(web_monitor.FAVICON_SVG.count('rx="2.2"'), 3)
+
+    def test_it_is_readable_on_a_dark_tab(self):
+        # The needle is near-black, so a transparent icon would be a hole with
+        # an arc in it on dark browser chrome.
+        self.assertIn('<rect width="32" height="32"', web_monitor.FAVICON_SVG)
+        self.assertIn('fill="#ffffff"', web_monitor.FAVICON_SVG)

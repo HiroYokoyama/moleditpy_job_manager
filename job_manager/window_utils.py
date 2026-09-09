@@ -24,6 +24,13 @@ def make_independent(dialog) -> None:
         | Qt.WindowType.WindowCloseButtonHint
     )
     dialog.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
+    # Here rather than in each window: a window with its own task bar entry
+    # needs its own icon, or it shows the generic one while every other
+    # MoleditPy window shows the application's. Imported inside the function
+    # so the icon's dependencies are not pulled in by every dialog module.
+    from .icon import apply_icon
+
+    apply_icon(dialog)
 
 
 __all__ = ["make_independent"]

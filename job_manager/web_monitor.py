@@ -32,7 +32,7 @@ import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 from . import PLUGIN_VERSION
 from .api_core import new_token, write_private_file
@@ -86,6 +86,37 @@ def ensure_web_token(directory: str, renew: bool = False) -> str:
     token = new_token(16)
     write_private_file(web_token_path(directory), token + "\n")
     return token
+
+
+#: The page's tab icon: a server rack with its lights on.
+#:
+#: A molecule with a bar chart was tried first and read as generic analytics --
+#: the chart carried no meaning this plugin owns, and the application's own
+#: icon is already the molecule. A rack says "the machines your work is running
+#: on", which is what this page is a view of. The bottom unit takes MoleditPy's
+#: blue so it belongs to the same family.
+#:
+#: Drawn for 16 px first rather than scaled down to it: the indicator dots are
+#: deliberately oversized for their slabs, because at tab size a realistic LED
+#: is a single pale pixel and the icon collapses into three grey bars.
+#:
+#: SVG rather than a .ico, and inlined as a data: URI rather than served from a
+#: route, so the icon needs no second request and no second thing to get wrong.
+#: A light rounded plate behind it on purpose: the units are near-black, and on
+#: a dark browser tab a transparent version would show only the blue one.
+FAVICON_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+    '<rect width="32" height="32" rx="7" fill="#ffffff"/>'
+    '<rect x="4.5" y="5.5" width="23" height="6.5" rx="2.2" fill="#151515"/>'
+    '<rect x="4.5" y="13.5" width="23" height="6.5" rx="2.2" fill="#151515"/>'
+    '<rect x="4.5" y="21.5" width="23" height="6.5" rx="2.2" fill="#1e5fd0"/>'
+    '<circle cx="8.6" cy="8.75" r="2" fill="#00e676"/>'
+    '<circle cx="8.6" cy="16.75" r="2" fill="#00e676"/>'
+    '<circle cx="8.6" cy="24.75" r="2" fill="#ffffff"/>'
+    "</svg>"
+)
+
+FAVICON_DATA_URI = "data:image/svg+xml," + quote(FAVICON_SVG, safe="")
 
 
 def tailscale_command(port: int) -> str:
@@ -236,7 +267,7 @@ class _Handler(BaseHTTPRequestHandler):
         # answering every request perfectly.
         self.send_header(
             "Content-Security-Policy",
-            "default-src 'none'; connect-src 'self'; "
+            "default-src 'none'; connect-src 'self'; img-src data:; "
             "style-src 'unsafe-inline'; script-src 'unsafe-inline'",
         )
         if cookie:
@@ -412,6 +443,7 @@ PAGE = """<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Job Manager - Host Monitor</title>
+<link rel="icon" href="__ICON__">
 <style>
   /* Light is the default and dark is the override, so a browser that does not
      report a preference at all gets a readable page rather than a dark one on
@@ -595,10 +627,16 @@ schedule();
 </html>
 """
 
+# Substituted once at import: the page is full of literal "%" and of braces,
+# so neither %-formatting nor an f-string can be used on it.
+PAGE = PAGE.replace("__ICON__", FAVICON_DATA_URI)
+
 
 __all__ = [
     "COOKIE_NAME",
     "DEFAULT_PORT",
+    "FAVICON_DATA_URI",
+    "FAVICON_SVG",
     "PAGE",
     "WebMonitorServer",
     "ensure_web_token",
