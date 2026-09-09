@@ -27,6 +27,7 @@ import json
 import logging
 import secrets
 import shutil
+import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional
@@ -52,6 +53,67 @@ def tailscale_command(port: int) -> str:
 def tailscale_available() -> bool:
     """Whether the CLI is on PATH, for wording the hint rather than gating it."""
     return shutil.which("tailscale") is not None
+
+
+def _run_tailscale(*args: str, timeout: int = 20) -> "tuple[bool, str]":
+    """Run the CLI and say plainly whether it worked.
+
+    A list, never a shell string: the port is the only variable here and it is
+    an int, but building a command line for a shell to re-split is how that
+    stops being true later.
+    """
+    binary = shutil.which("tailscale")
+    if binary is None:
+        return False, "Tailscale was not found on PATH."
+    try:
+        done = subprocess.run(  # noqa: S603 - fixed binary, no shell, int argument
+            [binary, *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "Tailscale did not answer in time."
+    except OSError as exc:
+        return False, f"Could not run Tailscale: {exc}"
+    if done.returncode == 0:
+        return True, (done.stdout or "").strip()
+    # Its own message is far better than anything invented here: it is what
+    # says "not logged in", "needs HTTPS enabled for the tailnet", or that
+    # serve wants elevation on this platform.
+    return False, (done.stderr or done.stdout or "").strip() or "Tailscale refused."
+
+
+def tailscale_dns_name() -> str:
+    """This machine's name on the tailnet, or "" if it cannot be read.
+
+    Worth asking for rather than printing a ``<machine>.<tailnet>`` placeholder:
+    the whole point of the link is to be copied, and a placeholder has to be
+    hand-edited on a phone before it works.
+    """
+    ok, output = _run_tailscale("status", "--json", timeout=10)
+    if not ok or not output:
+        return ""
+    try:
+        name = (json.loads(output).get("Self") or {}).get("DNSName") or ""
+    except (ValueError, AttributeError):
+        return ""
+    return name.rstrip(".")
+
+
+def serve_on_tailnet(port: int) -> "tuple[bool, str]":
+    """Publish ``port`` to the tailnet. Equivalent to :func:`tailscale_command`."""
+    return _run_tailscale("serve", "--bg", str(int(port)))
+
+
+def stop_serving_on_tailnet() -> "tuple[bool, str]":
+    """Withdraw whatever this machine is serving.
+
+    Offered beside the publish button on purpose: an exposure that is one
+    click to switch on and a manual search to switch off is a trap.
+    """
+    return _run_tailscale("serve", "reset")
 
 
 class _Server(ThreadingHTTPServer):
@@ -333,6 +395,9 @@ __all__ = [
     "DEFAULT_PORT",
     "PAGE",
     "WebMonitorServer",
+    "serve_on_tailnet",
+    "stop_serving_on_tailnet",
     "tailscale_available",
     "tailscale_command",
+    "tailscale_dns_name",
 ]

@@ -201,6 +201,7 @@ path.
 |---|---|
 | the remote host | you gave it a shell command to run |
 | every program running as your user, if the local API is on | it can read the API token and submit as you |
+| everyone on your tailnet, if you publish the web monitor | Tailscale's ACLs, not this plugin, decide who reaches the page |
 | your `~/.ssh` config, keys and agent | both backends use them |
 | the plugin's generated script | preview it before submitting |
 | result files you download | they are handed to the host app's file openers, which is how the ORCA/Gaussian analyzers claim `.out` |
@@ -208,6 +209,36 @@ path.
 Downloaded results are opened through the application's own openers. A result
 file is data from a machine you chose to trust; the plugin does not execute
 anything it downloads.
+
+## The web monitor
+
+The Host Monitor can serve itself as a read-only page (**Web...** in its top
+bar). Three properties define it, and all three have tests holding them:
+
+* **It binds `127.0.0.1` only.** Not `0.0.0.0`, and not the Tailscale address
+  either. `tests/test_web_monitor.py` proves it by *connecting* over this
+  machine's routable address and requiring the connection to be refused —
+  binding that address instead proves nothing, because under a `0.0.0.0`
+  listener the bind still succeeds on Windows.
+* **It is read-only.** There is no `do_POST`, `do_PUT`, `do_DELETE` or
+  `do_PATCH` on the handler, and a test asserts none of them exists, so a later
+  edit cannot quietly add a route that changes something.
+* **It is off until asked.** The first time the window opens, nothing listens.
+  The choice is remembered after that; closing the window releases the socket
+  but keeps the preference.
+
+Requests carry a random per-session token, in the link or in a cookie the first
+load leaves behind (`HttpOnly`, `SameSite=Strict`). It is compared with
+`secrets.compare_digest`. The token is **not** the API token — sharing that one
+with a page you paste into a phone would hand a full-control credential to a
+browser history.
+
+Reaching the page from elsewhere is `tailscale serve --bg <port>`. That is a
+deliberate hand-off: exposure, TLS and identity are Tailscale's, governed by
+your tailnet ACLs, and this process never binds a routable address or decides
+whose certificate to trust. Anyone your ACLs let reach the machine can read
+your host names, job names and job states — which is the whole content of the
+page, and the reason it can do nothing else.
 
 ## Deliberate non-goals
 

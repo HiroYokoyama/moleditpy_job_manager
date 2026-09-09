@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
@@ -18,13 +19,20 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
 from . import PLUGIN_VERSION
-from .web_monitor import tailscale_available, tailscale_command
+from .web_monitor import (
+    serve_on_tailnet,
+    stop_serving_on_tailnet,
+    tailscale_available,
+    tailscale_command,
+    tailscale_dns_name,
+)
 
 
 class _CopyRow(QWidget):
@@ -43,6 +51,11 @@ class _CopyRow(QWidget):
         self.button = QPushButton("Copy")
         self.button.clicked.connect(self._copy)
         layout.addWidget(self.button)
+        self._layout = layout
+
+    def add_button(self, button: QPushButton) -> None:
+        """Put another action on this row, to the right of Copy."""
+        self._layout.addWidget(button)
 
     def set_text(self, text: str) -> None:
         self.field.setText(text)
@@ -63,6 +76,10 @@ class WebMonitorDialog(QDialog):
     def __init__(self, monitor, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.monitor = monitor
+        #: Whether *this dialog* ran the publish. Tailscale can already be
+        #: serving something else, which is not ours to withdraw.
+        self._served = False
+        self._dns = None
         self.setWindowTitle(f"Job Manager {PLUGIN_VERSION} - Web Monitor")
         self.setMinimumWidth(560)
 
@@ -83,7 +100,27 @@ class WebMonitorDialog(QDialog):
         hint.setWordWrap(True)
         layout.addWidget(hint)
         self.row_cmd = _CopyRow()
+        # Run it here rather than only offering it to be pasted: the command is
+        # fixed and the only variable in it is the port this dialog just bound,
+        # so retyping it in a terminal is a step that can only go wrong.
+        self.btn_serve = QPushButton("Run")
+        self.btn_serve.setToolTip("Run this command now, and publish the page to your tailnet.")
+        self.btn_serve.clicked.connect(self._serve_on_tailnet)
+        self.row_cmd.add_button(self.btn_serve)
+        self.btn_unserve = QPushButton("Unpublish")
+        self.btn_unserve.setToolTip(
+            "tailscale serve reset -- withdraw whatever this machine is serving."
+        )
+        self.btn_unserve.clicked.connect(self._stop_tailnet)
+        self.row_cmd.add_button(self.btn_unserve)
         layout.addWidget(self.row_cmd)
+
+        layout.addWidget(QLabel("From your phone or another device on the tailnet:"))
+        # A field with a Copy button, not a label: this is the one string that
+        # has to reach another device, and a label cannot be copied from a
+        # dialog whose text is not selectable.
+        self.row_tailnet = _CopyRow()
+        layout.addWidget(self.row_tailnet)
 
         self.lbl_tailnet = QLabel()
         self.lbl_tailnet.setWordWrap(True)
@@ -125,35 +162,85 @@ class WebMonitorDialog(QDialog):
             self.monitor._start_web()
         self._refresh()
 
+    def _serve_on_tailnet(self) -> None:
+        """One click: run the command shown, then say what happened."""
+        if not self._running():
+            return
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            ok, message = serve_on_tailnet(self._server().port)
+        finally:
+            # In a finally: a Tailscale that hangs to its timeout would
+            # otherwise leave the whole application stuck showing a wait
+            # cursor with no way back.
+            QApplication.restoreOverrideCursor()
+        if ok:
+            self._served = True
+            self._refresh()
+            QMessageBox.information(
+                self,
+                "Published",
+                "The monitor is now on your tailnet.\n\n"
+                "Open the link below on any device signed in to the same "
+                "tailnet. Use Unpublish to withdraw it.",
+            )
+        else:
+            QMessageBox.warning(self, "Tailscale", message)
+
+    def _stop_tailnet(self) -> None:
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            ok, message = stop_serving_on_tailnet()
+        finally:
+            QApplication.restoreOverrideCursor()
+        self._served = False
+        self._refresh()
+        if not ok:
+            QMessageBox.warning(self, "Tailscale", message)
+
     def _refresh(self) -> None:
         server = self._server()
-        if self._running():
+        running = self._running()
+        available = tailscale_available()
+        if running:
             port = server.port
             self.lbl_state.setText(f"Serving on 127.0.0.1:{port}, read-only.")
             self.row_url.set_text(server.url())
             self.row_cmd.set_text(tailscale_command(port))
+            # The real name where Tailscale will tell us, the placeholder only
+            # where it will not: a link that has to be hand-edited on a phone
+            # before it works is not much of a link.
+            self.row_tailnet.set_text(server.tailscale_url(self._dns_name()))
             self.lbl_tailnet.setText(
-                "Then open: " + server.tailscale_url() + "\n"
-                "(the token is in the link, and is stored as a cookie after the "
-                "first load)"
+                "The token is in the link, and is kept as a cookie after the "
+                "first load, so a reload does not need it again."
             )
             self.btn_toggle.setText("Stop serving")
         else:
             self.lbl_state.setText("Not serving. Nothing is listening.")
-            self.row_url.set_text("")
-            self.row_cmd.set_text("")
+            for row in (self.row_url, self.row_cmd, self.row_tailnet):
+                row.set_text("")
             self.lbl_tailnet.setText("")
             self.btn_toggle.setText("Start serving")
-        for row in (self.row_url, self.row_cmd):
-            row.setEnabled(self._running())
+        for row in (self.row_url, self.row_cmd, self.row_tailnet):
+            row.setEnabled(running)
             row.button.setText("Copy")
-        if not tailscale_available():
+        self.btn_serve.setEnabled(running and available)
+        self.btn_unserve.setEnabled(running and available and self._served)
+        if not available:
             self.lbl_tailnet.setText(
-                (self.lbl_tailnet.text() + "\n\n" if self._running() else "")
-                + "Tailscale was not found on PATH. The command above still "
-                "applies once it is installed; nothing here needs it to serve "
-                "on this machine."
+                (self.lbl_tailnet.text() + "\n\n" if running else "")
+                + "Tailscale was not found on PATH, so Run is unavailable. The "
+                "command above still applies once it is installed; nothing here "
+                "needs it to serve on this machine."
             )
+
+    def _dns_name(self) -> str:
+        """Asked once per dialog: it shells out, and the answer does not move
+        while a window is open."""
+        if self._dns is None:
+            self._dns = tailscale_dns_name() if tailscale_available() else ""
+        return self._dns
 
 
 __all__ = ["WebMonitorDialog"]

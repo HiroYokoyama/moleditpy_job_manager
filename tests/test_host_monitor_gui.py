@@ -1164,3 +1164,114 @@ class TestTheWebView(HostMonitorTestCase):
         # The error path stores a HostStats carrying the message.
         self.store.set_pref("host_monitor_web", False)
         self.assertIn("hosts", dialog._web_snapshot())
+
+
+class TestTheWebDialog(HostMonitorTestCase):
+    """The Run button, and the link that has to reach another device."""
+
+    def setUp(self):
+        super().setUp()
+        # Never the real CLI. It is installed on some machines and not others,
+        # so a test that shells out passes for a different reason on each --
+        # and "is Tailscale present" is precisely what several of these assert.
+        for name, value in (
+            ("tailscale_available", lambda: True),
+            ("tailscale_dns_name", lambda: "mybox.tail1234.ts.net"),
+        ):
+            patcher = unittest.mock.patch(f"job_manager.web_monitor_dialog.{name}", value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def dialog_for(self, dialog):
+        from job_manager.web_monitor_dialog import WebMonitorDialog
+
+        window = WebMonitorDialog(dialog, parent=None)
+        self.addCleanup(window.deleteLater)
+        return window
+
+    def test_the_link_names_the_machine_rather_than_a_placeholder(self):
+        monitor = self.monitor()
+        monitor._start_web(announce=False)
+        self.addCleanup(monitor._stop_web)
+        window = self.dialog_for(monitor)
+        text = window.row_tailnet.field.text()
+        self.assertIn("mybox.tail1234.ts.net", text)
+        self.assertNotIn("<machine>", text)
+
+    def test_the_tailnet_link_is_copyable_not_a_label(self):
+        # It is the one string that has to get to a phone; a QLabel in a
+        # dialog cannot be selected, let alone copied.
+        from PyQt6.QtWidgets import QLineEdit
+
+        monitor = self.monitor()
+        monitor._start_web(announce=False)
+        self.addCleanup(monitor._stop_web)
+        window = self.dialog_for(monitor)
+        self.assertIsInstance(window.row_tailnet.field, QLineEdit)
+        self.assertIn(monitor._web.token, window.row_tailnet.field.text())
+
+    def test_copy_puts_the_link_on_the_clipboard(self):
+        from PyQt6.QtWidgets import QApplication
+
+        monitor = self.monitor()
+        monitor._start_web(announce=False)
+        self.addCleanup(monitor._stop_web)
+        window = self.dialog_for(monitor)
+        window.row_tailnet.button.click()
+        self.assertEqual(QApplication.clipboard().text(), window.row_tailnet.field.text())
+
+    def test_run_publishes_the_port_that_is_actually_bound(self):
+        monitor = self.monitor()
+        monitor._start_web(announce=False)
+        self.addCleanup(monitor._stop_web)
+        window = self.dialog_for(monitor)
+        seen = {}
+
+        def fake(port):
+            seen["port"] = port
+            return True, ""
+
+        with (
+            unittest.mock.patch("job_manager.web_monitor_dialog.serve_on_tailnet", fake),
+            unittest.mock.patch(
+                "job_manager.web_monitor_dialog.QMessageBox.information", lambda *a, **k: None
+            ),
+        ):
+            window.btn_serve.click()
+        self.assertEqual(seen["port"], monitor._web.port)
+
+    def test_a_tailscale_failure_is_shown_and_not_claimed_as_success(self):
+        monitor = self.monitor()
+        monitor._start_web(announce=False)
+        self.addCleanup(monitor._stop_web)
+        window = self.dialog_for(monitor)
+        shown = {}
+
+        def warn(parent, title, text):
+            shown["text"] = text
+
+        with (
+            unittest.mock.patch(
+                "job_manager.web_monitor_dialog.serve_on_tailnet",
+                lambda port: (False, "not logged in"),
+            ),
+            unittest.mock.patch("job_manager.web_monitor_dialog.QMessageBox.warning", warn),
+        ):
+            window.btn_serve.click()
+        self.assertIn("not logged in", shown["text"])
+        self.assertFalse(window._served)
+
+    def test_unpublish_is_offered_only_after_this_dialog_published(self):
+        # Tailscale may already be serving something that is not ours, and a
+        # reset would withdraw that too.
+        monitor = self.monitor()
+        monitor._start_web(announce=False)
+        self.addCleanup(monitor._stop_web)
+        window = self.dialog_for(monitor)
+        self.assertFalse(window.btn_unserve.isEnabled())
+
+    def test_nothing_is_offered_while_the_server_is_stopped(self):
+        monitor = self.monitor()
+        window = self.dialog_for(monitor)
+        self.assertFalse(window.btn_serve.isEnabled())
+        self.assertEqual(window.row_tailnet.field.text(), "")

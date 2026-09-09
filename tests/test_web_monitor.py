@@ -10,6 +10,7 @@ import json
 import socket
 import threading
 import unittest
+import unittest.mock
 import urllib.error
 import urllib.request
 
@@ -247,3 +248,125 @@ class TestWhatTheDialogShows(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRunningTheTailscaleCommand(unittest.TestCase):
+    """The Run button's half: what is executed, and what a failure reports.
+
+    The CLI is never actually invoked here -- a test that published this
+    machine to a real tailnet would be a test with a side effect on the
+    developer's network.
+    """
+
+    def _fake_run(self, returncode=0, stdout="", stderr=""):
+        calls = []
+
+        class Done:
+            pass
+
+        def run(args, **kwargs):
+            calls.append((args, kwargs))
+            done = Done()
+            done.returncode, done.stdout, done.stderr = returncode, stdout, stderr
+            return done
+
+        return run, calls
+
+    def test_it_serves_the_port_it_was_given(self):
+        run, calls = self._fake_run()
+        with unittest.mock.patch.object(
+            web_monitor.shutil, "which", return_value="/usr/bin/tailscale"
+        ):
+            with unittest.mock.patch.object(web_monitor.subprocess, "run", run):
+                ok, _ = web_monitor.serve_on_tailnet(8770)
+        self.assertTrue(ok)
+        self.assertEqual(calls[0][0], ["/usr/bin/tailscale", "serve", "--bg", "8770"])
+
+    def test_the_command_is_a_list_so_no_shell_re_splits_it(self):
+        run, calls = self._fake_run()
+        with unittest.mock.patch.object(
+            web_monitor.shutil, "which", return_value="/usr/bin/tailscale"
+        ):
+            with unittest.mock.patch.object(web_monitor.subprocess, "run", run):
+                web_monitor.serve_on_tailnet(8770)
+        self.assertIsInstance(calls[0][0], list)
+        self.assertNotIn("shell", calls[0][1])
+
+    def test_unpublishing_resets_rather_than_guessing_a_port(self):
+        run, calls = self._fake_run()
+        with unittest.mock.patch.object(
+            web_monitor.shutil, "which", return_value="/usr/bin/tailscale"
+        ):
+            with unittest.mock.patch.object(web_monitor.subprocess, "run", run):
+                web_monitor.stop_serving_on_tailnet()
+        self.assertEqual(calls[0][0][1:], ["serve", "reset"])
+
+    def test_tailscales_own_error_is_what_reaches_the_user(self):
+        # "not logged in" and "HTTPS is not enabled for this tailnet" are the
+        # two real ones, and neither is improved by being paraphrased.
+        run, _ = self._fake_run(returncode=1, stderr="needs HTTPS enabled")
+        with unittest.mock.patch.object(
+            web_monitor.shutil, "which", return_value="/usr/bin/tailscale"
+        ):
+            with unittest.mock.patch.object(web_monitor.subprocess, "run", run):
+                ok, message = web_monitor.serve_on_tailnet(8770)
+        self.assertFalse(ok)
+        self.assertIn("HTTPS", message)
+
+    def test_a_missing_cli_is_reported_not_raised(self):
+        with unittest.mock.patch.object(web_monitor.shutil, "which", return_value=None):
+            ok, message = web_monitor.serve_on_tailnet(8770)
+        self.assertFalse(ok)
+        self.assertIn("not found", message)
+
+    def test_a_hang_is_reported_not_waited_out(self):
+        def run(args, **kwargs):
+            raise web_monitor.subprocess.TimeoutExpired(args, 20)
+
+        with unittest.mock.patch.object(
+            web_monitor.shutil, "which", return_value="/usr/bin/tailscale"
+        ):
+            with unittest.mock.patch.object(web_monitor.subprocess, "run", run):
+                ok, message = web_monitor.serve_on_tailnet(8770)
+        self.assertFalse(ok)
+        self.assertIn("time", message.lower())
+
+
+class TestTheTailnetName(unittest.TestCase):
+    def _status(self, payload):
+        def run(args, **kwargs):
+            class Done:
+                returncode, stdout, stderr = 0, json.dumps(payload), ""
+
+            return Done()
+
+        return run
+
+    def test_the_machines_own_name_is_read_and_the_trailing_dot_dropped(self):
+        # DNSName comes back fully qualified with a trailing dot, which is not
+        # what anyone types into a browser.
+        run = self._status({"Self": {"DNSName": "mybox.tail1234.ts.net."}})
+        with unittest.mock.patch.object(
+            web_monitor.shutil, "which", return_value="/usr/bin/tailscale"
+        ):
+            with unittest.mock.patch.object(web_monitor.subprocess, "run", run):
+                self.assertEqual(web_monitor.tailscale_dns_name(), "mybox.tail1234.ts.net")
+
+    def test_nonsense_output_is_an_empty_name_not_a_crash(self):
+        def run(args, **kwargs):
+            class Done:
+                returncode, stdout, stderr = 0, "not json at all", ""
+
+            return Done()
+
+        with unittest.mock.patch.object(
+            web_monitor.shutil, "which", return_value="/usr/bin/tailscale"
+        ):
+            with unittest.mock.patch.object(web_monitor.subprocess, "run", run):
+                self.assertEqual(web_monitor.tailscale_dns_name(), "")
+
+    def test_a_name_makes_a_link_that_needs_no_hand_editing(self):
+        server = web_monitor.WebMonitorServer()
+        url = server.tailscale_url("mybox.tail1234.ts.net")
+        self.assertNotIn("<", url)
+        self.assertIn(server.token, url)

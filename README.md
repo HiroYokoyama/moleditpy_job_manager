@@ -166,6 +166,40 @@ can be copied next to whatever program needs it.
 
 Every route, every field and the security model: [docs/API.md](docs/API.md).
 
+### Checking on it from a phone
+
+The **Host Monitor** can serve itself as a web page — the same cards, the same
+meters, the same job lists — for a browser instead of a Qt window. Press
+**Web...** in the Host Monitor's top bar.
+
+The page is **read-only**. There is no route on it that cancels, submits,
+downloads or deletes anything, so a link that gets away from you costs a look
+at what is running, not the run itself.
+
+The socket binds **`127.0.0.1` and nothing else**. Reaching it from somewhere
+else is [Tailscale](https://tailscale.com)'s job:
+
+```bash
+tailscale serve --bg 8770
+```
+
+which puts the same page on `https://<machine>.<tailnet>.ts.net/` behind
+Tailscale's own identity check. The dialog shows that command with a **Copy**
+button and a **Run** button beside it — Run executes it for you and fills in
+your machine's real tailnet name, so the link underneath is one you can copy
+straight to a phone rather than a placeholder to hand-edit. **Unpublish**
+(`tailscale serve reset`) withdraws it again, and is offered only if this
+dialog is what published it.
+
+Keeping the exposure in Tailscale rather than in the plugin is deliberate: this
+process never binds a routable address, never decides whose certificate to
+trust, and never grows an authentication story beyond the token in the link.
+Nothing here needs Tailscale to serve on your own machine.
+
+It is **off the first time the window opens** and remembered afterwards, so a
+listening socket is never something you get by surprise, and never something
+you have to ask for twice.
+
 ### What it does not do
 
 **No workflow graph.** Chaining is a straight line: each job waits for one
