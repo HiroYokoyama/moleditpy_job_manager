@@ -536,6 +536,10 @@ def cancel_in_runner(transport: Transport, host: HostProfile, job: Job) -> None:
     chained lanes cannot do, since there the successor is bound to a specific
     predecessor.
     """
+    if not job.remote_job_id:
+        # Never reached the queue: no entry to move and no pid to kill. Asked
+        # for anyway when a submission is cancelled while it is still uploading.
+        return
     directory = remote_runner.runner_dir(effective_root(host))
     transport.run(remote_runner.flavour_for(host).cancel_command(directory, job.remote_job_id))
 

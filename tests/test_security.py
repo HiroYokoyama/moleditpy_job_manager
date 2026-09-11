@@ -16,8 +16,8 @@ import os
 import tempfile
 import unittest
 
-from job_manager import runner
-from job_manager.models import Job, SubmitPreset
+from job_manager import remote_runner, remote_runner_ps, runner
+from job_manager.models import MODE_RUNNER, Job, SubmitPreset
 from job_manager.schedulers import get_scheduler
 from job_manager.store import JobStore
 
@@ -65,6 +65,64 @@ class TestTheQueueIdCannotCarryACommand(unittest.TestCase):
         sent = transport.commands[-1]
         self.assertIn("'12345; rm -rf ~'", sent)
         self.assertNotIn("scancel 12345; rm", sent)
+
+
+class TestTheHelperQueueEntryCannotCarryACommand(unittest.TestCase):
+    """The same id, on the one path that cannot quote it.
+
+    A runner entry is half of a path built *inside* the command
+    (``mv "queue/$entry"``), so quoting it is not available -- it is checked
+    against the shape :func:`remote_runner.entry_name` writes instead. Both
+    flavours, because the bash one interpolated it raw while the PowerShell
+    one quoted, and a guarantee that holds in one shell is not a guarantee.
+    """
+
+    FLAVOURS = (remote_runner, remote_runner_ps)
+    BUILDERS = ("cancel_command", "release_command", "enqueue_command")
+
+    def test_an_entry_that_is_not_ours_is_refused(self):
+        payloads = INJECTIONS + (
+            'job_0001_x$(id > /tmp/pwned).sh',
+            'job_0001_a"; id; #',
+            "job_0001_a`id`.sh",
+            "../../../etc/passwd",
+            "",
+        )
+        for flavour in self.FLAVOURS:
+            for builder in self.BUILDERS:
+                for payload in payloads:
+                    with self.subTest(flavour=flavour.__name__, cmd=builder, payload=payload):
+                        with self.assertRaises(remote_runner.UnsafeEntry):
+                            getattr(flavour, builder)("~/jobs/.moleditpy_runner", payload)
+
+    def test_a_real_entry_still_works(self):
+        entry = remote_runner.entry_name(7, "a1b2c3d4e5f6")
+        self.assertEqual(entry, "job_0007_a1b2c3d4e5f6.sh")
+        for builder in self.BUILDERS:
+            command = getattr(remote_runner, builder)("~/jobs/.moleditpy_runner", entry)
+            self.assertIn(entry, command)
+        ps_entry = remote_runner.entry_name(7, "a1b2c3d4e5f6", ".ps1")
+        for builder in self.BUILDERS:
+            command = getattr(remote_runner_ps, builder)("~/jobs", ps_entry)
+            self.assertIn(ps_entry, command)
+
+    def test_cancelling_a_crafted_job_sends_nothing(self):
+        host = make_host(scheduler="shell", concurrency_mode=MODE_RUNNER)
+        self.assertTrue(host.uses_remote_runner)
+        transport = FakeTransport(host)
+        job = Job(id="j1", remote_job_id='job_0001_x$(rm -rf ~).sh')
+
+        with self.assertRaises(remote_runner.UnsafeEntry):
+            runner.cancel_in_runner(transport, host, job)
+        self.assertEqual(transport.commands, [])
+
+    def test_a_job_that_never_queued_is_not_an_error(self):
+        host = make_host(scheduler="shell", concurrency_mode=MODE_RUNNER)
+        transport = FakeTransport(host)
+
+        runner.cancel_in_runner(transport, host, Job(id="j1", remote_job_id=""))
+        runner.release_in_runner(transport, host, Job(id="j2", remote_job_id=""))
+        self.assertEqual(transport.commands, [])
 
 
 class TestDownloadsStayInTheirDirectory(unittest.TestCase):

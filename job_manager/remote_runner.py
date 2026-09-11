@@ -186,6 +186,27 @@ def entry_name(sequence: int, job_id: str, suffix: str = ".sh") -> str:
     return f"job_{int(sequence):0{SEQUENCE_WIDTH}d}_{job_id}{suffix}"
 
 
+class UnsafeEntry(ValueError):
+    """A queue entry name that is not one this plugin ever wrote.
+
+    An entry reaches a remote shell inside ``mv "queue/$entry"``, and it is
+    read back from ``jobs.pmejbs`` -- a file that can come from a colleague, a
+    backup or an email, so every field in it is untrusted the moment the user
+    opens one. The queue-based schedulers quote the id for exactly this reason;
+    the helper queue cannot, because the entry is half of a path built inside
+    the command, so it refuses anything that is not the shape
+    :func:`entry_name` writes.
+    """
+
+
+def require_entry(entry: str) -> str:
+    """``entry`` if it is a name this plugin could have written; else raise."""
+    name = str(entry or "").strip()
+    if not _ENTRY_RE.match(name):
+        raise UnsafeEntry(f"Not a queue entry this plugin wrote: {entry!r}")
+    return name
+
+
 def parse_entry(name: str) -> tuple:
     """``(sequence, job_id)`` for a queue entry, or ``(0, "")`` if unreadable."""
     match = _ENTRY_RE.match((name or "").strip())
@@ -579,6 +600,7 @@ def parse_listing(stdout: str) -> dict:
 
 def enqueue_command(directory: str, entry: str) -> str:
     """Move an uploaded script from ``tmp/`` into ``queue/``."""
+    entry = require_entry(entry)
     return f'cd {quote(directory)} && mv "tmp/{entry}" "queue/{entry}"'
 
 
@@ -619,6 +641,7 @@ def cancel_command(directory: str, entry: str) -> str:
     A waiting job is cancelled by taking it out of the queue, which frees its
     slot at once -- the thing chained lanes cannot do.
     """
+    entry = require_entry(entry)
     return (
         f"cd {quote(directory)} 2>/dev/null || exit 0; "
         f'if mv "queue/{entry}" "done/{entry}" 2>/dev/null; then echo dequeued; exit 0; fi; '
@@ -641,6 +664,7 @@ def release_command(directory: str, entry: str) -> str:
     argument on BSD and macOS and none on GNU, and there is no spelling that
     works on both.
     """
+    entry = require_entry(entry)
     return (
         f"cd {quote(directory)} 2>/dev/null || exit 0; "
         f'f="queue/{entry}"; [ -f "$f" ] || exit 0; '

@@ -43,6 +43,7 @@ from .remote_runner import (
     SLOTS_NAME,
     STATUS_BLOCKED,
     SUBDIRS,
+    require_entry,
 )
 from .schedulers.windows import ps_quote
 
@@ -450,6 +451,7 @@ def enqueue_command(directory: str, entry: str) -> str:
     # *expression* is a syntax error before Python 3.12, and this plugin
     # supports 3.9 upwards -- so the module would not even import for most of
     # its users, which is exactly how CI found this.
+    entry = require_entry(entry)
     source = ps_quote(_join("tmp", entry))
     target = ps_quote(_join("queue", entry))
     return (
@@ -496,6 +498,7 @@ def ensure_runner_command(directory: str, script_name: str) -> str:
 
 def cancel_command(directory: str, entry: str) -> str:
     """Cancel whether the job is waiting or already running."""
+    entry = require_entry(entry)
     quoted = ps_quote(directory)
     # Outside the f-strings; see enqueue_command.
     queued = ps_quote(_join("queue", entry))
@@ -517,6 +520,7 @@ def cancel_command(directory: str, entry: str) -> str:
 
 def release_command(directory: str, entry: str) -> str:
     """The PowerShell half of :func:`remote_runner.release_command`."""
+    entry = require_entry(entry)
     quoted = ps_quote(directory)
     queued = ps_quote(_join("queue", entry))
     tag = ps_quote(REQUIRE_SUCCESS_TAG)

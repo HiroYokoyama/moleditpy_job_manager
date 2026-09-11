@@ -178,6 +178,12 @@ handled explicitly:
   interpolated into `scancel` / `qdel` / `kill`, so an id of
   `12345; rm -rf ~` in a crafted list would otherwise have been a command the
   user's own account ran on the cluster the moment they pressed Cancel.
+* **The helper queue's entry is checked instead of quoted.** On a host running
+  the built-in queue the id is a file name that the plugin builds a path from
+  (`mv "queue/$entry"`), which quoting cannot protect, so it is required to
+  match the shape the plugin itself writes — `job_0007_<job id>.sh` — and
+  anything else is refused before a command is built. Both shells, and
+  asserted for both in `tests/test_security.py`.
 * **A job list carries no host details.** No hostname, username, key path or
   anything resembling a credential is in a job record, so opening one cannot
   add or alter a host profile — you can only ever act on hosts you configured
