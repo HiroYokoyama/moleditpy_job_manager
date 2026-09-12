@@ -8,7 +8,6 @@ Displays all results in a hierarchical folder tree scoped strictly to the job.
 from __future__ import annotations
 
 import os
-import tempfile
 from typing import Callable, List, Optional, Sequence
 
 from PyQt6.QtCore import QUrl

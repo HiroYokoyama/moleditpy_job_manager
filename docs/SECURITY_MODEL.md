@@ -64,7 +64,10 @@ same idea as `.pmeprj` for a project.
 Clearing the table writes the current list here first rather than deleting it.
 Same contents, same absence of credentials. Exports you make yourself (`.pmejbs`
 or `.csv`) contain the same fields — including remote directory paths and
-usernames, which is worth remembering before mailing one to anybody.
+usernames, which is worth remembering before mailing one to anybody. A CSV cell
+that begins `=`, `+`, `-` or `@` is written with a leading apostrophe: every
+spreadsheet reads those as a formula whoever wrote them, and the person opening
+an export is not the person who named the jobs in it.
 
 ### `api_token` and `api.json`
 

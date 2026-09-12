@@ -1,25 +1,32 @@
-"""Two ways a string from elsewhere could act on the user's behalf.
+"""The ways a string from elsewhere could act on the user's behalf.
 
-Both were found by reviewing the code that opening a job list newly reaches: a
+Most were found by reviewing the code that opening a job list newly reaches: a
 `.pmejbs` file can come from a colleague or a backup, so every field in a job
 record is attacker-controlled once the user opens one.
 
 1. The queue id was interpolated into a remote shell command unquoted, so
    `12345; rm -rf ~` in a job record became a command the user's own account ran
-   on the cluster when they pressed Cancel.
+   on the cluster when they pressed Cancel -- and the helper queue's own entry,
+   which is a path built inside the command and so cannot be quoted at all.
 2. File names in the remote directory listing were joined straight onto the
    local download directory, so a remote host answering `../../.bashrc` wrote
    outside it.
+3. An input file's name is substituted into the command line for `{input}`,
+   so `mol$(id).inp` ran `id` on the host.
+4. Working copies went to a predictable name in the shared temp directory,
+   which another user on the machine can create first.
+5. An exported CSV is opened in a spreadsheet by somebody who did not write it.
 """
 
+import csv
 import os
 import tempfile
 import unittest
 
 from job_manager import remote_runner, remote_runner_ps, runner
+from job_manager import store as store_module
 from job_manager.models import MODE_RUNNER, Job, SubmitPreset
 from job_manager.schedulers import get_scheduler
-from job_manager import store as store_module
 from job_manager.store import JobStore
 
 from .fakes import FakeTransport, make_host
@@ -83,7 +90,7 @@ class TestTheHelperQueueEntryCannotCarryACommand(unittest.TestCase):
 
     def test_an_entry_that_is_not_ours_is_refused(self):
         payloads = INJECTIONS + (
-            'job_0001_x$(id > /tmp/pwned).sh',
+            "job_0001_x$(id > /tmp/pwned).sh",
             'job_0001_a"; id; #',
             "job_0001_a`id`.sh",
             "../../../etc/passwd",
@@ -111,7 +118,7 @@ class TestTheHelperQueueEntryCannotCarryACommand(unittest.TestCase):
         host = make_host(scheduler="shell", concurrency_mode=MODE_RUNNER)
         self.assertTrue(host.uses_remote_runner)
         transport = FakeTransport(host)
-        job = Job(id="j1", remote_job_id='job_0001_x$(rm -rf ~).sh')
+        job = Job(id="j1", remote_job_id="job_0001_x$(rm -rf ~).sh")
 
         with self.assertRaises(remote_runner.UnsafeEntry):
             runner.cancel_in_runner(transport, host, job)
@@ -250,6 +257,29 @@ class TestWorkingCopiesStayOutOfTheSharedTempDirectory(unittest.TestCase):
         written = structure_relay.materialize(source, job)
         root = os.path.abspath(store_module.work_path(structure_relay.RELAY_DIRNAME))
         self.assertTrue(os.path.abspath(written).startswith(root), written)
+
+
+class TestAnExportedCsvIsNotAProgram(unittest.TestCase):
+    """An export is made to be sent to somebody, and they open it in Excel."""
+
+    def test_a_formula_cell_is_written_as_text(self):
+        tmp = tempfile.mkdtemp(prefix="csvexport_")
+        store = JobStore(tmp)
+        store.add_job(Job(id="j1", name="=1+1", command="@SUM(A1)", last_error="-2+3"))
+        target = os.path.join(tmp, "jobs.csv")
+
+        store.export_jobs_csv(target)
+        with open(target, encoding="utf-8") as handle:
+            rows = list(csv.reader(handle))
+
+        cells = rows[1]
+        for written in ("'=1+1", "'@SUM(A1)", "'-2+3"):
+            self.assertIn(written, cells)
+
+    def test_ordinary_text_is_left_alone(self):
+        self.assertEqual(store_module.csv_safe("mol.inp"), "mol.inp")
+        self.assertEqual(store_module.csv_safe(""), "")
+        self.assertEqual(store_module.csv_safe(None), "")
 
 
 class TestOpeningAJobListCannotLeakSecrets(unittest.TestCase):

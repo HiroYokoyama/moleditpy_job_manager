@@ -135,6 +135,24 @@ def _stamp(value: float) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(value)) if value else ""
 
 
+#: What a spreadsheet reads as the start of a formula rather than as text.
+_FORMULA_LEAD = ("=", "+", "-", "@", "\t", "\r")
+
+
+def csv_safe(value: Any) -> str:
+    """A cell a spreadsheet will show rather than evaluate.
+
+    Excel, LibreOffice and Sheets all treat a cell beginning `=`, `+`, `-` or
+    `@` as a formula, whoever wrote it. A job name or a command line is free
+    text, an export is a file made to be sent to somebody, and the person who
+    opens it is not the person who chose what is in it -- so a leading
+    apostrophe goes in front, which is the spelling every one of them reads as
+    "this is text".
+    """
+    text = "" if value is None else str(value)
+    return "'" + text if text.startswith(_FORMULA_LEAD) else text
+
+
 #: States a worker thread owns while uploading/fetching. Nothing can still be
 #: in one after a restart -- the thread that would move it on died with the process.
 INTERRUPTED_STATES = frozenset({STATE_UPLOADING, STATE_DOWNLOADING})
@@ -856,21 +874,21 @@ class JobStore:
                 writer.writerow(
                     [
                         job.id,
-                        job.name,
-                        job.host_name,
+                        csv_safe(job.name),
+                        csv_safe(job.host_name),
                         job.scheduler,
-                        job.remote_job_id,
+                        csv_safe(job.remote_job_id),
                         job.state,
                         "" if job.rc is None else job.rc,
                         _stamp(job.submitted_at),
                         _stamp(job.started_at),
                         _stamp(job.finished_at),
                         round(job.elapsed(), 1),
-                        job.remote_dir,
-                        job.local_dir,
+                        csv_safe(job.remote_dir),
+                        csv_safe(job.local_dir),
                         "yes" if job.downloaded else "no",
-                        (job.command or "").replace("\n", " ").strip(),
-                        (job.last_error or "").replace("\n", " ").strip(),
+                        csv_safe((job.command or "").replace("\n", " ").strip()),
+                        csv_safe((job.last_error or "").replace("\n", " ").strip()),
                     ]
                 )
 
