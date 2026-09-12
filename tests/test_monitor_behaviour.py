@@ -24,6 +24,7 @@ from job_manager.models import (  # noqa: E402
     STATE_RUNNING,
     Job,
 )
+from job_manager.remote_runner import entry_name  # noqa: E402
 
 from .fakes import make_host  # noqa: E402
 from .test_dialogs import DialogTestCase  # noqa: E402
@@ -137,12 +138,15 @@ class TestCancellingOneJobOfAChain(DialogTestCase):
         super().setUp()
         self.host = make_host(scheduler=SCHEDULER_SHELL, concurrency_mode=MODE_RUNNER)
         self.store.add_host(self.host)
+        # Built with entry_name, not spelled by hand: a queue entry has one
+        # shape, the runner refuses anything else, and a fixture that invents
+        # its own tests a protocol nothing speaks.
         self.first = Job(
             id="a",
             name="first",
             host_id=self.host.id,
             state=STATE_RUNNING,
-            remote_job_id="0001_a.sh",
+            remote_job_id=entry_name(1, "a"),
             submitted_at=1.0,
         )
         self.second = Job(
@@ -150,7 +154,7 @@ class TestCancellingOneJobOfAChain(DialogTestCase):
             name="second",
             host_id=self.host.id,
             state=STATE_PENDING,
-            remote_job_id="0002_b.sh",
+            remote_job_id=entry_name(2, "b"),
             after_job_id="a",
             submitted_at=2.0,
         )
@@ -174,8 +178,9 @@ class TestCancellingOneJobOfAChain(DialogTestCase):
 
         with patch.object(self.service, "transport_for", return_value=Recorder()):
             self.service.cancel(self.first)
+        released = f"queue/{entry_name(2, 'b')}"
         self.assertTrue(
-            any("queue/0002_b.sh" in command for command in commands),
+            any(released in command for command in commands),
             f"the dependent was never released: {commands}",
         )
 
