@@ -168,6 +168,14 @@ the feature. The safeguards are:
   quote is doubled and `$` never reaches an expression parser. Job names are
   reduced to `[A-Za-z0-9._-]`, so a name like `../../etc/passwd` becomes
   `etc_passwd` and `a;rm -rf /` becomes `a_rm_-rf`.
+* **A file name cannot become part of the command.** `{input}` is substituted
+  onto the command line as it stands — it must be, since a template is free to
+  write `"{input}"` and quote it itself — so a file called `mol$(id).inp` would
+  otherwise have run `id` on the host. A name containing anything a shell reads
+  as syntax (`` ` ``, `$`, `;`, `&`, `|`, `<`, `>`, `(`, `)`, a quote, a
+  backslash, a newline) is refused before the job is created, by the wizard, by
+  the API (as a 400) and by the runner itself. Spaces and glob characters are
+  allowed: neither can execute anything.
 * **Command templates are yours.** The built-in ones are conventional
   invocations of well-known programs; a template you save is stored verbatim and
   is no more privileged than typing the command.

@@ -38,7 +38,7 @@ from .credentials import ensure_password
 
 from . import structure_relay
 from .models import HostProfile, Job, SubmitPreset
-from .runner import make_remote_dir
+from .runner import check_input_name, make_remote_dir
 from .schedulers import get_scheduler, references_input, requested_cores, requested_memory_mb
 from .theme import apply_theme
 from .window_utils import make_independent
@@ -1435,6 +1435,13 @@ class SubmitDialog(QDialog):
         missing = [path for path in files if not os.path.isfile(path)]
         if missing:
             QMessageBox.warning(self, "Submit", f"File not found:\n{missing[0]}")
+            return
+        try:
+            for path in files:
+                check_input_name(os.path.basename(path))
+            check_input_name(self.remote_input())
+        except ValueError as exc:
+            QMessageBox.warning(self, "Submit", str(exc))
             return
         preset = self.collect_preset()
         if not preset.command_template.strip():

@@ -91,6 +91,40 @@ def make_remote_dir(
     return remote_paths.join(effective_root(host), name)
 
 
+#: Characters that would make a file name act as *syntax* in the command it is
+#: substituted into. ``{input}`` goes onto the command line as it stands -- it
+#: has to, since a template is free to quote it itself -- so a file called
+#: ``mol$(id).inp`` would run `id` on the host.
+#:
+#: A space is deliberately not on this list. A template that writes
+#: ``"{input}"`` handles a name with a space in it perfectly well, and refusing
+#: those would turn an ordinary file name into a submission error. Nor are the
+#: glob characters: they can only ever name another file in the same directory,
+#: which is not the same kind of thing at all.
+UNSAFE_IN_COMMAND = "\"'`$;&|<>()\\\n\r"
+
+
+def command_unsafe_character(name: str) -> str:
+    """The first character of ``name`` a remote shell would act on, or ""."""
+    for character in name or "":
+        if character in UNSAFE_IN_COMMAND:
+            return character
+    return ""
+
+
+def check_input_name(name: str) -> None:
+    """Raise if this file name cannot safely be substituted into a command."""
+    bad = command_unsafe_character(name)
+    if not bad:
+        return
+    raise ValueError(
+        f"The input file is named {name!r}, and a remote shell reads {bad!r} in "
+        "it as syntax rather than as part of the name. The name is substituted "
+        "into the command line for {input}, so the rest of it would run as a "
+        "command of its own. Rename the file and submit again."
+    )
+
+
 def input_name_for(job: Job, local_files: Sequence[str]) -> str:
     """What ``{input}`` means for this job.
 
@@ -99,9 +133,13 @@ def input_name_for(job: Job, local_files: Sequence[str]) -> str:
     allowed -- a command-only job has no input file at all, and the templates
     that do not mention one run perfectly well without.
     """
-    if job.remote_input:
-        return safe_relative_name(job.remote_input)
-    return os.path.basename(local_files[0]) if local_files else ""
+    name = (
+        safe_relative_name(job.remote_input)
+        if job.remote_input
+        else (os.path.basename(local_files[0]) if local_files else "")
+    )
+    check_input_name(name)
+    return name
 
 
 def name_job_files(job: Job, scheduler) -> None:
@@ -203,12 +241,15 @@ def submit_job(
         raise ValueError("No command to run")
 
     name_job_files(job, scheduler)
+    # Before the directory is made and anything is uploaded: a name that cannot
+    # go into the command line is not a job, and leaving its files on the host
+    # would be litter nobody goes back for.
+    input_name = input_name_for(job, local_files)
     prepare_remote_dir(transport, host, job)
 
     for path in local_files:
         transport.upload(path, remote_paths.join(job.remote_dir, os.path.basename(path)))
 
-    input_name = input_name_for(job, local_files)
     relay_lines = (
         dialect.for_host(host).relay_lines(relay_source_dir, relay_filenames)
         if relay_source_dir and relay_filenames
@@ -311,6 +352,8 @@ def submit_to_runner(
         raise ValueError("No command to run")
 
     name_job_files(job, scheduler)
+    # Before anything is uploaded; see submit_job.
+    input_name = input_name_for(job, local_files)
     prepare_remote_dir(transport, host, job)
     for path in local_files:
         transport.upload(path, remote_paths.join(job.remote_dir, os.path.basename(path)))
@@ -323,7 +366,7 @@ def submit_to_runner(
     script = scheduler.build_script(
         sanitize_name(job.name),
         preset,
-        input_name_for(job, local_files),
+        input_name,
         job.log_file,
         start_after=job.start_after,
         remote_dir=job.remote_dir,

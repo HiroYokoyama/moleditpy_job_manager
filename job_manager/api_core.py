@@ -570,6 +570,11 @@ class JobApi:
 
     @staticmethod
     def _files(body: Mapping[str, Any]) -> List[str]:
+        # Imported here, not at the top: this module is deliberately free of
+        # everything but the standard library and .models, and runner pulls in
+        # the schedulers.
+        from .runner import check_input_name
+
         raw = body.get("files") or []
         if isinstance(raw, str):
             raw = [raw]
@@ -582,6 +587,12 @@ class JobApi:
             path = os.path.abspath(os.path.expanduser(str(entry)))
             if not os.path.isfile(path):
                 raise ApiError(400, f"No such input file: {entry}")
+            # Refused here as well as in the runner, so a caller is told what
+            # is wrong with its request instead of watching a job fail.
+            try:
+                check_input_name(os.path.basename(path))
+            except ValueError as exc:
+                raise ApiError(400, str(exc)) from exc
             files.append(path)
         return files
 

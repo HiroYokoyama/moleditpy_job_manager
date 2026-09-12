@@ -172,6 +172,45 @@ class TestDownloadsStayInTheirDirectory(unittest.TestCase):
         self.assertEqual([os.path.basename(p) for p in downloaded], ["mol.out"])
 
 
+class TestAFileNameCannotCarryACommand(unittest.TestCase):
+    """``{input}`` is substituted into the command line as it stands.
+
+    It has to be: a template is free to write ``"{input}"`` and quote it
+    itself, so quoting here would double it. That leaves the name, which the
+    user did not necessarily choose -- an input can arrive by email or from a
+    shared directory -- so a name that would act as syntax is refused instead.
+    """
+
+    def test_a_name_that_would_run_something_is_refused(self):
+        for name in ("mol$(id).inp", "mol`id`.inp", "a;rm -rf ~.inp", "a|sh.inp", 'a".inp'):
+            with self.subTest(name=name):
+                with self.assertRaises(ValueError):
+                    runner.check_input_name(name)
+
+    def test_an_ordinary_name_is_not(self):
+        # A space is not syntax -- `"{input}"` handles it -- and a glob can
+        # only ever name another file in the same directory.
+        for name in ("mol.inp", "my mol.inp", "a[1].inp", "mol-2.opt.inp", ""):
+            with self.subTest(name=name):
+                runner.check_input_name(name)
+
+    def test_nothing_is_uploaded_for_a_refused_name(self):
+        host = make_host()
+        transport = FakeTransport(host)
+        job = Job(id="j1", name="a")
+        preset = SubmitPreset(command_template="orca {input} > {stem}.out")
+
+        with self.assertRaises(ValueError):
+            runner.submit_job(transport, host, preset, job, ["/tmp/mol$(id).inp"])
+        self.assertEqual(transport.uploads, [])
+        self.assertEqual(transport.commands, [])
+
+    def test_the_remote_input_name_is_checked_too(self):
+        job = Job(id="j1", remote_input="mol`id`.inp")
+        with self.assertRaises(ValueError):
+            runner.input_name_for(job, [])
+
+
 class TestOpeningAJobListCannotLeakSecrets(unittest.TestCase):
     """A job list is data, not configuration: it must not bring hosts with it."""
 
