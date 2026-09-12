@@ -143,6 +143,14 @@ confirmation, and only writes the fingerprint to `~/.ssh/known_hosts` after you
 agree. When `~/.ssh/config` gives the host an alias, the fingerprint is filed
 under the name the connection actually verifies, not under the alias.
 
+**The prompt shows the key before you accept it** — the key type and the
+`SHA256:…` fingerprint, the same string `ssh` and `ssh-keygen -l` print, so it
+can be compared against the value your site publishes. The key is read first
+and written only if you say yes; nothing is filed on the strength of a question
+you could not check. (It is not the MD5 hex paramiko's `get_fingerprint()`
+returns: OpenSSH stopped showing that in 6.8, so there would be nothing to
+compare it against.)
+
 A key that *changed* (rather than being unknown) is a different matter and is
 not offered for trusting — that is the case where a warning is the point.
 

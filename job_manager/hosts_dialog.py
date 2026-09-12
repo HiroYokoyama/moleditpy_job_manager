@@ -1092,7 +1092,20 @@ class HostsDialog(QDialog):
         run_async(self.service.pool, work, on_success=ok, on_error=failed)
 
     def _offer_trust(self, host: HostProfile) -> None:
-        from .transport.paramiko_backend import PARAMIKO_AVAILABLE, trust_host_key
+        """Show the key the host is offering, and file it only if it is accepted.
+
+        The key is read *before* the question, not after it: a prompt that
+        cannot show a fingerprint is asking the user to agree to something
+        nobody has seen. This is the one moment a host's identity is decided,
+        and the whole value of it is the comparison against what the site
+        published -- so the dialog shows what ``ssh`` would show.
+        """
+        from .transport.paramiko_backend import (
+            PARAMIKO_AVAILABLE,
+            add_host_key,
+            key_fingerprint,
+            read_host_key,
+        )
 
         if not PARAMIKO_AVAILABLE:
             QMessageBox.information(
@@ -1102,17 +1115,27 @@ class HostsDialog(QDialog):
                 f"{host.target}' in a terminal and accept the fingerprint.",
             )
             return
+        try:
+            key, hostname, port = read_host_key(host.hostname, host.port)
+        except Exception as exc:
+            QMessageBox.warning(self, "Host key", str(exc))
+            return
+        where = hostname if int(port or 22) == 22 else f"{hostname}:{int(port)}"
         confirm = QMessageBox.question(
             self,
             "Unknown host key",
-            f"{host.hostname} is not in your known_hosts file.\n\n"
-            "Only continue if you expect this host to be new. Add its current key?",
+            f"{where} is not in your known_hosts file.\n\n"
+            f"Key type:\t{key.get_name()}\n"
+            f"Fingerprint:\t{key_fingerprint(key)}\n\n"
+            "Check that against the fingerprint your site publishes, or against "
+            "'ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub' run on the host "
+            "itself. Add this key to known_hosts?",
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
         try:
-            fingerprint = trust_host_key(host.hostname, host.port)
+            fingerprint = add_host_key(key, hostname, port)
         except Exception as exc:
             QMessageBox.warning(self, "Host key", str(exc))
             return
-        self.lbl_test.setText(f"Host key added ({fingerprint[:16]}...). Test again.")
+        self.lbl_test.setText(f"Host key added ({fingerprint}). Test again.")

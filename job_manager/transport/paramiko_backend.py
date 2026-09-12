@@ -15,6 +15,8 @@ fingerprint is written to ``known_hosts``.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import logging
 import os
 import threading
@@ -235,11 +237,25 @@ class ParamikoTransport(Transport):
             self._home = ""
 
 
-def trust_host_key(hostname: str, port: int = 22) -> str:
-    """Append the host's current key to ``known_hosts``; returns its fingerprint.
+def key_fingerprint(key) -> str:
+    """``SHA256:0Rr...`` -- the string ``ssh-keygen -l`` and ``ssh`` itself print.
 
-    Only called after the user explicitly confirms the fingerprint shown by the
-    Hosts dialog.
+    Not ``key.get_fingerprint().hex()``, which is the MD5 digest: OpenSSH
+    stopped showing that in 6.8, so it is not something a user can compare
+    against their site's published fingerprint or against what `ssh` says. A
+    fingerprint nobody can check is decoration.
+    """
+    digest = hashlib.sha256(key.asbytes()).digest()
+    return "SHA256:" + base64.b64encode(digest).decode("ascii").rstrip("=")
+
+
+def read_host_key(hostname: str, port: int = 22) -> tuple:
+    """The key the host is offering right now, as ``(key, hostname, port)``.
+
+    Separate from :func:`add_host_key` so the caller can *show* the
+    fingerprint and have it accepted or refused before anything is written.
+    Asking first and confirming afterwards is not trust on first use, it is
+    trust on first sight.
     """
     if paramiko is None:
         raise TransportError(INSTALL_HINT)
@@ -270,7 +286,17 @@ def trust_host_key(hostname: str, port: int = 22) -> str:
                 sock.close()
             except OSError:
                 logging.debug("Job Manager: host-key probe socket close failed")
+    return key, hostname, port
 
+
+def add_host_key(key, hostname: str, port: int = 22) -> str:
+    """Append ``key`` to ``known_hosts``; returns its fingerprint.
+
+    Only called after the user has been shown that fingerprint and agreed to
+    it -- see :func:`read_host_key`.
+    """
+    if paramiko is None:
+        raise TransportError(INSTALL_HINT)
     path = known_hosts_path()
     os.makedirs(os.path.dirname(path), exist_ok=True)
     host_keys = paramiko.HostKeys()
@@ -282,4 +308,10 @@ def trust_host_key(hostname: str, port: int = 22) -> str:
     entry = hostname if int(port or 22) == 22 else f"[{hostname}]:{int(port)}"
     host_keys.add(entry, key.get_name(), key)
     host_keys.save(path)
-    return key.get_fingerprint().hex()
+    return key_fingerprint(key)
+
+
+def trust_host_key(hostname: str, port: int = 22) -> str:
+    """Read the host's key and file it in one step, for a caller with no UI."""
+    key, hostname, port = read_host_key(hostname, port)
+    return add_host_key(key, hostname, port)

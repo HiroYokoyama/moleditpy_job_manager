@@ -5,6 +5,8 @@ that records what it was asked to do, so these tests run identically whether or
 not paramiko is installed.
 """
 
+import base64
+import hashlib
 import os
 import tempfile
 import types
@@ -153,6 +155,10 @@ class _FakeKey:
 
     def get_fingerprint(self):
         return b"\x01\x02\x03\x04"
+
+    def asbytes(self):
+        # What a real PKey hashes for its SHA256 fingerprint: the wire blob.
+        return b"ssh-ed25519 blob"
 
 
 class _FakeTransportProbe:
@@ -412,8 +418,34 @@ class TestTrustHostKey(ParamikoTestCase):
         ):
             with patch("socket.create_connection", return_value=_DummySocket()):
                 fingerprint = paramiko_backend.trust_host_key("h.example.org")
-        self.assertEqual(fingerprint, "01020304")
+        self.assertEqual(fingerprint, paramiko_backend.key_fingerprint(_FakeKey()))
         self.assertTrue(_FakeHostKeys.saved)
+
+    def test_the_fingerprint_is_the_one_ssh_would_print(self):
+        """SHA256 base64, not the MD5 hex paramiko's get_fingerprint() returns.
+
+        A user compares this against their site's published value or against
+        `ssh-keygen -l`; neither of those has spoken MD5 since OpenSSH 6.8.
+        """
+        from job_manager.transport import paramiko_backend
+
+        expected = base64.b64encode(hashlib.sha256(b"ssh-ed25519 blob").digest())
+        self.assertEqual(
+            paramiko_backend.key_fingerprint(_FakeKey()),
+            "SHA256:" + expected.decode("ascii").rstrip("="),
+        )
+
+    def test_reading_the_key_writes_nothing(self):
+        """The prompt has to be able to show a fingerprint before anything is
+        filed, or the user is agreeing to something nobody has seen."""
+        from job_manager.transport import paramiko_backend
+
+        _FakeHostKeys.saved.clear()
+        with patch("socket.create_connection", return_value=_DummySocket()):
+            key, hostname, port = paramiko_backend.read_host_key("h.example.org", 2222)
+        self.assertEqual((hostname, port), ("h.example.org", 2222))
+        self.assertEqual(key.get_name(), "ssh-ed25519")
+        self.assertEqual(_FakeHostKeys.saved, [])
 
     def test_probe_failure_is_wrapped(self):
         from job_manager.transport import paramiko_backend
