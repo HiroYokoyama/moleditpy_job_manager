@@ -30,6 +30,7 @@ import os
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -84,8 +85,20 @@ def discover(directory: str = "") -> Dict[str, Any]:
         ) from exc
     except (OSError, ValueError) as exc:
         raise JobApiError(f"Could not read {path}: {exc}") from exc
-    if not data.get("url"):
+    url = str(data.get("url") or "")
+    if not url:
         raise JobApiError(f"{path} names no url")
+    # The token goes to whatever this file names, so what it names is checked.
+    # The server only ever writes a loopback url -- the bind address is not
+    # configurable -- so anything else means the file is not the one the server
+    # wrote, and sending the secret there is the one mistake worth refusing.
+    host = (urllib.parse.urlsplit(url).hostname or "").lower()
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        raise JobApiError(
+            f"{path} points at {host or 'nothing'}, which is not this machine. "
+            f"The API only ever listens on 127.0.0.1; delete the file and let "
+            f"MoleditPy write it again."
+        )
     return data
 
 

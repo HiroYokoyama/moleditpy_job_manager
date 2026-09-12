@@ -19,6 +19,7 @@ record is attacker-controlled once the user opens one.
 """
 
 import csv
+import json
 import os
 import tempfile
 import unittest
@@ -280,6 +281,31 @@ class TestAnExportedCsvIsNotAProgram(unittest.TestCase):
         self.assertEqual(store_module.csv_safe("mol.inp"), "mol.inp")
         self.assertEqual(store_module.csv_safe(""), "")
         self.assertEqual(store_module.csv_safe(None), "")
+
+
+class TestTheClientOnlySendsItsTokenToThisMachine(unittest.TestCase):
+    """api.json names where the token goes, so where it points is checked."""
+
+    def write_endpoint(self, url: str) -> str:
+        tmp = tempfile.mkdtemp(prefix="endpoint_")
+        with open(os.path.join(tmp, "api.json"), "w", encoding="utf-8") as handle:
+            json.dump({"url": url, "token": "secret"}, handle)
+        return tmp
+
+    def test_a_loopback_endpoint_is_read(self):
+        from job_manager import api_client
+
+        directory = self.write_endpoint("http://127.0.0.1:8765/api/v1")
+        self.assertEqual(api_client.discover(directory)["token"], "secret")
+
+    def test_an_endpoint_somewhere_else_is_refused(self):
+        from job_manager import api_client
+
+        for url in ("http://evil.example.org/api/v1", "http://10.0.0.5:8765/api/v1"):
+            with self.subTest(url=url):
+                directory = self.write_endpoint(url)
+                with self.assertRaises(api_client.JobApiError):
+                    api_client.discover(directory)
 
 
 class TestOpeningAJobListCannotLeakSecrets(unittest.TestCase):
