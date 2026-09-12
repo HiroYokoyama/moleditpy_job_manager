@@ -197,7 +197,7 @@ class OutputFileSelectorDialog(QDialog):
             except OSError:
                 pass
 
-        cache_dir = os.path.join(tempfile.gettempdir(), "moleditpy_job_manager_cache", self.job.id)
+        cache_dir = self._cache_dir()
         if os.path.isdir(cache_dir):
             try:
                 for root, _, entries in os.walk(cache_dir):
@@ -260,7 +260,7 @@ class OutputFileSelectorDialog(QDialog):
         selected_item: Optional[QTreeWidgetItem] = None
         mirror_dir = self._mirrored_job_dir()
         norm_mirror = os.path.normpath(mirror_dir) if mirror_dir else ""
-        cache_dir = os.path.join(tempfile.gettempdir(), "moleditpy_job_manager_cache", self.job.id)
+        cache_dir = self._cache_dir()
         folders: dict = {}
 
         for path in paths:
@@ -326,6 +326,14 @@ class OutputFileSelectorDialog(QDialog):
             self.lbl_status.setText(f"Could not list remote files: {msg}")
 
         self.service.list_remote_results(self.job, on_ok, on_error)
+
+    def _cache_dir(self) -> str:
+        """Where fetch_file_to_cache put this job's files. Creates nothing."""
+        from .store import CACHE_DIRNAME, work_path
+
+        store = getattr(self.service, "store", None)
+        directory = getattr(store, "directory", "") if store is not None else ""
+        return work_path(CACHE_DIRNAME, self.job.id, directory)
 
     def _mirrored_job_dir(self) -> str:
         """Return the verified equal-path directory for this job, if any."""
@@ -574,9 +582,7 @@ class OutputFileSelectorDialog(QDialog):
         elif self.job.local_dir and os.path.isdir(self.job.local_dir):
             target_dir = self.job.local_dir
         else:
-            cache_dir = os.path.join(
-                tempfile.gettempdir(), "moleditpy_job_manager_cache", self.job.id
-            )
+            cache_dir = self._cache_dir()
             if os.path.isdir(cache_dir):
                 target_dir = cache_dir
 

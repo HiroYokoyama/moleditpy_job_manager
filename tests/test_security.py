@@ -19,6 +19,7 @@ import unittest
 from job_manager import remote_runner, remote_runner_ps, runner
 from job_manager.models import MODE_RUNNER, Job, SubmitPreset
 from job_manager.schedulers import get_scheduler
+from job_manager import store as store_module
 from job_manager.store import JobStore
 
 from .fakes import FakeTransport, make_host
@@ -209,6 +210,46 @@ class TestAFileNameCannotCarryACommand(unittest.TestCase):
         job = Job(id="j1", remote_input="mol`id`.inp")
         with self.assertRaises(ValueError):
             runner.input_name_for(job, [])
+
+
+class TestWorkingCopiesStayOutOfTheSharedTempDirectory(unittest.TestCase):
+    """A fetched result and a relayed input are the user's data.
+
+    Both used to be written under ``tempfile.gettempdir()`` at a name another
+    user on the same machine could predict -- so they could create it first as
+    a symlink and choose where the write landed, and read whatever arrived.
+    """
+
+    def test_the_cache_is_under_the_data_directory(self):
+        tmp = tempfile.mkdtemp(prefix="workdirs_")
+        store = JobStore(tmp)
+
+        path = store.cache_dir("a1b2c3d4", create=True)
+        self.assertTrue(path.startswith(os.path.abspath(tmp)), path)
+        self.assertTrue(os.path.isdir(path))
+        if os.name != "nt":
+            self.assertEqual(oct(os.stat(path).st_mode & 0o777), oct(0o700))
+
+    def test_a_crafted_job_id_cannot_climb_out(self):
+        tmp = tempfile.mkdtemp(prefix="workdirs_")
+        store = JobStore(tmp)
+
+        path = os.path.abspath(store.cache_dir("../../../etc"))
+        self.assertTrue(path.startswith(os.path.abspath(tmp)), path)
+        self.assertNotIn("..", path.split(os.sep))
+
+    def test_a_relayed_input_lands_there_too(self):
+        from job_manager import structure_relay
+
+        tmp = tempfile.mkdtemp(prefix="relaysrc_")
+        source = os.path.join(tmp, "run.inp")
+        with open(source, "w", encoding="utf-8") as handle:
+            handle.write("%oldchk=[prevfile:.chk]\n")
+        job = Job(id="j1", name="prev", input_files=[os.path.join(tmp, "opt.inp")])
+
+        written = structure_relay.materialize(source, job)
+        root = os.path.abspath(store_module.work_path(structure_relay.RELAY_DIRNAME))
+        self.assertTrue(os.path.abspath(written).startswith(root), written)
 
 
 class TestOpeningAJobListCannotLeakSecrets(unittest.TestCase):

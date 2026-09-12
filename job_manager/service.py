@@ -402,16 +402,13 @@ class JobService(QObject):
         return True
 
     def fetch_file_to_cache(self, job: Job, filename: str, on_ok, on_error) -> None:
-        """Fetch one remote file into a local temporary cache directory."""
-        import tempfile
-
+        """Fetch one remote file into this job's cache directory."""
         host = self.store.hosts.get(job.host_id)
         if host is None:
             on_error(f"Host profile for {job.name} no longer exists")
             return
 
-        cache_dir = os.path.join(tempfile.gettempdir(), "moleditpy_job_manager_cache", job.id)
-        os.makedirs(cache_dir, exist_ok=True)
+        cache_dir = self.store.cache_dir(job.id, create=True)
 
         def work() -> str:
             from .runner import safe_relative_name

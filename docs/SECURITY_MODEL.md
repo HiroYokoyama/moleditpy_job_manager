@@ -90,6 +90,18 @@ refused, so a web page cannot make your browser submit a job on your behalf.
 
 Full detail: [API.md](API.md).
 
+### `cache/` and `relay/`
+
+Working copies, both inside the data directory and created `0700`: a remote
+file fetched to be looked at (rather than downloaded and kept), and an input
+with its `[prevfile:...]` tags filled in on the way to the host.
+
+They used to live under the system temp directory, which on a multi-user
+machine is shared and where both names were predictable — so another user
+could create the directory first, as a symlink, and decide where the write
+landed, and read whatever arrived there. Neither is a secret, but both are
+your data, and they belong where the rest of it is.
+
 ### Nowhere
 
 The password for a paramiko host lives in a plain dict on the session's

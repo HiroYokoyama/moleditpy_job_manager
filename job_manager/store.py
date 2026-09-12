@@ -32,6 +32,7 @@ from .models import (
     HostProfile,
     Job,
     SubmitPreset,
+    sanitize_name,
 )
 
 SETTINGS_FILENAME = "settings.json"
@@ -194,6 +195,38 @@ def default_data_dir() -> str:
 def default_download_root() -> str:
     """Where fetched results land unless the user picks somewhere else."""
     return os.path.join(default_data_dir(), "downloads")
+
+
+#: Working copies: a remote file fetched to be looked at rather than kept, and
+#: an input with its relay tags filled in on the way to the host.
+CACHE_DIRNAME = "cache"
+RELAY_DIRNAME = "relay"
+
+
+def work_path(kind: str, name: str = "", directory: str = "") -> str:
+    """A path under the plugin's own data directory. Creates nothing.
+
+    Not under ``tempfile.gettempdir()``, which is where both of these used to
+    live. On a multi-user machine that directory is shared: the name was
+    predictable, so another user could create it first as a symlink and choose
+    where the write landed, and whatever was written stayed there for them to
+    read -- job inputs on the way up, downloaded results on the way back. Both
+    are the user's own data and belong beside the rest of it.
+
+    ``name`` is sanitised because a job id can come out of a ``.pmejbs`` file
+    somebody else wrote, and it is a path segment here.
+    """
+    parts = [directory or default_data_dir(), kind]
+    if name:
+        parts.append(sanitize_name(name, fallback="job"))
+    return os.path.join(*parts)
+
+
+def ensure_work_dir(kind: str, name: str = "", directory: str = "") -> str:
+    """:func:`work_path`, made to exist and readable only by this user."""
+    path = work_path(kind, name, directory)
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    return path
 
 
 def atomic_write_json(path: str, data: Any) -> None:
@@ -941,6 +974,12 @@ class JobStore:
     def download_root(self) -> str:
         configured = str(self.get_pref("download_root", "") or "").strip()
         return os.path.expanduser(configured) if configured else default_download_root()
+
+    def cache_dir(self, job_id: str, create: bool = False) -> str:
+        """Where one job's fetched-to-open files are kept."""
+        if create:
+            return ensure_work_dir(CACHE_DIRNAME, job_id, self.directory)
+        return work_path(CACHE_DIRNAME, job_id, self.directory)
 
     @property
     def poll_interval(self) -> int:

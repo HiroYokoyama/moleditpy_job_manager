@@ -18,10 +18,7 @@ import time
 from typing import List
 
 from .models import STATE_DONE, Job
-
-#: Left on disk (not cleaned up): the upload runs on a worker thread with no
-#: cheap hook back to "the transfer is done".
-RELAY_DIRNAME = "moleditpy_job_manager_relay"
+from .store import RELAY_DIRNAME, ensure_work_dir
 
 #: ``[prevfile]`` or ``[prevfile:.ext]``, resolved from another job's result at
 #: submit time. Square brackets, not the {input}/{stem} braces: those are
@@ -134,6 +131,11 @@ def materialize(local_path: str, job: Job) -> str:
 
     Same basename, in a directory of its own, so nothing else needs to know a
     substitution happened. The original is never written to.
+
+    Left on disk, not cleaned up: the upload runs on a worker thread with no
+    cheap hook back to "the transfer is done". Which is the other reason it
+    lives under the plugin's own data directory rather than in the shared
+    temp directory -- these are copies of the user's inputs, and they stay.
     """
     try:
         with open(local_path, "r", encoding="utf-8", errors="replace") as handle:
@@ -146,8 +148,7 @@ def materialize(local_path: str, job: Job) -> str:
     # same-basename inputs collide and overwrite each other. Timestamp stays
     # in the prefix since the directory is never cleaned up and should be
     # readable by hand.
-    root = os.path.join(tempfile.gettempdir(), RELAY_DIRNAME)
-    os.makedirs(root, exist_ok=True)
+    root = ensure_work_dir(RELAY_DIRNAME)
     directory = tempfile.mkdtemp(prefix=f"{int(time.time())}_{os.getpid()}_", dir=root)
     target = os.path.join(directory, os.path.basename(local_path))
     try:
