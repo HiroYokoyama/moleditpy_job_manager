@@ -296,7 +296,7 @@ class TestCommands(ParamikoTestCase):
         host = make_host(backend="paramiko", login_commands=["source /etc/profile"])
         transport = self.cls(host)
         transport.run("squeue")
-        self.assertEqual(self.client.commands[-1], "source /etc/profile; squeue")
+        self.assertEqual(self.client.commands[-1], "source /etc/profile\nsqueue")
 
     def test_exec_failures_are_wrapped(self):
         transport = self.cls(self.host)

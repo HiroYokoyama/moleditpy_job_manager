@@ -51,8 +51,17 @@ def dirname(path: str) -> str:
 
 
 def wrap_login(cmd: str, login_commands: Iterable[str]) -> str:
-    """Prefix a command with the host's login/profile setup commands."""
+    """Prefix a command with the host's login/profile setup commands.
+
+    Joined with real newlines, not ``"; "``: a login command that is a bare
+    ``#`` comment -- e.g. a user's own "# OpenMPI (for ORCA)" label above an
+    ``export`` line -- runs to the end of whatever line it is on. Squashed
+    onto one line with semicolons, that end-of-line is the end of the whole
+    wrapped string, so the comment silently swallows every export after it
+    and the payload command itself. Real newlines keep each login command,
+    comment or not, confined to its own line.
+    """
     prefix = [c.strip() for c in (login_commands or []) if c and c.strip()]
     if not prefix:
         return cmd
-    return "; ".join(prefix) + "; " + cmd
+    return "\n".join(prefix) + "\n" + cmd

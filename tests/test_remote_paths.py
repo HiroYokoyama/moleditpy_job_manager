@@ -57,11 +57,23 @@ class TestWrapLogin(unittest.TestCase):
     def test_none_is_tolerated(self):
         self.assertEqual(remote_paths.wrap_login("squeue", None), "squeue")
 
-    def test_login_commands_are_prefixed_with_semicolons(self):
-        # ';' not '&&': a profile line that returns non-zero must not block the
-        # real command.
+    def test_login_commands_are_prefixed_on_their_own_lines(self):
+        # Newlines, not '&&': a profile line that returns non-zero must not
+        # block the real command.
         result = remote_paths.wrap_login("squeue", ["source /etc/profile", "module purge"])
-        self.assertEqual(result, "source /etc/profile; module purge; squeue")
+        self.assertEqual(result, "source /etc/profile\nmodule purge\nsqueue")
+
+    def test_a_comment_line_does_not_swallow_what_follows(self):
+        # A '#' label squashed onto one line with ';' comments out every
+        # export after it and the command itself.
+        result = remote_paths.wrap_login(
+            "squeue",
+            ["# OpenMPI (for ORCA)", "export PATH=/opt/openmpi/bin:$PATH"],
+        )
+        self.assertEqual(
+            result,
+            "# OpenMPI (for ORCA)\nexport PATH=/opt/openmpi/bin:$PATH\nsqueue",
+        )
 
     def test_blank_lines_are_ignored(self):
         self.assertEqual(remote_paths.wrap_login("ls", ["", "  "]), "ls")

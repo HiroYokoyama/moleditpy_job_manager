@@ -81,7 +81,7 @@ class TestArgumentAssembly(OpenSSHTestCase):
     def test_login_commands_are_prepended(self):
         self.transport = OpenSSHTransport(make_host(login_commands=["source /etc/profile"]))
         self.run_with("squeue", method="run")
-        self.assertEqual(self.argv[-1], "source /etc/profile; squeue")
+        self.assertEqual(self.argv[-1], "source /etc/profile\nsqueue")
 
     def test_scp_uses_capital_p_for_the_port(self):
         self.transport = OpenSSHTransport(make_host(port=2222))
