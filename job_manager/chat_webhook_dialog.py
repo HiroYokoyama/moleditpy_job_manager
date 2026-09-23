@@ -105,13 +105,8 @@ class ChatWebhookDialog(QDialog):
         self._say("Sending...")
         run_async(
             self.pool,
-            webhook.post,
-            self._on_test_done,
-            None,
-            None,
-            url,
-            "MoleditPy job manager",
-            TEST_MESSAGE,
+            lambda: webhook.post(url, "MoleditPy job manager", TEST_MESSAGE),
+            on_success=self._on_test_done,
             quiet=True,
         )
 
