@@ -174,6 +174,19 @@ def resolve_interrupted(job: Job) -> bool:
     return False
 
 
+def _will_run(job: Job) -> bool:
+    """Active, or on its way to the host right now.
+
+    For chaining and slot counting only. Submission is asynchronous, so a job
+    submitted a moment ago is still UPLOADING -- and leaving it out meant the
+    next file of a batch saw nothing queued: "run one after another" put every
+    file behind the same predecessor, and a lane limit let the whole batch
+    start at once. The worker waits for the predecessor's queue id itself
+    (JobService._chain_pid), so chaining behind an uploading job is safe.
+    """
+    return job.is_active or job.state == STATE_UPLOADING
+
+
 class JobsReload(NamedTuple):
     """What re-reading the job file off disk changed in this session."""
 
@@ -609,7 +622,7 @@ class JobStore:
         The tail of the chain: appending to the newest active job makes
         successive submissions line up instead of all starting at once.
         """
-        candidates = [job for job in self.jobs.values() if job.host_id == host_id and job.is_active]
+        candidates = [job for job in self.jobs.values() if job.host_id == host_id and _will_run(job)]
         # Don't queue behind an already-stranded job -- that would strand this one too.
         runnable = [job for job in candidates if self.chain_blocker(job) is None]
         if not runnable:
@@ -621,7 +634,7 @@ class JobStore:
         return [
             job
             for job in self.jobs.values()
-            if job.host_id == host_id and job.is_active and self.chain_blocker(job) is None
+            if job.host_id == host_id and _will_run(job) and self.chain_blocker(job) is None
         ]
 
     def chain_lanes(self, host_id: str) -> List[List[Job]]:

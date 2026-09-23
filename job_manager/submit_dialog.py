@@ -1612,8 +1612,10 @@ class SubmitDialog(QDialog):
         ]
         if not clashes:
             return True
-        first = clashes[0]
         running = [job for job in clashes if job.is_active]
+        # The running one when there is one: naming a finished job while
+        # saying "is running" described the wrong job.
+        first = running[0] if running else clashes[0]
         detail = (
             f"'{first.name}' is {first.state.lower()} on {first.host_name or 'a host'}"
             if running
