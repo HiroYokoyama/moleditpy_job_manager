@@ -291,16 +291,6 @@ def _job_line(job: Dict[str, Any]) -> str:
     )
 
 
-def _key_values(pairs: Sequence[str], what: str) -> Dict[str, str]:
-    values: Dict[str, str] = {}
-    for pair in pairs or ():
-        if "=" not in pair:
-            raise SystemExit(f"--{what} wants NAME=VALUE, not {pair!r}")
-        key, value = pair.split("=", 1)
-        values[key.strip()] = value.strip()
-    return values
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="job-manager",

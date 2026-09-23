@@ -51,12 +51,6 @@ from .base import (
 #: The generated wrapper. ``.ps1`` so PowerShell will run it at all.
 SCRIPT_NAME = "moleditpy_run.ps1"
 
-#: How PowerShell is invoked: no profile (a user's profile can print banners
-#: that corrupt captured output, and costs a second on every launch), and
-#: Bypass because a generated script is unsigned and the default policy on a
-#: workstation refuses it.
-POWERSHELL_ARGS = "-NoProfile -ExecutionPolicy Bypass -File"
-
 #: Seconds between checks while a wrapper waits for its start time.
 WAIT_POLL_SECONDS = 5
 

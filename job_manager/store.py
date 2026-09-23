@@ -100,9 +100,6 @@ DEFAULT_PREFS: Dict[str, Any] = {
     "last_input_dir": "",
     #: Which file type the input picker opens on. Empty means the first one.
     "input_filter": "",
-    #: The last submission's settings per host id (walltime, queue, modules,
-    #: command, fetch patterns, ...); what the input file decides is not kept.
-    "last_preset": {},
     #: Read core count / memory request out of the input file. On, since that's
     #: what the queue actually schedules on.
     "scan_resources": True,
@@ -610,7 +607,7 @@ class JobStore:
         runnable = [job for job in candidates if self.chain_blocker(job) is None]
         if not runnable:
             return None
-        return max(runnable, key=lambda job: (job.submitted_at or job.updated_at))
+        return max(runnable, key=lambda job: job.submitted_at or job.updated_at)
 
     def runnable_jobs(self, host_id: str) -> List[Job]:
         """Active jobs on this host that are still going to run."""

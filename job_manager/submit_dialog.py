@@ -1588,25 +1588,13 @@ class SubmitDialog(QDialog):
         self._remember(host, preset)
 
     def _remember(self, host: HostProfile, preset: SubmitPreset) -> None:
-        """Keep this submission's settings as the starting point for the next
-        (presets are the named, deliberate version of this)."""
-        remembered = dict(self.store.get_pref("last_preset", {}) or {})
-        remembered[host.id] = preset.to_dict()
-        self.store.set_pref("last_preset", remembered)
-        # The next submission opens on this host, not whichever sorts first.
-        self.store.set_pref("last_host_id", host.id)
+        """Open the next submission on this host, not whichever sorts first.
 
-    def _apply_remembered(self, host: HostProfile) -> None:
-        """Restore the last submission to this host, where nothing else has."""
-        data = (self.store.get_pref("last_preset", {}) or {}).get(host.id)
-        if not data:
-            return
-        self._apply_preset(SubmitPreset.from_dict(data))
-        if self.chk_scan_resources.isChecked():
-            # Cores/memory describe the molecule, not the site: reset to
-            # defaults so the scan refills them from the input file.
-            self.spin_cpus.setValue(1)
-            self.txt_memory.setText("")
+        Only the host. The form itself starts from the host's first preset (or
+        the defaults) every time -- restoring the previous submission's fields
+        was tried and taken out -- so the fields are not stored either.
+        """
+        self.store.set_pref("last_host_id", host.id)
 
     def _confirm_duplicate(self, files: List[str]) -> bool:
         """Warn when this input has been submitted before. False cancels.
