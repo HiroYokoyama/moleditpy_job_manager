@@ -390,7 +390,11 @@ class _Handler(BaseHTTPRequestHandler):
         # compare_digest, not ==: a plain comparison returns faster the sooner
         # it finds a wrong byte, which over enough tries is a way to read the
         # secret one character at a time.
-        return bool(expected) and secrets.compare_digest(self._token_offered(), expected)
+        # As bytes: on str, compare_digest raises for any non-ASCII character,
+        # so ?token=é from anyone who can reach the port was a traceback.
+        return bool(expected) and secrets.compare_digest(
+            self._token_offered().encode("utf-8"), expected.encode("utf-8")
+        )
 
     # --- routes -------------------------------------------------------------
 

@@ -210,7 +210,8 @@ def tokens_match(presented: str, expected: str) -> bool:
     """Constant-time comparison; a token is a secret like any other."""
     if not presented or not expected:
         return False
-    return secrets.compare_digest(str(presented), str(expected))
+    # As bytes: on str, compare_digest raises for any non-ASCII character.
+    return secrets.compare_digest(str(presented).encode("utf-8"), str(expected).encode("utf-8"))
 
 
 # --- serialisation ----------------------------------------------------------
