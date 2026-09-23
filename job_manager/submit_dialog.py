@@ -106,6 +106,12 @@ class SubmitDialog(QDialog):
         #: Set once the user picks a host themselves, so a later file-mirror
         #: detection does not override a deliberate choice.
         self._host_chosen_by_user = False
+        #: What the resource scan last wrote into Memory and CPUs. A field
+        #: still holding it was filled by the scan rather than decided, so the
+        #: next file's scan may replace it -- with the box ticked the fields are
+        #: read-only, and a first file's numbers otherwise outlived the file.
+        self._scanned_memory = ""
+        self._scanned_cpus = 0
         self._build_ui()
         self._reload_hosts()
         # So the relay box already shows its greyed-out reason on open, before
@@ -1256,10 +1262,14 @@ class SubmitDialog(QDialog):
         if not found.found:
             return
         filled = []
-        if found.memory_mb and not self.txt_memory.text().strip():
-            self.txt_memory.setText(input_scan.format_memory(found.memory_mb))
-            filled.append(f"memory {input_scan.format_memory(found.memory_mb)}")
-        if found.cores > 0 and self.spin_cpus.value() <= 1:
+        memory = self.txt_memory.text().strip()
+        if found.memory_mb and (not memory or memory == self._scanned_memory):
+            self._scanned_memory = input_scan.format_memory(found.memory_mb)
+            self.txt_memory.setText(self._scanned_memory)
+            filled.append(f"memory {self._scanned_memory}")
+        cpus = self.spin_cpus.value()
+        if found.cores > 0 and (cpus <= 1 or cpus == self._scanned_cpus):
+            self._scanned_cpus = found.cores
             self.spin_cpus.setValue(found.cores)
             filled.append(f"{found.cores} CPUs")
         if filled:
