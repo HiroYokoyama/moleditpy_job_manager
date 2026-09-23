@@ -447,6 +447,27 @@ class TestTrustHostKey(ParamikoTestCase):
         self.assertEqual(key.get_name(), "ssh-ed25519")
         self.assertEqual(_FakeHostKeys.saved, [])
 
+    def test_the_configs_port_wins_over_the_default(self):
+        """A profile left on 22 has to probe the port the connection will use,
+        or the key is filed under one the connection never looks up."""
+        from job_manager.transport import paramiko_backend
+
+        config = {"hostname": "login7.example.org", "port": "2222"}
+        with patch.object(paramiko_backend, "ssh_config_for", return_value=config):
+            with patch("socket.create_connection", return_value=_DummySocket()) as connect:
+                _key, hostname, port = paramiko_backend.read_host_key("cluster", 22)
+        self.assertEqual((hostname, port), ("login7.example.org", 2222))
+        self.assertEqual(connect.call_args[0][0], ("login7.example.org", 2222))
+
+    def test_a_port_the_profile_chose_is_kept(self):
+        from job_manager.transport import paramiko_backend
+
+        config = {"port": "2222"}
+        with patch.object(paramiko_backend, "ssh_config_for", return_value=config):
+            with patch("socket.create_connection", return_value=_DummySocket()):
+                _key, _hostname, port = paramiko_backend.read_host_key("cluster", 2200)
+        self.assertEqual(port, 2200)
+
     def test_probe_failure_is_wrapped(self):
         from job_manager.transport import paramiko_backend
 
