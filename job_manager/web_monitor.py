@@ -210,7 +210,6 @@ TOUCH_ICON_PNG_B64 = (
 )
 
 
-
 def tailscale_command(port: int) -> str:
     """The command that puts this port on the tailnet."""
     return f"tailscale serve --bg {int(port)}"
@@ -332,6 +331,13 @@ class _Server(ThreadingHTTPServer):
     #: still serving would quietly show that one's hosts under this one's URL.
     allow_reuse_address = False
     monitor: Any = None
+
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        # socketserver's default prints a traceback to stderr, MoleditPy's
+        # console -- for a phone dropping its connection, most of the time.
+        logging.debug(
+            "Job Manager web monitor: request from %s failed", client_address, exc_info=True
+        )
 
 
 class _Handler(BaseHTTPRequestHandler):
