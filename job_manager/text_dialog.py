@@ -177,6 +177,10 @@ class TextDialog(QDialog):
         self._timer.stop()
         super().hideEvent(event)
 
+    def set_refresh(self, on_refresh) -> None:
+        """Point Refresh, and the auto-refresh timer, at a different source."""
+        self._on_refresh_callback = on_refresh
+
     def set_text(self, text: str) -> None:
         """Replace the contents, keeping the view scrolled to the end.
 

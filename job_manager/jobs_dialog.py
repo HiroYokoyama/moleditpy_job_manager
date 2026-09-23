@@ -1128,7 +1128,7 @@ class JobsDialog(QDialog):
             self._tail_dialog.setWindowTitle(
                 f"Job Manager {PLUGIN_VERSION} - {job.name}: {job.log_file}"
             )
-            self._tail_dialog._on_refresh_callback = lambda: self.service.tail(job)
+            self._tail_dialog.set_refresh(lambda: self.service.tail(job))
             self._tail_dialog.raise_()
             self._tail_dialog.activateWindow()
         self.service.tail(job)
@@ -1565,10 +1565,13 @@ class JobsDialog(QDialog):
             return
         from .output_file_dialog import OutputFileSelectorDialog
 
+        # Normalised before the duplicate check, so one file listed two ways
+        # counts once -- and a single result opens without the chooser.
         existing_local: List[str] = []
         for path in job.downloaded_files or []:
+            path = os.path.normpath(path) if path else ""
             if path and os.path.isfile(path) and path not in existing_local:
-                existing_local.append(os.path.normpath(path))
+                existing_local.append(path)
 
         if len(existing_local) == 1 and not job.remote_dir:
             self.open_result_files(existing_local)
