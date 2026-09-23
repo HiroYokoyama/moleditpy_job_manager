@@ -174,3 +174,33 @@ class TestJob(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAMalformedRecordKeepsItsDefaults(unittest.TestCase):
+    """A job list can come from anywhere; a wrong type must not travel on."""
+
+    def test_null_timestamps_do_not_reach_the_sort(self):
+        from job_manager.models import Job
+
+        job = Job.from_dict({"id": "j", "submitted_at": None, "updated_at": None})
+        self.assertEqual(job.submitted_at, 0.0)
+        self.assertIsInstance(job.updated_at, float)
+
+    def test_a_string_where_a_number_belongs_is_dropped(self):
+        from job_manager.models import HostProfile
+
+        host = HostProfile.from_dict({"port": "22; id", "max_concurrent": "3", "name": "h"})
+        self.assertEqual((host.port, host.max_concurrent, host.name), (22, 0, "h"))
+
+    def test_good_values_survive(self):
+        from job_manager.models import Job
+
+        job = Job.from_dict({"rc": 3, "submitted_at": 5, "input_files": ["a"], "chain_any": True})
+        self.assertEqual(
+            (job.rc, job.submitted_at, job.input_files, job.chain_any), (3, 5.0, ["a"], True)
+        )
+
+    def test_a_bad_exit_code_is_none(self):
+        from job_manager.models import Job
+
+        self.assertIsNone(Job.from_dict({"rc": "0"}).rc)
