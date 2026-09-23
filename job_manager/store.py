@@ -375,6 +375,12 @@ class JobStore:
             # that: it has been moved, renamed or not written yet, and reading
             # it as "everything was removed" would empty the table over it.
             return JobsReload()
+        payload = read_json(self.jobs_path, None)
+        if not isinstance(payload, dict):
+            # Unreadable is not empty: a file caught mid-copy, or damaged, would
+            # otherwise read as "every job was removed elsewhere" and empty the
+            # table. The next good read takes whatever really changed.
+            return JobsReload()
         disk_jobs, _archived = self.read_job_list(self.jobs_path)
         added = updated = removed = 0
         on_disk = set()
@@ -518,9 +524,10 @@ class JobStore:
         ]
         if not matches:
             return None
-        return max(
-            matches, key=lambda host: len(os.path.abspath(os.path.expanduser(host.equal_path)))
-        )
+        # local_root(), not equal_path: a local host's root is its own
+        # remote_root and has no equal_path, which measured as the length of
+        # the working directory and could outrank a deeper mirror.
+        return max(matches, key=lambda host: len(os.path.abspath(host.local_root())))
 
     def mirrored_hosts(self) -> List[HostProfile]:
         """Enabled hosts that have a local mirror (``equal_path``) configured,
@@ -746,7 +753,7 @@ class JobStore:
         return os.path.join(self.directory, ARCHIVE_DIRNAME)
 
     def archive_jobs(self, when: Optional[float] = None) -> str:
-        """Write the current list to ``old/jobs_<date>.json``; returns its path.
+        """Write the current list to ``archived/jobs_<date>.pmejbs``; returns its path.
 
         Clearing the table must not lose the record -- a job's remote
         directory is often the only way back to results still on the cluster.

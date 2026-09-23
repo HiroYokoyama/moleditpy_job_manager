@@ -193,6 +193,16 @@ class TestPickingTheHostAFileBelongsTo(unittest.TestCase):
         found = self.store.host_for_local_path(os.path.join(inner, "mol.inp"))
         self.assertEqual(found.id, deep.id)
 
+    def test_depth_decides_not_the_name(self):
+        # Named so the outer root sorts first: the old measure was the length
+        # of equal_path, empty for both, and the tie went to the name.
+        inner = os.path.join(self.root, "inner")
+        os.makedirs(inner)
+        self.store.add_host(HostProfile(name="a", backend=BACKEND_LOCAL, remote_root=self.root))
+        deep = self.store.add_host(HostProfile(name="z", backend=BACKEND_LOCAL, remote_root=inner))
+        found = self.store.host_for_local_path(os.path.join(inner, "mol.inp"))
+        self.assertEqual(found.id, deep.id)
+
 
 @unittest.skipIf(BASH is None, "no POSIX shell that can run a script")
 class TestTheMemoryProbeReadsWhatItIsGiven(unittest.TestCase):
