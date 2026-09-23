@@ -16,30 +16,12 @@ import logging
 from typing import Any, Optional
 
 PLUGIN_NAME = "Job Manager"
-PLUGIN_VERSION = "1.7.0"
+PLUGIN_VERSION = "1.7.1"
 PLUGIN_AUTHOR = "HiroYokoyama"
 
-PLUGIN_DESCRIPTION = (
-    "Submit calculations to remote HPC clusters over SSH, track queue status, "
-    "and fetch results back into MoleditPy. Drop an input file on the monitor "
-    "and the wizard opens prefilled, reading the memory and core request "
-    "straight out of the ORCA, Gaussian, Psi4, NWChem, Q-Chem or GAMESS input; "
-    "results come back next to it and a notification says when. Work already "
-    "staged on the cluster is submitted where it sits, with no input file to "
-    "upload at all. Runs on this "
-    "machine too, with no SSH -- natively on Windows through PowerShell, with "
-    "nothing to install. Installing paramiko adds a backend that keeps one SSH "
-    "session open -- which the live host panel samples through -- and that can "
-    "log in with a password where a key is not an option. On a machine with no "
-    "scheduler it keeps a small queue "
-    "of its own that schedules on physical cores and memory, so two large jobs "
-    "never share a machine that cannot hold both, chains jobs with each "
-    "scheduler's own dependency flag, holds a job until a chosen time, and "
-    "outlives MoleditPy. Other programs on the same machine can submit and "
-    "track jobs through a local HTTP API, off until you switch it on."
-)
+PLUGIN_DESCRIPTION = "Submit calculations to remote HPC clusters over SSH, track queue status, and fetch results back into MoleditPy. Ready-made command lines for ORCA, Gaussian, CP2K, GAMESS, MOPAC, NWChem, Psi4, PySCF, Quantum ESPRESSO, VASP and xTB; job lists export to CSV or .pmejbs and reopen by drag and drop. Runs on this machine too, with no SSH; chains jobs with each scheduler's own dependency flag; and can hold a job until a chosen time. Installing paramiko adds a backend that keeps one SSH session open and can log in with a password."
 PLUGIN_CATEGORY = "Utility"
-PLUGIN_TAGS = ["hpc", "ssh", "job", "Utility"]
+PLUGIN_TAGS = ["Utility"]
 # The default OpenSSH backend needs nothing beyond the host app, so nothing
 # here is required to submit a job.
 PLUGIN_DEPENDENCIES = []
