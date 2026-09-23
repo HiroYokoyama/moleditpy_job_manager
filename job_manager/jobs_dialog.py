@@ -914,16 +914,30 @@ class JobsDialog(QDialog):
 
     def open_host_monitor(self) -> None:
         """Open the live host panel, or raise the one already up."""
+        from . import HOST_MONITOR_WINDOW_KEY, get_context
         from .host_monitor import HostMonitorDialog
 
-        if self._host_monitor is not None:
-            self._host_monitor.show()
-            self._host_monitor.raise_()
-            self._host_monitor.activateWindow()
+        # One Host Monitor, whichever way it was opened. Extensions > Job
+        # Manager > Host Monitor registers its window under this key; this
+        # button used to keep its own, so both could be open at once, each
+        # sampling every host over SSH.
+        context = get_context()
+        existing = self._host_monitor
+        if existing is None and context is not None:
+            existing = context.get_window(HOST_MONITOR_WINDOW_KEY)
+        if existing is not None:
+            existing.show()
+            existing.raise_()
+            existing.activateWindow()
             return
         dialog = HostMonitorDialog(self.service, parent=None)
         self._host_monitor = dialog
         dialog.finished.connect(lambda *_: setattr(self, "_host_monitor", None))
+        if context is not None:
+            context.register_window(HOST_MONITOR_WINDOW_KEY, dialog)
+            dialog.finished.connect(
+                lambda *_: context.register_window(HOST_MONITOR_WINDOW_KEY, None)
+            )
         dialog.show()
 
     def open_hosts_dialog(self) -> None:
@@ -1183,9 +1197,9 @@ class JobsDialog(QDialog):
         )
         self._detail_dialogs.append(dialog)
         dialog.finished.connect(
-            lambda *_: self._detail_dialogs.remove(dialog)
-            if dialog in self._detail_dialogs
-            else None
+            lambda *_: (
+                self._detail_dialogs.remove(dialog) if dialog in self._detail_dialogs else None
+            )
         )
         dialog.show()
         self._refresh_tail_file(job, filename, dialog)

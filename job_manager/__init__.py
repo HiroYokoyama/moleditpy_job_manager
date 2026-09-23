@@ -379,17 +379,6 @@ def show_submit(context=None) -> None:
         window.open_submit_dialog()
 
 
-def show_host_monitor(context=None) -> None:
-    """Open the host monitor, creating the main monitor behind it."""
-    context = context or _context
-    if context is None:
-        return
-    show_monitor(context)
-    window = context.get_window(WINDOW_KEY)
-    if window is not None:
-        window.open_host_monitor()
-
-
 def show_host_monitor_standalone(context=None) -> None:
     """Open (or raise) the host monitor on its own -- no job monitor window.
 
