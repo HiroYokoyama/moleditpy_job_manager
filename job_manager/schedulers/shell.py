@@ -11,6 +11,7 @@ from typing import Dict, Iterable, List
 
 from ..models import SubmitPreset
 from ..remote_paths import quote
+from ..remote_runner import SETSID_PREFIX, kill_job_command
 from .base import (
     CORES_TAG,
     MEMORY_TAG,
@@ -53,9 +54,11 @@ class ShellScheduler(Scheduler):
         # a worker thread the entire time. Backgrounding only the nohup, whose
         # three streams all go elsewhere, lets the shell exit at once.
         # It also makes $! the wrapper's own pid rather than a subshell's.
+        # setsid gives the job a process group of its own; see SETSID_PREFIX.
         return (
             f"chmod +x {quote(script_name)} && "
-            f"{{ nohup bash {quote(script_name)} > {quote(log_file)} 2>&1 < /dev/null & }} && echo $!"
+            f"{{ {SETSID_PREFIX} nohup bash {quote(script_name)} > {quote(log_file)} 2>&1 "
+            "< /dev/null & } && echo $!"
         )
 
     def parse_submit_output(self, stdout: str, stderr: str) -> str:
@@ -87,8 +90,7 @@ class ShellScheduler(Scheduler):
         # Kill the whole process group so the payload dies with the wrapper.
         # The pid is quoted: a job list can come from anywhere, and this string
         # is executed by the user's shell on the remote machine.
-        pid = quote(job_id)
-        return f"kill -- -$(ps -o pgid= -p {pid} | tr -d ' ') 2>/dev/null || kill {pid}"
+        return kill_job_command(quote(job_id))
 
 
 SHELL = register(ShellScheduler())

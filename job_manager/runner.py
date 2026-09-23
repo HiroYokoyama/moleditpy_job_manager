@@ -437,7 +437,7 @@ def submit_to_runner(
 
     # Only now: a runner started before the job was queued could empty the
     # queue and exit before it arrived.
-    # The versioned name, not the default: the script is content-addressed, so
+    # The versioned name, not the default: the script is named per version, so
     # starting "the runner" by a fixed name starts a file that is not there.
     started = transport.run(flavour.ensure_runner_command(directory, script_name))
     if "missing" in (started.stdout or ""):

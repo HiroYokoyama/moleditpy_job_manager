@@ -280,7 +280,8 @@ class TestSubmittingDoesNotBlock(unittest.TestCase):
 
     def test_only_the_nohup_is_backgrounded(self):
         command = get_scheduler("shell").submit_command("run.sh", "job.log")
-        self.assertIn("{ nohup bash run.sh > job.log 2>&1 < /dev/null & }", command)
+        self.assertIn("nohup bash run.sh > job.log 2>&1 < /dev/null & }", command)
+        self.assertRegex(command, r"&& \{ [^&]*nohup bash run\.sh")
         self.assertTrue(command.endswith("&& echo $!"))
 
     @unittest.skipUnless(BASH, "no bash available")

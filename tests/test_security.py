@@ -64,7 +64,8 @@ class TestTheQueueIdCannotCarryACommand(unittest.TestCase):
 
     def test_the_shell_scheduler_quotes_both_uses(self):
         command = get_scheduler("shell").cancel_command("12345; id")
-        self.assertEqual(command.count("'12345; id'"), 2)
+        self.assertGreaterEqual(command.count("'12345; id'"), 2)
+        self.assertEqual(command.count("12345; id"), command.count("'12345; id'"))
 
     def test_cancel_sends_the_quoted_form(self):
         host = make_host(scheduler="slurm")
