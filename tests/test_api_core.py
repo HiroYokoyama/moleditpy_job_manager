@@ -315,6 +315,23 @@ class TestJobActions(ApiTestCase):
         self.assertEqual(caught.exception.status, 409)
         self.assertEqual(self.service.cancelled, [])
 
+    def test_cancelling_a_job_still_uploading_is_a_409(self):
+        # It has no queue id yet, and the upload finishing would submit it
+        # anyway -- the cancel would be reported and then undone.
+        job = self.add_job(name="j", state="UPLOADING")
+        with self.assertRaises(ApiError) as caught:
+            self.post(f"/jobs/{job.id}/cancel")
+        self.assertEqual(caught.exception.status, 409)
+        self.assertEqual(self.service.cancelled, [])
+
+    def test_forgetting_a_job_mid_transfer_is_refused(self):
+        for state in ("UPLOADING", "DOWNLOADING"):
+            job = self.add_job(name="j", state=state)
+            with self.assertRaises(ApiError) as caught:
+                self.api.handle("DELETE", f"{api_core.API_PREFIX}/jobs/{job.id}", {}, {})
+            self.assertEqual(caught.exception.status, 409)
+        self.assertEqual(self.service.removed, [])
+
     def test_download_starts_one_and_says_so(self):
         job = self.add_job(name="j", state=STATE_DONE)
         _, payload = self.post(f"/jobs/{job.id}/download")
@@ -357,6 +374,17 @@ class TestJobActions(ApiTestCase):
         with self.assertRaises(ApiError) as caught:
             deferred.wait(1)
         self.assertIn("refused", caught.exception.message)
+
+    def test_an_error_from_elsewhere_does_not_answer_a_running_download(self):
+        # The service's error signal is shared: a failed poll of another host
+        # is emitted on it while this download is still going.
+        job = self.add_job(name="j", state=STATE_DONE)
+        _, deferred = self.post(f"/jobs/{job.id}/download", wait=True)
+        self.service.in_flight.add(job.id)
+        self.service.error.emit("Submission failed: some other job")
+        self.service.in_flight.discard(job.id)
+        self.service.results_ready.emit(job.id, ["/tmp/out.log"])
+        self.assertEqual(deferred.wait(1)["files"], ["/tmp/out.log"])
 
     def test_a_finished_wait_leaves_no_handler_connected(self):
         # Left connected, every later download would answer a request that

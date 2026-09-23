@@ -251,7 +251,15 @@ class JobPoller(QObject):
 
         # Recorded even when state is unchanged (e.g. resubmit fails the same way).
         recorded = False
-        for job_id, code in (exit_codes or {}).items():
+        # Only jobs still active here. The poll read a copy taken when it was
+        # dispatched; a job the user cancelled while it was in flight is
+        # CANCELLED now, and the copy's RUNNING -- or the LOST it became once
+        # the queue no longer listed it -- would have overwritten that.
+        live = {job_id for job_id, job in self.store.jobs.items() if job.is_active}
+        exit_codes = {k: v for k, v in (exit_codes or {}).items() if k in live}
+        errors = {k: v for k, v in (errors or {}).items() if k in live}
+        updates = {k: v for k, v in (updates or {}).items() if k in live}
+        for job_id, code in exit_codes.items():
             job = self.store.jobs.get(job_id)
             if job is not None and job.rc != code:
                 job.rc = code

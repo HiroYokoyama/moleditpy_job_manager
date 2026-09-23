@@ -46,9 +46,9 @@ and the runner sorts numerically so passing 9999 does not invert it.
 does go is a finished job's pid file, the lock, and -- in the wrapper, before
 its trap is installed -- a stale ``.moleditpy_rc`` from an earlier run in the
 same directory, so that a killed run cannot report the previous attempt's exit
-code as its own. The runner script is named after a digest of its own contents,
-so an upgrade is a new file rather than a rewrite of the one a running runner
-is reading by byte offset.
+code as its own. The runner script is named after the plugin version, so an
+upgrade is a new file rather than a rewrite of the one a running runner is
+reading by byte offset.
 
 **A job is claimed by moving it out of ``queue/``.** Two runners racing for the
 same entry cannot both win a ``mv``, so nothing is ever dispatched twice.
@@ -73,7 +73,7 @@ from .remote_paths import quote
 #: Directory the runner keeps its state in, under the host's remote root.
 RUNNER_DIRNAME = ".moleditpy_runner"
 #: The unversioned name, kept for the test harnesses and for reading a runner
-#: written by a version of this plugin that predates content addressing. What
+#: written by a version of this plugin that predates versioned names. What
 #: the plugin writes and starts is :func:`runner_script_name`.
 RUNNER_SCRIPT_NAME = "moleditpy_runner.sh"
 #: Queue entries are bash scripts in this flavour.
@@ -232,6 +232,33 @@ def next_sequence(existing: Sequence[str]) -> int:
     return highest + 1
 
 
+#: Prefix that starts a background process as the leader of its own process
+#: group, where the host has ``setsid``. Expands to nothing where it has not
+#: (macOS), which :func:`kill_job_command` allows for.
+#:
+#: A shell with no job control -- every ``bash -c`` this plugin runs, and the
+#: runner -- puts what it backgrounds in *its own* process group. Every job the
+#: runner started then shared one group with the runner, and with MoleditPy
+#: itself on a local host, so killing "the job's" group took down the runner,
+#: every other running job, and on a local host the application.
+SETSID_PREFIX = "$(command -v setsid 2>/dev/null)"
+
+
+def kill_job_command(pid: str) -> str:
+    """Kill one job's process tree, and nothing else.
+
+    ``pid`` is a shell word -- a quoted literal or ``"$p"``. The group is only
+    killed when the job leads it (started through :data:`SETSID_PREFIX`); a
+    job started by an older version shares its group with others, so only it
+    and its direct children are signalled.
+    """
+    return (
+        f"g=$(ps -o pgid= -p {pid} 2>/dev/null | tr -d ' '); "
+        f'if [ -n "$g" ] && [ "$g" = {pid} ]; then kill -- -"$g" 2>/dev/null || kill {pid}; '
+        f"else pkill -TERM -P {pid} 2>/dev/null; kill {pid}; fi"
+    )
+
+
 def build_job_script(
     job_dir: str,
     script_name: str,
@@ -295,6 +322,7 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
 # MoleditPy remote job runner. Runs the scripts in queue/ in name order, at
 # most `slots` at a time, and exits as soon as there is nothing left to run.
 cd {quoted} || exit 1
+SETSID={SETSID_PREFIX}
 
 count() {{ ls -1 "$1" 2>/dev/null | wc -l | tr -d ' '; }}
 
@@ -431,7 +459,9 @@ dispatch() {{
     # nowhere. The braces matter: `A && nohup B & echo $!` backgrounds the
     # whole list, and the subshell then holds this runner's stdout open until
     # the job ends -- which would stall the queue behind it.
-    ( {{ nohup bash "running/$entry" > /dev/null 2>&1 < /dev/null & }} && echo $! ) \\
+    # Its own process group, so cancelling it cannot reach this runner or the
+    # jobs beside it.
+    ( {{ $SETSID nohup bash "running/$entry" > /dev/null 2>&1 < /dev/null & }} && echo $! ) \\
       > "pids/$entry" 2>/dev/null
   done
 }}
@@ -629,7 +659,8 @@ def ensure_runner_command(directory: str, script_name: str) -> str:
         # mkdir is the lock: atomic, and unlike flock it behaves on NFS, which
         # is where a cluster's home directory usually lives.
         "if mkdir lock 2>/dev/null; then "
-        f'{{ nohup bash "{script_name}" > "{RUNNER_LOG_NAME}" 2>&1 < /dev/null & }} '
+        f'{{ {SETSID_PREFIX} nohup bash "{script_name}" '
+        f'> "{RUNNER_LOG_NAME}" 2>&1 < /dev/null & }} '
         "&& echo $! > lock/pid && echo started; "
         "else echo running; fi"
     )
@@ -646,9 +677,8 @@ def cancel_command(directory: str, entry: str) -> str:
         f"cd {quote(directory)} 2>/dev/null || exit 0; "
         f'if mv "queue/{entry}" "done/{entry}" 2>/dev/null; then echo dequeued; exit 0; fi; '
         f'p=$(cat "pids/{entry}" 2>/dev/null); '
-        '[ -n "$p" ] || exit 0; '
-        # Kill the process group, so the payload dies with its wrapper.
-        'kill -- -$(ps -o pgid= -p "$p" 2>/dev/null | tr -d " ") 2>/dev/null || kill "$p"'
+        '[ -n "$p" ] || exit 0; ' + kill_job_command('"$p"')
+        # The process group, so the payload dies with its wrapper.
     )
 
 

@@ -7,6 +7,7 @@ session and the dialog is only a view onto it.
 
 from __future__ import annotations
 
+import glob
 import logging
 import os
 import time
@@ -375,8 +376,11 @@ class JobService(QObject):
         def work() -> List[str]:
             transport = self.transport_for(host)
             try:
-                # An explicit set of names is passed as patterns: each matches only itself.
-                return fetch_results(transport, job, local_dir, globs=names)
+                # An explicit set of names is passed as patterns, escaped so each
+                # matches only itself: a file called mol[1].out is otherwise a
+                # character class that never matches its own name.
+                patterns = [glob.escape(name) for name in names] if names else None
+                return fetch_results(transport, job, local_dir, globs=patterns)
             finally:
                 transport.close()
 
@@ -401,6 +405,10 @@ class JobService(QObject):
         run_async(self.pool, work, on_success=done, on_error=failed)
         return True
 
+    def download_in_flight(self, job_id: str) -> bool:
+        """Whether a download for this job has started and not yet ended."""
+        return job_id in self._downloads_in_flight
+
     def fetch_file_to_cache(self, job: Job, filename: str, on_ok, on_error) -> None:
         """Fetch one remote file into this job's cache directory."""
         host = self.store.hosts.get(job.host_id)
@@ -418,7 +426,7 @@ class JobService(QObject):
                 raise ValueError(f"Unsafe remote filename: {filename}")
             transport = self.transport_for(host)
             try:
-                paths = fetch_results(transport, job, cache_dir, globs=[safe_name])
+                paths = fetch_results(transport, job, cache_dir, globs=[glob.escape(safe_name)])
                 if paths and os.path.isfile(paths[0]):
                     return paths[0]
                 local_path = os.path.join(cache_dir, *safe_name.split("/"))
@@ -443,6 +451,12 @@ class JobService(QObject):
         host = self.store.hosts.get(job.host_id)
         if host is None:
             self.error.emit(f"Host profile for {job.name} no longer exists")
+            return
+        if not job.is_active:
+            # Nothing on the host to cancel yet (UPLOADING), or already over.
+            # Marking an uploading job CANCELLED here was undone the moment its
+            # submission finished and put it in the queue after all.
+            self.error.emit(f"{job.name} is {job.state} and cannot be cancelled now")
             return
         dependents = self.store.dependents_of(job.id) if release_dependents else []
         if dependents:

@@ -264,6 +264,17 @@ class TestChoosingWhatToChainBehind(unittest.TestCase):
         self.add("second", "RUNNING", 200)
         self.assertEqual(self.store.chain_tail("h1").id, "second")
 
+    def test_a_job_still_uploading_is_the_tail(self):
+        # Submission is asynchronous: the previous file of a batch is still
+        # UPLOADING when the next one asks what to chain behind.
+        self.add("running", "RUNNING", 100)
+        self.add("uploading", "UPLOADING", 200)
+        self.assertEqual(self.store.chain_tail("h1").id, "uploading")
+
+    def test_an_uploading_job_holds_a_lane(self):
+        self.add("uploading", "UPLOADING", 100)
+        self.assertFalse(self.store.free_slot("h1", 1))
+
     def test_finished_jobs_are_not_a_tail(self):
         self.add("done", "DONE", 300)
         self.assertIsNone(self.store.chain_tail("h1"))
@@ -280,7 +291,8 @@ class TestSubmittingDoesNotBlock(unittest.TestCase):
 
     def test_only_the_nohup_is_backgrounded(self):
         command = get_scheduler("shell").submit_command("run.sh", "job.log")
-        self.assertIn("{ nohup bash run.sh > job.log 2>&1 < /dev/null & }", command)
+        self.assertIn("nohup bash run.sh > job.log 2>&1 < /dev/null & }", command)
+        self.assertRegex(command, r"&& \{ [^&]*nohup bash run\.sh")
         self.assertTrue(command.endswith("&& echo $!"))
 
     @unittest.skipUnless(BASH, "no bash available")

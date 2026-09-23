@@ -263,7 +263,13 @@ def read_host_key(hostname: str, port: int = 22) -> tuple:
     # the name the connection will actually verify, not under an alias.
     ssh_config = ssh_config_for(hostname)
     hostname = ssh_config.get("hostname") or hostname
-    port = int(port or ssh_config.get("port") or 22)
+    # The same rule as _connect: 22 is the profile's default, not a request,
+    # so a `Port` stanza wins over it. `port or ...` never reached the config,
+    # and the key was then read from -- and filed under -- a port the
+    # connection does not use, which asked about the same host key for ever.
+    port = int(port or 22)
+    if port == 22:
+        port = int(ssh_config.get("port") or 22)
     transport = None
     sock = None
     try:

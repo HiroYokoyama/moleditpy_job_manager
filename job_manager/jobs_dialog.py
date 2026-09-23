@@ -914,16 +914,30 @@ class JobsDialog(QDialog):
 
     def open_host_monitor(self) -> None:
         """Open the live host panel, or raise the one already up."""
+        from . import HOST_MONITOR_WINDOW_KEY, get_context
         from .host_monitor import HostMonitorDialog
 
-        if self._host_monitor is not None:
-            self._host_monitor.show()
-            self._host_monitor.raise_()
-            self._host_monitor.activateWindow()
+        # One Host Monitor, whichever way it was opened. Extensions > Job
+        # Manager > Host Monitor registers its window under this key; this
+        # button used to keep its own, so both could be open at once, each
+        # sampling every host over SSH.
+        context = get_context()
+        existing = self._host_monitor
+        if existing is None and context is not None:
+            existing = context.get_window(HOST_MONITOR_WINDOW_KEY)
+        if existing is not None:
+            existing.show()
+            existing.raise_()
+            existing.activateWindow()
             return
         dialog = HostMonitorDialog(self.service, parent=None)
         self._host_monitor = dialog
         dialog.finished.connect(lambda *_: setattr(self, "_host_monitor", None))
+        if context is not None:
+            context.register_window(HOST_MONITOR_WINDOW_KEY, dialog)
+            dialog.finished.connect(
+                lambda *_: context.register_window(HOST_MONITOR_WINDOW_KEY, None)
+            )
         dialog.show()
 
     def open_hosts_dialog(self) -> None:
@@ -1114,7 +1128,7 @@ class JobsDialog(QDialog):
             self._tail_dialog.setWindowTitle(
                 f"Job Manager {PLUGIN_VERSION} - {job.name}: {job.log_file}"
             )
-            self._tail_dialog._on_refresh_callback = lambda: self.service.tail(job)
+            self._tail_dialog.set_refresh(lambda: self.service.tail(job))
             self._tail_dialog.raise_()
             self._tail_dialog.activateWindow()
         self.service.tail(job)
@@ -1183,9 +1197,9 @@ class JobsDialog(QDialog):
         )
         self._detail_dialogs.append(dialog)
         dialog.finished.connect(
-            lambda *_: self._detail_dialogs.remove(dialog)
-            if dialog in self._detail_dialogs
-            else None
+            lambda *_: (
+                self._detail_dialogs.remove(dialog) if dialog in self._detail_dialogs else None
+            )
         )
         dialog.show()
         self._refresh_tail_file(job, filename, dialog)
@@ -1551,10 +1565,13 @@ class JobsDialog(QDialog):
             return
         from .output_file_dialog import OutputFileSelectorDialog
 
+        # Normalised before the duplicate check, so one file listed two ways
+        # counts once -- and a single result opens without the chooser.
         existing_local: List[str] = []
         for path in job.downloaded_files or []:
+            path = os.path.normpath(path) if path else ""
             if path and os.path.isfile(path) and path not in existing_local:
-                existing_local.append(os.path.normpath(path))
+                existing_local.append(path)
 
         if len(existing_local) == 1 and not job.remote_dir:
             self.open_result_files(existing_local)

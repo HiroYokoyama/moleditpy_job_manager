@@ -107,6 +107,15 @@ class TestWhatArrives(ReloadTestCase):
 
 
 class TestWhatIsLeftAlone(ReloadTestCase):
+    def test_an_unreadable_file_is_not_read_as_empty(self):
+        # A damaged or half-copied file must not empty the table.
+        self.mine.add_job(make_job("j1", state=STATE_RUNNING))
+        with open(self.mine.jobs_path, "w", encoding="utf-8") as handle:
+            handle.write('{"jobs": [')
+        result = self.mine.reload_jobs()
+        self.assertEqual(result.total, 0)
+        self.assertIn("j1", self.mine.jobs)
+
     """Live work, on both sides of the file."""
 
     def test_a_job_we_are_uploading_is_not_overwritten(self):

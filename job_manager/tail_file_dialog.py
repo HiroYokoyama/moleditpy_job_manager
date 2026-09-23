@@ -54,7 +54,6 @@ class TailFileDialog(QDialog):
         #: host -- but never the one selected for you: this window is for what
         #: the calculation writes, and the Tail Log button already opens that.
         self._log_file = log_file
-        self._selected_path: str = ""
 
         layout = QVBoxLayout(self)
 
@@ -118,16 +117,13 @@ class TailFileDialog(QDialog):
             if default_file and (name == default_file or leaf == default_file):
                 default_item = item
 
-        self._selected_path = ""
         self.tree.expandAll()
         if default_item is not None:
             self.tree.setCurrentItem(default_item)
-            self._selected_path = default_item.data(0, PATH_ROLE) or ""
         elif names:
             first = find_first_leaf_item(self.tree)
             if first is not None:
                 self.tree.setCurrentItem(first)
-                self._selected_path = first.data(0, PATH_ROLE) or ""
 
     def _apply_filter(self, text: str) -> None:
         filter_text = text.strip().lower()
@@ -147,7 +143,6 @@ class TailFileDialog(QDialog):
     def _on_item_double_clicked(self, item: QTreeWidgetItem, _column: int) -> None:
         path = item.data(0, PATH_ROLE)
         if path:
-            self._selected_path = str(path)
             self.accept()
 
     def chosen(self) -> str:

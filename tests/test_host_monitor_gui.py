@@ -919,6 +919,24 @@ class TestHostMonitorIndependentWindow(HostMonitorTestCase):
         dialog.open_host_monitor()
         self.assertIs(dialog._host_monitor, first_monitor)
 
+    def test_the_menus_host_monitor_is_the_one_raised(self):
+        # Opened from Extensions > Job Manager > Host Monitor, it is registered
+        # with the host; the job monitor's button must raise that one rather
+        # than open a second window sampling the same hosts.
+        from unittest.mock import MagicMock, patch
+
+        import job_manager
+
+        existing = MagicMock()
+        context = MagicMock()
+        context.get_window.return_value = existing
+        dialog = JobsDialog(self.service)
+        self.addCleanup(dialog.deleteLater)
+        with patch.object(job_manager, "_context", context):
+            dialog.open_host_monitor()
+        existing.raise_.assert_called_once_with()
+        self.assertIsNone(dialog._host_monitor)
+
 
 class TestDisabledHosts(HostMonitorTestCase):
     """A disabled host still gets a card, but is skipped by the timer."""

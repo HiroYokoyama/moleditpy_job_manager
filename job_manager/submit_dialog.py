@@ -106,6 +106,12 @@ class SubmitDialog(QDialog):
         #: Set once the user picks a host themselves, so a later file-mirror
         #: detection does not override a deliberate choice.
         self._host_chosen_by_user = False
+        #: What the resource scan last wrote into Memory and CPUs. A field
+        #: still holding it was filled by the scan rather than decided, so the
+        #: next file's scan may replace it -- with the box ticked the fields are
+        #: read-only, and a first file's numbers otherwise outlived the file.
+        self._scanned_memory = ""
+        self._scanned_cpus = 0
         self._build_ui()
         self._reload_hosts()
         # So the relay box already shows its greyed-out reason on open, before
@@ -450,8 +456,10 @@ class SubmitDialog(QDialog):
         """What will actually be filled in, read from the current input."""
         job = self.selected_relay_job()
         if job is None:
+            # The dropdown, not the whole job list: jobs on other hosts, or
+            # ones that failed, are not offered and so are not "other jobs".
             self.lbl_relay_status.setText(
-                "" if self.store.jobs else "No other job on this host yet."
+                "" if self.cmb_relay_source.count() else "No other job on this host yet."
             )
             return
         files = self.selected_files()
@@ -1256,10 +1264,14 @@ class SubmitDialog(QDialog):
         if not found.found:
             return
         filled = []
-        if found.memory_mb and not self.txt_memory.text().strip():
-            self.txt_memory.setText(input_scan.format_memory(found.memory_mb))
-            filled.append(f"memory {input_scan.format_memory(found.memory_mb)}")
-        if found.cores > 0 and self.spin_cpus.value() <= 1:
+        memory = self.txt_memory.text().strip()
+        if found.memory_mb and (not memory or memory == self._scanned_memory):
+            self._scanned_memory = input_scan.format_memory(found.memory_mb)
+            self.txt_memory.setText(self._scanned_memory)
+            filled.append(f"memory {self._scanned_memory}")
+        cpus = self.spin_cpus.value()
+        if found.cores > 0 and (cpus <= 1 or cpus == self._scanned_cpus):
+            self._scanned_cpus = found.cores
             self.spin_cpus.setValue(found.cores)
             filled.append(f"{found.cores} CPUs")
         if filled:
@@ -1535,7 +1547,19 @@ class SubmitDialog(QDialog):
                                 relay_filenames.append(filename)
                 # Uploaded instead of the originals, but the job still belongs
                 # to the files the user picked, not to these scratch copies.
-                upload_files = [structure_relay.materialize(path, relay_job) for path in files]
+                # Only a file with a tag is rewritten: materialize() refuses
+                # one with none, so a second input file (a basis set, a
+                # restart) made the whole submission fail.
+                tagged = set(self._files_with_relay_tags(files))
+                if not tagged:
+                    raise structure_relay.StructureRelayError(
+                        f"No {structure_relay.TAG_RE.pattern} tag was found in the input, "
+                        "so there is nothing to fill in."
+                    )
+                upload_files = [
+                    structure_relay.materialize(path, relay_job) if path in tagged else path
+                    for path in files
+                ]
             except (structure_relay.StructureRelayError, OSError) as exc:
                 QMessageBox.warning(self, "Submit", str(exc))
                 return
@@ -1588,25 +1612,13 @@ class SubmitDialog(QDialog):
         self._remember(host, preset)
 
     def _remember(self, host: HostProfile, preset: SubmitPreset) -> None:
-        """Keep this submission's settings as the starting point for the next
-        (presets are the named, deliberate version of this)."""
-        remembered = dict(self.store.get_pref("last_preset", {}) or {})
-        remembered[host.id] = preset.to_dict()
-        self.store.set_pref("last_preset", remembered)
-        # The next submission opens on this host, not whichever sorts first.
-        self.store.set_pref("last_host_id", host.id)
+        """Open the next submission on this host, not whichever sorts first.
 
-    def _apply_remembered(self, host: HostProfile) -> None:
-        """Restore the last submission to this host, where nothing else has."""
-        data = (self.store.get_pref("last_preset", {}) or {}).get(host.id)
-        if not data:
-            return
-        self._apply_preset(SubmitPreset.from_dict(data))
-        if self.chk_scan_resources.isChecked():
-            # Cores/memory describe the molecule, not the site: reset to
-            # defaults so the scan refills them from the input file.
-            self.spin_cpus.setValue(1)
-            self.txt_memory.setText("")
+        Only the host. The form itself starts from the host's first preset (or
+        the defaults) every time -- restoring the previous submission's fields
+        was tried and taken out -- so the fields are not stored either.
+        """
+        self.store.set_pref("last_host_id", host.id)
 
     def _confirm_duplicate(self, files: List[str]) -> bool:
         """Warn when this input has been submitted before. False cancels.
@@ -1624,8 +1636,10 @@ class SubmitDialog(QDialog):
         ]
         if not clashes:
             return True
-        first = clashes[0]
         running = [job for job in clashes if job.is_active]
+        # The running one when there is one: naming a finished job while
+        # saying "is running" described the wrong job.
+        first = running[0] if running else clashes[0]
         detail = (
             f"'{first.name}' is {first.state.lower()} on {first.host_name or 'a host'}"
             if running

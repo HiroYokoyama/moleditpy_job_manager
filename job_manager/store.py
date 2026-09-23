@@ -100,9 +100,6 @@ DEFAULT_PREFS: Dict[str, Any] = {
     "last_input_dir": "",
     #: Which file type the input picker opens on. Empty means the first one.
     "input_filter": "",
-    #: The last submission's settings per host id (walltime, queue, modules,
-    #: command, fetch patterns, ...); what the input file decides is not kept.
-    "last_preset": {},
     #: Read core count / memory request out of the input file. On, since that's
     #: what the queue actually schedules on.
     "scan_resources": True,
@@ -175,6 +172,19 @@ def resolve_interrupted(job: Job) -> bool:
             job.touch(STATE_DONE if job.rc == 0 else STATE_FAILED)
         return True
     return False
+
+
+def _will_run(job: Job) -> bool:
+    """Active, or on its way to the host right now.
+
+    For chaining and slot counting only. Submission is asynchronous, so a job
+    submitted a moment ago is still UPLOADING -- and leaving it out meant the
+    next file of a batch saw nothing queued: "run one after another" put every
+    file behind the same predecessor, and a lane limit let the whole batch
+    start at once. The worker waits for the predecessor's queue id itself
+    (JobService._chain_pid), so chaining behind an uploading job is safe.
+    """
+    return job.is_active or job.state == STATE_UPLOADING
 
 
 class JobsReload(NamedTuple):
@@ -378,6 +388,12 @@ class JobStore:
             # that: it has been moved, renamed or not written yet, and reading
             # it as "everything was removed" would empty the table over it.
             return JobsReload()
+        payload = read_json(self.jobs_path, None)
+        if not isinstance(payload, dict):
+            # Unreadable is not empty: a file caught mid-copy, or damaged, would
+            # otherwise read as "every job was removed elsewhere" and empty the
+            # table. The next good read takes whatever really changed.
+            return JobsReload()
         disk_jobs, _archived = self.read_job_list(self.jobs_path)
         added = updated = removed = 0
         on_disk = set()
@@ -521,9 +537,10 @@ class JobStore:
         ]
         if not matches:
             return None
-        return max(
-            matches, key=lambda host: len(os.path.abspath(os.path.expanduser(host.equal_path)))
-        )
+        # local_root(), not equal_path: a local host's root is its own
+        # remote_root and has no equal_path, which measured as the length of
+        # the working directory and could outrank a deeper mirror.
+        return max(matches, key=lambda host: len(os.path.abspath(host.local_root())))
 
     def mirrored_hosts(self) -> List[HostProfile]:
         """Enabled hosts that have a local mirror (``equal_path``) configured,
@@ -605,19 +622,19 @@ class JobStore:
         The tail of the chain: appending to the newest active job makes
         successive submissions line up instead of all starting at once.
         """
-        candidates = [job for job in self.jobs.values() if job.host_id == host_id and job.is_active]
+        candidates = [job for job in self.jobs.values() if job.host_id == host_id and _will_run(job)]
         # Don't queue behind an already-stranded job -- that would strand this one too.
         runnable = [job for job in candidates if self.chain_blocker(job) is None]
         if not runnable:
             return None
-        return max(runnable, key=lambda job: (job.submitted_at or job.updated_at))
+        return max(runnable, key=lambda job: job.submitted_at or job.updated_at)
 
     def runnable_jobs(self, host_id: str) -> List[Job]:
         """Active jobs on this host that are still going to run."""
         return [
             job
             for job in self.jobs.values()
-            if job.host_id == host_id and job.is_active and self.chain_blocker(job) is None
+            if job.host_id == host_id and _will_run(job) and self.chain_blocker(job) is None
         ]
 
     def chain_lanes(self, host_id: str) -> List[List[Job]]:
@@ -749,7 +766,7 @@ class JobStore:
         return os.path.join(self.directory, ARCHIVE_DIRNAME)
 
     def archive_jobs(self, when: Optional[float] = None) -> str:
-        """Write the current list to ``old/jobs_<date>.json``; returns its path.
+        """Write the current list to ``archived/jobs_<date>.pmejbs``; returns its path.
 
         Clearing the table must not lose the record -- a job's remote
         directory is often the only way back to results still on the cluster.

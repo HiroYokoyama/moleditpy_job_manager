@@ -20,18 +20,16 @@ class _TaskSignals(QObject):
 
 
 class BackgroundTask(QRunnable):
-    """Runs ``fn(*args, **kwargs)`` off the GUI thread."""
+    """Runs ``fn()`` off the GUI thread. Bind arguments with a lambda."""
 
-    def __init__(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> None:
+    def __init__(self, fn: Callable[[], Any], quiet: bool = False) -> None:
         super().__init__()
         self.fn = fn
-        self.args = args
-        self.kwargs = kwargs
         #: Log a failure at debug rather than warning. For work whose failure
         #: is an ordinary outcome the caller already shows -- a host that did
         #: not answer this tick -- where a warning with a traceback would fill
         #: the application log with something nobody has to act on.
-        self.quiet = bool(kwargs.pop("_quiet", False))
+        self.quiet = bool(quiet)
         self.signals = _TaskSignals()
 
     def run(self) -> None:  # pragma: no cover - thread entry; body tested via run_sync
@@ -40,7 +38,7 @@ class BackgroundTask(QRunnable):
     def run_sync(self) -> Any:
         """Execute inline. Returns the result, or None if it raised."""
         try:
-            result = self.fn(*self.args, **self.kwargs)
+            result = self.fn()
         except Exception as exc:
             if self.quiet:
                 logging.debug("Job Manager: background task failed: %s", exc, exc_info=True)
@@ -56,13 +54,12 @@ class BackgroundTask(QRunnable):
 
 def run_async(
     pool: QThreadPool,
-    fn: Callable[..., Any],
+    fn: Callable[[], Any],
     on_success: Optional[Callable[[Any], None]] = None,
     on_error: Optional[Callable[[str], None]] = None,
     on_finished: Optional[Callable[[], None]] = None,
-    *args: Any,
+    *,
     quiet: bool = False,
-    **kwargs: Any,
 ) -> BackgroundTask:
     """Queue ``fn`` and wire its callbacks. Returns the task (kept by the pool).
 
@@ -70,7 +67,7 @@ def run_async(
     at debug rather than warning, so an unreachable host does not write a
     traceback into the application log every time it is asked.
     """
-    task = BackgroundTask(fn, *args, _quiet=quiet, **kwargs)
+    task = BackgroundTask(fn, quiet=quiet)
     if on_success is not None:
         task.signals.succeeded.connect(on_success)
     if on_error is not None:

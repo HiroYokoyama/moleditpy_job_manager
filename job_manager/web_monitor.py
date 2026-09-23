@@ -33,7 +33,7 @@ import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional
-from urllib.parse import parse_qs, quote, urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from . import PLUGIN_VERSION
 from .api_core import new_token, write_private_file
@@ -101,8 +101,8 @@ def ensure_web_token(directory: str, renew: bool = False) -> str:
 #: deliberately oversized for their slabs, because at tab size a realistic LED
 #: is a single pale pixel and the icon collapses into three grey bars.
 #:
-#: SVG rather than a .ico, and inlined as a data: URI rather than served from a
-#: route, so the icon needs no second request and no second thing to get wrong.
+#: SVG rather than a .ico. Served from its own route (see ICON_ROUTES): Safari
+#: ignores a data: favicon, so inlining it worked in Chrome and nowhere else.
 #: A light rounded plate behind it on purpose: the units are near-black, and on
 #: a dark browser tab a transparent version would show only the blue one.
 FAVICON_SVG = (
@@ -121,9 +121,9 @@ FAVICON_SVG = (
 #: -- and Safari on a phone is the browser this page is mostly opened in.
 #: Chrome and Firefox take the SVG above and never fetch this one.
 #:
-#: Inlined rather than served from a route on purpose: every route here is
-#: behind the token, and a browser fetching an icon -- an apple-touch-icon
-#: especially -- need not send the cookie, so the icon would 401.
+#: Served without the token (see ICON_ROUTES): a browser fetching an icon --
+#: an apple-touch-icon especially -- need not send the cookie, so a gated icon
+#: would 401.
 #:
 #: Generated from FAVICON_SVG by `python -m tests.regenerate_icons`.
 #: test_icon.py re-renders the SVG and compares, so the two cannot drift.
@@ -208,8 +208,6 @@ TOUCH_ICON_PNG_B64 = (
     "uMdz7QCO+HF/3BuhrfalTz2dAkwFJgLFwCigABiCu2gjq5F20riLH824JU0acA/OP4Z7PPNhpVQoz+7/P9Ms6Ox+"
     "0L2fAAAAAElFTkSuQmCC"
 )
-
-FAVICON_DATA_URI = "data:image/svg+xml," + quote(FAVICON_SVG, safe="")
 
 
 def tailscale_command(port: int) -> str:
@@ -334,6 +332,13 @@ class _Server(ThreadingHTTPServer):
     allow_reuse_address = False
     monitor: Any = None
 
+    def handle_error(self, request: Any, client_address: Any) -> None:
+        # socketserver's default prints a traceback to stderr, MoleditPy's
+        # console -- for a phone dropping its connection, most of the time.
+        logging.debug(
+            "Job Manager web monitor: request from %s failed", client_address, exc_info=True
+        )
+
 
 class _Handler(BaseHTTPRequestHandler):
     server_version = "MoleditPyJobMonitor/1.0"
@@ -390,7 +395,11 @@ class _Handler(BaseHTTPRequestHandler):
         # compare_digest, not ==: a plain comparison returns faster the sooner
         # it finds a wrong byte, which over enough tries is a way to read the
         # secret one character at a time.
-        return bool(expected) and secrets.compare_digest(self._token_offered(), expected)
+        # As bytes: on str, compare_digest raises for any non-ASCII character,
+        # so ?token=é from anyone who can reach the port was a traceback.
+        return bool(expected) and secrets.compare_digest(
+            self._token_offered().encode("utf-8"), expected.encode("utf-8")
+        )
 
     # --- routes -------------------------------------------------------------
 
@@ -756,9 +765,6 @@ schedule();
 </body>
 </html>
 """
-
-# Substituted once at import: the page is full of literal "%" and of braces,
-# so neither %-formatting nor an f-string can be used on it.
 
 
 __all__ = [

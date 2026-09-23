@@ -49,6 +49,8 @@ class FakeService:
         self.listings: List[str] = []
         self.removed: List[str] = []
         self.download_returns = True
+        #: Job ids whose download is still running, for ``download_in_flight``.
+        self.in_flight: set = set()
         self._tail_done: Optional[Callable] = None
         self._tail_error: Optional[Callable] = None
         self._list_ok: Optional[Callable] = None
@@ -74,6 +76,9 @@ class FakeService:
     def download(self, job, into="", names=None):
         self.downloads.append((job.id, into, list(names) if names else None))
         return self.download_returns
+
+    def download_in_flight(self, job_id):
+        return job_id in self.in_flight
 
     def tail_file(self, job, filename, lines=200, on_done=None, on_error=None):
         self.tails.append((job.id, filename, lines))

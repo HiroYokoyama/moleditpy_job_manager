@@ -16,7 +16,7 @@ import logging
 from typing import Any, Optional
 
 PLUGIN_NAME = "Job Manager"
-PLUGIN_VERSION = "1.6.7"
+PLUGIN_VERSION = "1.7.0"
 PLUGIN_AUTHOR = "HiroYokoyama"
 
 PLUGIN_DESCRIPTION = (
@@ -377,17 +377,6 @@ def show_submit(context=None) -> None:
     window = context.get_window(WINDOW_KEY)
     if window is not None:
         window.open_submit_dialog()
-
-
-def show_host_monitor(context=None) -> None:
-    """Open the host monitor, creating the main monitor behind it."""
-    context = context or _context
-    if context is None:
-        return
-    show_monitor(context)
-    window = context.get_window(WINDOW_KEY)
-    if window is not None:
-        window.open_host_monitor()
 
 
 def show_host_monitor_standalone(context=None) -> None:

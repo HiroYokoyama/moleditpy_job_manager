@@ -246,6 +246,14 @@ class TestSendingTheLimits(QueueControlTestCase):
         self.assertIn("3", text)
         self.assertIn("16", text)
 
+    def test_no_job_limit_is_not_reported_as_one_job(self):
+        # 0 is "no limit" everywhere, and the helper is sent 9999 for it.
+        self.dlg.spin_max_concurrent.setValue(0)
+        self.dlg._apply_queue_limits()
+        text = self.dlg.lbl_queue.text()
+        self.assertNotIn("at most 1 job", text)
+        self.assertIn("as many jobs as fit", text)
+
     def test_detect_is_described_rather_than_printed_as_zero(self):
         # "Ask the host" is the checkbox now; the fields cannot be 0 by hand.
         self.dlg.chk_detect_resources.setChecked(True)
@@ -324,6 +332,21 @@ class TestTheWizardReadsTheInput(DialogTestCase):
 
         self.assertEqual(dialog.txt_memory.text(), "4G")
         self.assertEqual(dialog.spin_cpus.value(), 2)
+
+    def test_a_second_file_replaces_what_the_first_one_filled_in(self):
+        # With the box ticked the fields are read-only, so numbers the scan
+        # wrote for a file that has since been removed must not stay behind.
+        dialog = self.dialog()
+        dialog.add_files([self.orca_input()])
+        dialog.list_files.clear()
+        smaller = os.path.join(self.tmp, "small.inp")
+        with open(smaller, "w", encoding="utf-8") as handle:
+            handle.write("! B3LYP\n%pal nprocs 2 end\n%maxcore 1000\n* xyz 0 1\nH 0 0 0\n*\n")
+
+        dialog.add_files([smaller])
+
+        self.assertEqual(dialog.spin_cpus.value(), 2)
+        self.assertEqual(dialog.txt_memory.text(), "2000M")
 
     def test_a_prefilled_wizard_reads_the_input_too(self):
         # Every way into the wizard bar "Add files..." goes through prefill: a

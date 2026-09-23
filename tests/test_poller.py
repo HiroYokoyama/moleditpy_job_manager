@@ -78,6 +78,25 @@ class PollerTestCase(unittest.TestCase):
         return job
 
 
+class TestAResultArrivingLateIsNotApplied(PollerTestCase):
+    """A poll reads copies taken at dispatch; the user may act meanwhile."""
+
+    def test_a_job_cancelled_during_the_poll_stays_cancelled(self):
+        from job_manager.models import STATE_CANCELLED
+
+        job = self.add_job("j1", state=STATE_RUNNING)
+        job.touch(STATE_CANCELLED)
+        self.poller._on_poll_finished(self.host.id, {"j1": "LOST"}, {"j1": 143}, {})
+        self.assertEqual(self.store.jobs["j1"].state, STATE_CANCELLED)
+        self.assertIsNone(self.store.jobs["j1"].rc)
+
+    def test_an_active_job_still_takes_the_result(self):
+        self.add_job("j2", state=STATE_RUNNING)
+        self.poller._on_poll_finished(self.host.id, {"j2": STATE_DONE}, {"j2": 0}, {})
+        self.assertEqual(self.store.jobs["j2"].state, STATE_DONE)
+        self.assertEqual(self.store.jobs["j2"].rc, 0)
+
+
 class TestTimerLifecycle(PollerTestCase):
     def test_does_not_start_with_no_active_jobs(self):
         self.poller.start()

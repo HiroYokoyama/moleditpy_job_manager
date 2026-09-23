@@ -52,6 +52,13 @@ DEFAULT_TIMEOUT = 130.0
 TERMINAL_STATES = frozenset({"DONE", "FAILED", "CANCELLED", "LOST"})
 
 
+#: Never through a proxy. urllib takes HTTP_PROXY from the environment and, off
+#: Windows and macOS, bypasses it for loopback only when NO_PROXY says so -- so
+#: on a machine with a proxy set every request, bearer token included, was
+#: handed to the proxy, which cannot reach this machine's 127.0.0.1 anyway.
+_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
 class JobApiError(RuntimeError):
     """The API refused the request, or could not be reached."""
 
@@ -144,7 +151,7 @@ class JobManagerClient:
         request.add_header("Authorization", f"Bearer {self.token}")
         request.add_header("Content-Type", "application/json")
         try:
-            with urllib.request.urlopen(request, timeout=timeout or self.timeout) as reply:
+            with _OPENER.open(request, timeout=timeout or self.timeout) as reply:
                 return self._decode(reply.read())
         except urllib.error.HTTPError as exc:
             payload = self._decode(exc.read(), quiet=True)
@@ -282,16 +289,6 @@ def _job_line(job: Dict[str, Any]) -> str:
         host_name=job.get("host_name", ""),
         name=job.get("name", ""),
     )
-
-
-def _key_values(pairs: Sequence[str], what: str) -> Dict[str, str]:
-    values: Dict[str, str] = {}
-    for pair in pairs or ():
-        if "=" not in pair:
-            raise SystemExit(f"--{what} wants NAME=VALUE, not {pair!r}")
-        key, value = pair.split("=", 1)
-        values[key.strip()] = value.strip()
-    return values
 
 
 def build_parser() -> argparse.ArgumentParser:

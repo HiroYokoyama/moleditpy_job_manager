@@ -557,3 +557,24 @@ class TestAnInputIsNeverOverwritten(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAnExactNameMatchesItself(unittest.TestCase):
+    """Names picked in the download chooser are passed as patterns, escaped."""
+
+    def test_a_name_with_brackets_is_fetched(self):
+        import glob
+
+        from job_manager.runner import select_files
+
+        names = ["mol[1].out", "mol1.out", "sub/a*b.log", "sub/axb.log"]
+        self.assertEqual(select_files(names, [glob.escape("mol[1].out")]), ["mol[1].out"])
+        self.assertEqual(select_files(names, [glob.escape("sub/a*b.log")]), ["sub/a*b.log"])
+
+
+class TestTokensMatchNonAscii(unittest.TestCase):
+    def test_a_non_ascii_token_is_refused_not_raised(self):
+        from job_manager.api_core import tokens_match
+
+        self.assertFalse(tokens_match("é", "secret"))
+        self.assertTrue(tokens_match("secret", "secret"))

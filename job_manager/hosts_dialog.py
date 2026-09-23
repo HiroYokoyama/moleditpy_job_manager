@@ -1043,8 +1043,14 @@ class HostsDialog(QDialog):
         def ok(_result) -> None:
             self.btn_apply_limits.setEnabled(True)
             cores = host.runner_cores or 0
+            # 0 is no job limit (see remote_runner.slots_for), not one job.
+            jobs = (
+                f"at most {host.max_concurrent} job(s)"
+                if host.max_concurrent
+                else "as many jobs as fit"
+            )
             self.lbl_queue.setText(
-                f"The helper will run at most {max(1, host.max_concurrent or 1)} job(s), "
+                f"The helper will run {jobs}, "
                 + (f"using up to {cores} core(s)." if cores else "using every core it finds.")
             )
 
@@ -1100,12 +1106,7 @@ class HostsDialog(QDialog):
         and the whole value of it is the comparison against what the site
         published -- so the dialog shows what ``ssh`` would show.
         """
-        from .transport.paramiko_backend import (
-            PARAMIKO_AVAILABLE,
-            add_host_key,
-            key_fingerprint,
-            read_host_key,
-        )
+        from .transport.paramiko_backend import PARAMIKO_AVAILABLE, read_host_key
 
         if not PARAMIKO_AVAILABLE:
             QMessageBox.information(
@@ -1115,11 +1116,21 @@ class HostsDialog(QDialog):
                 f"{host.target}' in a terminal and accept the fingerprint.",
             )
             return
-        try:
-            key, hostname, port = read_host_key(host.hostname, host.port)
-        except Exception as exc:
-            QMessageBox.warning(self, "Host key", str(exc))
-            return
+        self.lbl_test.setText("Reading the host's key...")
+        # On a worker: reading the key is a TCP connection and an SSH
+        # handshake, up to twenty seconds against a slow host, and it froze the
+        # whole window while it waited.
+        run_async(
+            self.service.pool,
+            lambda: read_host_key(host.hostname, host.port),
+            on_success=lambda found: self._confirm_host_key(*found),
+            on_error=lambda message: QMessageBox.warning(self, "Host key", message),
+        )
+
+    def _confirm_host_key(self, key, hostname: str, port: int) -> None:
+        """Show the fingerprint, and file the key only if it is accepted."""
+        from .transport.paramiko_backend import add_host_key, key_fingerprint
+
         where = hostname if int(port or 22) == 22 else f"{hostname}:{int(port)}"
         confirm = QMessageBox.question(
             self,

@@ -192,9 +192,6 @@ class DownloadDialog(QDialog):
             self._syncing = False
         self._update_count()
 
-    def _set_recursive(self, item: QTreeWidgetItem, state: Qt.CheckState) -> None:
-        set_tree_checked_recursive(item, state)
-
     def _toggle(self, item: QTreeWidgetItem, column: int = 0) -> None:
         item.setCheckState(
             0,

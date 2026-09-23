@@ -13,7 +13,7 @@ import posixpath
 import re
 import time
 import uuid
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import MISSING, asdict, dataclass, field, fields
 from typing import Any, Dict, List, Optional
 
 # --- Canonical job states -------------------------------------------------
@@ -130,6 +130,48 @@ def sanitize_name(name: str, fallback: str = "job") -> str:
     return cleaned or fallback
 
 
+_NOT_GIVEN = object()
+
+
+def _default_of(spec: Any) -> Any:
+    if spec.default is not MISSING:
+        return spec.default
+    if spec.default_factory is not MISSING:
+        return spec.default_factory()
+    return _NOT_GIVEN
+
+
+def _coerce(value: Any, default: Any) -> Any:
+    """``value`` as the type ``default`` has, or :data:`_NOT_GIVEN`.
+
+    A job list is a file that can come from anywhere, and a field of the wrong
+    type does not fail here -- it fails later, somewhere unrelated: a ``null``
+    timestamp made sorting the table raise, a string port reached ``int()`` on
+    a worker thread. So a value that is not what the field holds is dropped
+    and the field keeps its default, the same as a field that is missing.
+    """
+    if default is None or default is _NOT_GIVEN:
+        # Only rc: an exit code or nothing.
+        if value is None or (isinstance(value, int) and not isinstance(value, bool)):
+            return value
+        return _NOT_GIVEN
+    if isinstance(default, bool):
+        return value if isinstance(value, bool) else _NOT_GIVEN
+    if isinstance(default, (int, float)):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return _NOT_GIVEN
+        if isinstance(default, int) and value != int(value):
+            return _NOT_GIVEN
+        return type(default)(value)
+    if isinstance(default, str):
+        return value if isinstance(value, str) else _NOT_GIVEN
+    if isinstance(default, list):
+        return list(value) if isinstance(value, list) else _NOT_GIVEN
+    if isinstance(default, dict):
+        return dict(value) if isinstance(value, dict) else _NOT_GIVEN
+    return value
+
+
 def _from_dict(cls: type, data: Dict[str, Any]) -> Any:
     """Build a dataclass from a dict, ignoring unknown or malformed values.
 
@@ -139,8 +181,14 @@ def _from_dict(cls: type, data: Dict[str, Any]) -> Any:
     """
     if not isinstance(data, dict):
         data = {}
-    known = {f.name for f in fields(cls)}
-    return cls(**{k: v for k, v in data.items() if k in known})
+    kwargs: Dict[str, Any] = {}
+    for spec in fields(cls):
+        if spec.name not in data:
+            continue
+        value = _coerce(data[spec.name], _default_of(spec))
+        if value is not _NOT_GIVEN:
+            kwargs[spec.name] = value
+    return cls(**kwargs)
 
 
 @dataclass

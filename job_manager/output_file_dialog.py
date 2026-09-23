@@ -180,53 +180,45 @@ class OutputFileSelectorDialog(QDialog):
     def _get_existing_local_files(self) -> List[str]:
         """Find all local (or locally mirrored) output files associated strictly with this job."""
         files: List[str] = []
+        seen: set = set()
+
+        def add(path: str) -> None:
+            # Normalised before the duplicate check, not after: comparing the
+            # raw path and storing the normalised one let a file listed both
+            # ways appear twice.
+            path = os.path.normpath(path)
+            if path not in seen and os.path.isfile(path):
+                seen.add(path)
+                files.append(path)
+
+        def add_tree(directory: str) -> None:
+            # os.walk reports an unreadable directory through onerror, which
+            # defaults to skipping it, so there is nothing to catch here.
+            for root, _, entries in os.walk(directory):
+                for entry in entries:
+                    if not entry.startswith("."):
+                        add(os.path.join(root, entry))
+
         for path in self.job.downloaded_files or []:
-            if path and os.path.isfile(path) and path not in files:
-                files.append(os.path.normpath(path))
+            if path:
+                add(path)
 
         mirror_dir = self._mirrored_job_dir()
         if mirror_dir and os.path.isdir(mirror_dir):
-            try:
-                for root, _, entries in os.walk(mirror_dir):
-                    for entry in entries:
-                        if not entry.startswith("."):
-                            full = os.path.normpath(os.path.join(root, entry))
-                            if os.path.isfile(full) and full not in files:
-                                files.append(full)
-            except OSError:
-                pass
+            add_tree(mirror_dir)
 
         cache_dir = self._cache_dir()
         if os.path.isdir(cache_dir):
-            try:
-                for root, _, entries in os.walk(cache_dir):
-                    for entry in entries:
-                        if not entry.startswith("."):
-                            full = os.path.normpath(os.path.join(root, entry))
-                            if os.path.isfile(full) and full not in files:
-                                files.append(full)
-            except OSError:
-                pass
+            add_tree(cache_dir)
 
-        # If job.local_dir is a dedicated job directory (under store.download_root), include its files.
-        # If it's a shared working directory (download_beside_input), only downloaded_files are included.
-        if self.job.local_dir and os.path.isdir(self.job.local_dir):
-            dl_root = ""
-            if hasattr(self.service, "store") and hasattr(self.service.store, "download_root"):
-                try:
-                    dl_root = self.service.store.download_root()
-                except Exception:
-                    dl_root = ""
-            if dl_root and _is_within(self.job.local_dir, dl_root):
-                try:
-                    for root, _, entries in os.walk(self.job.local_dir):
-                        for entry in entries:
-                            if not entry.startswith("."):
-                                full = os.path.normpath(os.path.join(root, entry))
-                                if os.path.isfile(full) and full not in files:
-                                    files.append(full)
-                except OSError:
-                    pass
+        # A job directory of its own under the download root holds only this
+        # job's files, so all of them are listed. A shared working directory
+        # (results beside the input) holds other things too, so there only the
+        # downloaded files above count.
+        local_dir = self.job.local_dir
+        if local_dir and os.path.isdir(local_dir):
+            if _is_within(local_dir, self.service.store.download_root()):
+                add_tree(local_dir)
 
         return files
 

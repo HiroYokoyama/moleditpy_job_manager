@@ -138,7 +138,9 @@ def materialize(local_path: str, job: Job) -> str:
     temp directory -- these are copies of the user's inputs, and they stay.
     """
     try:
-        with open(local_path, "r", encoding="utf-8", errors="replace") as handle:
+        # surrogateescape both ways: an input in Shift-JIS or cp1252 keeps its
+        # bytes, where "replace" turned every non-UTF-8 character into U+FFFD.
+        with open(local_path, "r", encoding="utf-8", errors="surrogateescape") as handle:
             text = handle.read()
     except OSError as exc:
         raise StructureRelayError(f"Could not read {local_path}: {exc}") from exc
@@ -152,7 +154,7 @@ def materialize(local_path: str, job: Job) -> str:
     directory = tempfile.mkdtemp(prefix=f"{int(time.time())}_{os.getpid()}_", dir=root)
     target = os.path.join(directory, os.path.basename(local_path))
     try:
-        with open(target, "w", encoding="utf-8", newline="\n") as handle:
+        with open(target, "w", encoding="utf-8", errors="surrogateescape", newline="\n") as handle:
             handle.write(filled)
     except OSError as exc:
         raise StructureRelayError(f"Could not write {target}: {exc}") from exc
