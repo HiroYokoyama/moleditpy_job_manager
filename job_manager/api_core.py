@@ -491,6 +491,12 @@ class JobApi:
             deferred.set_result({"job": job_payload(current, self.store), "files": list(paths)})
 
         def on_error(message: str) -> None:
+            # ``error`` is the service's one error channel, and carries no job
+            # id: another job's failed poll or submission would otherwise answer
+            # this request with its own message. Only this download ending does.
+            in_flight = getattr(self.service, "download_in_flight", None)
+            if in_flight is not None and in_flight(job_id):
+                return
             disconnect()
             deferred.set_error(message)
 

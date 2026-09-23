@@ -401,6 +401,10 @@ class JobService(QObject):
         run_async(self.pool, work, on_success=done, on_error=failed)
         return True
 
+    def download_in_flight(self, job_id: str) -> bool:
+        """Whether a download for this job has started and not yet ended."""
+        return job_id in self._downloads_in_flight
+
     def fetch_file_to_cache(self, job: Job, filename: str, on_ok, on_error) -> None:
         """Fetch one remote file into this job's cache directory."""
         host = self.store.hosts.get(job.host_id)

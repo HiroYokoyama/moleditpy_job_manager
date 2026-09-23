@@ -358,6 +358,17 @@ class TestJobActions(ApiTestCase):
             deferred.wait(1)
         self.assertIn("refused", caught.exception.message)
 
+    def test_an_error_from_elsewhere_does_not_answer_a_running_download(self):
+        # The service's error signal is shared: a failed poll of another host
+        # is emitted on it while this download is still going.
+        job = self.add_job(name="j", state=STATE_DONE)
+        _, deferred = self.post(f"/jobs/{job.id}/download", wait=True)
+        self.service.in_flight.add(job.id)
+        self.service.error.emit("Submission failed: some other job")
+        self.service.in_flight.discard(job.id)
+        self.service.results_ready.emit(job.id, ["/tmp/out.log"])
+        self.assertEqual(deferred.wait(1)["files"], ["/tmp/out.log"])
+
     def test_a_finished_wait_leaves_no_handler_connected(self):
         # Left connected, every later download would answer a request that
         # was served long ago -- and keep this Deferred alive for the session.
