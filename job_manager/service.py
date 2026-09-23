@@ -7,6 +7,7 @@ session and the dialog is only a view onto it.
 
 from __future__ import annotations
 
+import glob
 import logging
 import os
 import time
@@ -375,8 +376,11 @@ class JobService(QObject):
         def work() -> List[str]:
             transport = self.transport_for(host)
             try:
-                # An explicit set of names is passed as patterns: each matches only itself.
-                return fetch_results(transport, job, local_dir, globs=names)
+                # An explicit set of names is passed as patterns, escaped so each
+                # matches only itself: a file called mol[1].out is otherwise a
+                # character class that never matches its own name.
+                patterns = [glob.escape(name) for name in names] if names else None
+                return fetch_results(transport, job, local_dir, globs=patterns)
             finally:
                 transport.close()
 
@@ -422,7 +426,7 @@ class JobService(QObject):
                 raise ValueError(f"Unsafe remote filename: {filename}")
             transport = self.transport_for(host)
             try:
-                paths = fetch_results(transport, job, cache_dir, globs=[safe_name])
+                paths = fetch_results(transport, job, cache_dir, globs=[glob.escape(safe_name)])
                 if paths and os.path.isfile(paths[0]):
                     return paths[0]
                 local_path = os.path.join(cache_dir, *safe_name.split("/"))
