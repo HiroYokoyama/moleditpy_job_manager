@@ -228,7 +228,7 @@ a person as it is:
 | `403` | The request carried a web page's `Origin` |
 | `404` | No such route, host, preset or job |
 | `405` | The right path, the wrong method |
-| `409` | The request makes no sense here: a disabled host, a finished job to cancel, a download already running |
+| `409` | The request makes no sense here: a disabled host, a finished job to cancel, a job still uploading or downloading, a download already running |
 | `413` | The body is over 1 MB |
 | `500` | A bug — the message is the exception, and the details are in MoleditPy's log |
 | `503` | MoleditPy did not handle the request within 30 s |

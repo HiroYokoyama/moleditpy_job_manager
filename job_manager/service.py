@@ -452,6 +452,12 @@ class JobService(QObject):
         if host is None:
             self.error.emit(f"Host profile for {job.name} no longer exists")
             return
+        if not job.is_active:
+            # Nothing on the host to cancel yet (UPLOADING), or already over.
+            # Marking an uploading job CANCELLED here was undone the moment its
+            # submission finished and put it in the queue after all.
+            self.error.emit(f"{job.name} is {job.state} and cannot be cancelled now")
+            return
         dependents = self.store.dependents_of(job.id) if release_dependents else []
         if dependents:
             # Recorded before the cancel: stops the monitor calling them

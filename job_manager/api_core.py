@@ -23,7 +23,15 @@ import threading
 import time
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
-from .models import ACTIVE_STATES, TERMINAL_STATES, HostProfile, Job, SubmitPreset
+from .models import (
+    ACTIVE_STATES,
+    STATE_DOWNLOADING,
+    STATE_UPLOADING,
+    TERMINAL_STATES,
+    HostProfile,
+    Job,
+    SubmitPreset,
+)
 
 #: Bumped when a response or a request field changes meaning. The path carries
 #: it, so a client written against v1 keeps working when v2 appears beside it.
@@ -445,6 +453,13 @@ class JobApi:
         job = self._job(job_id)
         if job.is_terminal:
             raise ApiError(409, f"{job.name} has already finished ({job.state})")
+        if not job.is_active:
+            # UPLOADING has no queue id to cancel yet, and the submission
+            # finishing afterwards would put the job on the host regardless --
+            # the cancel would be reported and then silently undone.
+            raise ApiError(
+                409, f"{job.name} is {job.state}; cancel it once it has reached the queue"
+            )
         self.service.cancel(
             job, release_dependents=self._optional_bool(body, "release_dependents", True)
         )
@@ -510,7 +525,7 @@ class JobApi:
 
     def forget(self, job_id: str) -> Dict[str, Any]:
         job = self._job(job_id)
-        if job.is_active:
+        if job.is_active or job.state in (STATE_UPLOADING, STATE_DOWNLOADING):
             raise ApiError(
                 409,
                 f"{job.name} is still {job.state}. Cancel it first, or it would "

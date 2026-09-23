@@ -262,6 +262,15 @@ class TestCancel(ServiceTestCase):
         self.assertEqual(job.state, STATE_CANCELLED)
         self.assertTrue(self.transport.ran("scancel 4242"))
 
+    def test_a_job_that_is_not_active_is_left_alone(self):
+        job = self.submit()
+        job.state = "UPLOADING"
+        errors = []
+        self.service.error.connect(errors.append)
+        self.service.cancel(job)
+        self.assertEqual(job.state, "UPLOADING")
+        self.assertTrue(errors)
+
     def test_cancel_without_a_host_is_reported(self):
         job = self.submit()
         self.store.remove_host(self.host.id)

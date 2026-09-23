@@ -315,6 +315,23 @@ class TestJobActions(ApiTestCase):
         self.assertEqual(caught.exception.status, 409)
         self.assertEqual(self.service.cancelled, [])
 
+    def test_cancelling_a_job_still_uploading_is_a_409(self):
+        # It has no queue id yet, and the upload finishing would submit it
+        # anyway -- the cancel would be reported and then undone.
+        job = self.add_job(name="j", state="UPLOADING")
+        with self.assertRaises(ApiError) as caught:
+            self.post(f"/jobs/{job.id}/cancel")
+        self.assertEqual(caught.exception.status, 409)
+        self.assertEqual(self.service.cancelled, [])
+
+    def test_forgetting_a_job_mid_transfer_is_refused(self):
+        for state in ("UPLOADING", "DOWNLOADING"):
+            job = self.add_job(name="j", state=state)
+            with self.assertRaises(ApiError) as caught:
+                self.api.handle("DELETE", f"{api_core.API_PREFIX}/jobs/{job.id}", {}, {})
+            self.assertEqual(caught.exception.status, 409)
+        self.assertEqual(self.service.removed, [])
+
     def test_download_starts_one_and_says_so(self):
         job = self.add_job(name="j", state=STATE_DONE)
         _, payload = self.post(f"/jobs/{job.id}/download")
