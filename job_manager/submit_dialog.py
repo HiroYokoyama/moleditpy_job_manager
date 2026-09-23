@@ -456,8 +456,10 @@ class SubmitDialog(QDialog):
         """What will actually be filled in, read from the current input."""
         job = self.selected_relay_job()
         if job is None:
+            # The dropdown, not the whole job list: jobs on other hosts, or
+            # ones that failed, are not offered and so are not "other jobs".
             self.lbl_relay_status.setText(
-                "" if self.store.jobs else "No other job on this host yet."
+                "" if self.cmb_relay_source.count() else "No other job on this host yet."
             )
             return
         files = self.selected_files()
@@ -1545,7 +1547,19 @@ class SubmitDialog(QDialog):
                                 relay_filenames.append(filename)
                 # Uploaded instead of the originals, but the job still belongs
                 # to the files the user picked, not to these scratch copies.
-                upload_files = [structure_relay.materialize(path, relay_job) for path in files]
+                # Only a file with a tag is rewritten: materialize() refuses
+                # one with none, so a second input file (a basis set, a
+                # restart) made the whole submission fail.
+                tagged = set(self._files_with_relay_tags(files))
+                if not tagged:
+                    raise structure_relay.StructureRelayError(
+                        f"No {structure_relay.TAG_RE.pattern} tag was found in the input, "
+                        "so there is nothing to fill in."
+                    )
+                upload_files = [
+                    structure_relay.materialize(path, relay_job) if path in tagged else path
+                    for path in files
+                ]
             except (structure_relay.StructureRelayError, OSError) as exc:
                 QMessageBox.warning(self, "Submit", str(exc))
                 return

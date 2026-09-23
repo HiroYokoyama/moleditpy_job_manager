@@ -223,6 +223,31 @@ class TestSubmittingWithARelay(DialogTestCase):
 
         self.assertEqual(open(template, encoding="utf-8").read(), "[prevfile:.xyz]\n")
 
+    def test_only_the_tagged_input_is_rewritten(self):
+        # A second input without a tag (a basis set, a restart file) used to
+        # fail the submission: every file was sent through materialize(),
+        # which refuses one with nothing to fill in.
+        self.source_job()
+        template = self.make_input("run.inp")
+        with open(template, "w", encoding="utf-8") as handle:
+            handle.write("[prevfile:.xyz]\n")
+        extra = self.make_input("basis.gbs")
+        with open(extra, "w", encoding="utf-8") as handle:
+            handle.write("basis\n")
+
+        dialog = self.dialog()
+        dialog.add_files([template, extra])
+        dialog.chk_batch.setChecked(False)
+        dialog.txt_command.setText("orca {input} > {stem}.out")
+        dialog.box_relay.setChecked(True)
+        self.select_source(dialog, "opt")
+        with patch("job_manager.submit_dialog.QMessageBox.warning") as warned:
+            dialog._submit()
+
+        warned.assert_not_called()
+        job = next(j for j in self.store.jobs.values() if j.id != "opt-id")
+        self.assertEqual(job.input_files, [template, extra])
+
     def test_a_missing_tag_refuses_to_submit(self):
         self.source_job()
         template = self.make_input("run.inp")
