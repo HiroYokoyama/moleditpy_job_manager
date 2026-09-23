@@ -246,6 +246,14 @@ class TestSendingTheLimits(QueueControlTestCase):
         self.assertIn("3", text)
         self.assertIn("16", text)
 
+    def test_no_job_limit_is_not_reported_as_one_job(self):
+        # 0 is "no limit" everywhere, and the helper is sent 9999 for it.
+        self.dlg.spin_max_concurrent.setValue(0)
+        self.dlg._apply_queue_limits()
+        text = self.dlg.lbl_queue.text()
+        self.assertNotIn("at most 1 job", text)
+        self.assertIn("as many jobs as fit", text)
+
     def test_detect_is_described_rather_than_printed_as_zero(self):
         # "Ask the host" is the checkbox now; the fields cannot be 0 by hand.
         self.dlg.chk_detect_resources.setChecked(True)
