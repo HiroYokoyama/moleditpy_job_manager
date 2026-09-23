@@ -643,7 +643,8 @@ class HostCard(QFrame):
             self.lbl_target.setStyleSheet("color: #656d76;")
             self.lbl_load_avg.setStyleSheet("color: #8b949e;")
         self.setStyleSheet(
-            f"QFrame#hostCard {{ background-color: {bg}; border: 1px solid {border}; border-radius: 10px; }}"
+            f"QFrame#hostCard {{ background-color: {bg}; "
+            f"border: 1px solid {border}; border-radius: 10px; }}"
         )
         self.meter_cpu.set_dark(dark)
         self.meter_memory.set_dark(dark)
@@ -947,14 +948,15 @@ class HostMonitorDialog(QDialog):
         """Disconnect service signals to prevent memory leaks on re-open."""
         if getattr(self, "_refresh_pending", None) is not None:
             self._refresh_pending.stop()
-        try:
-            self.service.jobs_changed.disconnect(self._request_card_refresh)
-        except Exception:
-            pass
-        try:
-            self.service.job_updated.disconnect(self._on_job_updated)
-        except Exception:
-            pass
+        for signal, slot in (
+            (self.service.jobs_changed, self._request_card_refresh),
+            (self.service.job_updated, self._on_job_updated),
+        ):
+            try:
+                signal.disconnect(slot)
+            except TypeError:
+                # Already disconnected; teardown is allowed to run twice.
+                logging.debug("Job Manager: host monitor signal already disconnected")
         if hasattr(self, "_jobs_bar") and self._jobs_bar is not None:
             self._jobs_bar.teardown()
 
@@ -1314,8 +1316,8 @@ class HostMonitorDialog(QDialog):
             self.service.store.set_pref("host_monitor_interval", int(self.spin_interval.value()))
             self.service.store.set_pref("host_monitor_history", bool(self.btn_history.isChecked()))
             self.service.store.set_pref("host_monitor_dark", bool(self.btn_dark.isChecked()))
-        except Exception:
-            pass
+        except (OSError, ValueError, TypeError):
+            logging.warning("Job Manager: the host monitor settings were not saved", exc_info=True)
 
     def _teardown(self) -> None:
         """Stop sampling, save settings, and hand every connection back.
@@ -1395,14 +1397,14 @@ class _ActiveJobsBar(QWidget):
     def teardown(self) -> None:
         """Disconnect service signals; call when the parent dialog closes."""
         self._pending.stop()
-        try:
-            self.service.jobs_changed.disconnect(self._request_refresh)
-        except Exception:
-            pass
-        try:
-            self.service.job_updated.disconnect(self._on_updated)
-        except Exception:
-            pass
+        for signal, slot in (
+            (self.service.jobs_changed, self._request_refresh),
+            (self.service.job_updated, self._on_updated),
+        ):
+            try:
+                signal.disconnect(slot)
+            except TypeError:
+                logging.debug("Job Manager: jobs bar signal already disconnected")
 
     def _on_updated(self, _job_id: str = "") -> None:
         self._request_refresh()
