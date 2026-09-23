@@ -209,6 +209,15 @@ class TestMaterializing(RelayCase):
         text = open(result, encoding="utf-8").read()
         self.assertEqual(text, "%oldchk=opt.chk\n# something\n")
 
+    def test_bytes_that_are_not_utf8_survive(self):
+        # A Shift-JIS or cp1252 comment used to come back as U+FFFD.
+        template = os.path.join(self.tmp, "run.inp")
+        with open(template, "wb") as handle:
+            handle.write(b"! comment \xe9\x93\n%oldchk=[prevfile:.chk]\n")
+        result = materialize(template, self.source_job())
+        with open(result, "rb") as handle:
+            self.assertEqual(handle.read(), b"! comment \xe9\x93\n%oldchk=opt.chk\n")
+
     def test_the_result_keeps_the_original_basename(self):
         template = self.write("run.inp", "[prevfile:.xyz]\n")
         result = materialize(template, self.source_job())
