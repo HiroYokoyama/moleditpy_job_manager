@@ -86,6 +86,18 @@ class TestTheClientRoutes(ClientTestCase):
         reply = in_thread(self.client.ping)
         self.assertTrue(reply["ok"])
 
+    def test_a_proxy_in_the_environment_is_not_used(self):
+        """Loopback is only exempt from HTTP_PROXY where NO_PROXY says so, and
+        the bearer token must never be handed to a proxy."""
+        from unittest.mock import patch
+
+        dead_proxy = "http://127.0.0.1:9"
+        with patch.dict(os.environ, {"HTTP_PROXY": dead_proxy, "http_proxy": dead_proxy}):
+            os.environ.pop("NO_PROXY", None)
+            os.environ.pop("no_proxy", None)
+            reply = in_thread(self.client.ping)
+        self.assertTrue(reply["ok"])
+
     def test_hosts_and_presets(self):
         from job_manager.models import SubmitPreset
 
