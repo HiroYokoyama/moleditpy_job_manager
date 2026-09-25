@@ -20,8 +20,9 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
-from job_manager import remote_runner
+from job_manager import remote_runner, remote_runner_ps
 from job_manager.models import (
     BACKEND_LOCAL,
     BACKEND_WSL,
@@ -51,6 +52,7 @@ from .runner_support import REAL_PROCESS_TIMEOUT
 
 ON_WINDOWS = os.name == "nt"
 POWERSHELL = find_shell("powershell") if ON_WINDOWS else ""
+RUNNER_POLL = 0.1
 STUB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "wsl_stub.py")
 
 
@@ -89,6 +91,20 @@ class SubmissionCase(unittest.TestCase):
         )
         self.transport = self.make_transport()
         self.addCleanup(self.transport.close)
+        if self.mode == MODE_RUNNER:
+            # The queue sleeps RUNNER_POLL_SECONDS (5) between dispatch rounds,
+            # so every queued job cost about two rounds of waiting. The other
+            # runner suites shorten it the same way; the script is otherwise
+            # the one production uploads.
+            for flavour in (remote_runner, remote_runner_ps):
+                build = flavour.build_runner_script
+                patcher = mock.patch.object(
+                    flavour,
+                    "build_runner_script",
+                    lambda directory, _build=build: _build(directory, poll_seconds=RUNNER_POLL),
+                )
+                patcher.start()
+                self.addCleanup(patcher.stop)
 
     def remote_root(self) -> str:
         return self.root
