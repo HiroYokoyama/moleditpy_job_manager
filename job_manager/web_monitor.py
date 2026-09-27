@@ -593,10 +593,9 @@ PAGE = """<!doctype html>
           --bg:#f6f8fa; --card:#ffffff; --line:#d0d7de;
           --text:#1f2328; --dim:#59636e; --track:#eaeef2;
           --ok:#1a7f37; --warn:#9a6700; --bad:#cf222e; }
-  /* One class, the way the Plugin Explorer page does it: the system
-     preference only decides the starting state, and after that the button
-     is the whole answer. A media query as well would fight the class on a
-     device whose OS disagrees with what the user just pressed. */
+  /* One class, set by the script from the chosen mode, the way the Plugin
+     Explorer page does it. A media query as well would fight the class on a
+     device whose OS disagrees with what the user just picked. */
   :root.dark {
     color-scheme: dark;
     --bg:#14171c; --card:#1d2128; --line:#2c313a;
@@ -639,14 +638,19 @@ PAGE = """<!doctype html>
            border:1px solid var(--line); border-radius:6px; padding:3px 8px;
            font-size:12px; font-family:inherit; cursor:pointer; }
   #theme { display:inline-flex; align-items:center; justify-content:center; padding:4px; }
-  :root.dark #theme .moon { display:none; }
-  :root:not(.dark) #theme .sun { display:none; }
+  #theme svg { display:none; }
+  #theme[data-mode="auto"] .auto, #theme[data-mode="light"] .sun,
+  #theme[data-mode="dark"] .moon { display:block; }
 </style>
 </head>
 <body>
 <header><h1>Host Monitor</h1><span id="age">connecting...</span>
 <div class="controls">
-<button id="theme" type="button" aria-label="Toggle theme" title="Light or dark">
+<button id="theme" type="button" data-mode="auto" aria-label="Theme: Auto" title="Theme: Auto">
+  <svg class="auto" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+       stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="9"></circle>
+    <path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"></path></svg>
   <svg class="sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
        stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line>
@@ -720,23 +724,44 @@ async function tick() {
 // connection pays, and the person holding it is the only one who knows
 // whether this tab is being watched or left open all afternoon. Kept in
 // localStorage so a reload does not silently put it back to four seconds.
-// The system preference decides where this starts and nothing more: after
-// the first press the stored choice is the answer, on every device and
-// whatever the OS later switches to. Same shape as the Plugin Explorer page.
+// The button cycles Auto -> Light -> Dark, the same as the Plugin Explorer
+// page. Auto follows the OS, including a switch made while the tab is open:
+// a phone that goes dark at sunset should not keep a white page on the desk.
+// Light or Dark, once picked, stays whatever the OS later switches to.
 const themeButton = document.getElementById("theme");
 const root = document.documentElement;
+const THEME_MODES = ["auto", "light", "dark"];
+const THEME_LABELS = { auto: "Auto (follows system)", light: "Light", dark: "Dark" };
+const systemDark = window.matchMedia("(prefers-color-scheme: dark)");
 
-function setTheme(dark) {
-  root.classList.toggle("dark", dark);
-  try { localStorage.setItem("jm_theme", dark ? "dark" : "light"); } catch (e) {}
+let themeMode = "auto";
+try {
+  const saved = localStorage.getItem("jm_theme");
+  if (THEME_MODES.includes(saved)) themeMode = saved;
+} catch (e) {}
+
+function applyTheme() {
+  root.classList.toggle("dark",
+    themeMode === "dark" || (themeMode === "auto" && systemDark.matches));
+  themeButton.dataset.mode = themeMode;
+  const label = "Theme: " + THEME_LABELS[themeMode];
+  themeButton.title = label;
+  themeButton.setAttribute("aria-label", label);
 }
 
-let saved = null;
-try { saved = localStorage.getItem("jm_theme"); } catch (e) {}
-const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-root.classList.toggle("dark", saved === "dark" || (!saved && prefersDark));
+applyTheme();
+systemDark.addEventListener("change", () => { if (themeMode === "auto") applyTheme(); });
+// A hidden tab is not always told about the switch -- a phone with the monitor
+// in the background at sunset -- so look again when it comes back into view.
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && themeMode === "auto") applyTheme();
+});
 
-themeButton.addEventListener("click", () => setTheme(!root.classList.contains("dark")));
+themeButton.addEventListener("click", () => {
+  themeMode = THEME_MODES[(THEME_MODES.indexOf(themeMode) + 1) % THEME_MODES.length];
+  try { localStorage.setItem("jm_theme", themeMode); } catch (e) {}
+  applyTheme();
+});
 
 const every = document.getElementById("every");
 let timer = null;

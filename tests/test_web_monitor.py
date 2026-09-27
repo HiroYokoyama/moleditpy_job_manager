@@ -508,24 +508,37 @@ class TestTheBarsWarnByColour(ServerTestCase):
 
 
 class TestTheThemeToggle(ServerTestCase):
-    """Two states and a button, the way the Plugin Explorer page does it."""
+    """Auto, Light and Dark on one button, the way the Plugin Explorer page does it."""
 
     def page(self):
         return self.get("/", token=self.server.token)[1].decode()
 
-    def test_there_is_a_button_with_both_icons(self):
+    def test_there_is_a_button_with_an_icon_per_mode(self):
         page = self.page()
         self.assertIn('id="theme"', page)
+        self.assertIn('class="auto"', page)
         self.assertIn('class="sun"', page)
         self.assertIn('class="moon"', page)
 
-    def test_the_system_preference_only_decides_where_it_starts(self):
-        # Read once, at load. A media query on the variables as well would
-        # fight the class every time the OS disagreed with the last press.
+    def test_the_button_cycles_auto_light_dark(self):
+        self.assertIn('const THEME_MODES = ["auto", "light", "dark"];', self.page())
+
+    def test_auto_is_where_a_first_visit_starts(self):
+        self.assertIn('let themeMode = "auto";', self.page())
+
+    def test_the_system_preference_is_read_by_the_script_only(self):
+        # A media query on the variables as well would fight the class every
+        # time the OS disagreed with a Light or Dark the user picked.
         page = self.page()
         self.assertIn('matchMedia("(prefers-color-scheme: dark)")', page)
         style = page.split("<style>", 1)[1].split("</style>", 1)[0]
         self.assertNotIn("prefers-color-scheme", style)
+
+    def test_auto_follows_a_switch_made_while_the_tab_is_open(self):
+        page = self.page()
+        self.assertIn('systemDark.addEventListener("change"', page)
+        # A hidden tab may miss that event, so it looks again on coming back.
+        self.assertIn('document.addEventListener("visibilitychange"', page)
 
     def test_the_choice_is_remembered(self):
         page = self.page()
@@ -534,8 +547,11 @@ class TestTheThemeToggle(ServerTestCase):
 
     def test_a_stored_choice_beats_the_system_preference(self):
         # Otherwise the button appears to do nothing on the next visit from a
-        # device whose OS says the opposite.
-        self.assertIn('saved === "dark" || (!saved && prefersDark)', self.page())
+        # device whose OS says the opposite. A "light" or "dark" saved by the
+        # two-state page is still a valid mode, so an existing choice survives.
+        page = self.page()
+        self.assertIn("if (THEME_MODES.includes(saved)) themeMode = saved;", page)
+        self.assertIn('themeMode === "dark" || (themeMode === "auto" && systemDark.matches)', page)
 
     def test_both_schemes_define_every_colour(self):
         # A variable defined only in one block is a missing colour in the
