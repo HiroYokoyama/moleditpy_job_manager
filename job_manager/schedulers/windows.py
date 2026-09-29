@@ -230,7 +230,9 @@ class WindowsScheduler(Scheduler):
     def dependency_directives(self, after_id: str, any_outcome: bool = False) -> List[str]:
         return []
 
-    def submit_command(self, script_name: str, log_file: str) -> str:
+    def submit_command(
+        self, script_name: str, log_file: str, extra_args: Sequence[str] = ()
+    ) -> str:
         """Start the wrapper detached and print its process id.
 
         ``-PassThru`` gives the process object, whose ``Id`` is what the poller

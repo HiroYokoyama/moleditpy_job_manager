@@ -193,6 +193,7 @@ somebody's input by accident is worse than an error.
 | `queue`, `account`, `walltime` | Passed to the scheduler |
 | `nodes`, `ntasks`, `cpus_per_task`, `memory` | The resource request |
 | `modules`, `pre_commands`, `extra_directives` | Added to the generated script |
+| `submit_options` | Extra arguments for the submit command (`qsub <these> script`), after the host's own |
 | `fetch_globs` | What to bring back |
 | `auto_download` | Fetch the results automatically when it ends |
 | `remote_dir` | Run in a directory already on the host, uploading nothing |

@@ -39,7 +39,14 @@ from .credentials import ensure_password
 from . import structure_relay
 from .models import HostProfile, Job, SubmitPreset
 from .runner import check_input_name, make_remote_dir
-from .schedulers import get_scheduler, references_input, requested_cores, requested_memory_mb
+from .schedulers import (
+    format_command,
+    get_scheduler,
+    references_input,
+    requested_cores,
+    requested_memory_mb,
+    submit_arguments,
+)
 from .theme import apply_theme
 from .window_utils import make_independent
 from .service import JobService
@@ -585,6 +592,14 @@ class SubmitDialog(QDialog):
         self.txt_extra = QPlainTextEdit()
         self.txt_extra.setPlaceholderText("#SBATCH --exclusive")
         self.txt_extra.setMaximumHeight(60)
+        self.txt_submit_options = QLineEdit()
+        self.txt_submit_options.setPlaceholderText("e.g. -l select=1:ncpus=8 -W group_list=mygroup")
+        self.txt_submit_options.setToolTip(
+            "Arguments for sbatch / qsub itself, placed before the script:\n"
+            "qsub <these> moleditpy_run.sh. Written as you would type them.\n"
+            "The host's own submit options come first."
+        )
+        self.txt_submit_options.textChanged.connect(self._refresh_preview)
         self.txt_command = QLineEdit("orca {input} > {stem}.out")
         from .template_editor_dialog import PLACEHOLDER_TIP
 
@@ -704,6 +719,7 @@ class SubmitDialog(QDialog):
         form.addRow("Modules", self.txt_modules)
         form.addRow("Pre-commands", self.txt_pre)
         form.addRow("Extra directives", self.txt_extra)
+        form.addRow("Submit options", self.txt_submit_options)
         self.command_row = QWidget()
         command_layout = QHBoxLayout(self.command_row)
         command_layout.setContentsMargins(0, 0, 0, 0)
@@ -748,7 +764,11 @@ class SubmitDialog(QDialog):
         self.lbl_preview_hint.setWordWrap(True)
         self.txt_preview = QPlainTextEdit()
         self.txt_preview.setReadOnly(True)
+        self.lbl_submit_line = QLabel("")
+        self.lbl_submit_line.setWordWrap(True)
+        self.lbl_submit_line.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(self.lbl_preview_hint)
+        layout.addWidget(self.lbl_submit_line)
         layout.addWidget(self.txt_preview)
         return page
 
@@ -806,6 +826,7 @@ class SubmitDialog(QDialog):
             self.txt_walltime,
             self.spin_nodes,
             self.txt_extra,
+            self.txt_submit_options,
         ):
             widget.setEnabled(live)
             if not live:
@@ -961,6 +982,7 @@ class SubmitDialog(QDialog):
         self.txt_modules.setPlainText("\n".join(preset.modules or []))
         self.txt_pre.setPlainText("\n".join(preset.pre_commands or []))
         self.txt_extra.setPlainText("\n".join(preset.extra_directives or []))
+        self.txt_submit_options.setText(getattr(preset, "submit_options", "") or "")
         self.txt_command.setText(preset.command_template)
         self.txt_globs.setText(", ".join(preset.fetch_globs or []))
         if preset.name in ("default", ""):
@@ -988,6 +1010,7 @@ class SubmitDialog(QDialog):
                 d.strip() for d in self.txt_extra.toPlainText().splitlines() if d.strip()
             ],
             command_template=self.txt_command.text(),
+            submit_options=self.txt_submit_options.text().strip(),
             fetch_globs=globs,
             auto_download=bool(self.chk_auto_download.isChecked()),
         )
@@ -1417,6 +1440,25 @@ class SubmitDialog(QDialog):
             preamble=host.environment_commands(),
         )
         self.txt_preview.setPlainText(script)
+        self.lbl_submit_line.setText(self._submit_line(host, scheduler, input_name, name))
+
+    def _submit_line(self, host: HostProfile, scheduler, input_name: str, name: str) -> str:
+        """The command that hands the script to the queue, as the preview
+        shows it: the script alone hid where the submit options go, and a
+        stray quote in them would otherwise surface only at submission."""
+        if not scheduler.queue_directives:
+            return ""
+        try:
+            preset = self.collect_preset()
+            words = submit_arguments(
+                *(
+                    format_command(text, input_name, preset, name, self.remote_dir())
+                    for text in (getattr(host, "submit_options", ""), preset.submit_options)
+                )
+            )
+        except ValueError as exc:
+            return f"Submit options could not be read: {exc}"
+        return "Submitted with: " + scheduler.submit_command(scheduler.script_name, "", words)
 
     # --- actions ------------------------------------------------------------
 

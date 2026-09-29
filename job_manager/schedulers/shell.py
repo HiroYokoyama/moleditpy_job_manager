@@ -7,7 +7,7 @@ tracked pids at once.
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Sequence
 
 from ..models import SubmitPreset
 from ..remote_paths import quote
@@ -46,7 +46,9 @@ class ShellScheduler(Scheduler):
             lines.append(f"{MEMORY_TAG} {memory}")
         return lines
 
-    def submit_command(self, script_name: str, log_file: str) -> str:
+    def submit_command(
+        self, script_name: str, log_file: str, extra_args: Sequence[str] = ()
+    ) -> str:
         # The braces matter. Written as `A && nohup B ... & echo $!`, the `&`
         # backgrounds the whole `&&` list, and that subshell keeps the caller's
         # stdout and stderr open for as long as the job runs -- so submitting

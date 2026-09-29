@@ -334,6 +334,12 @@ def build_parser() -> argparse.ArgumentParser:
     submit.add_argument("--module", action="append", default=[], dest="modules")
     submit.add_argument("--pre", action="append", default=[], dest="pre_commands")
     submit.add_argument("--fetch", action="append", default=[], dest="fetch_globs")
+    submit.add_argument(
+        "--submit-options",
+        default="",
+        dest="submit_options",
+        help="Arguments for sbatch/qsub; use --submit-options='-W group_list=g'",
+    )
     submit.add_argument("--remote-dir", default="", help="Run in a directory already on the host")
     submit.add_argument("--remote-input", default="", help="Input inside --remote-dir")
     submit.add_argument("--after", default="", dest="after_job", help="Chain behind this job id")
@@ -374,7 +380,16 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _submit_fields(args: argparse.Namespace) -> Dict[str, Any]:
     fields: Dict[str, Any] = {"host": args.host, "files": list(args.files)}
-    for key in ("command", "preset", "name", "queue", "account", "walltime", "memory"):
+    for key in (
+        "command",
+        "preset",
+        "name",
+        "queue",
+        "account",
+        "walltime",
+        "memory",
+        "submit_options",
+    ):
         if getattr(args, key, ""):
             fields[key] = getattr(args, key)
     for key in ("nodes", "ntasks", "cpus_per_task"):

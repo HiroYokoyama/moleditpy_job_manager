@@ -46,6 +46,7 @@ from .models import (
 from .runner import apply_queue_limits, probe_resources, queue_paused, set_queue_paused
 from .schedulers import available_schedulers
 from .service import JobService
+from .store import MAX_POLL_INTERVAL, MIN_POLL_INTERVAL
 from .tasks import run_async
 from .theme import apply_theme
 from .window_utils import make_independent
@@ -303,7 +304,46 @@ class HostsDialog(QDialog):
         adv.addRow("ssh -o options", self.txt_options)
         adv.addRow("Connect timeout", self.spin_connect_timeout)
         adv.addRow("Command timeout", self.spin_command_timeout)
+        self.txt_submit_options = QLineEdit()
+        self.txt_submit_options.setPlaceholderText("e.g. -W group_list=mygroup")
+        self.txt_submit_options.setToolTip(
+            "Added to every sbatch / qsub on this host, before the script:\n"
+            "qsub <these> moleditpy_run.sh. Written as you would type them; a\n"
+            "preset's own submit options come after. Ignored without a queue."
+        )
+        adv.addRow("Submit options", self.txt_submit_options)
         right.addWidget(self.adv_box)
+
+        self.monitor_box = QGroupBox("Monitoring")
+        mon = QFormLayout(self.monitor_box)
+        self.chk_monitor_usage = QCheckBox("Sample load and memory in the Host Monitor")
+        self.chk_monitor_usage.setToolTip(
+            "Untick for a shared login node, such as a supercomputer's: its load is\n"
+            "everyone's, and a probe every few seconds is traffic its admins do not\n"
+            "want. The Host Monitor still lists this host's jobs."
+        )
+        self.spin_monitor_interval = QSpinBox()
+        self.spin_monitor_interval.setRange(0, 3600)
+        self.spin_monitor_interval.setSuffix(" s")
+        self.spin_monitor_interval.setSpecialValueText("window setting")
+        self.spin_monitor_interval.setToolTip(
+            "How often the Host Monitor samples this host. 0 follows the window's own setting."
+        )
+        self.chk_monitor_usage.toggled.connect(self.spin_monitor_interval.setEnabled)
+        self.spin_poll_interval = QSpinBox()
+        self.spin_poll_interval.setRange(0, MAX_POLL_INTERVAL)
+        self.spin_poll_interval.setSingleStep(30)
+        self.spin_poll_interval.setSuffix(" s")
+        self.spin_poll_interval.setSpecialValueText("global setting")
+        self.spin_poll_interval.setToolTip(
+            "How often this host's queue is asked about its jobs. 0 follows the\n"
+            f"interval in the Jobs window; anything set is at least {MIN_POLL_INTERVAL} s.\n"
+            "Set it higher for a busy login node, lower for your own workstation."
+        )
+        mon.addRow("", self.chk_monitor_usage)
+        mon.addRow("Monitor every", self.spin_monitor_interval)
+        mon.addRow("Poll jobs every", self.spin_poll_interval)
+        right.addWidget(self.monitor_box)
 
         self.chk_ask_password = QCheckBox(
             "Ask for a password when connecting (kept in memory for this session only)"
@@ -435,6 +475,7 @@ class HostsDialog(QDialog):
         for widget in (
             self.form_box,
             self.adv_box,
+            self.monitor_box,
             self.chk_ask_password,
             self.queue_box,
             self.btn_test,
@@ -464,6 +505,10 @@ class HostsDialog(QDialog):
         self.txt_options.setPlainText("")
         self.spin_connect_timeout.setValue(10)
         self.spin_command_timeout.setValue(60)
+        self.txt_submit_options.setText("")
+        self.chk_monitor_usage.setChecked(True)
+        self.spin_monitor_interval.setValue(0)
+        self.spin_poll_interval.setValue(0)
         self.chk_ask_password.setChecked(False)
         self._set_pause_checkbox(False)
         self.lbl_queue.setText("")
@@ -517,6 +562,11 @@ class HostsDialog(QDialog):
         self.txt_options.setPlainText("\n".join(host.ssh_options or []))
         self.spin_connect_timeout.setValue(int(host.connect_timeout or 10))
         self.spin_command_timeout.setValue(int(host.command_timeout or 60))
+        self.txt_submit_options.setText(getattr(host, "submit_options", "") or "")
+        self.chk_monitor_usage.setChecked(bool(getattr(host, "monitor_usage", True)))
+        self.spin_monitor_interval.setValue(max(0, int(getattr(host, "monitor_interval", 0) or 0)))
+        self.spin_poll_interval.setValue(max(0, int(getattr(host, "poll_interval", 0) or 0)))
+        self.spin_monitor_interval.setEnabled(self.chk_monitor_usage.isChecked())
         self.chk_ask_password.setChecked(bool(host.ask_password))
         # Explicitly, not only from the combo's signal: selecting a host whose
         # backend matches the one already shown changes no index, and the box
@@ -823,6 +873,12 @@ class HostsDialog(QDialog):
         host.ask_password = bool(self.chk_ask_password.isChecked())
         host.connect_timeout = int(self.spin_connect_timeout.value())
         host.command_timeout = int(self.spin_command_timeout.value())
+        host.submit_options = self.txt_submit_options.text().strip()
+        host.monitor_usage = bool(self.chk_monitor_usage.isChecked())
+        host.monitor_interval = int(self.spin_monitor_interval.value())
+        poll = int(self.spin_poll_interval.value())
+        # 1-4 s would be clamped up anyway; store what will actually happen.
+        host.poll_interval = max(MIN_POLL_INTERVAL, poll) if poll else 0
         return host
 
     def _save_current(self, reload: bool = True) -> Optional[HostProfile]:
@@ -838,6 +894,7 @@ class HostsDialog(QDialog):
             return None
         self._collect(host)
         self.store.add_host(host)
+        self._reschedule_polling()
         # Before the reload, not after: reloading re-selects, and a stale
         # snapshot at that moment is what made Save ask to save again.
         self._loaded = self._snapshot()
@@ -848,6 +905,12 @@ class HostsDialog(QDialog):
         # nothing at all.
         self.lbl_test.setText(f"Saved '{host.name}'.")
         return host
+
+    def _reschedule_polling(self) -> None:
+        """A changed per-host interval takes effect now, not after a restart."""
+        poller = getattr(self.service, "poller", None)
+        if poller is not None and hasattr(poller, "reschedule"):
+            poller.reschedule()
 
     def _persist_current(self) -> Optional[HostProfile]:
         """Apply the form to the selected profile without rebuilding the list.

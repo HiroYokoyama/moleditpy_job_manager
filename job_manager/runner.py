@@ -31,7 +31,14 @@ from .models import (
     SubmitPreset,
     sanitize_name,
 )
-from .schedulers import STATE_UNKNOWN, get_scheduler, requested_cores, requested_memory_mb
+from .schedulers import (
+    STATE_UNKNOWN,
+    format_command,
+    get_scheduler,
+    requested_cores,
+    requested_memory_mb,
+    submit_arguments,
+)
 from .transport.base import Transport, TransportError
 
 DEFAULT_LOG_NAME = "job.log"
@@ -245,7 +252,21 @@ def submit_job(
     # go into the command line is not a job, and leaving its files on the host
     # would be litter nobody goes back for.
     input_name = input_name_for(job, local_files)
+    # Before anything reaches the host, for the same reason: an unbalanced
+    # quote in the options is a typo to report, not a directory to litter.
+    options = (host.submit_options, preset.submit_options)
+    try:
+        submit_arguments(*options)
+    except ValueError as exc:
+        raise ValueError(f"Submit options could not be read: {exc}") from None
     prepare_remote_dir(transport, host, job)
+    # After the directory is decided, so {jobdir} has something to say.
+    extra_args = submit_arguments(
+        *(
+            format_command(text, input_name, preset, sanitize_name(job.name), job.remote_dir)
+            for text in options
+        )
+    )
 
     for path in local_files:
         transport.upload(path, remote_paths.join(job.remote_dir, os.path.basename(path)))
@@ -273,7 +294,7 @@ def submit_job(
     script_remote = remote_paths.join(job.remote_dir, script_name)
     _upload_text(transport, script, script_remote)
 
-    submit_cmd = scheduler.submit_command(script_name, job.log_file)
+    submit_cmd = scheduler.submit_command(script_name, job.log_file, extra_args)
     result = transport.run(
         dialect.for_host(host).run_in(job.remote_dir, submit_cmd),
         timeout=max(60, int(host.command_timeout or 60)),

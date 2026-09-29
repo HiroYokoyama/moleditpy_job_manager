@@ -334,6 +334,9 @@ A login node is not a status API, so:
   the login node;
 - the timer stops entirely when no job is active;
 - a host that errors backs off exponentially, up to 15 minutes;
+- any one host can override the interval (**Hosts… ▸ Monitoring ▸ Poll jobs
+  every**): ask a busy supercomputer every ten minutes and your workstation
+  every thirty seconds, without one slowing the other;
 - **Refresh Now** is there when you actually need an answer immediately;
 - **Reload List** re-reads the job file, so a job another Job Manager window
   submitted, finished or removed shows up here. No host is contacted.
@@ -383,6 +386,40 @@ success. `FAILED (rc=143)` is what a walltime kill looks like now.
 Step 2 needs no input file if the work is already on the host: tick **Work
 already on the host**, give the directory, and **Check** it before you submit.
 See [Work that is already on the host](docs/WORKFLOW.md#work-that-is-already-on-the-host).
+
+### Submit options and supercomputer login nodes
+
+Some sites need arguments on the submit command line itself, not as `#PBS` /
+`#SBATCH` lines in the script: a billing group, a resource group, a PBS Pro
+`select`. **Submit options** puts them between the verb and the script —
+`qsub <these> moleditpy_run.sh`:
+
+- on the **host** (Hosts… ▸ Advanced), for what every job there needs, such
+  as `-W group_list=mygroup`;
+- on the **preset** (New Job… ▸ Resources), for one kind of job, such as
+  `-l select=1:ncpus={cpus}:mem={memory}`. The same placeholders as the
+  command work here.
+
+The host's come first. They are split the way a shell would split them and
+each word is quoted, so a `;` is an argument and never a second command. The
+**Script preview** tab shows the exact submit line.
+
+A supercomputer's login ("entry") node is shared by hundreds of people. Its
+load is theirs, not yours, and a probe every few seconds is traffic its admins
+ask people not to make. For such a host, **Hosts… ▸ Monitoring**:
+
+- untick **Sample load and memory in the Host Monitor**: its card stays and
+  still lists your jobs, but the host is never probed;
+- or keep sampling but less often, with **Monitor every**;
+- and set **Poll jobs every** to something unhurried, such as 600 s.
+
+> **Tested on a real queue? Not yet.** SLURM, PBS/Torque and SGE/UGE support
+> is written against their documentation and held by unit tests of the exact
+> text each one is sent, but the author has no access to a cluster running
+> them. The no-queue modes (this machine, WSL, SSH to a plain machine,
+> Windows) are what is used day to day. If something is refused or misread
+> on your cluster, please open an issue with the scheduler, its version, and
+> the error text. A report is how that support gets tested.
 
 ### Command templates
 

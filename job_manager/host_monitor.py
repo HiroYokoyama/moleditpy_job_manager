@@ -9,6 +9,7 @@ connection every two seconds would cost more than the measurement.
 from __future__ import annotations
 
 import logging
+import time
 from collections import deque
 from typing import Deque, Dict, List, Optional
 
@@ -78,6 +79,9 @@ MAX_BACKOFF_TICKS = 16
 #: say. Written as the character, never ``&nbsp;``: QLabel's AutoText format
 #: does not recognise that entity as markup, so it showed the literal text.
 BLANK = "\u00a0"
+
+#: What a card says for a host set not to be sampled.
+NOT_SAMPLED = "usage not sampled"
 
 #: Waiting, drawn as the *white hourglass* rather than the emoji one. The
 #: emoji codepoint (U+231B) renders as a crushed, off-baseline colour glyph;
@@ -800,6 +804,17 @@ class HostCard(QFrame):
         self.graph_cpu.add(stats.load_fraction)
         self.graph_memory.add(stats.memory_fraction)
 
+    def show_not_sampled(self) -> None:
+        """Jobs only: the host is set not to be sampled (a shared login node)."""
+        self.lbl_state.setText(NOT_SAMPLED)
+        self.setToolTip(
+            "Load and memory are not sampled on this host (Hosts... > Monitor load and "
+            "memory). Its jobs are still listed."
+        )
+        self.meter_cpu.show_value(0.0, "-")
+        self.meter_memory.show_value(0.0, "-")
+        self.lbl_load_avg.setText(BLANK)
+
     def show_error(self, message: str) -> None:
         first = message.splitlines()[0] if message else "no answer"
         self.lbl_state.setText(first)
@@ -844,6 +859,9 @@ class HostMonitorDialog(QDialog):
         #: The last good sample per host, kept because the web view is served
         #: from a thread that must not read a widget to find out what it says.
         self._latest: Dict[str, object] = {}
+        #: When each host was last asked, so one with its own interval is
+        #: sampled on that and not on every tick of the window's timer.
+        self._last_sample: Dict[str, float] = {}
         self._web = None
         self._build_ui()
         self._timer = QTimer(self)
@@ -856,7 +874,7 @@ class HostMonitorDialog(QDialog):
         self.spin_interval.blockSignals(True)
         self.spin_interval.setValue(stored or self._default_interval())
         self.spin_interval.blockSignals(False)
-        self._timer.start(self.spin_interval.value() * 1000)
+        self._timer.start(self._tick_seconds() * 1000)
         if self.btn_history.isChecked():
             self._set_history(True)
         # `setChecked` above happens before the signal connection, so it
@@ -991,7 +1009,14 @@ class HostMonitorDialog(QDialog):
     def _host_signature(self) -> tuple:
         """What the cards depend on: which hosts there are, and their labels."""
         return tuple(
-            (host.id, host.name, host.target, bool(getattr(host, "enabled", True)))
+            (
+                host.id,
+                host.name,
+                host.target,
+                bool(getattr(host, "enabled", True)),
+                bool(getattr(host, "monitor_usage", True)),
+                int(getattr(host, "monitor_interval", 0) or 0),
+            )
             for host in self.service.store.host_list()
         )
 
@@ -1015,11 +1040,15 @@ class HostMonitorDialog(QDialog):
                 effect = QGraphicsOpacityEffect(card)
                 effect.setOpacity(0.45)
                 card.setGraphicsEffect(effect)
+            elif not getattr(host, "monitor_usage", True):
+                card.show_not_sampled()
             card.restyle(self.palette(), dark=bool(self.btn_dark.isChecked()))
             self.cards[host.id] = card
         self._empty_label.setVisible(not self.cards)
         self._relayout()
         self._refresh_card_jobs()
+        if hasattr(self, "_timer"):
+            self._timer.setInterval(self._tick_seconds() * 1000)
 
     def _sync_cards(self) -> None:
         """Rebuild the cards if the host list has changed since they were made."""
@@ -1053,7 +1082,7 @@ class HostMonitorDialog(QDialog):
     def _set_interval(self, seconds: int) -> None:
         """Apply the cadence and save setting."""
         self.service.store.set_pref("host_monitor_interval", int(seconds))
-        self._timer.setInterval(int(seconds) * 1000)
+        self._timer.setInterval(self._tick_seconds() * 1000)
 
     def _set_history(self, shown: bool) -> None:
         """Open or close the graphs on every card at once and save setting."""
@@ -1112,12 +1141,27 @@ class HostMonitorDialog(QDialog):
             return OPENSSH_INTERVAL_SECONDS
         return DEFAULT_INTERVAL_SECONDS
 
+    def _interval_for(self, host: HostProfile) -> int:
+        """Seconds between samples of one host: its own, else the window's."""
+        own = int(getattr(host, "monitor_interval", 0) or 0)
+        return own if own > 0 else max(1, int(self.spin_interval.value()))
+
+    def _tick_seconds(self) -> int:
+        """The timer runs as often as the most eager sampled host wants."""
+        seconds = [
+            self._interval_for(host)
+            for host in self.service.store.host_list()
+            if getattr(host, "enabled", True) and getattr(host, "monitor_usage", True)
+        ]
+        return max(1, min(seconds or [int(self.spin_interval.value())]))
+
     def _hosts(self) -> List[HostProfile]:
         return [
             host
             for host in self.service.store.host_list()
             if host.id in self.cards
             and getattr(host, "enabled", True)
+            and getattr(host, "monitor_usage", True)
             and not needs_password(self.service, host)
         ]
 
@@ -1131,7 +1175,16 @@ class HostMonitorDialog(QDialog):
     def _sample_all(self) -> None:
         # Cheap tuple comparison; there is no store signal for host edits.
         self._sync_cards()
+        now = time.monotonic()
+        tick = self._tick_seconds()
         for host in self._hosts():
+            # Only a host slower than the tick is gated on the clock; the rest
+            # are asked every tick, as they always were. Half a tick of slack,
+            # so a timer firing a hair early does not skip a whole interval.
+            last = self._last_sample.get(host.id)
+            interval = self._interval_for(host)
+            if interval > tick and last is not None and now - last + tick / 2.0 < interval:
+                continue
             if host.id in self._busy:
                 # Still waiting on the last probe; stacking more would only
                 # make a slow host slower.
@@ -1142,6 +1195,7 @@ class HostMonitorDialog(QDialog):
                 # unreachable host every tick.
                 self._skip_ticks[host.id] = waiting - 1
                 continue
+            self._last_sample[host.id] = now
             self._sample(host)
 
     def _sample(self, host: HostProfile) -> None:
@@ -1184,7 +1238,7 @@ class HostMonitorDialog(QDialog):
             self._backoff[host_id] = waited
             self._skip_ticks[host_id] = waited
             if host_id in self.cards:
-                seconds = waited * max(1, self.spin_interval.value())
+                seconds = waited * self._interval_for(host)
                 self.cards[host_id].show_error(f"{message} - retrying in {seconds}s")
             self._latest[host_id] = host_stats.HostStats(error=message)
             self._publish_web()
@@ -1201,7 +1255,6 @@ class HostMonitorDialog(QDialog):
         of those from a request handler is the bug this shape exists to make
         impossible.
         """
-        import time
 
         by_host: Dict[str, list] = {}
         for job in self.service.store.job_list():
@@ -1220,6 +1273,10 @@ class HostMonitorDialog(QDialog):
             if host.id not in self.cards:
                 continue
             stats = self._latest.get(host.id)
+            if not getattr(host, "monitor_usage", True):
+                # A value left from before sampling was switched off would be
+                # served as if it were current.
+                stats = None
             entry = {
                 "name": host.name,
                 "jobs": by_host.get(host.id, []),
@@ -1241,6 +1298,8 @@ class HostMonitorDialog(QDialog):
                     entry["memory_detail"] = (
                         f"{stats.mem_used_mb / 1024:.1f}/{stats.mem_total_mb / 1024:.1f} GB"
                     )
+            if not getattr(host, "monitor_usage", True):
+                entry["summary"] = NOT_SAMPLED
             hosts.append(entry)
         return {"hosts": hosts, "generated": time.strftime("%H:%M:%S")}
 
