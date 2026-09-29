@@ -19,7 +19,7 @@ import re
 import shlex
 import time
 from abc import ABC, abstractmethod
-from typing import Dict, Iterable, List, Sequence
+from typing import Callable, Dict, Iterable, List, Optional, Sequence
 
 from ..models import (
     SENTINEL_NAME,
@@ -70,7 +70,8 @@ def memory_request(text: str, units: Dict[str, str], bare: str = "") -> str:
     ``8gb`` and rejects ``8G``; and PBS and SGE read a bare number as *bytes*,
     so the ``8192`` that means 8 GB to SLURM asked them for 8 kB and had the job
     killed on its first allocation. ``units`` maps M/G/T to this queue's
-    suffix; a fraction is carried in megabytes, since no queue takes ``1.5G``.
+    suffix; a fraction, or a unit this queue has no suffix for (``T`` on an
+    older SGE), is carried in megabytes, since no queue takes ``1.5G``.
 
     Anything this cannot read is passed through as typed: a site-specific
     spelling the user knows about is theirs to make.
@@ -84,15 +85,15 @@ def memory_request(text: str, units: Dict[str, str], bare: str = "") -> str:
         unit = unit[0]
     elif not unit:
         unit = bare
-    if unit not in units:
+    if unit not in _MEMORY_UNITS or not unit:
         return raw
-    if "." in number:
+    if "." in number or unit not in units:
         megabytes = parse_memory_mb(f"{number}{unit}")
         return f"{megabytes}{units['M']}" if megabytes else raw
     return f"{int(number)}{units[unit]}"
 
 
-def submit_arguments(*texts: str) -> List[str]:
+def submit_arguments(*texts: str, substitute: Optional[Callable[[str], str]] = None) -> List[str]:
     """Extra arguments for the submit verb, as separate shell-quoted words.
 
     Written the way they would be typed after ``qsub`` -- ``-W group_list=gr1
@@ -100,11 +101,18 @@ def submit_arguments(*texts: str) -> List[str]:
     quoted one by one. The words reach the queue exactly as typed, but a ``;``
     or a ``$(...)`` is an argument, not a second command run on the login node.
     Raises ``ValueError`` for an unbalanced quote rather than guessing.
+
+    ``substitute`` fills placeholders in each word *after* the split: a
+    ``{jobdir}`` holding a space would otherwise become two arguments, and a
+    quote in a queue name an unbalanced one. A leading ``~`` stays expandable,
+    as it would typed at a prompt, so ``{jobdir}`` under ``~/`` still names it.
     """
     words: List[str] = []
     for text in texts:
         words += shlex.split(text or "", comments=False, posix=True)
-    return [shlex.quote(word) for word in words]
+    if substitute is not None:
+        words = [substitute(word) for word in words]
+    return [quote(word) for word in words]
 
 
 def user_argument(username: str) -> str:

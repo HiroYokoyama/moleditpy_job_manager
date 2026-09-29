@@ -37,7 +37,7 @@ from .command_templates import CommandTemplate, extension_of, suggest, templates
 from .credentials import ensure_password
 
 from . import structure_relay
-from .models import HostProfile, Job, SubmitPreset
+from .models import HostProfile, Job, SubmitPreset, sanitize_name
 from .runner import check_input_name, make_remote_dir
 from .schedulers import (
     format_command,
@@ -1398,6 +1398,7 @@ class SubmitDialog(QDialog):
 
     def _refresh_preview(self) -> None:
         host = self.current_host()
+        self.lbl_submit_line.setText("")
         if host is None:
             self.txt_preview.setPlainText("Add a host profile first (Hosts...).")
             return
@@ -1426,35 +1427,47 @@ class SubmitDialog(QDialog):
         if self._batch_active() and files:
             # A batch job is named after its own file's stem, not the field.
             name = os.path.splitext(os.path.basename(files[0]))[0]
+        preset = self.collect_preset()
+        # Same construction submitting uses, so the preview shows the real cd
+        # target (bar the timestamp) -- and the same {jobdir} on the submit line.
+        remote_dir = self.remote_dir() or make_remote_dir(host, name)
         script = scheduler.build_script(
             name,
-            self.collect_preset(),
+            preset,
             input_name,
             "job.log",
             run_after=(predecessor.remote_job_id if predecessor else ""),
             run_after_any=self.chain_any_requested(),
             start_after=self.selected_start_time(),
-            # Same construction submitting uses, so the preview shows the real
-            # cd target (bar the timestamp).
-            remote_dir=self.remote_dir() or make_remote_dir(host, name),
+            remote_dir=remote_dir,
             preamble=host.environment_commands(),
         )
         self.txt_preview.setPlainText(script)
-        self.lbl_submit_line.setText(self._submit_line(host, scheduler, input_name, name))
+        self.lbl_submit_line.setText(
+            self._submit_line(host, scheduler, preset, input_name, name, remote_dir)
+        )
 
-    def _submit_line(self, host: HostProfile, scheduler, input_name: str, name: str) -> str:
+    def _submit_line(
+        self,
+        host: HostProfile,
+        scheduler,
+        preset: SubmitPreset,
+        input_name: str,
+        name: str,
+        remote_dir: str,
+    ) -> str:
         """The command that hands the script to the queue, as the preview
         shows it: the script alone hid where the submit options go, and a
         stray quote in them would otherwise surface only at submission."""
         if not scheduler.queue_directives:
             return ""
         try:
-            preset = self.collect_preset()
             words = submit_arguments(
-                *(
-                    format_command(text, input_name, preset, name, self.remote_dir())
-                    for text in (getattr(host, "submit_options", ""), preset.submit_options)
-                )
+                getattr(host, "submit_options", ""),
+                preset.submit_options,
+                substitute=lambda word: format_command(
+                    word, input_name, preset, sanitize_name(name), remote_dir
+                ),
             )
         except ValueError as exc:
             return f"Submit options could not be read: {exc}"
