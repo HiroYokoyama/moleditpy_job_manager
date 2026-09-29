@@ -259,10 +259,14 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
             "        # Not $pid: that is an automatic variable holding this",
             "        # process's own id, and writing to it would make the check below",
             "        # test the runner instead of the job.",
-            "        $jobPid = Get-Content -LiteralPath ('pids\\' + $entry) "
+            # Over once it has written its exit code, as in the bash runner,
+            # whose zombies made the process check alone lag behind it.
+            "        if (-not (Test-Path -LiteralPath ('status\\' + $entry))) {",
+            "            $jobPid = Get-Content -LiteralPath ('pids\\' + $entry) "
             "-ErrorAction SilentlyContinue | Select-Object -First 1",
-            "        if ($jobPid -match '^\\d+$' -and "
+            "            if ($jobPid -match '^\\d+$' -and "
             "(Get-Process -Id ([int]$jobPid) -ErrorAction SilentlyContinue)) { continue }",
+            "        }",
             "        # An empty pid file means the job never started; either way it is",
             "        # over, and leaving it here would hold its cores for ever.",
             "        Move-Item -LiteralPath ('running\\' + $entry) "
@@ -295,8 +299,10 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
             "    # Pausing stops new work only. Killing what is already running would",
             "    # make 'pause' mean 'throw away the last six hours'.",
             f"    if (Test-Path -LiteralPath {ps_quote(PAUSED_NAME)}) {{ return }}",
-            "    $cap = Get-TotalCores",
-            "    $memcap = Get-TotalMemory",
+            # Only once a job could start, as in the bash runner: each is a CIM
+            # query, and most passes start nothing.
+            "    $cap = $null",
+            "    $memcap = $null",
             # Sorted on the number itself, not as text: past 9999 the padding
             # runs out and job_10000 sorts before job_9999, inverting the
             # dispatch order exactly when a queue has been busy a long time.
@@ -306,6 +312,10 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
             "        if ((Get-DirCount 'running') -ge (Get-Slots)) { break }",
             "        $entry = $f.Name",
             "        if (-not (Test-Ready $entry)) { continue }",
+            "        if ($null -eq $cap) {",
+            "            $cap = Get-TotalCores",
+            "            $memcap = Get-TotalMemory",
+            "        }",
             "        $want = Get-JobCores ('queue\\' + $entry)",
             "        # A job asking for more than the machine has would otherwise wait",
             "        # for ever; give it everything, so it runs on its own.",

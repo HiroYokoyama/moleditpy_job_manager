@@ -211,6 +211,35 @@ class TestItRunsWhatIsQueued(RunnerHarness):
         with open(self.marker("order"), encoding="utf-8") as handle:
             self.assertEqual(handle.read().split(), ["aaa", "bbb", "ccc"])
 
+    def test_a_job_that_wrote_its_exit_code_frees_its_slot_at_once(self):
+        # A finished job is an orphan, and a zombie that `kill -0` still finds
+        # until init reaps it: each one held its slot a second or two, three
+        # in a row overran this file's ten-second wait on Windows, and a
+        # container whose init never reaps would have held the slot for ever.
+        # A live process whose job has written its status stands in for one.
+        lingering = subprocess.run(
+            [BASH, "-c", "sleep 30 >/dev/null 2>&1 < /dev/null & echo $!"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        ).stdout.strip()
+        self.addCleanup(subprocess.run, [BASH, "-c", f"kill {lingering}"], timeout=10)
+        first = self.enqueue("aaa", "exit 0")
+        os.replace(os.path.join(self.dir, "queue", first), os.path.join(self.dir, "running", first))
+        with open(os.path.join(self.dir, "pids", first), "w", encoding="utf-8") as handle:
+            handle.write(f"{lingering}\n")
+        with open(os.path.join(self.dir, "status", first), "w", encoding="utf-8") as handle:
+            handle.write("0\n")
+        self.enqueue("bbb", f"touch {self.marker('ran')}")
+        self.set_limit(SLOTS_NAME, 1)
+
+        self.start_runner()
+
+        self.wait_for(lambda: os.path.exists(self.marker("ran")), what="bbb to get the slot")
+        self.assertEqual(self.listing()["aaa"], "done")
+        still_there = subprocess.run([BASH, "-c", f"kill -0 {lingering}"], timeout=10)
+        self.assertEqual(still_there.returncode, 0, "the stand-in process ended early")
+
     def test_it_exits_once_the_queue_empties(self):
         self.enqueue("aaa", "exit 0")
 
