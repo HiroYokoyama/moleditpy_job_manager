@@ -150,8 +150,11 @@ class SubmitDialog(QDialog):
             self.txt_remote_input.setText(remote_input)
         if not host_id and files:
             # A file already inside a host's local mirror is already on that
-            # host, so open on it rather than whichever was used last.
-            owner = self.store.host_for_local_path(files[0])
+            # host, so open on it rather than whichever was used last -- unless
+            # the one used last mirrors it too, which is the machine meant.
+            owner = self.store.host_for_local_path(
+                files[0], prefer_id=self.store.get_pref("last_host_id", "") or ""
+            )
             if owner is not None:
                 host_id = owner.id
         guessed = False
@@ -1218,10 +1221,10 @@ class SubmitDialog(QDialog):
         """
         if self._host_chosen_by_user or not path:
             return False
-        owner = self.store.host_for_local_path(path)
+        current = self.current_host()
+        owner = self.store.host_for_local_path(path, prefer_id=current.id if current else "")
         if owner is None:
             return False
-        current = self.current_host()
         if current is not None and current.id == owner.id:
             return False
         index = self.cmb_host.findData(owner.id)

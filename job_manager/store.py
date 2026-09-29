@@ -525,10 +525,16 @@ class JobStore:
             self.presets.pop(preset_id, None)
         self.save_settings()
 
-    def host_for_local_path(self, path: str) -> Optional[HostProfile]:
+    def host_for_local_path(self, path: str, prefer_id: str = "") -> Optional[HostProfile]:
         """The enabled host whose local mirror holds ``path``, if any.
 
-        The most specific wins (e.g. ``/mnt/hpc`` over ``/mnt``).
+        The most specific wins (e.g. ``/mnt/hpc`` over ``/mnt``). Between
+        mirrors of the same directory -- one cluster set up as a profile per
+        queue, or a login node and its scheduler -- ``prefer_id`` wins if it is
+        one of them, then the host most recently submitted to. List order
+        decided that before, so saving a file there switched the wizard away
+        from the machine the user had just been submitting to, onto whichever
+        profile sorted first by name.
         """
         matches = [
             host
@@ -540,16 +546,29 @@ class JobStore:
         # local_root(), not equal_path: a local host's root is its own
         # remote_root and has no equal_path, which measured as the length of
         # the working directory and could outrank a deeper mirror.
-        return max(matches, key=lambda host: len(os.path.abspath(host.local_root())))
+        depth = {host.id: len(os.path.abspath(host.local_root())) for host in matches}
+        deepest = max(depth.values())
+        tied = [host for host in matches if depth[host.id] == deepest]
+        for host in tied:
+            if prefer_id and host.id == prefer_id:
+                return host
+        last_used = self._last_submitted()
+        # max() keeps the first of equals, so with no history list order stands.
+        return max(tied, key=lambda host: last_used.get(host.id, 0.0))
 
-    def mirrored_hosts(self) -> List[HostProfile]:
-        """Enabled hosts that have a local mirror (``equal_path``) configured,
-        the one most recently submitted to first."""
+    def _last_submitted(self) -> Dict[str, float]:
+        """When each host was last submitted to, by its jobs."""
         last_used: Dict[str, float] = {}
         for job in self.jobs.values():
             when = job.submitted_at or job.updated_at or 0.0
             if when > last_used.get(job.host_id, 0.0):
                 last_used[job.host_id] = when
+        return last_used
+
+    def mirrored_hosts(self) -> List[HostProfile]:
+        """Enabled hosts that have a local mirror (``equal_path``) configured,
+        the one most recently submitted to first."""
+        last_used = self._last_submitted()
         candidates = [
             host
             for host in self.host_list()
