@@ -42,6 +42,10 @@ class TestMemoryRequest(unittest.TestCase):
         self.assertEqual(memory_request("16gb", LETTER_UNITS, "M"), "16G")
         self.assertEqual(memory_request("2T", LETTER_UNITS, "M"), "2T")
 
+    def test_a_unit_the_queue_lacks_is_carried_in_megabytes(self):
+        # Older SGE has no T suffix.
+        self.assertEqual(memory_request("2T", {"M": "M", "G": "G"}, "M"), "2097152M")
+
     def test_a_fraction_is_carried_in_megabytes(self):
         self.assertEqual(memory_request("1.5G", LETTER_UNITS, "M"), "1536M")
         self.assertEqual(memory_request("1.5G", PBS_UNITS, "M"), "1536mb")
@@ -69,11 +73,25 @@ class TestSubmitArguments(unittest.TestCase):
         self.assertEqual(submit_arguments('-N "two words"'), ["-N", "'two words'"])
 
     def test_a_second_command_is_only_an_argument(self):
-        words = submit_arguments("-q x; rm -rf ~ $(id)")
+        words = submit_arguments("-q x; rm -rf / $(id) `id` a|b")
         self.assertIn("'x;'", words)
-        self.assertIn("'~'", words)
         self.assertIn("'$(id)'", words)
-        self.assertNotIn(";", [w for w in words if not w.startswith("'")])
+        self.assertIn("'`id`'", words)
+        self.assertIn("'a|b'", words)
+
+    def test_a_leading_tilde_still_expands(self):
+        # As it would typed at a prompt; only expansion, never a command.
+        self.assertEqual(submit_arguments("-o ~/logs/x"), ["-o", "~/logs/x"])
+
+    def test_a_substituted_value_with_a_space_stays_one_word(self):
+        words = submit_arguments(
+            "-o {jobdir}/q.log", substitute=lambda w: w.replace("{jobdir}", "/scratch/my run")
+        )
+        self.assertEqual(words, ["-o", "'/scratch/my run/q.log'"])
+
+    def test_a_substituted_quote_is_not_a_syntax_error(self):
+        words = submit_arguments("-q {queue}", substitute=lambda w: w.replace("{queue}", "it's"))
+        self.assertEqual(words, ["-q", "'it'\"'\"'s'"])
 
     def test_empty_gives_nothing(self):
         self.assertEqual(submit_arguments("", "   "), [])
@@ -339,6 +357,23 @@ class TestSubmitJobCarriesTheOptions(unittest.TestCase):
         submit = [c for c in transport.commands if "qsub" in c][0]
         self.assertIn("qsub -W group_list=gr1 -l select=1:ncpus=8 ", submit)
         self.assertEqual(job.remote_job_id, "4711.pbs01")
+
+    def test_jobdir_under_home_is_one_expandable_word(self):
+        host = make_host(scheduler="pbs", remote_root="~/my jobs")
+        preset = SubmitPreset(command_template="prog {input}", submit_options="-o {jobdir}/q.log")
+        job, transport = self.submit(host, preset)
+        submit = [c for c in transport.commands if "qsub" in c][0]
+        self.assertIn("qsub -o ~/", submit)
+        self.assertIn("my jobs/", submit)
+        self.assertIn(job.remote_dir.split("/")[-1], submit)
+
+    def test_a_host_with_no_queue_ignores_them_even_when_broken(self):
+        host = make_host(scheduler="shell", concurrency_mode="lanes", submit_options='-x "oops')
+        preset = SubmitPreset(command_template="prog {input}", submit_options='"also')
+        transport = FakeTransport(host).when("nohup", stdout="4242\n")
+        job = runner.submit_job(transport, host, preset, Job(name="mol"), [self.input_path])
+        self.assertEqual(job.remote_job_id, "4242")
+        self.assertFalse(any("oops" in c for c in transport.commands))
 
     def test_an_unreadable_option_stops_before_the_host_is_touched(self):
         host = make_host(scheduler="pbs")

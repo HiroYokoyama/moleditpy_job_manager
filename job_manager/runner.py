@@ -254,7 +254,9 @@ def submit_job(
     input_name = input_name_for(job, local_files)
     # Before anything reaches the host, for the same reason: an unbalanced
     # quote in the options is a typo to report, not a directory to litter.
-    options = (host.submit_options, preset.submit_options)
+    # Only where there is a queue to hand them to -- the built-in modes ignore
+    # them, so a typo there must not stop a submission that never uses them.
+    options = (host.submit_options, preset.submit_options) if scheduler.queue_directives else ()
     try:
         submit_arguments(*options)
     except ValueError as exc:
@@ -262,10 +264,10 @@ def submit_job(
     prepare_remote_dir(transport, host, job)
     # After the directory is decided, so {jobdir} has something to say.
     extra_args = submit_arguments(
-        *(
-            format_command(text, input_name, preset, sanitize_name(job.name), job.remote_dir)
-            for text in options
-        )
+        *options,
+        substitute=lambda word: format_command(
+            word, input_name, preset, sanitize_name(job.name), job.remote_dir
+        ),
     )
 
     for path in local_files:

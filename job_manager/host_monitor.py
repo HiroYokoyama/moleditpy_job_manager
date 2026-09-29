@@ -808,8 +808,8 @@ class HostCard(QFrame):
         """Jobs only: the host is set not to be sampled (a shared login node)."""
         self.lbl_state.setText(NOT_SAMPLED)
         self.setToolTip(
-            "Load and memory are not sampled on this host (Hosts... > Monitor load and "
-            "memory). Its jobs are still listed."
+            "Load and memory are not sampled on this host (Hosts... > Monitoring). "
+            "Its jobs are still listed."
         )
         self.meter_cpu.show_value(0.0, "-")
         self.meter_memory.show_value(0.0, "-")

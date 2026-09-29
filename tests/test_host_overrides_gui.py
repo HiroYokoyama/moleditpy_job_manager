@@ -241,6 +241,24 @@ class TestTheSubmitDialogShowsTheSubmitLine(DialogTestCase):
         self.dialog._refresh_preview()
         self.assertIn("could not be read", self.dialog.lbl_submit_line.text())
 
+    def test_the_submit_line_uses_the_same_job_directory_as_the_script(self):
+        self.dialog.txt_submit_options.setText("-o {jobdir}/q.log")
+        self.dialog._refresh_preview()
+        line = self.dialog.lbl_submit_line.text()
+        cd_line = [
+            text
+            for text in self.dialog.txt_preview.toPlainText().splitlines()
+            if text.startswith("cd ")
+        ][0]
+        directory = cd_line.split()[1].rsplit("/", 1)[-1].strip("'")
+        self.assertIn(directory, line)
+
+    def test_no_host_clears_the_submit_line(self):
+        self.dialog.lbl_submit_line.setText("stale")
+        self.dialog.cmb_host.clear()
+        self.dialog._refresh_preview()
+        self.assertEqual(self.dialog.lbl_submit_line.text(), "")
+
     def test_the_preset_carries_them(self):
         self.dialog.txt_submit_options.setText("--qos=long")
         self.assertEqual(self.dialog.collect_preset().submit_options, "--qos=long")
