@@ -168,6 +168,96 @@ class TestAnotherInstanceAlreadyServes(ApiEntryTestCase):
         self.assertEqual(job_manager.api_external_port(), 0)
 
 
+class TestHostStyleReload(ApiEntryTestCase):
+    """The host reloads by re-executing the package as a new module object.
+
+    It calls no teardown hook, so the old load's server would keep its port
+    and its ``api.json`` unless the new load retires it.
+    """
+
+    def load_copy(self, name):
+        package_dir = os.path.dirname(job_manager.__file__)
+        spec = importlib.util.spec_from_file_location(
+            name,
+            os.path.join(package_dir, "__init__.py"),
+            submodule_search_locations=[package_dir],
+        )
+        module = importlib.util.module_from_spec(spec)
+        import sys
+
+        sys.modules[name] = module
+        self.addCleanup(self._drop_copy, name)
+        spec.loader.exec_module(module)
+        return module
+
+    @staticmethod
+    def _drop_copy(name):
+        import sys
+
+        module = sys.modules.get(name)
+        if module is not None:
+            module.shutdown()
+        for key in [k for k in sys.modules if k == name or k.startswith(name + ".")]:
+            del sys.modules[key]
+
+    def make_context(self):
+        registry = {}
+        context = MagicMock()
+        context.register_window.side_effect = registry.__setitem__
+        context.get_window.side_effect = registry.get
+        return context
+
+    def test_the_new_load_replaces_the_old_load_api(self):
+        self.enable_api()
+        context = self.make_context()
+        first = self.load_copy("jm_reload_a")
+        first.initialize(context)
+        self.assertTrue(first.api_is_running())
+        old_port = first.get_api_server().port
+
+        second = self.load_copy("jm_reload_b")
+        second.initialize(context)
+
+        self.assertFalse(first.api_is_running())
+        self.assertTrue(second.api_is_running())
+        # The old socket is closed and the endpoint file is the new server's.
+        with open(os.path.join(self.tmp, "api.json"), encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle)["port"], second.get_api_server().port)
+        with socket.socket() as probe:
+            probe.settimeout(0.5)
+            if old_port != second.get_api_server().port:
+                self.assertNotEqual(probe.connect_ex(("127.0.0.1", old_port)), 0)
+        self.assertEqual(second.api_external_port(), 0)
+
+    def test_a_reload_with_the_api_off_starts_nothing(self):
+        context = self.make_context()
+        self.load_copy("jm_reload_c").initialize(context)
+        second = self.load_copy("jm_reload_d")
+        second.initialize(context)
+        self.assertFalse(second.api_is_running())
+        self.assertFalse(os.path.exists(os.path.join(self.tmp, "api.json")))
+
+    def test_a_previous_teardown_that_raises_does_not_block_the_load(self):
+        context = self.make_context()
+        context.register_window(job_manager.API_TEARDOWN_KEY, MagicMock(side_effect=OSError("x")))
+        job_manager.initialize(context)  # must not raise
+
+    def test_a_reload_still_defers_to_a_different_live_instance(self):
+        context = self.make_context()
+        first = self.load_copy("jm_reload_e")
+        first.initialize(context)
+        with socket.socket() as other:
+            other.bind(("127.0.0.1", 0))
+            other.listen(1)
+            port = other.getsockname()[1]
+            with open(os.path.join(self.tmp, "api.json"), "w", encoding="utf-8") as handle:
+                json.dump({"port": port, "pid": os.getpid() + 1}, handle)
+            second = self.load_copy("jm_reload_f")
+            second.initialize(context)
+            self.assertEqual(second.start_api(0), port)
+            self.assertFalse(second.api_is_running())
+
+
 class TestSubmitJob(ApiEntryTestCase):
     """The in-process handoff, for a plugin that would otherwise use a socket."""
 
@@ -179,6 +269,7 @@ class TestSubmitJob(ApiEntryTestCase):
         os.close(handle)
 
     def test_it_submits_without_opening_the_wizard(self):
+        self.context.get_window.reset_mock()  # initialize() looks up its own teardown
         with patch.object(job_manager.get_service(), "submit") as submit:
             submit.return_value = Job(name="water", host_id=self.host.id, host_name=self.host.name)
             record = job_manager.submit_job(

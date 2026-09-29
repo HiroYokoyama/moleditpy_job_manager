@@ -94,8 +94,9 @@ class TestInitializeContract(unittest.TestCase):
             self.assertTrue(callable(callback))
 
     def test_initialize_touches_nothing_else(self):
-        # No window is created and no molecule is read at load time.
-        self.assertEqual(self.context.windows, {})
+        # No window is created and no molecule is read at load time. The only
+        # registry entry is the handle the next load uses to retire this API.
+        self.assertEqual(list(self.context.windows), [job_manager.API_TEARDOWN_KEY])
         self.assertEqual(self.context.status_messages, [])
 
     def test_no_project_handlers_are_registered(self):

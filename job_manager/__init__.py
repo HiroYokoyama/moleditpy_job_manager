@@ -16,7 +16,7 @@ import logging
 from typing import Any, Optional
 
 PLUGIN_NAME = "Job Manager"
-PLUGIN_VERSION = "1.8.1"
+PLUGIN_VERSION = "1.8.2"
 PLUGIN_AUTHOR = "HiroYokoyama"
 
 PLUGIN_DESCRIPTION = "Submit calculations to remote HPC clusters over SSH, track queue status, and fetch results back into MoleditPy. Ready-made command lines for ORCA, Gaussian, CP2K, GAMESS, MOPAC, NWChem, Psi4, PySCF, Quantum ESPRESSO, VASP and xTB; job lists export to CSV or .pmejbs and reopen by drag and drop. Runs on this machine too, with no SSH; chains jobs with each scheduler's own dependency flag; and can hold a job until a chosen time. Installing paramiko adds a backend that keeps one SSH session open and can log in with a password."
@@ -40,6 +40,9 @@ WINDOW_KEY = "job_monitor"
 #: Registered separately from WINDOW_KEY so opening it standalone (Extensions >
 #: Job Manager > Host Monitor) never has to build the job monitor first.
 HOST_MONITOR_WINDOW_KEY = "job_manager_host_monitor"
+
+#: Where a load keeps its `stop_api`, for the next load to call. See `_release_previous_api`.
+API_TEARDOWN_KEY = "api_teardown"
 
 _context: Optional[Any] = None
 _service: Optional[Any] = None
@@ -294,9 +297,28 @@ def handle_dropped_file(path: str) -> bool:
     return True
 
 
+def _release_previous_api(context) -> None:
+    """Close the API socket a previous load of this plugin left listening.
+
+    The host reloads a plugin by re-executing its module and calls no teardown
+    hook, so the old module's server keeps its port and its ``api.json``. The
+    previous load's ``stop_api`` is kept in the host's per-plugin registry,
+    which outlives the re-execution, and it acts on the old module's own
+    globals -- the only place the old server object is still reachable.
+    """
+    previous = context.get_window(API_TEARDOWN_KEY)
+    if callable(previous):
+        try:
+            previous()
+        except Exception:
+            logging.debug("Job Manager: the previous load's API did not stop", exc_info=True)
+    context.register_window(API_TEARDOWN_KEY, stop_api)
+
+
 def initialize(context) -> None:
     """Entry point called by the host at plugin load."""
     global _context
+    _release_previous_api(context)
     _context = context
     # Extensions rather than the Plugin menu. The host has no Extensions menu
     # of its own and creates it on demand, so this is a top-level entry.

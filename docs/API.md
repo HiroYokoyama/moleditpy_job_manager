@@ -46,6 +46,10 @@ different `pid`), a second one does not start a listener: it leaves the file
 alone and the settings dialog says the API is served elsewhere. A file left by
 a crashed instance is ignored, since nothing answers on its port.
 
+Reloading the plugin inside one MoleditPy closes the API the previous load was
+serving before the new load starts, so the port is free again and `api.json` is
+not left pointing at a socket nobody owns.
+
 ## Finding it from a client
 
 While the API is listening it writes `~/.moleditpy/job_manager/api.json`:

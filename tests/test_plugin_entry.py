@@ -63,6 +63,7 @@ class TestInitialize(PluginEntryTestCase):
 class TestShowMonitor(PluginEntryTestCase):
     def test_creates_and_registers_the_window(self):
         job_manager.initialize(self.context)
+        self.context.register_window.reset_mock()  # the teardown handle
         with patch("job_manager.jobs_dialog.JobsDialog") as dialog_cls:
             job_manager.show_monitor(self.context)
         self.context.register_window.assert_called_once()
@@ -100,6 +101,7 @@ class TestShowHostMonitorStandalone(PluginEntryTestCase):
 
     def test_creates_and_registers_the_window(self):
         job_manager.initialize(self.context)
+        self.context.register_window.reset_mock()  # the teardown handle
         with patch("job_manager.host_monitor.HostMonitorDialog") as dialog_cls:
             job_manager.show_host_monitor_standalone(self.context)
         self.assertEqual(
