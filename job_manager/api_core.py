@@ -69,6 +69,7 @@ PRESET_FIELDS = {
     "modules": list,
     "pre_commands": list,
     "extra_directives": list,
+    "submit_options": str,
     "fetch_globs": list,
     "auto_download": bool,
 }

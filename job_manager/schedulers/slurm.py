@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import time
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Sequence
 
 from ..models import SubmitPreset
 from ..remote_paths import quote
@@ -14,10 +14,15 @@ from .base import (
     STATE_RUNNING,
     Scheduler,
     canonical_state,
+    memory_request,
     register,
+    user_argument,
 )
 
 _JOB_ID_RE = re.compile(r"Submitted batch job (\d+)")
+
+#: One suffix letter; ``8GB`` is refused. A bare number is already MB.
+_MEMORY_UNITS = {"M": "M", "G": "G", "T": "T"}
 
 _STATE_MAP: Dict[str, str] = {
     "PENDING": STATE_PENDING,
@@ -59,22 +64,25 @@ class SlurmScheduler(Scheduler):
         if preset.cpus_per_task and int(preset.cpus_per_task) > 1:
             lines.append(f"#SBATCH --cpus-per-task={int(preset.cpus_per_task)}")
         if preset.memory:
-            lines.append(f"#SBATCH --mem={preset.memory}")
+            lines.append(f"#SBATCH --mem={memory_request(preset.memory, _MEMORY_UNITS, 'M')}")
         if preset.queue:
             lines.append(f"#SBATCH --partition={preset.queue}")
         if preset.account:
             lines.append(f"#SBATCH --account={preset.account}")
         return lines
 
-    def submit_command(self, script_name: str, log_file: str) -> str:
+    def submit_command(
+        self, script_name: str, log_file: str, extra_args: Sequence[str] = ()
+    ) -> str:
         # Quoted like every other name that reaches a remote command line;
         # shell.py already does, and safe_relative_name -- which is what a
         # script name is filtered through -- permits spaces and semicolons.
-        return f"sbatch --parsable {quote(script_name)}"
+        return " ".join(["sbatch", "--parsable", *extra_args, quote(script_name)])
 
     def parse_submit_output(self, stdout: str, stderr: str) -> str:
         text = (stdout or "").strip()
-        for line in text.splitlines():
+        # Last line first: a banner from the login files comes before sbatch.
+        for line in reversed(text.splitlines()):
             line = line.strip()
             # --parsable prints "jobid" or "jobid;cluster".
             candidate = line.split(";")[0].strip()
@@ -84,7 +92,7 @@ class SlurmScheduler(Scheduler):
         return match.group(1) if match else ""
 
     def status_command(self, username: str, job_ids: Iterable[str]) -> str:
-        return f'squeue -h -u {username} -o "%i %T"'
+        return f'squeue -h -u {user_argument(username)} -o "%i %T"'
 
     def parse_status(self, stdout: str) -> Dict[str, str]:
         states: Dict[str, str] = {}

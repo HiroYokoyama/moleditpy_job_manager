@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 import time
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Sequence
 
 from ..models import SubmitPreset
 from ..remote_paths import quote
@@ -18,10 +18,15 @@ from .base import (
     STATE_RUNNING,
     Scheduler,
     canonical_state,
+    memory_request,
     register,
+    user_argument,
 )
 
 _SUBMIT_RE = re.compile(r"[Yy]our job(?:-array)?\s+(\d+)")
+
+#: One suffix letter; a bare number is bytes.
+_MEMORY_UNITS = {"M": "M", "G": "G", "T": "T"}
 
 _STATE_MAP: Dict[str, str] = {
     "QW": STATE_PENDING,
@@ -45,6 +50,13 @@ _STATE_MAP: Dict[str, str] = {
 }
 
 
+def sge_job_name(job_name: str) -> str:
+    """A name ``-N`` accepts: not starting with a digit, which SGE would
+    take for a job id (``-hold_jid`` accepts either)."""
+    name = job_name or "job"
+    return name if name[0].isalpha() else f"j{name}"
+
+
 class SgeScheduler(Scheduler):
     name = "sge"
     label = "SGE / UGE"
@@ -54,7 +66,7 @@ class SgeScheduler(Scheduler):
 
     def directives(self, job_name: str, preset: SubmitPreset, log_file: str) -> List[str]:
         lines = [
-            f"#$ -N {job_name}",
+            f"#$ -N {sge_job_name(job_name)}",
             f"#$ -o {log_file}",
             "#$ -j y",
             "#$ -cwd",
@@ -63,7 +75,7 @@ class SgeScheduler(Scheduler):
         if preset.walltime:
             lines.append(f"#$ -l h_rt={preset.walltime}")
         if preset.memory:
-            lines.append(f"#$ -l h_vmem={preset.memory}")
+            lines.append(f"#$ -l h_vmem={memory_request(preset.memory, _MEMORY_UNITS, 'M')}")
         if preset.queue:
             lines.append(f"#$ -q {preset.queue}")
         if preset.account:
@@ -72,17 +84,19 @@ class SgeScheduler(Scheduler):
         # plain serial job belongs in the preset's extra directives.
         return lines
 
-    def submit_command(self, script_name: str, log_file: str) -> str:
+    def submit_command(
+        self, script_name: str, log_file: str, extra_args: Sequence[str] = ()
+    ) -> str:
         # Quoted for the reason cancel_command gives: safe_relative_name
         # permits spaces and semicolons, and this string is run by a shell.
-        return f"qsub {quote(script_name)}"
+        return " ".join(["qsub", *extra_args, quote(script_name)])
 
     def parse_submit_output(self, stdout: str, stderr: str) -> str:
         match = _SUBMIT_RE.search(f"{stdout}\n{stderr}")
         return match.group(1) if match else ""
 
     def status_command(self, username: str, job_ids: Iterable[str]) -> str:
-        return f"qstat -u {username}"
+        return f"qstat -u {user_argument(username)}"
 
     def parse_status(self, stdout: str) -> Dict[str, str]:
         states: Dict[str, str] = {}

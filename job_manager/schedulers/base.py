@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import posixpath
 import re
+import shlex
 import time
 from abc import ABC, abstractmethod
 from typing import Dict, Iterable, List, Sequence
@@ -59,6 +60,64 @@ def parse_memory_mb(text: str) -> int:
     if unit is None:
         return 0
     return int(float(match.group(1)) * unit)
+
+
+def memory_request(text: str, units: Dict[str, str], bare: str = "") -> str:
+    """``text`` spelled the way one queue system reads a size.
+
+    Each queue has its own grammar and none of them is the one users type:
+    SLURM and SGE take one suffix letter (``8G``) and reject ``8GB``; PBS wants
+    ``8gb`` and rejects ``8G``; and PBS and SGE read a bare number as *bytes*,
+    so the ``8192`` that means 8 GB to SLURM asked them for 8 kB and had the job
+    killed on its first allocation. ``units`` maps M/G/T to this queue's
+    suffix; a fraction is carried in megabytes, since no queue takes ``1.5G``.
+
+    Anything this cannot read is passed through as typed: a site-specific
+    spelling the user knows about is theirs to make.
+    """
+    raw = str(text or "").strip()
+    match = _MEMORY_RE.match(raw)
+    if not match:
+        return raw
+    number, unit = match.group(1), match.group(2).upper()
+    if len(unit) == 2 and unit.endswith("B"):
+        unit = unit[0]
+    elif not unit:
+        unit = bare
+    if unit not in units:
+        return raw
+    if "." in number:
+        megabytes = parse_memory_mb(f"{number}{unit}")
+        return f"{megabytes}{units['M']}" if megabytes else raw
+    return f"{int(number)}{units[unit]}"
+
+
+def submit_arguments(*texts: str) -> List[str]:
+    """Extra arguments for the submit verb, as separate shell-quoted words.
+
+    Written the way they would be typed after ``qsub`` -- ``-W group_list=gr1
+    -l select=1:ncpus=8`` -- and split the way a shell would split them, then
+    quoted one by one. The words reach the queue exactly as typed, but a ``;``
+    or a ``$(...)`` is an argument, not a second command run on the login node.
+    Raises ``ValueError`` for an unbalanced quote rather than guessing.
+    """
+    words: List[str] = []
+    for text in texts:
+        words += shlex.split(text or "", comments=False, posix=True)
+    return [shlex.quote(word) for word in words]
+
+
+def user_argument(username: str) -> str:
+    """The ``-u`` value for a queue listing.
+
+    ``$USER`` left to the remote shell when no user is configured (a profile
+    that relies on ``~/.ssh/config`` for it); anything else quoted, since it
+    is typed text on its way into a command line.
+    """
+    name = str(username or "").strip()
+    if not name or name == "$USER":
+        return '"$USER"'
+    return quote(name)
 
 
 def requested_memory_mb(preset) -> int:
@@ -404,8 +463,15 @@ class Scheduler(ABC):
     # --- submit -------------------------------------------------------------
 
     @abstractmethod
-    def submit_command(self, script_name: str, log_file: str) -> str:
-        """Command run inside the job directory to enqueue the script."""
+    def submit_command(
+        self, script_name: str, log_file: str, extra_args: Sequence[str] = ()
+    ) -> str:
+        """Command run inside the job directory to enqueue the script.
+
+        ``extra_args`` are already-quoted words from :func:`submit_arguments`,
+        placed between the verb and the script. Ignored where there is no
+        queue to hand them to.
+        """
 
     @abstractmethod
     def parse_submit_output(self, stdout: str, stderr: str) -> str:
@@ -471,6 +537,9 @@ __all__ = [
     "available_schedulers",
     "canonical_state",
     "format_command",
+    "memory_request",
+    "submit_arguments",
+    "user_argument",
     "placeholder_values",
     "references_input",
     "get_scheduler",

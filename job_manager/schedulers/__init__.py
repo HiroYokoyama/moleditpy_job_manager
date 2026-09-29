@@ -19,6 +19,7 @@ from .base import (
     register,
     requested_cores,
     requested_memory_mb,
+    submit_arguments,
 )
 from .pbs import PBS
 from .sge import SGE
@@ -32,6 +33,7 @@ __all__ = [
     "parse_memory_mb",
     "requested_cores",
     "requested_memory_mb",
+    "submit_arguments",
     "PBS",
     "SGE",
     "SHELL",

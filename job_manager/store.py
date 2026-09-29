@@ -622,7 +622,9 @@ class JobStore:
         The tail of the chain: appending to the newest active job makes
         successive submissions line up instead of all starting at once.
         """
-        candidates = [job for job in self.jobs.values() if job.host_id == host_id and _will_run(job)]
+        candidates = [
+            job for job in self.jobs.values() if job.host_id == host_id and _will_run(job)
+        ]
         # Don't queue behind an already-stranded job -- that would strand this one too.
         runnable = [job for job in candidates if self.chain_blocker(job) is None]
         if not runnable:
@@ -1024,6 +1026,15 @@ class JobStore:
         except (TypeError, ValueError):
             value = DEFAULT_POLL_INTERVAL
         return max(MIN_POLL_INTERVAL, min(MAX_POLL_INTERVAL, value))
+
+    def poll_interval_for(self, host_id: str) -> int:
+        """Seconds between status polls of one host: its own override if it
+        has one, else the global interval, clamped to the same range."""
+        host = self.hosts.get(host_id)
+        override = int(getattr(host, "poll_interval", 0) or 0) if host is not None else 0
+        if override <= 0:
+            return self.poll_interval
+        return max(MIN_POLL_INTERVAL, min(MAX_POLL_INTERVAL, override))
 
     @property
     def poll_interval_is_aggressive(self) -> bool:

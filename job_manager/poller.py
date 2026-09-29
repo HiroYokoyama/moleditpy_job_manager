@@ -120,7 +120,13 @@ class JobPoller(QObject):
     # --- lifecycle ----------------------------------------------------------
 
     def interval_ms(self) -> int:
-        return int(self.store.poll_interval * 1000)
+        """How often :meth:`tick` runs: the shortest interval any host with an
+        active job wants. Each host is still only asked when it is due, so a
+        host set slower than this is skipped on the ticks in between."""
+        seconds = self.store.poll_interval
+        for host_id in self.store.active_jobs_by_host():
+            seconds = min(seconds, self.store.poll_interval_for(host_id))
+        return int(seconds * 1000)
 
     def start(self) -> None:
         """Begin (or resume) polling if any job is active."""
@@ -247,7 +253,7 @@ class JobPoller(QObject):
     ) -> None:
         self._in_flight[host_id] = False
         self._backoff.pop(host_id, None)
-        self._schedule_next(host_id, float(self.store.poll_interval))
+        self._schedule_next(host_id, float(self.store.poll_interval_for(host_id)))
 
         # Recorded even when state is unchanged (e.g. resubmit fails the same way).
         recorded = False
@@ -289,8 +295,9 @@ class JobPoller(QObject):
 
     def _on_poll_failed(self, host_id: str, message: str) -> None:
         self._in_flight[host_id] = False
-        previous = self._backoff.get(host_id, float(self.store.poll_interval))
-        delay = min(MAX_BACKOFF, max(float(self.store.poll_interval), previous * 2))
+        interval = float(self.store.poll_interval_for(host_id))
+        previous = self._backoff.get(host_id, interval)
+        delay = min(MAX_BACKOFF, max(interval, previous * 2))
         self._backoff[host_id] = delay
         self._schedule_next(host_id, delay)
         logging.warning("Job Manager: poll of host %s failed: %s", host_id, message)

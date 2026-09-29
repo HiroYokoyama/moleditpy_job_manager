@@ -267,6 +267,22 @@ class HostProfile:
     #: means there is no such mirror and results are fetched over the
     #: transport as before.
     equal_path: str = ""
+    #: Arguments every submission to this host carries -- ``-W group_list=gr1``
+    #: on a machine that bills by group, say. A preset's own come after.
+    submit_options: str = ""
+    #: Off keeps the Host Monitor from sampling load and memory here. A
+    #: supercomputer's login node is shared by hundreds of people: its load is
+    #: theirs, not a measure of anything this user submitted, and a probe
+    #: every few seconds is exactly the traffic its admins ask people not to
+    #: make. The card still shows the host's jobs.
+    monitor_usage: bool = True
+    #: Seconds between Host Monitor samples of this host; 0 follows the
+    #: window's own setting.
+    monitor_interval: int = 0
+    #: Seconds between job status polls of this host; 0 follows the global
+    #: interval. A slow queue on a busy login node can be asked less often
+    #: than a workstation without slowing everything else down.
+    poll_interval: int = 0
 
     @property
     def is_local(self) -> bool:
@@ -457,6 +473,10 @@ class SubmitPreset:
     )
     auto_download: bool = True
     extra_directives: List[str] = field(default_factory=list)
+    #: Typed after the submit verb, before the script: ``qsub <this> run.sh``.
+    #: For what a site wants on the command line rather than as a directive,
+    #: and appended after the host's own :attr:`HostProfile.submit_options`.
+    submit_options: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

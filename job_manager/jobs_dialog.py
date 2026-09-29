@@ -1281,6 +1281,7 @@ class JobsDialog(QDialog):
                 ("Modules", ", ".join(preset.get("modules") or []) or "-"),
                 ("Pre-commands", "; ".join(preset.get("pre_commands") or []) or "-"),
                 ("Extra directives", "; ".join(preset.get("extra_directives") or []) or "-"),
+                ("Submit options", preset.get("submit_options", "") or "-"),
                 ("Fetch patterns", ", ".join(preset.get("fetch_globs") or []) or "-"),
             ]
         if host is not None:
@@ -1289,6 +1290,7 @@ class JobsDialog(QDialog):
                 ("Host target", host.target),
                 ("Reads login files", "yes" if host.load_profile else "no"),
                 ("Login commands", "; ".join(host.login_commands or []) or "-"),
+                ("Host submit options", getattr(host, "submit_options", "") or "-"),
             ]
         width = max(len(label) for label, _ in rows)
         lines = [f"{label.ljust(width)}  {value}".rstrip() for label, value in rows]
