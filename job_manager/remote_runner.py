@@ -324,7 +324,10 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
 cd {quoted} || exit 1
 SETSID={SETSID_PREFIX}
 
-count() {{ ls -1 "$1" 2>/dev/null | wc -l | tr -d ' '; }}
+# A glob, not `ls | wc | tr`: three processes per call, several calls a pass,
+# and a fork costs tens of milliseconds under Git Bash. An empty directory
+# leaves the pattern unexpanded, which names nothing.
+count() {{ set -- "$1"/*; if [ -e "$1" ] || [ -L "$1" ]; then echo $#; else echo 0; fi; }}
 
 positive() {{ case "$1" in ''|*[!0-9]*|0) echo "$2" ;; *) echo "$1" ;; esac; }}
 
@@ -393,9 +396,15 @@ block() {{ mv "queue/$1" "done/$1" 2>/dev/null && echo {STATUS_BLOCKED} > "statu
 
 reap() {{
   for entry in $(ls -1 running 2>/dev/null); do
-    pid=$(cat "pids/$entry" 2>/dev/null)
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-      continue
+    # Over once it has written its exit code, whether or not its process is
+    # gone: a finished job is an orphan, and stays a zombie that `kill -0`
+    # still finds until init reaps it -- a second or two per job holding its
+    # slot, and for ever in a container whose init never reaps.
+    if [ ! -e "status/$entry" ]; then
+      pid=$(cat "pids/$entry" 2>/dev/null)
+      if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        continue
+      fi
     fi
     # An empty pid file means the job could not be started at all; either way
     # it is over, and leaving it in running/ would hold its cores for ever.
@@ -426,14 +435,20 @@ dispatch() {{
   # Pausing stops new work only. Killing what is already running would make
   # "pause" mean "throw away the last six hours".
   [ -f {PAUSED_NAME} ] && return 0
-  cap=$(total_cores)
-  memcap=$(total_memory)
+  # The machine's size is read only once a job could start. With no limits
+  # file it is detected -- a dozen processes, lscpu and /proc pipelines --
+  # and most passes start nothing: the queue is empty or every slot is busy.
+  cap=
   # Sorted on the number itself, not as text: past 9999 the padding runs out
   # and `sort` puts job_10000 before job_9999, which is the dispatch order
   # inverted at exactly the point a queue has been busy for a long time.
   for entry in $(ls -1 queue 2>/dev/null | sort -t_ -k2,2n); do
     [ "$(count running)" -lt "$(slots)" ] || break
     ready "$entry" || continue
+    if [ -z "$cap" ]; then
+      cap=$(total_cores)
+      memcap=$(total_memory)
+    fi
     want=$(job_cores "queue/$entry")
     wantmem=$(job_memory "queue/$entry")
     # A job asking for more than the machine has would otherwise wait for ever;

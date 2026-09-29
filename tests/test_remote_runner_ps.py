@@ -233,6 +233,27 @@ class TestItRunsWhatIsQueued(RunnerHarness):
         with open(self.marker("order"), encoding="ascii") as handle:
             self.assertEqual(handle.read().split(), ["aaa", "bbb", "ccc"])
 
+    def test_a_job_that_wrote_its_exit_code_frees_its_slot_at_once(self):
+        # The bash runner's twin: over once the status is written, whether or
+        # not the process has gone yet. A live process stands in for it.
+        import sys
+
+        lingering = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        self.addCleanup(lingering.wait, 10)
+        self.addCleanup(lingering.kill)
+        first = self.enqueue("aaa", "exit 0")
+        os.replace(os.path.join(self.dir, "queue", first), os.path.join(self.dir, "running", first))
+        self._write(os.path.join(self.dir, "pids", first), f"{lingering.pid}\r\n")
+        self._write(os.path.join(self.dir, "status", first), "0\r\n")
+        self.enqueue("bbb", f"New-Item -ItemType File -Path '{self.marker('ran')}' | Out-Null")
+        self.set_limit(SLOTS_NAME, 1)
+
+        self.start_runner()
+
+        self.wait_for(lambda: os.path.exists(self.marker("ran")), what="bbb to get the slot")
+        self.assertEqual(self.listing()["aaa"], "done")
+        self.assertIsNone(lingering.poll(), "the stand-in process ended early")
+
     def test_it_exits_once_the_queue_empties(self):
         self.enqueue("aaa", "exit 0")
 
