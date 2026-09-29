@@ -478,3 +478,94 @@ def test_work_already_on_the_host_explains_both(service, qapp, tmp_path):
 
     assert "already on the host" in dlg.box_relay.title()
     assert "already on the host" in dlg.chk_batch.text()
+
+
+# --- several profiles mirroring one share ------------------------------------
+
+
+def _shared_mirror(store, tmp_path, *names):
+    """Profiles of one machine -- one per queue, say -- over the same share."""
+    root = tmp_path / "shared"
+    root.mkdir(exist_ok=True)
+    hosts = []
+    for name in names:
+        host = HostProfile(id=f"h-{name}", name=name, equal_path=str(root))
+        store.add_host(host)
+        hosts.append(host)
+    return hosts, root
+
+
+def _submitted_to(store, host, when):
+    from job_manager.models import Job
+
+    store.add_job(Job(id=f"j-{host.id}", host_id=host.id, name="x", submitted_at=when))
+
+
+def test_a_shared_mirror_opens_on_the_machine_last_submitted_to(service, qapp, tmp_path):
+    # Listed first by name, "hpc-login" used to win every time, so saving a
+    # file there moved the wizard away from the queue the user had just used.
+    (login, queue), root = _shared_mirror(service.store, tmp_path, "hpc-login", "hpc-queue")
+    service.store.set_pref("last_host_id", queue.id)
+    inp = root / "mol.inp"
+    inp.write_text("x", encoding="utf-8")
+
+    for handoff in (True, False):
+        dlg = SubmitDialog(service)
+        dlg.prefill(files=[str(inp)], name="mol", handoff=handoff)
+        assert dlg.current_host().id == queue.id
+
+
+def test_a_shared_mirror_added_by_hand_keeps_the_current_owner(service, qapp, tmp_path):
+    (login, queue), root = _shared_mirror(service.store, tmp_path, "hpc-login", "hpc-queue")
+    inp = root / "mol.inp"
+    inp.write_text("x", encoding="utf-8")
+
+    dlg = SubmitDialog(service)
+    dlg.cmb_host.setCurrentIndex(dlg.cmb_host.findData(queue.id))
+    dlg.add_files([str(inp)])
+
+    assert dlg.current_host().id == queue.id
+
+
+def test_from_another_host_a_shared_mirror_goes_to_the_most_recent(service, qapp, tmp_path):
+    other = HostProfile(id="h-other", name="aaa-workstation")
+    service.store.add_host(other)
+    (login, queue), root = _shared_mirror(service.store, tmp_path, "hpc-login", "hpc-queue")
+    _submitted_to(service.store, login, 100.0)
+    _submitted_to(service.store, queue, 200.0)
+    inp = root / "mol.inp"
+    inp.write_text("x", encoding="utf-8")
+
+    dlg = SubmitDialog(service)
+    dlg.cmb_host.setCurrentIndex(dlg.cmb_host.findData(other.id))
+    dlg.add_files([str(inp)])
+
+    assert dlg.current_host().id == queue.id
+
+
+def test_the_store_breaks_a_tie_by_preference_then_recency(temp_store, tmp_path):
+    (login, queue), root = _shared_mirror(temp_store, tmp_path, "hpc-login", "hpc-queue")
+    path = str(root / "mol.inp")
+
+    # No history: list order, as before.
+    assert temp_store.host_for_local_path(path).id == login.id
+    _submitted_to(temp_store, queue, 50.0)
+    assert temp_store.host_for_local_path(path).id == queue.id
+    assert temp_store.host_for_local_path(path, prefer_id=login.id).id == login.id
+    # A preference that does not own the file is ignored.
+    assert temp_store.host_for_local_path(path, prefer_id="nobody").id == queue.id
+
+
+def test_a_deeper_mirror_still_beats_the_last_machine(temp_store, tmp_path):
+    outer = tmp_path / "mnt"
+    inner = outer / "hpc"
+    inner.mkdir(parents=True)
+    wide = HostProfile(id="h-wide", name="wide", equal_path=str(outer))
+    deep = HostProfile(id="h-deep", name="deep", equal_path=str(inner))
+    temp_store.add_host(wide)
+    temp_store.add_host(deep)
+    _submitted_to(temp_store, wide, 999.0)
+
+    found = temp_store.host_for_local_path(str(inner / "mol.inp"), prefer_id=wide.id)
+
+    assert found.id == deep.id
