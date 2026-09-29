@@ -8,7 +8,9 @@ here against the real entry point.
 
 import importlib
 import os
+import json
 import shutil
+import socket
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
@@ -114,6 +116,56 @@ class TestTheSwitch(ApiEntryTestCase):
         with patch("job_manager.store.JobStore.load", autospec=True) as load:
             job_manager.initialize(self.context)
         self.assertEqual(load.call_count, 1)
+
+
+class TestAnotherInstanceAlreadyServes(ApiEntryTestCase):
+    """Two MoleditPy windows share one state directory and so one endpoint file."""
+
+    def serve_as_other_instance(self):
+        listener = socket.socket()
+        self.addCleanup(listener.close)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        port = listener.getsockname()[1]
+        with open(os.path.join(self.tmp, "api.json"), "w", encoding="utf-8") as handle:
+            json.dump({"port": port, "pid": os.getpid() + 1, "token": "theirs"}, handle)
+        return port
+
+    def test_start_defers_and_leaves_their_endpoint_file_alone(self):
+        job_manager.initialize(self.context)
+        port = self.serve_as_other_instance()
+        self.assertEqual(job_manager.start_api(0), port)
+        self.assertFalse(job_manager.api_is_running())
+        self.assertEqual(job_manager.api_external_port(), port)
+        with open(os.path.join(self.tmp, "api.json"), encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle)["token"], "theirs")
+
+    def test_the_preference_at_load_does_not_start_a_second_server(self):
+        self.enable_api()
+        port = self.serve_as_other_instance()
+        job_manager.initialize(self.context)
+        self.assertFalse(job_manager.api_is_running())
+        self.assertEqual(job_manager.api_external_port(), port)
+
+    def test_stopping_never_removes_the_other_instance_endpoint_file(self):
+        job_manager.initialize(self.context)
+        self.serve_as_other_instance()
+        job_manager.start_api(0)
+        job_manager.stop_api()
+        self.assertTrue(os.path.exists(os.path.join(self.tmp, "api.json")))
+        self.assertEqual(job_manager.api_external_port(), 0)
+
+    def test_a_stale_endpoint_file_does_not_stop_a_fresh_start(self):
+        job_manager.initialize(self.context)
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            dead_port = probe.getsockname()[1]
+        with open(os.path.join(self.tmp, "api.json"), "w", encoding="utf-8") as handle:
+            json.dump({"port": dead_port, "pid": os.getpid() + 1}, handle)
+        port = job_manager.start_api(0)
+        self.assertTrue(port)
+        self.assertTrue(job_manager.api_is_running())
+        self.assertEqual(job_manager.api_external_port(), 0)
 
 
 class TestSubmitJob(ApiEntryTestCase):

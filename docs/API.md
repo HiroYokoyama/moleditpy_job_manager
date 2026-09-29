@@ -38,6 +38,14 @@ an error either way: the API takes a free one instead, says which in the
 window, and writes it where clients look, so nothing that discovers the API is
 affected.
 
+## Several MoleditPy windows
+
+Instances share `~/.moleditpy/job_manager/`, so they share one API. If another
+running instance already listens (its `api.json` names a live port and a
+different `pid`), a second one does not start a listener: it leaves the file
+alone and the settings dialog says the API is served elsewhere. A file left by
+a crashed instance is ignored, since nothing answers on its port.
+
 ## Finding it from a client
 
 While the API is listening it writes `~/.moleditpy/job_manager/api.json`:

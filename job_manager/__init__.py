@@ -16,7 +16,7 @@ import logging
 from typing import Any, Optional
 
 PLUGIN_NAME = "Job Manager"
-PLUGIN_VERSION = "1.8.0"
+PLUGIN_VERSION = "1.8.1"
 PLUGIN_AUTHOR = "HiroYokoyama"
 
 PLUGIN_DESCRIPTION = "Submit calculations to remote HPC clusters over SSH, track queue status, and fetch results back into MoleditPy. Ready-made command lines for ORCA, Gaussian, CP2K, GAMESS, MOPAC, NWChem, Psi4, PySCF, Quantum ESPRESSO, VASP and xTB; job lists export to CSV or .pmejbs and reopen by drag and drop. Runs on this machine too, with no SSH; chains jobs with each scheduler's own dependency flag; and can hold a job until a chosen time. Installing paramiko adds a backend that keeps one SSH session open and can log in with a password."
@@ -45,6 +45,7 @@ _context: Optional[Any] = None
 _service: Optional[Any] = None
 _status_widget: Optional[Any] = None
 _api_server: Optional[Any] = None
+_api_external = 0
 
 
 def get_context() -> Optional[Any]:
@@ -91,11 +92,26 @@ def start_api(port: int = 0) -> int:
     Never called on its own initiative -- only from the preference being on at
     load, or the user switching it on. See :func:`_resume_api`.
     """
+    global _api_external
     server = get_api_server()
     if server is None:
         return 0
     if server.running:
         return server.port
+    # Another MoleditPy already serves this state directory: a second listener
+    # would overwrite its endpoint file and leave clients following whichever
+    # instance started last.
+    from .api_core import live_endpoint
+
+    other = live_endpoint(_service.store.directory)
+    if other is not None:
+        _api_external = int(other["port"])
+        logging.info(
+            "Job Manager: the local API is already served by another instance on port %s",
+            _api_external,
+        )
+        return _api_external
+    _api_external = 0
     try:
         return server.start(port or int(_service.store.get_pref("api_port", 0) or 0))
     except Exception as exc:
@@ -107,11 +123,18 @@ def start_api(port: int = 0) -> int:
 
 def stop_api() -> None:
     """Stop listening, and take the endpoint file with it."""
+    global _api_external
+    _api_external = 0
     if _api_server is not None:
         try:
             _api_server.stop()
         except Exception:
             logging.debug("Job Manager: the local API did not stop cleanly", exc_info=True)
+
+
+def api_external_port() -> int:
+    """Port of the API another instance serves and this one deferred to, else 0."""
+    return _api_external
 
 
 def api_is_running() -> bool:

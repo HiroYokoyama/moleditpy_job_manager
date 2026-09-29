@@ -9,6 +9,7 @@ runs this file, so nothing in it may import PyQt6.
 import json
 import os
 import shutil
+import socket
 import stat
 import tempfile
 import unittest
@@ -481,6 +482,48 @@ class TestTheToken(unittest.TestCase):
         self.assertEqual(data["token"], token)
         self.assertTrue(data["url"].startswith("http://127.0.0.1:8765"))
         self.assertIn(api_core.API_PREFIX, data["url"])
+
+    def _publish_as_other_process(self, port):
+        path = api_core.write_endpoint_file(self.directory, port, "t")
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+        data["pid"] = os.getpid() + 1
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(data, handle)
+
+    def test_a_live_endpoint_of_another_process_is_found(self):
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            port = listener.getsockname()[1]
+            self._publish_as_other_process(port)
+            found = api_core.live_endpoint(self.directory)
+        self.assertIsNotNone(found)
+        self.assertEqual(found["port"], port)
+
+    def test_a_stale_endpoint_nobody_listens_on_is_ignored(self):
+        # A crash leaves api.json behind; it must not block a fresh start.
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
+        self._publish_as_other_process(port)
+        self.assertIsNone(api_core.live_endpoint(self.directory))
+
+    def test_this_process_own_endpoint_is_not_another_instance(self):
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            api_core.write_endpoint_file(self.directory, listener.getsockname()[1], "t")
+            self.assertIsNone(api_core.live_endpoint(self.directory))
+
+    def test_no_or_unreadable_endpoint_file_means_no_other_instance(self):
+        self.assertIsNone(api_core.live_endpoint(self.directory))
+        with open(api_core.endpoint_path(self.directory), "w", encoding="utf-8") as handle:
+            handle.write("{ not json")
+        self.assertIsNone(api_core.live_endpoint(self.directory))
+        with open(api_core.endpoint_path(self.directory), "w", encoding="utf-8") as handle:
+            json.dump({"port": 99999, "pid": 1}, handle)
+        self.assertIsNone(api_core.live_endpoint(self.directory))
 
     def test_removing_the_endpoint_file_twice_is_not_an_error(self):
         api_core.write_endpoint_file(self.directory, 1, "t")

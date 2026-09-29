@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import socket
 import stat
 import threading
 import time
@@ -206,6 +207,30 @@ def write_endpoint_file(directory: str, port: int, token: str) -> str:
         + "\n",
     )
     return path
+
+
+def live_endpoint(directory: str, timeout: float = 0.5) -> Optional[Dict[str, Any]]:
+    """The endpoint another running instance published, or None.
+
+    Instances share one state directory, so a second MoleditPy finds the first
+    one's ``api.json``. It counts only if it names another process *and* that
+    port still accepts a connection: a crash leaves the file behind, and a
+    stale one must not stop this instance from starting its own server.
+    """
+    try:
+        with open(endpoint_path(directory), "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        port = int(data["port"])
+        pid = int(data.get("pid", 0))
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if pid == os.getpid() or not 0 < port < 65536:
+        return None
+    try:
+        with socket.create_connection((BIND_HOST, port), timeout=timeout):
+            return data
+    except OSError:
+        return None
 
 
 def remove_endpoint_file(directory: str) -> None:
@@ -745,6 +770,7 @@ __all__ = [
     "Deferred",
     "JobApi",
     "endpoint_path",
+    "live_endpoint",
     "ensure_token",
     "new_token",
     "write_private_file",

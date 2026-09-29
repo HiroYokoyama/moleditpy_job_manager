@@ -167,7 +167,14 @@ class ApiDialog(QDialog):
                 else f"Listening on port {actual}: port {wanted} was already in use."
             )
         else:
-            self.lbl_status.setText("Not listening.")
+            from . import api_external_port
+
+            external = api_external_port()
+            self.lbl_status.setText(
+                f"Already served by another MoleditPy instance on port {external}."
+                if external
+                else "Not listening."
+            )
 
     def _on_toggled(self, enabled: bool) -> None:
         from . import start_api, stop_api
