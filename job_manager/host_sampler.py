@@ -214,7 +214,7 @@ class HostSampler(QObject):
             self._latest[host_id] = host_stats.HostStats(error=message)
             self.sample_failed.emit(host_id, message, waited * self.interval_for(host))
 
-        run_async(self.service.pool, work, on_success=ok, on_error=failed, quiet=True)
+        run_async(self.service.pool, work, on_success=ok, on_error=failed, quiet=True, owner=self)
 
     def close_transport(self, host_id: str) -> None:
         """Hand a transport's teardown to the pool instead of closing it here:

@@ -988,7 +988,7 @@ class HostsDialog(QDialog):
                 message.splitlines()[0] if message else "Could not read the queue."
             )
 
-        run_async(self.service.pool, work, on_success=ok, on_error=failed)
+        run_async(self.service.pool, work, on_success=ok, on_error=failed, owner=self)
 
     def _on_pause_toggled(self, checked: bool) -> None:
         if self._syncing_pause:
@@ -1026,7 +1026,7 @@ class HostsDialog(QDialog):
                 message.splitlines()[0] if message else "Could not change the queue."
             )
 
-        run_async(self.service.pool, work, on_success=ok, on_error=failed)
+        run_async(self.service.pool, work, on_success=ok, on_error=failed, owner=self)
 
     def _detect_resources(self) -> None:
         """Fill the two budgets from what the host actually has."""
@@ -1085,7 +1085,7 @@ class HostsDialog(QDialog):
                 message.splitlines()[0] if message else "Could not ask the host."
             )
 
-        run_async(self.service.pool, work, on_success=ok, on_error=failed)
+        run_async(self.service.pool, work, on_success=ok, on_error=failed, owner=self)
 
     def _apply_queue_limits(self) -> None:
         host = self._persist_current()
@@ -1123,7 +1123,7 @@ class HostsDialog(QDialog):
                 message.splitlines()[0] if message else "Could not send the limits."
             )
 
-        run_async(self.service.pool, work, on_success=ok, on_error=failed)
+        run_async(self.service.pool, work, on_success=ok, on_error=failed, owner=self)
 
     # --- connection test ----------------------------------------------------
 
@@ -1158,7 +1158,7 @@ class HostsDialog(QDialog):
             if "known_hosts" in message.lower() or HostKeyRejected.__name__ in message:
                 self._offer_trust(host)
 
-        run_async(self.service.pool, work, on_success=ok, on_error=failed)
+        run_async(self.service.pool, work, on_success=ok, on_error=failed, owner=self)
 
     def _offer_trust(self, host: HostProfile) -> None:
         """Show the key the host is offering, and file it only if it is accepted.
@@ -1188,6 +1188,7 @@ class HostsDialog(QDialog):
             lambda: read_host_key(host.hostname, host.port),
             on_success=lambda found: self._confirm_host_key(*found),
             on_error=lambda message: QMessageBox.warning(self, "Host key", message),
+            owner=self,
         )
 
     def _confirm_host_key(self, key, hostname: str, port: int) -> None:

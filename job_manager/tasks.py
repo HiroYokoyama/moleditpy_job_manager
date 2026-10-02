@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Optional
 
+from PyQt6 import sip
 from PyQt6.QtCore import QObject, QRunnable, QThreadPool, pyqtSignal
 
 
@@ -52,6 +53,29 @@ class BackgroundTask(QRunnable):
         return result
 
 
+def gone(owner: Optional[QObject]) -> bool:
+    """Whether ``owner``'s C++ object has been destroyed."""
+    if owner is None:
+        return False
+    try:
+        return sip.isdeleted(owner)
+    except TypeError:
+        # Not a sip wrapper at all (a test double): nothing to outlive.
+        return False
+
+
+def _guarded(owner: QObject, callback: Optional[Callable]) -> Optional[Callable]:
+    if callback is None:
+        return None
+
+    def call(*args):
+        if gone(owner):
+            return None
+        return callback(*args)
+
+    return call
+
+
 def run_async(
     pool: QThreadPool,
     fn: Callable[[], Any],
@@ -60,13 +84,24 @@ def run_async(
     on_finished: Optional[Callable[[], None]] = None,
     *,
     quiet: bool = False,
+    owner: Optional[QObject] = None,
 ) -> BackgroundTask:
     """Queue ``fn`` and wire its callbacks. Returns the task (kept by the pool).
 
     ``quiet`` is for work whose failure the caller reports itself: it is logged
     at debug rather than warning, so an unreachable host does not write a
     traceback into the application log every time it is asked.
+
+    ``owner`` is the window the callbacks draw into. They are closures, not
+    slots, so Qt does not disconnect them when it is destroyed: a dialog closed
+    while its work was in flight had the answer delivered into widgets that no
+    longer existed, which raised, or crashed the process outright. With an
+    owner, a callback arriving after it is gone is dropped.
     """
+    if owner is not None:
+        on_success = _guarded(owner, on_success)
+        on_error = _guarded(owner, on_error)
+        on_finished = _guarded(owner, on_finished)
     task = BackgroundTask(fn, quiet=quiet)
     if on_success is not None:
         task.signals.succeeded.connect(on_success)

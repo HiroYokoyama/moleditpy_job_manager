@@ -316,7 +316,7 @@ class OutputFileSelectorDialog(QDialog):
             self.btn_browse_remote.setEnabled(True)
             self.lbl_status.setText(f"Could not list remote files: {msg}")
 
-        self.service.list_remote_results(self.job, on_ok, on_error)
+        self.service.list_remote_results(self.job, on_ok, on_error, owner=self)
 
     def _cache_dir(self) -> str:
         """Where fetch_file_to_cache put this job's files. Creates nothing."""

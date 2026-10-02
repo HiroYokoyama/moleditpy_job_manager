@@ -191,7 +191,14 @@ class WebMonitorDialog(QDialog):
             self._refresh()
             QMessageBox.warning(self, "Tailscale", message)
 
-        run_async(self.web.service.pool, work, on_success=finished, on_error=failed, quiet=True)
+        run_async(
+            self.web.service.pool,
+            work,
+            on_success=finished,
+            on_error=failed,
+            quiet=True,
+            owner=self,
+        )
 
     def _serve_on_tailnet(self) -> None:
         """One click: run the command shown, then say what happened."""

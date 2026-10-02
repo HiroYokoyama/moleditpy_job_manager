@@ -108,6 +108,7 @@ class ChatWebhookDialog(QDialog):
             lambda: webhook.post(url, "MoleditPy job manager", TEST_MESSAGE),
             on_success=self._on_test_done,
             quiet=True,
+            owner=self,
         )
 
     def _on_test_done(self, ok: bool) -> None:
