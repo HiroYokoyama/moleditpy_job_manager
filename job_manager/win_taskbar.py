@@ -217,6 +217,16 @@ def hicon_from_png(data: bytes, size: int) -> int:
         return 0
 
 
+def destroy_icon(hicon: int) -> None:
+    """Give an HICON back. Each is a GDI handle, and a process has 10,000."""
+    if not AVAILABLE or not hicon:
+        return
+    try:
+        ctypes.windll.user32.DestroyIcon(ctypes.c_void_p(int(hicon)))
+    except Exception:
+        logging.debug("Job Manager: an icon was not destroyed", exc_info=True)
+
+
 class WindowTaskbar:
     """One window's task bar button: its progress and its thumbnail buttons.
 
@@ -245,6 +255,18 @@ class WindowTaskbar:
 
     def clear(self) -> None:
         self.set_progress("none")
+
+    def release(self) -> None:
+        """Clear the button and destroy the thumbnail icons made for it.
+
+        Every monitor window made three, and nothing gave them back: a
+        session that opened and closed the monitor all day leaked GDI handles
+        until it hit the per-process limit.
+        """
+        self.clear()
+        for hicon in self._icons.values():
+            destroy_icon(hicon)
+        self._icons.clear()
 
     def _native_buttons(self) -> List[Tuple[int, int, str]]:
         out = []
@@ -303,6 +325,7 @@ __all__ = [
     "WindowTaskbar",
     "add_thumb_buttons",
     "button_created_message",
+    "destroy_icon",
     "hicon_from_png",
     "set_progress",
     "thumb_click_id",

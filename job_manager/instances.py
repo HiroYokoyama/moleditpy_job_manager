@@ -55,13 +55,31 @@ def _request_path(directory: str, pid: int) -> str:
 
 
 def _write_atomically(path: str, data: Dict[str, Any]) -> None:
+    """Replace ``path`` whole. No fsync: a heartbeat lost to a power cut is a
+    process that is not running any more either, and one every two seconds
+    would be a disk flush every two seconds for nothing."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     temp = f"{path}.tmp{os.getpid()}"
-    with open(temp, "w", encoding="utf-8") as handle:
-        json.dump(data, handle)
-    # Replaced, not rewritten: a reader mid-write would see an empty file and
-    # take a live instance for a dead one.
-    os.replace(temp, path)
+    try:
+        with open(temp, "w", encoding="utf-8") as handle:
+            json.dump(data, handle)
+        # Replaced, not rewritten: a reader mid-write would see an empty file
+        # and take a live instance for a dead one.
+        try:
+            os.replace(temp, path)
+        except PermissionError:
+            # Windows refuses to replace a file another process has open --
+            # a launch reading this heartbeat at that very moment. It lets go
+            # within milliseconds.
+            time.sleep(0.05)
+            os.replace(temp, path)
+    except OSError:
+        # Never a temp file left behind for every refused write.
+        try:
+            os.remove(temp)
+        except OSError:
+            pass
+        raise
 
 
 def write_heartbeat(directory: str, role: str, started: Optional[float] = None) -> None:

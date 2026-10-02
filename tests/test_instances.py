@@ -77,6 +77,28 @@ class TestTheRegistry(RegistryTestCase):
         self.assertEqual(os.listdir(instances.instances_dir(self.dir)), [])
         instances.remove_heartbeat(self.dir)  # twice is fine
 
+    def test_a_refused_replace_is_retried_once(self):
+        # Windows refuses to replace a file another process is reading.
+        real = os.replace
+        calls = []
+
+        def busy_once(src, dst):
+            calls.append(dst)
+            if len(calls) == 1:
+                raise PermissionError("in use")
+            return real(src, dst)
+
+        with patch("job_manager.instances.os.replace", side_effect=busy_once):
+            instances.write_heartbeat(self.dir, instances.ROLE_TRAY)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(os.listdir(instances.instances_dir(self.dir)), [f"{os.getpid()}.json"])
+
+    def test_a_write_that_fails_leaves_no_temp_file(self):
+        with patch("job_manager.instances.os.replace", side_effect=PermissionError("in use")):
+            with self.assertRaises(PermissionError):
+                instances.write_heartbeat(self.dir, instances.ROLE_TRAY)
+        self.assertEqual(os.listdir(instances.instances_dir(self.dir)), [])
+
     def test_no_temporary_file_is_left(self):
         instances.write_heartbeat(self.dir, instances.ROLE_TRAY)
         self.assertEqual(os.listdir(instances.instances_dir(self.dir)), [f"{os.getpid()}.json"])

@@ -88,6 +88,21 @@ class TestOffWindows(unittest.TestCase):
 class TestWindowWrapper(unittest.TestCase):
     """The dispatch, with the platform check and the MSG read stood in for."""
 
+    def test_release_destroys_every_icon_it_made(self):
+        # Three per monitor window, every time one opened: a GDI handle leak.
+        bar = win_taskbar.WindowTaskbar(MagicMock())
+        bar._icons = {1: 11, 2: 22, 3: 33}
+        with (
+            patch.object(win_taskbar, "destroy_icon") as destroy,
+            patch.object(win_taskbar, "set_progress"),
+        ):
+            bar.release()
+        self.assertEqual(sorted(c.args[0] for c in destroy.call_args_list), [11, 22, 33])
+        self.assertEqual(bar._icons, {})
+
+    def test_destroying_nothing_is_nothing(self):
+        win_taskbar.destroy_icon(0)
+
     def test_a_null_message_is_never_read(self):
         # Reading a MSG at address 0 is an access violation, not an exception.
         bar = win_taskbar.WindowTaskbar(MagicMock())

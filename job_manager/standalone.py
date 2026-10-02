@@ -191,6 +191,11 @@ class StandaloneTray(_StandaloneWindows):
                 logging.debug("Job Manager: the hand-off note was refused", exc_info=True)
         return True
 
+    def start_as_window(self) -> None:
+        """Nowhere to live but a window: a monitor, as a plain launch opens."""
+        self._start_beacon(instances.ROLE_STANDALONE)
+        self.open_monitor()
+
 
 def run(
     app: QApplication,
@@ -205,9 +210,7 @@ def run(
         logging.info("Job Manager: another Job Manager is tracking already; not starting")
         return 0
     if not tray.start():
-        # Nowhere to live but a window: show the monitor, as a plain launch does.
-        tray._start_beacon(instances.ROLE_STANDALONE)
-        tray.open_monitor()
+        tray.start_as_window()
     try:
         return app.exec()
     finally:

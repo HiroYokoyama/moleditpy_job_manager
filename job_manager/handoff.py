@@ -34,8 +34,6 @@ from typing import Any, Dict, List, Optional
 TRAY_FILE = "tray.json"
 STOP_FILE = "tray.stop"
 
-#: How often the tray process proves it is alive.
-HEARTBEAT_SECONDS = 2.0
 #: A heartbeat older than this is a process that crashed or was killed.
 STALE_AFTER_SECONDS = 10.0
 
@@ -46,18 +44,6 @@ def tray_path(directory: str) -> str:
 
 def stop_path(directory: str) -> str:
     return os.path.join(directory, STOP_FILE)
-
-
-def write_heartbeat(directory: str, relaunch: Optional[List[str]] = None) -> None:
-    """Say this process is the one tracking, and how to start MoleditPy again."""
-    os.makedirs(directory, exist_ok=True)
-    path = tray_path(directory)
-    temp = f"{path}.tmp{os.getpid()}"
-    with open(temp, "w", encoding="utf-8") as handle:
-        json.dump({"pid": os.getpid(), "beat": time.time(), "relaunch": relaunch or []}, handle)
-    # Replaced, not rewritten: a MoleditPy reading mid-write would see an empty
-    # file and take a live tray process for a dead one.
-    os.replace(temp, path)
 
 
 def live_tray(directory: str, now: Optional[float] = None) -> Optional[Dict[str, Any]]:
@@ -72,16 +58,6 @@ def live_tray(directory: str, now: Optional[float] = None) -> Optional[Dict[str,
     if current - beat > STALE_AFTER_SECONDS:
         return None
     return data
-
-
-def remove_tray_file(directory: str) -> None:
-    for path in (tray_path(directory), stop_path(directory)):
-        try:
-            os.remove(path)
-        except FileNotFoundError:
-            pass
-        except OSError:
-            logging.debug("Job Manager: %s not removed", path, exc_info=True)
 
 
 def request_stop(directory: str) -> None:
@@ -216,18 +192,15 @@ def spawn_detached(command: List[str], cwd: Optional[str] = None) -> bool:
 
 
 __all__ = [
-    "HEARTBEAT_SECONDS",
     "STALE_AFTER_SECONDS",
     "background_python",
     "can_hand_off",
     "clear_stop",
     "live_tray",
     "relaunch_command",
-    "remove_tray_file",
     "request_stop",
     "spawn_detached",
     "standalone_command",
     "stop_requested",
     "stop_running_tray",
-    "write_heartbeat",
 ]

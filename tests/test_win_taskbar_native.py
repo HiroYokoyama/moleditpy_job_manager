@@ -101,10 +101,13 @@ class TestTheComObject(NativeTestCase):
     def test_the_registered_message_exists(self):
         self.assertGreaterEqual(win_taskbar.button_created_message(), 0xC000)
 
-    def test_an_icon_is_made_from_png(self):
+    def test_an_icon_is_made_from_png_and_given_back(self):
         hicon = win_taskbar._hicon_for(plugin_icon())
         self.assertNotEqual(hicon, 0)
-        ctypes.windll.user32.DestroyIcon(ctypes.c_void_p(hicon))
+        win_taskbar.destroy_icon(hicon)
+        # A destroyed handle is no longer an icon.
+        info = ctypes.create_string_buffer(64)
+        self.assertEqual(ctypes.windll.user32.GetIconInfo(ctypes.c_void_p(hicon), info), 0)
 
 
 class TestTheBadge(NativeTestCase):

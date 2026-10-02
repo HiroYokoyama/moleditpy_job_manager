@@ -376,6 +376,14 @@ class TestTheMonitorWindow(PresenceTestCase):
         # And no longer told about job changes.
         service.jobs_changed.emit()
 
+    def test_closing_it_gives_its_thumbnail_icons_back(self):
+        # With or without a presence: the icons are the window's own.
+        service = self.service()
+        dialog = self.dialog(service)
+        with patch.object(dialog._taskbar, "release") as release:
+            dialog.close()
+        release.assert_called_once()
+
     def test_it_offers_three_thumbnail_buttons(self):
         service = self.service()
         dialog = self.dialog(service)

@@ -19,6 +19,20 @@ from unittest.mock import patch
 from job_manager import handoff
 
 
+def legacy_heartbeat(directory, relaunch=None, beat=None):
+    """What a 2.0 / 2.1 tray process wrote, which a newer MoleditPy still stops."""
+    os.makedirs(directory, exist_ok=True)
+    with open(handoff.tray_path(directory), "w", encoding="utf-8") as handle:
+        json.dump(
+            {
+                "pid": os.getpid(),
+                "beat": time.time() if beat is None else beat,
+                "relaunch": relaunch or [],
+            },
+            handle,
+        )
+
+
 class HandoffTestCase(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp(prefix="handoff_")
@@ -30,7 +44,7 @@ class TestHeartbeat(HandoffTestCase):
         self.assertIsNone(handoff.live_tray(self.dir))
 
     def test_a_fresh_beat_is_alive(self):
-        handoff.write_heartbeat(self.dir, ["moleditpy"])
+        legacy_heartbeat(self.dir, ["moleditpy"])
         live = handoff.live_tray(self.dir)
         self.assertEqual(live["pid"], os.getpid())
         self.assertEqual(live["relaunch"], ["moleditpy"])
@@ -38,7 +52,7 @@ class TestHeartbeat(HandoffTestCase):
     def test_a_stale_beat_is_a_dead_process(self):
         # A crashed or killed tray process leaves its file; a MoleditPy must
         # not wait on it, nor believe the jobs are tracked elsewhere.
-        handoff.write_heartbeat(self.dir)
+        legacy_heartbeat(self.dir)
         later = time.time() + handoff.STALE_AFTER_SECONDS + 1
         self.assertIsNone(handoff.live_tray(self.dir, now=later))
 
@@ -50,17 +64,6 @@ class TestHeartbeat(HandoffTestCase):
             json.dump(["a list"], handle)
         self.assertIsNone(handoff.live_tray(self.dir))
 
-    def test_no_temporary_file_is_left_behind(self):
-        handoff.write_heartbeat(self.dir)
-        self.assertEqual(os.listdir(self.dir), [handoff.TRAY_FILE])
-
-    def test_removal_takes_both_files(self):
-        handoff.write_heartbeat(self.dir)
-        handoff.request_stop(self.dir)
-        handoff.remove_tray_file(self.dir)
-        self.assertEqual(os.listdir(self.dir), [])
-        handoff.remove_tray_file(self.dir)  # twice is fine
-
 
 class TestStopping(HandoffTestCase):
     def test_nothing_running_returns_at_once(self):
@@ -70,7 +73,7 @@ class TestStopping(HandoffTestCase):
         self.assertFalse(handoff.stop_requested(self.dir))
 
     def test_it_waits_for_the_process_to_go(self):
-        handoff.write_heartbeat(self.dir)
+        legacy_heartbeat(self.dir)
 
         def tray_process():
             # What StandaloneTray.tick does: see the request, then leave.
@@ -89,7 +92,7 @@ class TestStopping(HandoffTestCase):
         self.assertFalse(handoff.stop_requested(self.dir))
 
     def test_one_that_never_goes_is_given_up_on(self):
-        handoff.write_heartbeat(self.dir)
+        legacy_heartbeat(self.dir)
         self.assertFalse(handoff.stop_running_tray(self.dir, timeout=0.2, poll=0.05))
 
     def test_clearing_a_request_that_is_not_there_is_fine(self):
