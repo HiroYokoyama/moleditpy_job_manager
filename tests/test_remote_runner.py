@@ -147,7 +147,10 @@ class RunnerHarness(unittest.TestCase):
             # condition. Report its stderr immediately instead of spending
             # the whole timeout waiting for a marker that will never appear.
             process = self.processes[-1] if self.processes else None
-            if process is not None and process.poll() is not None:
+            # Checked again once it has exited: the runner may have done what
+            # was waited for -- or the wait may be for its exit -- between
+            # the check above and this one. Failing then failed a passing run.
+            if process is not None and process.poll() is not None and not predicate():
                 stderr = (process.stderr.read() if process.stderr else "").strip()
                 self.fail(
                     f"runner exited with rc={process.returncode} while waiting for {what}; "
