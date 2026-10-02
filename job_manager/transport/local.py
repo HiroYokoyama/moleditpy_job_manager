@@ -114,7 +114,7 @@ def shell_kind_for(host) -> str:
     """
     from ..models import SCHEDULER_WINDOWS
 
-    return SHELL_POWERSHELL if getattr(host, "scheduler", "") == SCHEDULER_WINDOWS else SHELL_POSIX
+    return SHELL_POWERSHELL if host.scheduler == SCHEDULER_WINDOWS else SHELL_POSIX
 
 
 def shell_available(kind: str = SHELL_POSIX) -> bool:

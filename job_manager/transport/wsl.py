@@ -109,7 +109,7 @@ class WSLTransport(Transport):
         super().__init__(host)
         self._exe = exe or find_wsl()
         self.shell = shell or self.SHELL
-        self.distro = (getattr(host, "wsl_distro", "") or "").strip()
+        self.distro = (host.wsl_distro or "").strip()
 
     # --- helpers ------------------------------------------------------------
 

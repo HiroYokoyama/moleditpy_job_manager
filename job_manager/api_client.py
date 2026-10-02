@@ -260,7 +260,7 @@ class JobManagerClient:
         than its own poll interval, so a small number here costs nothing on the
         cluster. ``timeout`` of 0 waits indefinitely.
         """
-        deadline = time.time() + timeout if timeout else 0.0
+        deadline = time.monotonic() + timeout if timeout else 0.0
         previous = ""
         while True:
             job = self.job(job_id)
@@ -270,7 +270,7 @@ class JobManagerClient:
             previous = state
             if state in TERMINAL_STATES:
                 return job
-            if deadline and time.time() > deadline:
+            if deadline and time.monotonic() > deadline:
                 raise JobApiError(f"Timed out waiting for job {job_id} (still {state})")
             time.sleep(max(0.5, float(interval)))
 

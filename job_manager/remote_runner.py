@@ -150,7 +150,7 @@ def flavour_for(host):
     """
     from .models import SCHEDULER_WINDOWS
 
-    if getattr(host, "scheduler", "") == SCHEDULER_WINDOWS:
+    if host.scheduler == SCHEDULER_WINDOWS:
         from . import remote_runner_ps
 
         return remote_runner_ps
@@ -171,7 +171,7 @@ def slots_for(host) -> int:
     on an eight-core machine, and a third waits for cores rather than for a
     slot it was never told about.
     """
-    limit = max(0, int(getattr(host, "max_concurrent", 0) or 0))
+    limit = max(0, int(host.max_concurrent or 0))
     return limit or UNLIMITED_SLOTS
 
 

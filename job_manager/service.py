@@ -233,8 +233,9 @@ class JobService(QObject):
         """
         if after_job is None:
             return ""
-        deadline = time.time() + timeout
-        while not after_job.remote_job_id and time.time() < deadline:
+        # Monotonic: a clock set back by NTP or a DST bug would stretch the wait.
+        deadline = time.monotonic() + timeout
+        while not after_job.remote_job_id and time.monotonic() < deadline:
             if after_job.is_terminal:
                 logging.warning(
                     "Job Manager: %s never started, so the job chained behind it will not wait",

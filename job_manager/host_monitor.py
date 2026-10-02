@@ -14,6 +14,7 @@ from typing import Deque, Dict, Optional
 from PyQt6.QtCore import QRectF, QSize, Qt, QTimer
 from PyQt6.QtGui import QColor, QFont, QPainter, QPainterPath, QPalette, QPen
 from PyQt6.QtWidgets import (
+    QApplication,
     QDialog,
     QDialogButtonBox,
     QFrame,
@@ -816,6 +817,9 @@ class HostCard(QFrame):
 class HostMonitorDialog(QDialog):
     """A card per host, refreshed on a timer while this window is open."""
 
+    #: What :func:`find_open` looks for.
+    is_host_monitor = True
+
     #: One card fits comfortably in this much width; fewer wide columns beat
     #: many cramped ones.
     CARD_WIDTH = 320
@@ -987,9 +991,9 @@ class HostMonitorDialog(QDialog):
                 host.id,
                 host.name,
                 host.target,
-                bool(getattr(host, "enabled", True)),
-                bool(getattr(host, "monitor_usage", True)),
-                int(getattr(host, "monitor_interval", 0) or 0),
+                bool(host.enabled),
+                bool(host.monitor_usage),
+                int(host.monitor_interval or 0),
             )
             for host in self.service.store.host_list()
         )
@@ -1006,7 +1010,7 @@ class HostMonitorDialog(QDialog):
         self._laid_out_for = 0
         for host in self.service.store.host_list():
             card = HostCard(host)
-            if not getattr(host, "enabled", True):
+            if not host.enabled:
                 card.setEnabled(False)
                 card.lbl_state.setText("disabled")
                 # HostCard paints with fixed colours, not the palette, so
@@ -1014,7 +1018,7 @@ class HostMonitorDialog(QDialog):
                 effect = QGraphicsOpacityEffect(card)
                 effect.setOpacity(0.45)
                 card.setGraphicsEffect(effect)
-            elif not getattr(host, "monitor_usage", True):
+            elif not host.monitor_usage:
                 card.show_not_sampled()
             card.restyle(self.palette(), dark=bool(self.btn_dark.isChecked()))
             self.cards[host.id] = card
@@ -1249,4 +1253,23 @@ class _ActiveJobsBar(QWidget):
         self._lbl_count.setText("&nbsp;&nbsp;".join(parts))
 
 
-__all__ = ["HostCard", "HostMonitorDialog", "Sparkline"]
+def find_open(service) -> Optional[HostMonitorDialog]:
+    """The Host Monitor already on screen for ``service``, if any.
+
+    Without MoleditPy there is no window registry: the tray's Host Monitor
+    and the job monitor's button each opened one of their own.
+    """
+    app = QApplication.instance()
+    for widget in app.topLevelWidgets() if app is not None else []:
+        # By marker, not isinstance: the class is replaced in tests.
+        if (
+            getattr(widget, "is_host_monitor", False)
+            and getattr(widget, "service", None) is service
+            and widget.isVisible()
+            and not widget._torn_down
+        ):
+            return widget
+    return None
+
+
+__all__ = ["HostCard", "HostMonitorDialog", "Sparkline", "find_open"]

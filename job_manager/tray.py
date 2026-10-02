@@ -139,7 +139,7 @@ class TrayController(QObject):
                 return icon
         except Exception:
             logging.debug("Job Manager: no plugin icon for the tray", exc_info=True)
-        return notify._icon()
+        return notify.app_icon()
 
     def update(self, counts: dict, unseen_failures: int) -> None:
         if self.tray is None:
@@ -164,9 +164,11 @@ class TrayController(QObject):
 
     # --- the menu ------------------------------------------------------------
 
-    def _add(self, menu: QMenu, text: str, slot, enabled: bool = True) -> QAction:
+    def _add(self, menu: QMenu, text: str, slot) -> QAction:
         action = menu.addAction(text)
-        action.setEnabled(enabled)
+        # An entry with nothing behind it is shown greyed, not clickable and
+        # silently doing nothing.
+        action.setEnabled(slot is not None)
         if slot is not None:
             action.triggered.connect(lambda _checked=False: slot())
         return action
@@ -314,15 +316,10 @@ class TrayController(QObject):
         if self._told_still_running:
             return
         self._told_still_running = True
-        try:
-            self.tray.showMessage(
-                "MoleditPy job manager",
-                "Still tracking your jobs here. Right-click this icon to reopen or quit.",
-                notify._icon(),
-                notify.TIMEOUT_MS,
-            )
-        except Exception:
-            logging.debug("Job Manager: the still-running note was refused", exc_info=True)
+        notify.notify(
+            "MoleditPy job manager",
+            "Still tracking your jobs here. Right-click this icon to reopen or quit.",
+        )
 
     def show_main_window(self) -> None:
         window = self.main_window
@@ -363,7 +360,11 @@ class TrayController(QObject):
 
     def open_moleditpy(self) -> None:
         """From the tray process: start MoleditPy, which then takes the tracking back."""
-        handoff.spawn_detached(self.relaunch)
+        if not handoff.spawn_detached(self.relaunch):
+            notify.notify(
+                "MoleditPy job manager",
+                "MoleditPy could not be started from here; start it as usual.",
+            )
 
     # --- teardown --------------------------------------------------------------
 

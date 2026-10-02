@@ -433,11 +433,11 @@ class HostsDialog(QDialog):
         self.list.clear()
         for host in self.store.host_list():
             label = f"{host.name}  ({host.target})"
-            if not getattr(host, "enabled", True):
+            if not host.enabled:
                 label += "  [disabled]"
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, host.id)
-            if not getattr(host, "enabled", True):
+            if not host.enabled:
                 # A plain grey foreground, not setEnabled(False): the item
                 # must stay selectable so a disabled host can still be
                 # re-enabled from here.
@@ -527,7 +527,7 @@ class HostsDialog(QDialog):
             self._clear_form()
             return
         self._set_editor_enabled(True)
-        self.chk_enabled.setChecked(bool(getattr(host, "enabled", True)))
+        self.chk_enabled.setChecked(bool(host.enabled))
         self.txt_name.setText(host.name)
         self.txt_hostname.setText(host.hostname)
         self.txt_username.setText(host.username)
@@ -543,10 +543,10 @@ class HostsDialog(QDialog):
         index = self.cmb_scheduler.findData(host.scheduler)
         self.cmb_scheduler.setCurrentIndex(max(0, index))
         self.txt_key.setText(host.key_path)
-        self.cmb_distro.setCurrentText(getattr(host, "wsl_distro", "") or "")
+        self.cmb_distro.setCurrentText(host.wsl_distro or "")
         self.txt_jump.setText(host.jump_host)
         self.txt_remote_root.setText(host.remote_root)
-        self.txt_equal_path.setText(getattr(host, "equal_path", "") or "")
+        self.txt_equal_path.setText(host.equal_path or "")
         self.spin_max_concurrent.setValue(max(0, int(host.max_concurrent or 0)))
         index = self.cmb_concurrency.findData(host.concurrency_mode or MODE_LANES)
         self.cmb_concurrency.setCurrentIndex(max(0, index))
@@ -562,10 +562,10 @@ class HostsDialog(QDialog):
         self.txt_options.setPlainText("\n".join(host.ssh_options or []))
         self.spin_connect_timeout.setValue(int(host.connect_timeout or 10))
         self.spin_command_timeout.setValue(int(host.command_timeout or 60))
-        self.txt_submit_options.setText(getattr(host, "submit_options", "") or "")
-        self.chk_monitor_usage.setChecked(bool(getattr(host, "monitor_usage", True)))
-        self.spin_monitor_interval.setValue(max(0, int(getattr(host, "monitor_interval", 0) or 0)))
-        self.spin_poll_interval.setValue(max(0, int(getattr(host, "poll_interval", 0) or 0)))
+        self.txt_submit_options.setText(host.submit_options or "")
+        self.chk_monitor_usage.setChecked(bool(host.monitor_usage))
+        self.spin_monitor_interval.setValue(max(0, int(host.monitor_interval or 0)))
+        self.spin_poll_interval.setValue(max(0, int(host.poll_interval or 0)))
         self.spin_monitor_interval.setEnabled(self.chk_monitor_usage.isChecked())
         self.chk_ask_password.setChecked(bool(host.ask_password))
         # Explicitly, not only from the combo's signal: selecting a host whose

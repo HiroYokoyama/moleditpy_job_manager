@@ -16,7 +16,7 @@ import logging
 from typing import Any, Optional
 
 PLUGIN_NAME = "Job Manager"
-PLUGIN_VERSION = "2.3.0"
+PLUGIN_VERSION = "2.3.1"
 PLUGIN_AUTHOR = "HiroYokoyama"
 
 PLUGIN_DESCRIPTION = "Submit calculations to remote HPC clusters over SSH, track queue status, and fetch results back into MoleditPy. Ready-made command lines for ORCA, Gaussian, CP2K, GAMESS, MOPAC, NWChem, Psi4, PySCF, Quantum ESPRESSO, VASP and xTB; job lists export to CSV or .pmejbs and reopen by drag and drop. Runs on this machine too, with no SSH; chains jobs with each scheduler's own dependency flag; and can hold a job until a chosen time. Installing paramiko adds a backend that keeps one SSH session open and can log in with a password."
@@ -536,13 +536,9 @@ def show_monitor(context=None) -> None:
         return
     window = context.get_window(WINDOW_KEY)
     if window is not None:
-        # Restored as well as raised: from the tray, a minimised monitor is
-        # the usual case, and raise_() alone leaves it minimised.
-        if window.isMinimized():
-            window.showNormal()
-        window.show()
-        window.raise_()
-        window.activateWindow()
+        from .window_utils import bring_to_front
+
+        bring_to_front(window)
         _mark_opened()
         _acknowledge_failures()
         return
@@ -576,8 +572,9 @@ def show_settings(context=None) -> None:
     context = context or _context
     try:
         from .settings_dialog import SettingsDialog
+        from .window_utils import exec_once
 
-        SettingsDialog(get_service(), None).exec()
+        exec_once("settings", lambda: SettingsDialog(get_service(), None))
     except Exception as exc:
         logging.exception("Job Manager: could not open the settings")
         if context is not None:
@@ -610,9 +607,10 @@ def show_host_monitor_standalone(context=None) -> None:
         return
     window = context.get_window(HOST_MONITOR_WINDOW_KEY)
     if window is not None:
-        window.show()
-        window.raise_()
-        window.activateWindow()
+        from .window_utils import bring_to_front
+
+        # Minimised, it used to stay minimised: show() and raise_() leave it so.
+        bring_to_front(window)
         _mark_opened()
         return
     try:
@@ -670,8 +668,9 @@ def show_api_dialog(context=None) -> None:
         return
     try:
         from .api_dialog import ApiDialog
+        from .window_utils import exec_once
 
-        ApiDialog(get_service(), parent=None).exec()
+        exec_once("api", lambda: ApiDialog(get_service(), parent=None))
     except Exception as exc:
         logging.exception("Job Manager: could not open the API window")
         context.show_status_message(f"Job Manager: {exc}", 5000)
@@ -682,8 +681,9 @@ def show_about(context=None) -> None:
     context = context or _context
     try:
         from .about_dialog import AboutDialog
+        from .window_utils import exec_once
 
-        AboutDialog(parent=None).exec()
+        exec_once("about", lambda: AboutDialog(parent=None))
     except Exception as exc:
         logging.exception("Job Manager: could not open the About window")
         if context is not None:

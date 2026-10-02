@@ -208,6 +208,20 @@ class TestMenu(TrayTestCase):
         self.action(shown.tray, "Settings...").trigger()
         self.actions["settings"].assert_called_once()
 
+    def test_an_entry_with_nothing_behind_it_is_greyed(self):
+        # It used to be clickable and do nothing at all.
+        self.actions.pop("host_monitor")
+        shown = self.presence(self.service())
+        self.assertFalse(self.action(shown.tray, "Host Monitor...").isEnabled())
+        self.assertTrue(self.action(shown.tray, "Open Job Monitor").isEnabled())
+
+    def test_a_moleditpy_that_will_not_start_is_said_so(self):
+        shown = self.presence(self.service())
+        shown.tray.relaunch = ["/opt/missing/moleditpy"]
+        with patch("job_manager.handoff.spawn_detached", return_value=False):
+            shown.tray.open_moleditpy()
+        self.assertIn("could not be started", self.tray.showMessage.call_args[0][1])
+
 
 class TestIconAndTooltip(TrayTestCase):
     def test_the_tooltip_counts_jobs(self):
