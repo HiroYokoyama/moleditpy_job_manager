@@ -8,12 +8,11 @@ the same package, run on its own, polling from the tray. MoleditPy then quits
 for real.
 
 The two must never both track: two pollers query every host twice and every
-job ending is announced twice. The tray process writes a heartbeat file every
-couple of seconds; a MoleditPy starting up asks it to stop, through a file
-beside it, and waits for the heartbeat to go before reading the job list.
-Files rather than a socket or a pid: the state directory is already shared by
-every instance, and a heartbeat that stops being refreshed cannot be mistaken
-for a live process the way a recycled pid can.
+job ending is announced twice. The tray process registers itself in the
+instance registry (see :mod:`job_manager.instances`); a MoleditPy starting up
+asks it to stop there and waits for its heartbeat to go before reading the job
+list, and a standalone launch asks it to bring its monitor up instead of
+starting beside it.
 
 Pure stdlib, so the pytest-only CI job covers it.
 """
@@ -29,6 +28,9 @@ import sys
 import time
 from typing import Any, Dict, List, Optional
 
+#: The heartbeat and stop files of a 2.0 / 2.1 tray process. Newer ones are
+#: in the instance registry (see instances.py); these remain only so a
+#: MoleditPy updated while one of those runs can still stop it.
 TRAY_FILE = "tray.json"
 STOP_FILE = "tray.stop"
 
@@ -143,15 +145,21 @@ def background_python(executable: Optional[str] = None, platform: Optional[str] 
     return executable
 
 
-def standalone_command(package_dir: str, relaunch: Optional[List[str]] = None) -> List[str]:
+def standalone_command(
+    package_dir: str, relaunch: Optional[List[str]] = None, after_pid: int = 0
+) -> List[str]:
     """The command line for the tray process.
 
     ``__main__.py`` by path rather than ``-m``: the plugin folder's name is
     whatever the installer gave it, and need not be importable as a module name.
+    ``after_pid`` is the process handing over, which is still running -- and
+    still registered -- while the tray process starts.
     """
     command = [background_python(), os.path.join(package_dir, "__main__.py"), "--tray"]
     if relaunch:
         command += ["--relaunch", json.dumps(relaunch)]
+    if after_pid:
+        command += ["--after-pid", str(int(after_pid))]
     return command
 
 
@@ -165,6 +173,10 @@ def relaunch_command(
         return [executable]
     script = argv[0] if argv else ""
     if not script or script == "-c":
+        return []
+    if os.path.dirname(os.path.abspath(script)) == os.path.dirname(os.path.abspath(__file__)):
+        # This package run on its own: there is no MoleditPy to go back to,
+        # and "Open MoleditPy" must not open another standalone monitor.
         return []
     if script.lower().endswith(".exe"):
         # A console-script launcher (moleditpy.exe in Scripts\\).

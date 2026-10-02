@@ -14,12 +14,44 @@ if __package__ is None or __package__ == "":
 
 from PyQt6.QtWidgets import QApplication
 
-from . import PLUGIN_VERSION, get_service
+from . import PLUGIN_VERSION, get_service, instances
 from . import shutdown as release_service
-from .jobs_dialog import JobsDialog
+from .store import default_data_dir
+
+HOST_MONITOR_FLAGS = ("--host-monitor", "--hosts", "host-monitor", "-m")
+
+
+def _argument(args, name: str) -> str:
+    if name in args[:-1]:
+        return args[args.index(name) + 1]
+    return ""
 
 
 def main() -> int:
+    args = sys.argv[1:]
+    data_dir = default_data_dir()
+    tray_mode = "--tray" in args
+    host_view = any(arg in HOST_MONITOR_FLAGS for arg in args)
+
+    if not tray_mode:
+        # One Job Manager at a time, when it is ours to choose: a launch beside
+        # one already running brings that one's window up instead of starting
+        # a second tracker. Before the QApplication, so nothing flashes.
+        action = instances.ACTION_SHOW_HOST_MONITOR if host_view else instances.ACTION_SHOW_MONITOR
+        running = instances.defer_to_running(data_dir, action)
+        if running is not None:
+            print(
+                f"Job Manager is already running (pid {running['pid']}, {running['role']}); "
+                "its window has been brought up.",
+                file=sys.stderr,
+            )
+            return 0
+        # A tray process from 2.0 or 2.1 is not in the registry; it only knows
+        # its own stop file, and would otherwise track beside this window.
+        from . import handoff
+
+        handoff.stop_running_tray(data_dir)
+
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName(f"Job Manager {PLUGIN_VERSION}")
 
@@ -28,40 +60,28 @@ def main() -> int:
     # standalone monitor with neither the desktop notification nor the chat
     # message a job ending is supposed to produce. There is no PluginContext
     # here, which the status-bar counter it also installs allows for.
-    args = sys.argv[1:]
-    if "--tray" not in args:
-        # Opened by hand while a tray process tracks the same list: one of
-        # the two has to stop, and the window the user just opened wins.
-        from . import _take_tracking_back
-
-        _take_tracking_back()
     service = get_service()
     try:
-        if "--tray" in args:
-            # Started by MoleditPy as it closed: see job_manager/handoff.py.
+        if tray_mode:
+            # Started by MoleditPy, or a standalone monitor, as it closed: see
+            # job_manager/handoff.py.
             import json
 
             from .standalone import run
-            from .store import default_data_dir
 
-            relaunch = []
-            if "--relaunch" in args[:-1]:
-                try:
-                    relaunch = [
-                        str(part) for part in json.loads(args[args.index("--relaunch") + 1])
-                    ]
-                except (ValueError, TypeError):
-                    relaunch = []
-            return run(app, service, default_data_dir(), relaunch)
-        if any(arg in ("--host-monitor", "--hosts", "host-monitor", "-m") for arg in args):
-            from .host_monitor import HostMonitorDialog
+            try:
+                relaunch = [str(part) for part in json.loads(_argument(args, "--relaunch") or "[]")]
+            except (ValueError, TypeError):
+                relaunch = []
+            try:
+                after_pid = int(_argument(args, "--after-pid") or 0)
+            except ValueError:
+                after_pid = 0
+            return run(app, service, data_dir, relaunch, after_pid)
 
-            dialog = HostMonitorDialog(service)
-        else:
-            dialog = JobsDialog(service)
-        dialog.show()
+        from .standalone import run_monitor
 
-        return app.exec()
+        return run_monitor(app, service, data_dir, host_view)
     finally:
         # The module's own teardown, which also takes away the tray icon the
         # notifier put up and the badge on the task bar icon.

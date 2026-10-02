@@ -106,6 +106,13 @@ class TestCommands(unittest.TestCase):
         command = handoff.standalone_command("pkg", ["moleditpy", "--x"])
         self.assertEqual(json.loads(command[command.index("--relaunch") + 1]), ["moleditpy", "--x"])
 
+    def test_the_one_handing_over_is_named(self):
+        # It is still running, and registered, while the tray process starts;
+        # without its pid the tray process would defer to it and exit.
+        command = handoff.standalone_command("pkg", after_pid=4242)
+        self.assertEqual(command[command.index("--after-pid") + 1], "4242")
+        self.assertNotIn("--after-pid", handoff.standalone_command("pkg"))
+
     def test_windows_uses_pythonw_when_it_is_there(self):
         exe = "C:\\Python\\python.exe"
         with patch("job_manager.handoff.os.path.exists", return_value=True):
@@ -137,6 +144,10 @@ class TestTheWayBack(unittest.TestCase):
     def test_python_dash_m(self):
         main = os.path.join("site-packages", "moleditpy", "__main__.py")
         self.assertEqual(handoff.relaunch_command([main], "python"), ["python", "-m", "moleditpy"])
+
+    def test_this_package_run_on_its_own_has_no_moleditpy_to_go_back_to(self):
+        own_main = os.path.join(os.path.dirname(os.path.abspath(handoff.__file__)), "__main__.py")
+        self.assertEqual(handoff.relaunch_command([own_main], "python"), [])
 
     def test_nothing_to_go_on(self):
         self.assertEqual(handoff.relaunch_command([], "python"), [])

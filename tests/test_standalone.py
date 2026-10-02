@@ -1,8 +1,10 @@
-"""The tray process MoleditPy hands its jobs to, and taking them back."""
+"""The Job Manager without MoleditPy: the tray process, a monitor opened by
+hand, one at a time, and MoleditPy taking the jobs back."""
 
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import shutil
 import sys
@@ -17,11 +19,31 @@ pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 is not installed")
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 import job_manager  # noqa: E402
-from job_manager import handoff, notify, presence  # noqa: E402
+from job_manager import instances, notify, presence  # noqa: E402
 from job_manager.models import STATE_RUNNING, Job  # noqa: E402
 from job_manager.service import JobService  # noqa: E402
-from job_manager.standalone import StandaloneTray, run  # noqa: E402
+from job_manager.standalone import StandaloneMonitor, StandaloneTray, run  # noqa: E402
 from job_manager.store import JobStore  # noqa: E402
+
+
+def fake_instance(directory, pid, role, beat=None):
+    """Another Job Manager's heartbeat, as that process would have written it."""
+    import time
+
+    folder = os.path.join(directory, instances.INSTANCES_DIR)
+    os.makedirs(folder, exist_ok=True)
+    now = time.time() if beat is None else beat
+    with open(os.path.join(folder, f"{pid}.json"), "w", encoding="utf-8") as handle:
+        json.dump({"pid": pid, "role": role, "beat": now, "started": now}, handle)
+
+
+def mine(directory):
+    """This process's own registry entry, if it has one."""
+    path = os.path.join(directory, instances.INSTANCES_DIR, f"{os.getpid()}.json")
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as handle:
+        return json.load(handle)
 
 
 class StandaloneTestCase(unittest.TestCase):
@@ -53,29 +75,24 @@ class StandaloneTestCase(unittest.TestCase):
 
 
 class TestStarting(StandaloneTestCase):
-    def test_it_beats_and_lives_in_the_tray(self):
+    def test_it_registers_and_lives_in_the_tray(self):
         tray = self.standalone(
             Job(host_id="h1", scheduler="slurm", state=STATE_RUNNING), relaunch=["moleditpy"]
         )
         self.assertTrue(tray.start())
 
-        self.assertEqual(handoff.live_tray(self.dir)["relaunch"], ["moleditpy"])
+        self.assertEqual(mine(self.dir)["role"], instances.ROLE_TRAY)
         # No window: closing the monitor it opens later must not end it.
         self.assertFalse(self.app.quitOnLastWindowClosed())
         self.assertTrue(presence.current().tray.standalone)
+        self.assertEqual(presence.current().tray.relaunch, ["moleditpy"])
         message = self.tray_icon.showMessage.call_args[0][1]
         self.assertIn("1 job", message)
-
-    def test_a_stop_left_for_an_earlier_process_is_ignored(self):
-        handoff.request_stop(self.dir)
-        tray = self.standalone()
-        tray.start()
-        self.assertFalse(handoff.stop_requested(self.dir))
 
     def test_without_a_tray_it_says_so(self):
         self.tray_class.isSystemTrayAvailable.return_value = False
         self.assertFalse(self.standalone().start())
-        self.assertIsNone(handoff.live_tray(self.dir))
+        self.assertIsNone(mine(self.dir))
 
     def test_without_a_tray_run_shows_the_monitor_instead(self):
         self.tray_class.isSystemTrayAvailable.return_value = False
@@ -88,34 +105,106 @@ class TestStarting(StandaloneTestCase):
         monitor.assert_called_once()
 
 
-class TestTheHeartbeat(StandaloneTestCase):
-    def test_a_tick_refreshes_it(self):
-        tray = self.standalone()
-        tray.start()
-        os.remove(handoff.tray_path(self.dir))
-        tray.tick()
-        self.assertIsNotNone(handoff.live_tray(self.dir))
+class TestOnlyOneTracker(StandaloneTestCase):
+    """The tray process steps aside for a Job Manager already tracking."""
 
+    def test_another_tray_process_means_nothing_to_do(self):
+        fake_instance(self.dir, 4242, instances.ROLE_TRAY)
+        service = self.service()
+        with patch.object(self.app, "exec") as loop:
+            self.assertEqual(run(self.app, service, self.dir), 0)
+        loop.assert_not_called()
+        self.assertIsNone(mine(self.dir))
+
+    def test_a_standalone_monitor_means_nothing_to_do(self):
+        fake_instance(self.dir, 4242, instances.ROLE_STANDALONE)
+        self.assertTrue(StandaloneTray(self.app, self.service(), self.dir).already_tracked())
+
+    def test_the_one_handing_over_is_not_counted(self):
+        # It is still running, and registered, while the tray process starts.
+        fake_instance(self.dir, 4242, instances.ROLE_STANDALONE)
+        tray = StandaloneTray(self.app, self.service(), self.dir, after_pid=4242)
+        self.assertFalse(tray.already_tracked())
+
+    def test_a_moleditpy_is_not_counted(self):
+        # Two MoleditPy windows each run the plugin, and that is accepted; a
+        # second one quitting must still be able to hand over.
+        fake_instance(self.dir, 4242, instances.ROLE_MOLEDITPY)
+        self.assertFalse(StandaloneTray(self.app, self.service(), self.dir).already_tracked())
+
+
+class TestAnsweringOtherLaunches(StandaloneTestCase):
     def test_a_stop_request_ends_the_process(self):
         tray = self.standalone()
         tray.start()
-        handoff.request_stop(self.dir)
-        with patch.object(self.app, "quit") as quit_app:
-            tray.tick()
-        quit_app.assert_called_once()
+        self.assertEqual(tray.beacon.handlers[instances.ACTION_STOP], self.app.quit)
+        stop = MagicMock()
+        tray.beacon.handlers[instances.ACTION_STOP] = stop
+        instances.send_request(self.dir, os.getpid(), instances.ACTION_STOP)
+        tray.beacon.check_requests()
+        stop.assert_called_once()
+
+    def test_a_show_request_opens_the_monitor(self):
+        tray = self.standalone()
+        tray.start()
+        instances.send_request(self.dir, os.getpid(), instances.ACTION_SHOW_MONITOR)
+        with patch.object(tray, "open_monitor") as monitor:
+            tray.beacon.handlers[instances.ACTION_SHOW_MONITOR] = monitor
+            tray.beacon.check_requests()
+        monitor.assert_called_once()
+        self.assertFalse(instances.request_pending(self.dir, os.getpid()))
 
     def test_stopping_takes_everything_down(self):
         tray = self.standalone()
         tray.start()
         tray.stop()
-        self.assertIsNone(handoff.live_tray(self.dir))
+        self.assertIsNone(mine(self.dir))
         self.assertIsNone(presence.current())
 
     def test_run_stops_when_the_loop_ends(self):
         service = self.service()
         with patch.object(self.app, "exec", return_value=0):
             run(self.app, service, self.dir, ["moleditpy"])
-        self.assertIsNone(handoff.live_tray(self.dir))
+        self.assertIsNone(mine(self.dir))
+
+
+class TestAMonitorOpenedByHand(StandaloneTestCase):
+    def monitor(self) -> StandaloneMonitor:
+        windows = StandaloneMonitor(self.app, self.service(), self.dir)
+        self.addCleanup(windows.stop)
+        return windows
+
+    def test_it_registers_and_opens_the_monitor(self):
+        windows = self.monitor()
+        with patch.object(windows, "open_monitor") as monitor:
+            windows.start()
+        monitor.assert_called_once()
+        self.assertEqual(mine(self.dir)["role"], instances.ROLE_STANDALONE)
+
+    def test_the_host_view_opens_the_host_monitor(self):
+        windows = self.monitor()
+        with patch.object(windows, "open_host_monitor") as hosts:
+            windows.start(host_view=True)
+        hosts.assert_called_once()
+
+    def test_its_tray_menu_reaches_its_own_windows(self):
+        # The plugin's menu asks a MoleditPy that is not there.
+        windows = self.monitor()
+        with patch.object(windows, "open_monitor"):
+            windows.start()
+        tray = presence.current().tray
+        self.assertFalse(tray.standalone)
+        self.assertEqual(tray.quit_label, "Quit Job Manager")
+        self.assertEqual(tray.actions["host_monitor"], windows.open_host_monitor)
+        self.assertEqual(tray.actions["settings"], windows.open_settings)
+
+    def test_closing_it_hands_over_without_a_way_back_to_moleditpy(self):
+        # "Open MoleditPy" in the tray process would otherwise start another
+        # standalone monitor.
+        from job_manager import handoff
+
+        main = os.path.join(os.path.dirname(handoff.__file__), "__main__.py")
+        self.assertEqual(handoff.relaunch_command([main], "python"), [])
 
 
 class TestItsWindows(StandaloneTestCase):
@@ -164,32 +253,53 @@ class TestItsWindows(StandaloneTestCase):
 
 
 class TestTheCommandLine(StandaloneTestCase):
-    def main(self, *args):
+    def main(self, *args, running=None):
         from job_manager import __main__ as entry
 
         with (
             patch.object(sys, "argv", ["__main__.py", *args]),
             patch("job_manager.standalone.run", return_value=0) as tray_run,
-            patch("job_manager._take_tracking_back") as take_back,
-            patch("job_manager.jobs_dialog.JobsDialog"),
+            patch("job_manager.standalone.run_monitor", return_value=0) as monitor_run,
+            patch("job_manager.instances.defer_to_running", return_value=running) as defer,
+            patch("job_manager.handoff.stop_running_tray") as legacy,
             patch.object(self.app, "exec", return_value=0),
         ):
-            entry.main()
-        return tray_run, take_back
+            code = entry.main()
+        return code, tray_run, monitor_run, defer, legacy
 
-    def test_tray_mode_carries_the_way_back(self):
-        tray_run, take_back = self.main("--tray", "--relaunch", '["moleditpy", "--x"]')
+    def test_tray_mode_carries_the_way_back_and_who_handed_over(self):
+        code, tray_run, _, defer, _ = self.main(
+            "--tray", "--relaunch", '["moleditpy", "--x"]', "--after-pid", "77"
+        )
         self.assertEqual(tray_run.call_args[0][3], ["moleditpy", "--x"])
-        take_back.assert_not_called()
+        self.assertEqual(tray_run.call_args[0][4], 77)
+        # The tray process decides for itself; it never defers by request.
+        defer.assert_not_called()
 
-    def test_a_garbled_way_back_is_dropped(self):
-        tray_run, _ = self.main("--tray", "--relaunch", "not json")
+    def test_garbled_arguments_are_dropped(self):
+        _, tray_run, _, _, _ = self.main("--tray", "--relaunch", "not json", "--after-pid", "x")
         self.assertEqual(tray_run.call_args[0][3], [])
+        self.assertEqual(tray_run.call_args[0][4], 0)
 
-    def test_opening_it_by_hand_stops_a_tray_process(self):
-        tray_run, take_back = self.main()
+    def test_opening_it_by_hand_alone_starts_a_monitor(self):
+        code, tray_run, monitor_run, defer, legacy = self.main()
         tray_run.assert_not_called()
-        take_back.assert_called_once()
+        monitor_run.assert_called_once()
+        self.assertEqual(defer.call_args[0][1], instances.ACTION_SHOW_MONITOR)
+        legacy.assert_called_once()
+
+    def test_opening_it_beside_a_running_one_brings_that_up_instead(self):
+        code, tray_run, monitor_run, defer, _ = self.main(
+            running={"pid": 4242, "role": instances.ROLE_TRAY}
+        )
+        self.assertEqual(code, 0)
+        monitor_run.assert_not_called()
+        tray_run.assert_not_called()
+
+    def test_the_host_monitor_flag_asks_for_the_host_monitor(self):
+        _, _, monitor_run, defer, _ = self.main("--host-monitor")
+        self.assertEqual(defer.call_args[0][1], instances.ACTION_SHOW_HOST_MONITOR)
+        self.assertTrue(monitor_run.call_args[0][3])
 
 
 class TestMoleditPyTakesItBack(unittest.TestCase):
@@ -209,6 +319,53 @@ class TestMoleditPyTakesItBack(unittest.TestCase):
         self.addCleanup(restore)
         importlib.reload(job_manager)
         self.addCleanup(job_manager.shutdown)
+
+    def test_a_registered_tray_process_is_asked_to_stop_and_waited_for(self):
+        fake_instance(self.dir, 4242, instances.ROLE_TRAY)
+        fake_instance(self.dir, 4343, instances.ROLE_MOLEDITPY)
+        with (
+            patch("job_manager.instances.send_request") as send,
+            patch("job_manager.instances.wait_until_gone", return_value=True) as wait,
+            patch("job_manager.handoff.stop_running_tray"),
+        ):
+            job_manager._take_tracking_back()
+        send.assert_called_once_with(self.dir, 4242, instances.ACTION_STOP)
+        wait.assert_called_once_with(self.dir, 4242)
+
+    def test_a_plugin_with_a_service_registers_and_answers(self):
+        context = MagicMock()
+        context.get_window.return_value = None
+        job_manager.initialize(context)
+        self.assertIsNone(mine(self.dir))  # nothing opened, nothing tracked yet
+        job_manager.get_service()
+        self.assertEqual(mine(self.dir)["role"], instances.ROLE_MOLEDITPY)
+
+        with patch.object(job_manager, "show_monitor") as show:
+            instances.send_request(self.dir, os.getpid(), instances.ACTION_SHOW_MONITOR)
+            job_manager._beacon.check_requests()
+        show.assert_called_once_with(context)
+        with patch.object(job_manager, "show_host_monitor_standalone") as hosts:
+            instances.send_request(self.dir, os.getpid(), instances.ACTION_SHOW_HOST_MONITOR)
+            job_manager._beacon.check_requests()
+        hosts.assert_called_once_with(context)
+
+        job_manager.shutdown()
+        self.assertIsNone(mine(self.dir))
+
+    def test_a_plugin_ignores_a_stop_request(self):
+        # Only the tray process steps aside; a MoleditPy is never stopped from
+        # outside.
+        context = MagicMock()
+        context.get_window.return_value = None
+        job_manager.initialize(context)
+        job_manager.get_service()
+        self.assertNotIn(instances.ACTION_STOP, job_manager._beacon.handlers)
+
+    def test_the_service_without_a_plugin_registers_nothing_itself(self):
+        # A standalone monitor or the tray process registers in its own role.
+        job_manager._context = None
+        job_manager.get_service()
+        self.assertIsNone(mine(self.dir))
 
     def test_loading_the_plugin_stops_the_tray_process_before_reading_jobs(self):
         order = []

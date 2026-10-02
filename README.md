@@ -301,6 +301,17 @@ and the same notifications when a job ends, on this desktop and in your chat
 room. Opening a result is the one thing it cannot do, since there is no editor
 to open it into.
 
+**One at a time.** A standalone launch first looks for a Job Manager already
+running — another standalone window, the tray process MoleditPy hands its
+jobs to, or the plugin inside an open MoleditPy that has been tracking jobs —
+and, finding one, brings *that* one's Job Monitor (or Host Monitor, with
+`--host-monitor`) to the front and exits. A second tracker beside the first
+would ask every host twice and announce every finished job twice. Two MoleditPy
+windows each run the plugin, as before: that is MoleditPy's choice to start
+twice, not this plugin's. Closing a standalone window with jobs still running
+hands them to the tray process, exactly as closing MoleditPy does, when
+**Keep tracking jobs after MoleditPy closes** is on in Settings.
+
 ### Launch via Batch File (.bat) & Desktop Shortcut
 
 If you want to launch Job Manager with a single double-click from your desktop, create a `.bat` file (e.g. `launch_job_manager.bat`):

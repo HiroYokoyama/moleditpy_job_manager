@@ -79,12 +79,15 @@ class TrayController(QObject):
         actions: Optional[dict] = None,
         standalone: bool = False,
         relaunch: Optional[list] = None,
+        quit_label: str = "Quit MoleditPy",
     ):
         super().__init__()
         #: True in the process :mod:`job_manager.handoff` started.
         self.standalone = standalone
         #: How to start MoleditPy again, from the standalone process.
         self.relaunch = list(relaunch or [])
+        #: A monitor opened by hand quits itself, not a MoleditPy that is not there.
+        self.quit_label = quit_label
         self._quitting_everything = False
         self._quit_hooked = False
         self.service = service
@@ -205,7 +208,7 @@ class TrayController(QObject):
         # MoleditPy is gone, and the tray process offers Open MoleditPy.
         if self.main_window is not None and not self._main_visible() and not self.hands_off():
             self._add(menu, "Show MoleditPy", self.show_main_window)
-        self._add(menu, "Quit MoleditPy", self.quit_application)
+        self._add(menu, self.quit_label, self.quit_application)
 
     def _listed_jobs(self):
         jobs = list(self.service.store.active_jobs())
@@ -265,7 +268,9 @@ class TrayController(QObject):
         if not self.service.store.active_jobs():
             return
         package_dir = os.path.dirname(os.path.abspath(__file__))
-        command = handoff.standalone_command(package_dir, handoff.relaunch_command())
+        command = handoff.standalone_command(
+            package_dir, handoff.relaunch_command(), after_pid=os.getpid()
+        )
         if handoff.spawn_detached(command, cwd=os.path.dirname(package_dir)):
             logging.info("Job Manager: tracking continues in a process of its own")
 
