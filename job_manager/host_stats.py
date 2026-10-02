@@ -24,9 +24,7 @@ from .remote_runner import CORE_COUNT_SH
 #: bash's $(( )) cannot read that: the whole probe stopped at a syntax error
 #: right after the core count, and the host's card showed neither load nor
 #: memory. %.0f is exact for every integer a double holds, in every awk.
-CPU_SUMS_AWK = (
-    "'/^cpu /{printf \"%.0f %.0f\\n\", $2+$3+$4+$7+$8+$9, $2+$3+$4+$5+$6+$7+$8+$9}'"
-)
+CPU_SUMS_AWK = "'/^cpu /{printf \"%.0f %.0f\\n\", $2+$3+$4+$7+$8+$9, $2+$3+$4+$5+$6+$7+$8+$9}'"
 
 #: POSIX. /proc first because it is exact, then the portable fallbacks: uptime
 #: prints a load average on every Unix, and sysctl answers on macOS and BSD.
