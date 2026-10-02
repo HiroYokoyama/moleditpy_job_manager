@@ -851,7 +851,7 @@ class SubmitDialog(QDialog):
         host = self.current_host()
         if host is None:
             return 0
-        return max(0, int(getattr(host, "max_concurrent", 0) or 0))
+        return max(0, int(host.max_concurrent or 0))
 
     def _update_chain_row(self) -> None:
         """Every scheduler can chain; only the mechanism differs."""
@@ -985,7 +985,7 @@ class SubmitDialog(QDialog):
         self.txt_modules.setPlainText("\n".join(preset.modules or []))
         self.txt_pre.setPlainText("\n".join(preset.pre_commands or []))
         self.txt_extra.setPlainText("\n".join(preset.extra_directives or []))
-        self.txt_submit_options.setText(getattr(preset, "submit_options", "") or "")
+        self.txt_submit_options.setText(preset.submit_options or "")
         self.txt_command.setText(preset.command_template)
         self.txt_globs.setText(", ".join(preset.fetch_globs or []))
         if preset.name in ("default", ""):
@@ -1192,10 +1192,10 @@ class SubmitDialog(QDialog):
         whole budget is not a job that waits -- the helper clamps the request
         and runs it anyway with fewer cores/memory than it was told it had.
         """
-        if host is None or not host.uses_remote_runner or getattr(host, "runner_detect", False):
+        if host is None or not host.uses_remote_runner or host.runner_detect:
             return ""
-        cores = int(getattr(host, "runner_cores", 0) or 0)
-        memory = int(getattr(host, "runner_memory_mb", 0) or 0)
+        cores = int(host.runner_cores or 0)
+        memory = int(host.runner_memory_mb or 0)
         wanted_cores = requested_cores(preset)
         wanted_memory = requested_memory_mb(preset)
         if cores and wanted_cores > cores:
@@ -1466,7 +1466,7 @@ class SubmitDialog(QDialog):
             return ""
         try:
             words = submit_arguments(
-                getattr(host, "submit_options", ""),
+                host.submit_options,
                 preset.submit_options,
                 substitute=lambda word: format_command(
                     word, input_name, preset, sanitize_name(name), remote_dir

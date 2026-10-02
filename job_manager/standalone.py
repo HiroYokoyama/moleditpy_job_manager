@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import QApplication
 
 from . import instances, notify, presence
 from .beacon import InstanceBeacon
-from .window_utils import bring_to_front
+from .window_utils import bring_to_front, exec_once
 
 
 class _StandaloneWindows(QObject):
@@ -76,7 +76,7 @@ class _StandaloneWindows(QObject):
         from .settings_dialog import SettingsDialog
 
         # No local API from here: MoleditPy serves it.
-        SettingsDialog(self.service, None, standalone=True).exec()
+        exec_once("settings", lambda: SettingsDialog(self.service, None, standalone=True))
 
     def select_job(self, job_id: str) -> None:
         self.open_monitor().select_job(job_id)
@@ -177,22 +177,12 @@ class StandaloneTray(_StandaloneWindows):
         )
         self._start_beacon(instances.ROLE_TRAY, {instances.ACTION_STOP: self.app.quit})
         count = len(self.service.store.active_jobs())
-        tray = notify.ensure_tray()
-        if tray is not None:
-            note = (
-                f"Still tracking {count} job(s) from here."
-                if count
-                else "Still running here, in the tray."
-            )
-            try:
-                tray.showMessage(
-                    "MoleditPy job manager",
-                    note,
-                    notify._icon(),
-                    notify.TIMEOUT_MS,
-                )
-            except Exception:
-                logging.debug("Job Manager: the hand-off note was refused", exc_info=True)
+        notify.notify(
+            "MoleditPy job manager",
+            f"Still tracking {count} job(s) from here."
+            if count
+            else "Still running here, in the tray.",
+        )
         return True
 
     def start_as_window(self) -> None:

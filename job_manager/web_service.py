@@ -194,7 +194,7 @@ class WebService(QObject):
 
         hosts = []
         for host in self.service.store.host_list():
-            sampled = getattr(host, "monitor_usage", True)
+            sampled = host.monitor_usage
             # A value left from before sampling was switched off would be
             # served as if it were current.
             stats = self.sampler.latest(host.id) if sampled else None
@@ -210,7 +210,7 @@ class WebService(QObject):
             }
             if not sampled:
                 entry["summary"] = NOT_SAMPLED
-            elif not getattr(host, "enabled", True):
+            elif not host.enabled:
                 entry["summary"] = "disabled"
             elif stats is None:
                 # Sampling starts with the first request, so the first load

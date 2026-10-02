@@ -991,9 +991,9 @@ class HostMonitorDialog(QDialog):
                 host.id,
                 host.name,
                 host.target,
-                bool(getattr(host, "enabled", True)),
-                bool(getattr(host, "monitor_usage", True)),
-                int(getattr(host, "monitor_interval", 0) or 0),
+                bool(host.enabled),
+                bool(host.monitor_usage),
+                int(host.monitor_interval or 0),
             )
             for host in self.service.store.host_list()
         )
@@ -1010,7 +1010,7 @@ class HostMonitorDialog(QDialog):
         self._laid_out_for = 0
         for host in self.service.store.host_list():
             card = HostCard(host)
-            if not getattr(host, "enabled", True):
+            if not host.enabled:
                 card.setEnabled(False)
                 card.lbl_state.setText("disabled")
                 # HostCard paints with fixed colours, not the palette, so
@@ -1018,7 +1018,7 @@ class HostMonitorDialog(QDialog):
                 effect = QGraphicsOpacityEffect(card)
                 effect.setOpacity(0.45)
                 card.setGraphicsEffect(effect)
-            elif not getattr(host, "monitor_usage", True):
+            elif not host.monitor_usage:
                 card.show_not_sampled()
             card.restyle(self.palette(), dark=bool(self.btn_dark.isChecked()))
             self.cards[host.id] = card

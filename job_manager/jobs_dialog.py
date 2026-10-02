@@ -1196,7 +1196,7 @@ class JobsDialog(QDialog):
                 ("Host target", host.target),
                 ("Reads login files", "yes" if host.load_profile else "no"),
                 ("Login commands", "; ".join(host.login_commands or []) or "-"),
-                ("Host submit options", getattr(host, "submit_options", "") or "-"),
+                ("Host submit options", host.submit_options or "-"),
             ]
         width = max(len(label) for label, _ in rows)
         lines = [f"{label.ljust(width)}  {value}".rstrip() for label, value in rows]

@@ -130,7 +130,7 @@ def user_argument(username: str) -> str:
 
 def requested_memory_mb(preset) -> int:
     """Megabytes this job asks for, or 0 when it asks for none."""
-    return parse_memory_mb(getattr(preset, "memory", "") or "")
+    return parse_memory_mb(preset.memory or "")
 
 
 def requested_cores(preset) -> int:
@@ -140,7 +140,7 @@ def requested_cores(preset) -> int:
     cores are free, so it is the request that decides what runs alongside what
     on a machine with no queue of its own.
     """
-    return max(1, int(getattr(preset, "cpus_per_task", 1) or 1))
+    return max(1, int(preset.cpus_per_task or 1))
 
 
 #: Queue reported something we do not recognise; the poller falls back to the

@@ -572,8 +572,9 @@ def show_settings(context=None) -> None:
     context = context or _context
     try:
         from .settings_dialog import SettingsDialog
+        from .window_utils import exec_once
 
-        SettingsDialog(get_service(), None).exec()
+        exec_once("settings", lambda: SettingsDialog(get_service(), None))
     except Exception as exc:
         logging.exception("Job Manager: could not open the settings")
         if context is not None:
@@ -667,8 +668,9 @@ def show_api_dialog(context=None) -> None:
         return
     try:
         from .api_dialog import ApiDialog
+        from .window_utils import exec_once
 
-        ApiDialog(get_service(), parent=None).exec()
+        exec_once("api", lambda: ApiDialog(get_service(), parent=None))
     except Exception as exc:
         logging.exception("Job Manager: could not open the API window")
         context.show_status_message(f"Job Manager: {exc}", 5000)
@@ -679,8 +681,9 @@ def show_about(context=None) -> None:
     context = context or _context
     try:
         from .about_dialog import AboutDialog
+        from .window_utils import exec_once
 
-        AboutDialog(parent=None).exec()
+        exec_once("about", lambda: AboutDialog(parent=None))
     except Exception as exc:
         logging.exception("Job Manager: could not open the About window")
         if context is not None:

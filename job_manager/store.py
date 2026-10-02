@@ -549,11 +549,7 @@ class JobStore:
         from the machine the user had just been submitting to, onto whichever
         profile sorted first by name.
         """
-        matches = [
-            host
-            for host in self.host_list()
-            if getattr(host, "enabled", True) and host.owns_local_path(path)
-        ]
+        matches = [host for host in self.host_list() if host.enabled and host.owns_local_path(path)]
         if not matches:
             return None
         # local_root(), not equal_path: a local host's root is its own
@@ -583,9 +579,7 @@ class JobStore:
         the one most recently submitted to first."""
         last_used = self._last_submitted()
         candidates = [
-            host
-            for host in self.host_list()
-            if getattr(host, "enabled", True) and (host.equal_path or "").strip()
+            host for host in self.host_list() if host.enabled and (host.equal_path or "").strip()
         ]
         return sorted(candidates, key=lambda h: -last_used.get(h.id, 0.0))
 
@@ -1063,7 +1057,7 @@ class JobStore:
         """Seconds between status polls of one host: its own override if it
         has one, else the global interval, clamped to the same range."""
         host = self.hosts.get(host_id)
-        override = int(getattr(host, "poll_interval", 0) or 0) if host is not None else 0
+        override = int(host.poll_interval or 0) if host is not None else 0
         if override <= 0:
             return self.poll_interval
         return max(MIN_POLL_INTERVAL, min(MAX_POLL_INTERVAL, override))

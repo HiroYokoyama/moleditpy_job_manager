@@ -46,4 +46,30 @@ def bring_to_front(window) -> None:
     window.activateWindow()
 
 
-__all__ = ["bring_to_front", "make_independent"]
+#: Modal windows on screen, by name. The tray menu stays usable while one is
+#: up, so a second click used to stack a second Settings over the first.
+_modal: dict = {}
+
+
+def exec_once(key: str, build):
+    """``build()``'s dialog run modally -- or the one already up, raised.
+
+    Returns the dialog's result, or None when it was only raised.
+    """
+    existing = _modal.get(key)
+    if existing is not None:
+        try:
+            bring_to_front(existing)
+            return None
+        except RuntimeError:
+            # Deleted under us; fall through and build a fresh one.
+            _modal.pop(key, None)
+    dialog = build()
+    _modal[key] = dialog
+    try:
+        return dialog.exec()
+    finally:
+        _modal.pop(key, None)
+
+
+__all__ = ["bring_to_front", "exec_once", "make_independent"]

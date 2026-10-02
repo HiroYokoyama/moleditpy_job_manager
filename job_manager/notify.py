@@ -27,7 +27,7 @@ def available() -> bool:
         return False
 
 
-def _icon():
+def app_icon():
     """The application's own icon, falling back to a stock one.
 
     A null icon is invisible or drops the message on some platforms.
@@ -49,7 +49,7 @@ def ensure_tray() -> Optional[QSystemTrayIcon]:
     if not available():
         return None
     if _tray is None:
-        _tray = QSystemTrayIcon(_icon())
+        _tray = QSystemTrayIcon(app_icon())
         _tray.setToolTip("MoleditPy job manager")
         _tray.show()
     return _tray
@@ -63,7 +63,7 @@ def notify(title: str, message: str) -> bool:
         tray = ensure_tray()
         if tray is None:
             return False
-        tray.showMessage(title, message, _icon(), TIMEOUT_MS)
+        tray.showMessage(title, message, app_icon(), TIMEOUT_MS)
     except Exception:
         logging.debug("Job Manager: the notification was refused", exc_info=True)
         return False
@@ -83,4 +83,4 @@ def shutdown() -> None:
     _tray = None
 
 
-__all__ = ["TIMEOUT_MS", "available", "ensure_tray", "notify", "shutdown"]
+__all__ = ["TIMEOUT_MS", "app_icon", "available", "ensure_tray", "notify", "shutdown"]

@@ -115,7 +115,7 @@ class HostSampler(QObject):
 
     def interval_for(self, host: HostProfile) -> int:
         """Seconds between samples of one host: its own, else the shared one."""
-        own = int(getattr(host, "monitor_interval", 0) or 0)
+        own = int(host.monitor_interval or 0)
         return own if own > 0 else self.interval_seconds()
 
     def tick_seconds(self) -> int:
@@ -123,7 +123,7 @@ class HostSampler(QObject):
         seconds = [
             self.interval_for(host)
             for host in self.service.store.host_list()
-            if getattr(host, "enabled", True) and getattr(host, "monitor_usage", True)
+            if host.enabled and host.monitor_usage
         ]
         return max(1, min(seconds or [self.interval_seconds()]))
 
@@ -138,9 +138,7 @@ class HostSampler(QObject):
         return [
             host
             for host in self.service.store.host_list()
-            if getattr(host, "enabled", True)
-            and getattr(host, "monitor_usage", True)
-            and not needs_password(self.service, host)
+            if host.enabled and host.monitor_usage and not needs_password(self.service, host)
         ]
 
     def latest(self, host_id: str) -> Optional[host_stats.HostStats]:
