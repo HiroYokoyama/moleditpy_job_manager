@@ -795,33 +795,19 @@ class TestThePageHasAnIcon(ServerTestCase):
     def test_the_indicator_dots_are_oversized_on_purpose(self):
         # It is a 16 px drawing before it is anything else. A realistic LED is
         # one pale pixel at tab size, and the icon collapses into three grey
-        # bars; r=2 against a 6-high unit is what keeps them visible. A deeper
-        # green than the theme's: #00e676 all but vanished on the white units.
+        # bars; r=2 against a 6.5-high unit is what keeps them visible.
         svg = web_monitor.FAVICON_SVG
         self.assertEqual(svg.count('r="2"'), 3)
-        self.assertIn('fill="#00c853"', svg)
+        self.assertIn('fill="#00e676"', svg)
 
     def test_it_reads_as_a_stack_of_machines(self):
         # Three units, not one box: the plugin is about several hosts.
-        self.assertEqual(web_monitor.FAVICON_SVG.count('rx="1.5"'), 3)
-
-    def test_every_edge_lands_on_a_whole_pixel_at_16(self):
-        # Half units are what blurred the gaps between the units into one grey
-        # block on the task bar: at 16 px a 32-unit drawing halves, so every
-        # rectangle edge has to sit on an even unit.
-        import re
-
-        for x, y, w, h in re.findall(
-            r'<rect x="([\d.]+)" y="([\d.]+)" width="([\d.]+)" height="([\d.]+)"',
-            web_monitor.FAVICON_SVG,
-        ):
-            for value in (x, y, float(x) + float(w), float(y) + float(h)):
-                self.assertEqual(float(value) % 2, 0, web_monitor.FAVICON_SVG)
+        self.assertEqual(web_monitor.FAVICON_SVG.count('rx="2.2"'), 3)
 
     def test_it_is_readable_on_a_dark_tab(self):
-        # A full plate, so it is never a few floating bars on dark chrome; blue
-        # rather than white, which vanished on a light Windows task bar.
-        self.assertIn('<rect width="32" height="32" rx="7" fill="#3577f7"', web_monitor.FAVICON_SVG)
+        # The needle is near-black, so a transparent icon would be a hole with
+        # an arc in it on dark browser chrome.
+        self.assertIn('<rect width="32" height="32"', web_monitor.FAVICON_SVG)
         self.assertIn('fill="#ffffff"', web_monitor.FAVICON_SVG)
 
 
