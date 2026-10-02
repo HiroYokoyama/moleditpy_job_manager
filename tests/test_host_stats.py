@@ -183,6 +183,21 @@ class TestInstantaneousCPUStatParsing(unittest.TestCase):
         self.assertIn("/proc/stat", host_stats.POSIX_COMMAND)
         self.assertIn("sleep", host_stats.POSIX_COMMAND)
 
+    def test_cpu_sums_stay_integers_past_2_pow_31(self):
+        # mawk prints a bare 2159720000 as 2.15972e+09, which bash's $(( ))
+        # cannot read; the awk program must print every sum as a plain integer.
+        line = "cpu  2000000000 100 100000000 50000000 10 20 30 0 0 0\n"
+        result = subprocess.run(
+            ["awk", host_stats.CPU_SUMS_AWK.strip("'")],
+            input=line,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        busy, total = result.stdout.split()
+        self.assertEqual(busy, "2100000150")
+        self.assertEqual(total, "2150000160")
+
     def test_summary_reports_cpu_label(self):
         stats = host_stats.parse("cores=4\nload=2.50 1.00 0.50\nmem_total=16000\nmem_free=8000\n")
         self.assertIn("CPU 2.50 1.00 0.50", stats.summary)

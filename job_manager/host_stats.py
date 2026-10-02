@@ -17,6 +17,15 @@ from typing import Optional
 
 from .remote_runner import CORE_COUNT_SH
 
+#: The two /proc/stat sums (busy, total), printed with %.0f -- never a bare
+#: print. The cpu line counts jiffies on every logical CPU since boot, so on a
+#: 16-thread host the total passes 2^31 after about 15 days up, and mawk 1.3.4
+#: 20200120 (Ubuntu 22.04's awk) prints a number that size as 2.15972e+09.
+#: bash's $(( )) cannot read that: the whole probe stopped at a syntax error
+#: right after the core count, and the host's card showed neither load nor
+#: memory. %.0f is exact for every integer a double holds, in every awk.
+CPU_SUMS_AWK = "'/^cpu /{printf \"%.0f %.0f\\n\", $2+$3+$4+$7+$8+$9, $2+$3+$4+$5+$6+$7+$8+$9}'"
+
 #: POSIX. /proc first because it is exact, then the portable fallbacks: uptime
 #: prints a load average on every Unix, and sysctl answers on macOS and BSD.
 #: Each is guarded so a missing source prints nothing rather than an error.
@@ -33,9 +42,9 @@ POSIX_COMMAND = (
     "t=$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 0); echo threads=$t; "
     'inst=""; '
     "if [ -r /proc/stat ]; then "
-    "t1=$(awk '/^cpu /{print $2+$3+$4+$7+$8+$9, $2+$3+$4+$5+$6+$7+$8+$9}' /proc/stat 2>/dev/null); "
+    "t1=$(awk " + CPU_SUMS_AWK + " /proc/stat 2>/dev/null); "
     "sleep 0.05 2>/dev/null || true; "
-    "t2=$(awk '/^cpu /{print $2+$3+$4+$7+$8+$9, $2+$3+$4+$5+$6+$7+$8+$9}' /proc/stat 2>/dev/null); "
+    "t2=$(awk " + CPU_SUMS_AWK + " /proc/stat 2>/dev/null); "
     "u1=${t1%% *}; tt1=${t1##* }; "
     "u2=${t2%% *}; tt2=${t2##* }; "
     "du=$((u2 - u1)); dt=$((tt2 - tt1)); "
