@@ -364,6 +364,24 @@ class TestTaskBarBadge(TrackingTestCase):
 
         native.assert_called_once_with(4)
 
+    def test_the_real_qt_call_is_accepted(self):
+        # Unmocked. Every test above patches setBadgeNumber on the class, and
+        # so passed while the plugin called it on the class -- where, being an
+        # instance method, it raised a TypeError that set_badge swallowed. The
+        # badge was never set on any platform.
+        from job_manager import taskbar
+
+        if not taskbar.SUPPORTED:
+            self.skipTest("Qt older than 6.5 has no badge API")
+        self.assertTrue(taskbar.set_badge(3))
+        self.assertTrue(taskbar.clear_badge())
+
+    def test_no_application_means_no_badge_rather_than_an_error(self):
+        from job_manager import taskbar
+
+        with patch.object(taskbar.QGuiApplication, "instance", return_value=None):
+            self.assertFalse(taskbar.set_badge(3))
+
 
 class TestTheMonitorLetsGoOfTheService(TrackingTestCase):
     """The service outlives the window, so a dismissed window must let go.
