@@ -342,7 +342,12 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
             "        $proc = Start-Process -FilePath $__moleditpy_shell -ArgumentList "
             f"{_PS_ARGS},(Join-Path $__moleditpy_dir ('running\\' + $entry)) "
             "-WorkingDirectory $__moleditpy_dir -WindowStyle Hidden -PassThru",
-            "        Set-Content -Path ('pids\\' + $entry) -Value $proc.Id -Encoding ascii",
+            # Written then moved, as in the bash runner: Set-Content creates
+            # the file before it writes the id, and a cancel reading it then
+            # found nothing to kill and reported success.
+            "        Set-Content -Path ('tmp\\' + $entry + '.pid') -Value $proc.Id -Encoding ascii",
+            "        Move-Item -LiteralPath ('tmp\\' + $entry + '.pid') "
+            "-Destination ('pids\\' + $entry) -Force",
             "    }",
             "}",
             "",

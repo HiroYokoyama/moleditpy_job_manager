@@ -477,7 +477,11 @@ dispatch() {{
     # Its own process group, so cancelling it cannot reach this runner or the
     # jobs beside it.
     ( {{ $SETSID nohup bash "running/$entry" > /dev/null 2>&1 < /dev/null & }} && echo $! ) \\
-      > "pids/$entry" 2>/dev/null
+      > "tmp/$entry.pid" 2>/dev/null
+    # Written then moved, as the exit code is: `>` empties pids/ before the
+    # pid is in it, and a cancel reading it then found nothing to kill and
+    # reported success.
+    mv -f "tmp/$entry.pid" "pids/$entry" 2>/dev/null
   done
 }}
 

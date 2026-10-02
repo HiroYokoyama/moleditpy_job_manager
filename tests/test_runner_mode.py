@@ -466,3 +466,30 @@ class TestThePowerShellControlCommands(unittest.TestCase):
         ):
             with self.subTest(command=command[:30]):
                 self.assertIn(r"C:\jobs\.moleditpy_runner" "\\", command)
+
+
+class TestThePidFileIsNeverSeenHalfWritten(unittest.TestCase):
+    """A job's pid file is written under tmp/ and moved in, in both flavours.
+
+    Written in place, it exists empty for a moment -- `>` truncates before the
+    pid is echoed, Set-Content creates before it writes -- and a cancel landing
+    then read nothing, killed nothing and reported success. The exit-code
+    sentinel was fixed the same way for the same reason.
+    """
+
+    def test_bash(self):
+        script = remote_runner.build_runner_script("/r")
+        self.assertNotIn('> "pids/', script)
+        self.assertIn('> "tmp/$entry.pid"', script)
+        self.assertIn('mv -f "tmp/$entry.pid" "pids/$entry"', script)
+
+    def test_powershell(self):
+        from job_manager import remote_runner_ps
+
+        script = remote_runner_ps.build_runner_script("C:\\r")
+        self.assertNotIn("Set-Content -Path ('pids\\", script)
+        self.assertIn("Set-Content -Path ('tmp\\' + $entry + '.pid')", script)
+        self.assertIn(
+            "Move-Item -LiteralPath ('tmp\\' + $entry + '.pid') -Destination ('pids\\' + $entry)",
+            script,
+        )
