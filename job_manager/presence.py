@@ -104,7 +104,9 @@ def tray_state(counts: dict, unseen_failures: int) -> str:
 class Presence(QObject):
     """Keeps the tray, the task bar and the job monitor's title current."""
 
-    def __init__(self, service, main_window=None, actions: Optional[dict] = None) -> None:
+    def __init__(
+        self, service, main_window=None, actions: Optional[dict] = None, **tray_options
+    ) -> None:
         super().__init__()
         self.service = service
         self.main_window = main_window
@@ -124,7 +126,7 @@ class Presence(QObject):
         try:
             from .tray import TrayController
 
-            self.tray = TrayController(service, self, main_window, actions or {})
+            self.tray = TrayController(service, self, main_window, actions or {}, **tray_options)
             self.tray.install()
         except Exception:
             logging.debug("Job Manager: no tray icon", exc_info=True)
@@ -280,11 +282,11 @@ def current() -> Optional[Presence]:
     return _current
 
 
-def install(service, main_window=None, actions: Optional[dict] = None) -> Presence:
+def install(service, main_window=None, actions: Optional[dict] = None, **tray_options) -> Presence:
     global _current
     if _current is not None:
         _current.detach()
-    _current = Presence(service, main_window, actions)
+    _current = Presence(service, main_window, actions, **tray_options)
     return _current
 
 

@@ -84,8 +84,10 @@ fetch, open.
   amber while they wait, red when one failed and you have not looked yet — and
   whose right-click menu opens the monitor, starts a new job, refreshes, lists
   the active jobs (pick one to jump to it) and quits MoleditPy. Optionally
-  **keep running in the tray** after MoleditPy's window is closed, so a long
-  run stays tracked; off by default.
+  **keep tracking jobs after MoleditPy closes**: MoleditPy quits for real, and
+  the Job Manager carries on alone in the tray — polling, notifying and
+  downloading — until you open MoleditPy again, which takes the jobs back. Off
+  by default.
 - **On the Windows task bar**, the job monitor's button shows the batch's
   progress — green filling as jobs end, yellow for a blocked chain, red for an
   unseen failure — and its thumbnail carries *Refresh now*, *New job* and

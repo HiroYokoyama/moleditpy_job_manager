@@ -282,7 +282,9 @@ working in, so a transfer cut off half way would otherwise leave a truncated
 | `taskbar.py` | the same count on the application icon (Dock / task bar / launcher) |
 | `notify.py` | the desktop notification raised when a job ends, and the one tray icon |
 | `presence.py` | what the tray, the task bar and the monitor's title show; the counting is plain functions |
-| `tray.py` | the tray icon's menu, status dot and tooltip, and keeping MoleditPy alive in the tray |
+| `tray.py` | the tray icon's menu, status dot and tooltip, and what happens when MoleditPy closes |
+| `handoff.py` | handing the jobs to a tray process of their own: heartbeat, stop request, commands. Pure stdlib |
+| `standalone.py` | that tray process: its heartbeat, its windows, and when it ends |
 | `win_taskbar.py` | `ITaskbarList3` through ctypes: progress and thumbnail buttons on a Windows task bar button |
 | `webhook.py` | the same line posted to a chat room (Slack, Discord, generic JSON) |
 | `api_core.py` | what an API request *means*: routing, validation, serialisation. Pure stdlib |

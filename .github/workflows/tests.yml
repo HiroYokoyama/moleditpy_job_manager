@@ -93,7 +93,7 @@ jobs:
           $code = $LASTEXITCODE
           type native.log
           if ($code -ne 0) { exit $code }
-          if (Select-String -Path native.log -Pattern "test_win_taskbar_native.py::Test(TheComObject|TheMonitorWindow)\S* SKIPPED" -Quiet) {
+          if (Select-String -Path native.log -Pattern "test_win_taskbar_native.py::Test(TheComObject|TheMonitorWindow|TheHandOffForReal)\S* SKIPPED" -Quiet) {
             echo "::error::The native task bar tests skipped; this step exists to run them."
             exit 1
           }

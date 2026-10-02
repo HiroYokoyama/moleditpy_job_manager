@@ -255,6 +255,14 @@ class TestIconAndTooltip(TrayTestCase):
 
 
 class TestKeepRunning(TrayTestCase):
+    """The fallback, for a MoleditPy that cannot start a separate Python."""
+
+    def setUp(self):
+        super().setUp()
+        patcher = patch("job_manager.handoff.can_hand_off", return_value=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def main_window(self) -> QWidget:
         window = QWidget()
         self.addCleanup(window.deleteLater)
@@ -282,11 +290,11 @@ class TestKeepRunning(TrayTestCase):
         self.app.setQuitOnLastWindowClosed(True)
         service = self.service()
         shown = self.presence(service)
-        self.action(shown.tray, "Keep running when MoleditPy is closed").trigger()
+        self.action(shown.tray, "Keep tracking jobs after MoleditPy closes").trigger()
         self.assertTrue(service.store.get_pref("keep_running_in_tray"))
         self.assertFalse(self.app.quitOnLastWindowClosed())
 
-        self.action(shown.tray, "Keep running when MoleditPy is closed").trigger()
+        self.action(shown.tray, "Keep tracking jobs after MoleditPy closes").trigger()
         self.assertTrue(self.app.quitOnLastWindowClosed())
 
     def test_detach_restores_quitting_and_brings_the_window_back(self):
@@ -338,6 +346,128 @@ class TestKeepRunning(TrayTestCase):
 
         self.assertTrue(main.isVisible())
         self.assertFalse(self.app.property("moleditpy_shutting_down"))
+
+
+class TestHandOff(TrayTestCase):
+    """MoleditPy quits for real, and a process of its own takes the jobs over."""
+
+    def setUp(self):
+        super().setUp()
+        patcher = patch("job_manager.handoff.can_hand_off", return_value=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        spawn = patch("job_manager.handoff.spawn_detached", return_value=True)
+        self.spawn = spawn.start()
+        self.addCleanup(spawn.stop)
+
+    def test_quitting_is_left_alone(self):
+        # MoleditPy is meant to quit; holding its last window open would bring
+        # back the hidden-window behaviour this replaces.
+        self.app.setQuitOnLastWindowClosed(True)
+        self.presence(self.service(keep_running_in_tray=True))
+        self.assertTrue(self.app.quitOnLastWindowClosed())
+
+    def test_quitting_with_jobs_running_starts_the_tray_process(self):
+        shown = self.presence(
+            self.service(make_job(state=STATE_RUNNING), keep_running_in_tray=True)
+        )
+        with patch("job_manager.handoff.relaunch_command", return_value=["moleditpy"]):
+            shown.tray._on_about_to_quit()
+        self.spawn.assert_called_once()
+        command = self.spawn.call_args[0][0]
+        self.assertTrue(command[1].endswith("__main__.py"))
+        self.assertIn("--tray", command)
+        self.assertIn('["moleditpy"]', command)
+
+    def test_it_is_wired_to_the_application_quitting(self):
+        shown = self.presence(
+            self.service(make_job(state=STATE_RUNNING), keep_running_in_tray=True)
+        )
+        self.app.aboutToQuit.emit()
+        self.spawn.assert_called_once()
+        shown.detach()
+        self.app.aboutToQuit.emit()
+        self.spawn.assert_called_once()
+
+    def test_nothing_running_means_nothing_to_hand_over(self):
+        shown = self.presence(self.service(keep_running_in_tray=True))
+        shown.tray._on_about_to_quit()
+        self.spawn.assert_not_called()
+
+    def test_the_option_off_means_nothing_is_started(self):
+        shown = self.presence(self.service(make_job(state=STATE_RUNNING)))
+        shown.tray._on_about_to_quit()
+        self.spawn.assert_not_called()
+
+    def test_quit_from_the_tray_means_quit_everything(self):
+        main = MagicMock()
+        main.isVisible.return_value = False
+        shown = self.presence(
+            self.service(make_job(state=STATE_RUNNING), keep_running_in_tray=True), main_window=main
+        )
+        with patch.object(QApplication, "quit"):
+            shown.tray.quit_application()
+        shown.tray._on_about_to_quit()
+        self.spawn.assert_not_called()
+
+    def test_a_cancelled_quit_does_not_disarm_the_hand_off(self):
+        main = MagicMock()
+        main.isVisible.return_value = True
+        main.close.return_value = False
+        shown = self.presence(
+            self.service(make_job(state=STATE_RUNNING), keep_running_in_tray=True), main_window=main
+        )
+        shown.tray.quit_application()
+        shown.tray._on_about_to_quit()
+        self.spawn.assert_called_once()
+
+    def test_no_still_running_note_from_a_process_that_is_quitting(self):
+        main = MagicMock()
+        main.isVisible.return_value = False
+        shown = self.presence(self.service(keep_running_in_tray=True), main_window=main)
+        shown.tray._after_main_close()
+        messages = [c for c in self.tray.showMessage.call_args_list if "Still tracking" in c[0][1]]
+        self.assertEqual(messages, [])
+
+    def test_the_menu_has_no_show_moleditpy(self):
+        shown = self.presence(self.service(keep_running_in_tray=True))
+        self.assertIn("Keep tracking jobs after MoleditPy closes", self.menu_texts(shown.tray))
+
+
+class TestTheStandaloneMenu(TrayTestCase):
+    def standalone(self, relaunch=None):
+        service = self.service()
+        shown = Presence(service, None, self.actions, standalone=True, relaunch=relaunch)
+        self.addCleanup(shown.detach)
+        return shown
+
+    def test_it_quits_itself_not_moleditpy(self):
+        texts = self.menu_texts(self.standalone(["moleditpy"]).tray)
+        self.assertIn("Quit Job Manager", texts)
+        self.assertNotIn("Quit MoleditPy", texts)
+        self.assertNotIn("Keep tracking jobs after MoleditPy closes", texts)
+
+    def test_it_can_start_moleditpy_again(self):
+        shown = self.standalone(["moleditpy", "--flag"])
+        with patch("job_manager.handoff.spawn_detached") as spawn:
+            self.action(shown.tray, "Open MoleditPy").trigger()
+        spawn.assert_called_once_with(["moleditpy", "--flag"])
+
+    def test_without_a_way_back_it_does_not_offer_one(self):
+        self.assertNotIn("Open MoleditPy", self.menu_texts(self.standalone([]).tray))
+
+    def test_it_never_hands_off_again(self):
+        shown = self.standalone()
+        self.assertFalse(shown.tray.hands_off())
+        with patch("job_manager.handoff.spawn_detached") as spawn:
+            shown.tray._on_about_to_quit()
+        spawn.assert_not_called()
+
+    def test_its_quit_quits(self):
+        shown = self.standalone()
+        with patch.object(QApplication, "quit") as quit_app:
+            self.action(shown.tray, "Quit Job Manager").trigger()
+        quit_app.assert_called_once()
 
 
 class TestQuit(TrayTestCase):

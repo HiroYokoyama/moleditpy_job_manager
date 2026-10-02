@@ -28,9 +28,31 @@ def main() -> int:
     # standalone monitor with neither the desktop notification nor the chat
     # message a job ending is supposed to produce. There is no PluginContext
     # here, which the status-bar counter it also installs allows for.
+    args = sys.argv[1:]
+    if "--tray" not in args:
+        # Opened by hand while a tray process tracks the same list: one of
+        # the two has to stop, and the window the user just opened wins.
+        from . import _take_tracking_back
+
+        _take_tracking_back()
     service = get_service()
     try:
-        args = sys.argv[1:]
+        if "--tray" in args:
+            # Started by MoleditPy as it closed: see job_manager/handoff.py.
+            import json
+
+            from .standalone import run
+            from .store import default_data_dir
+
+            relaunch = []
+            if "--relaunch" in args[:-1]:
+                try:
+                    relaunch = [
+                        str(part) for part in json.loads(args[args.index("--relaunch") + 1])
+                    ]
+                except (ValueError, TypeError):
+                    relaunch = []
+            return run(app, service, default_data_dir(), relaunch)
         if any(arg in ("--host-monitor", "--hosts", "host-monitor", "-m") for arg in args):
             from .host_monitor import HostMonitorDialog
 

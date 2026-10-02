@@ -256,6 +256,22 @@ def _acknowledge_failures() -> None:
         logging.debug("Job Manager: failures not acknowledged", exc_info=True)
 
 
+def _take_tracking_back() -> None:
+    """Stop the tray process a previous MoleditPy handed its jobs to.
+
+    Before the job list is read: that process may be part way through saving
+    it, and two trackers would query every host twice and announce every job
+    ending twice. See :mod:`.handoff`.
+    """
+    try:
+        from . import handoff
+        from .store import default_data_dir
+
+        handoff.stop_running_tray(default_data_dir())
+    except Exception:
+        logging.debug("Job Manager: the tray process was not stopped", exc_info=True)
+
+
 def _startup_store() -> Optional[Any]:
     """The job list, read once at load for everything that has to peek at it.
 
@@ -422,6 +438,7 @@ def initialize(context) -> None:
 
     # One store for both peeks: each used to build its own, which parses both
     # files twice at every launch.
+    _take_tracking_back()
     store = _startup_store()
     _resume_tracking(store)
     # After tracking, so an API that is on adopts the service that resume

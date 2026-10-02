@@ -645,13 +645,29 @@ with it selected, clearing a filter that would hide it), the notification and
 flash switches, and **Quit MoleditPy**. Quit goes through MoleditPy's own close,
 so unsaved work is still asked about, and Cancel there cancels the quit.
 
-**Keep running when MoleditPy is closed**, in the same menu, lets the main
-window close while jobs are still being tracked: polling, auto-download and
-notifications carry on, and the menu gains **Show MoleditPy** to bring the
-window back. Off by default, since closing the window has always quit the
-application. It only takes effect while the tray icon exists — a desktop with no
-notification area could otherwise be left with a process nothing can reach —
-and switching it off while the window is closed brings the window back.
+**Keep tracking jobs after MoleditPy closes**, in the same menu, lets MoleditPy
+quit for real while jobs are still running. As it closes, the Job Manager starts
+again on its own — the same package, run as a separate small process with only
+its tray icon — and MoleditPy's own process, with its 3D view and molecules,
+ends. The new icon says how many jobs it took over; polling, notifications,
+chat messages and auto-download all carry on. Results are downloaded but not
+opened, since there is no MoleditPy to open them in.
+
+Its menu is the same, with **Open MoleditPy** and **Quit Job Manager** at the
+bottom. Opening MoleditPy — from there or any other way — takes the jobs back:
+the plugin asks the tray process to stop and waits for it before reading the
+job list, so the two never track the same jobs at once. Opening the standalone
+Job Manager by hand does the same.
+
+Nothing is handed over when no job is active, and nothing when you chose **Quit
+MoleditPy** from the tray, which means quit everything. Off by default, since
+closing the window has always ended the application.
+
+A MoleditPy packaged as a single executable has no separate Python to start the
+tray process with. There the option keeps MoleditPy's own process alive with its
+window hidden instead, and the menu gains **Show MoleditPy** to bring it back.
+That only takes effect while the tray icon exists — a desktop with no
+notification area could otherwise be left with a process nothing can reach.
 
 When a job ends, the task bar button flashes (the Dock icon bounces on macOS)
 until you look, unless MoleditPy is already in front. Untick **Flash the task

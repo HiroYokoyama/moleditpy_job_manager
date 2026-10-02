@@ -24,7 +24,7 @@ pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 is not installed")
 
 from PyQt6.QtWidgets import QApplication, QWidget  # noqa: E402
 
-from job_manager import notify, presence, win_taskbar  # noqa: E402
+from job_manager import handoff, notify, presence, win_taskbar  # noqa: E402
 from job_manager.icon import plugin_icon  # noqa: E402
 from job_manager.models import STATE_RUNNING, Job  # noqa: E402
 from job_manager.service import JobService  # noqa: E402
@@ -171,7 +171,9 @@ class TestTheRealTray(NativeTestCase):
         service = self.service(Job(host_id="h1", scheduler="slurm", state=STATE_RUNNING))
         service.store.set_pref("keep_running_in_tray", True)
         main = self.window()
-        shown = presence.Presence(service, main)
+        # The in-process fallback, which is the path that touches Qt's quit flag.
+        with patch("job_manager.handoff.can_hand_off", return_value=False):
+            shown = presence.Presence(service, main)
         self.addCleanup(shown.detach)
 
         self.assertIsNotNone(shown.tray.tray)
@@ -181,6 +183,39 @@ class TestTheRealTray(NativeTestCase):
 
         shown.detach()
         self.assertEqual(_app.quitOnLastWindowClosed(), self.original_quit)
+
+
+class TestTheHandOffForReal(NativeTestCase):
+    """The tray process itself: started as MoleditPy starts it, stopped as
+    MoleditPy stops it. pythonw, a detached process, the real tray."""
+
+    def test_it_starts_beats_and_stops_when_asked(self):
+        import os
+        import subprocess
+
+        if not notify.available():
+            self.skipTest("this desktop session has no notification area")
+        store = JobStore(self.tmp)
+        job = Job(host_id="h1", scheduler="slurm", state=STATE_RUNNING)
+        store.jobs = {job.id: job}
+        store.save_jobs()
+        package_dir = os.path.dirname(os.path.abspath(presence.__file__))
+        command = handoff.standalone_command(package_dir, ["moleditpy"])
+        env = dict(os.environ, MOLEDITPY_JOB_MANAGER_DIR=self.tmp, QT_QPA_PLATFORM="windows")
+        process = subprocess.Popen(command, cwd=os.path.dirname(package_dir), env=env)
+        self.addCleanup(process.kill)
+
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline and handoff.live_tray(self.tmp) is None:
+            self.assertIsNone(process.poll(), "the tray process exited on its own")
+            time.sleep(0.2)
+        beat = handoff.live_tray(self.tmp)
+        self.assertIsNotNone(beat, "no heartbeat within a minute")
+        self.assertEqual(beat["relaunch"], ["moleditpy"])
+
+        self.assertTrue(handoff.stop_running_tray(self.tmp, timeout=30))
+        self.assertEqual(process.wait(timeout=30), 0)
+        self.assertFalse(os.path.exists(handoff.tray_path(self.tmp)))
 
 
 if __name__ == "__main__":
