@@ -242,7 +242,7 @@ class TestHostStyleReload(ApiEntryTestCase):
         context = self.make_context()
         context.register_window(job_manager.API_TEARDOWN_KEY, MagicMock(side_effect=OSError("x")))
         context.register_window(
-            job_manager.PRESENCE_TEARDOWN_KEY, MagicMock(side_effect=RuntimeError("x"))
+            job_manager.LOAD_TEARDOWN_KEY, MagicMock(side_effect=RuntimeError("x"))
         )
         job_manager.initialize(context)  # must not raise
 
@@ -259,6 +259,108 @@ class TestHostStyleReload(ApiEntryTestCase):
         second.initialize(context)
 
         self.assertIsNone(old_presence.current())
+
+    def test_the_old_loads_service_stops_polling(self):
+        # Two pollers querying every host, and every job ending announced twice.
+        context = self.make_context()
+        first = self.load_copy("jm_reload_svc_a")
+        first.initialize(context)
+        old_service = first.get_service()
+
+        with patch.object(
+            old_service.poller, "shutdown", wraps=old_service.poller.shutdown
+        ) as stopped:
+            second = self.load_copy("jm_reload_svc_b")
+            second.initialize(context)
+
+        stopped.assert_called_once()
+        self.assertIsNone(first._service)
+
+    def test_a_job_ending_after_a_reload_is_announced_once(self):
+        context = self.make_context()
+        first = self.load_copy("jm_reload_once_a")
+        first.initialize(context)
+        old_service = first.get_service()
+        second = self.load_copy("jm_reload_once_b")
+        second.initialize(context)
+        new_service = second.get_service()
+        job = Job(name="opt", host_name="myhost", host_id="h1", scheduler="slurm")
+        for service in (old_service, new_service):
+            service.store.jobs[job.id] = job
+
+        with (
+            patch.object(sys.modules["jm_reload_once_a.notify"], "notify") as old_notify,
+            patch.object(sys.modules["jm_reload_once_b.notify"], "notify") as new_notify,
+        ):
+            new_service.job_finished.emit(job.id, "DONE")
+            # The old service is shut down; nothing of the old load answers.
+            first._notify_finished(job.id, "DONE")
+
+        new_notify.assert_called_once()
+        old_notify.assert_not_called()
+
+    def test_the_old_loads_status_bar_counter_is_removed(self):
+        from PyQt6.QtWidgets import QMainWindow
+
+        main = QMainWindow()
+        self.addCleanup(main.deleteLater)
+        context = self.make_context()
+        context.get_main_window.return_value = main
+        first = self.load_copy("jm_reload_bar_a")
+        first.initialize(context)
+        first.get_service()
+        old_widget = first._status_widget
+        self.assertIsNotNone(old_widget)
+
+        second = self.load_copy("jm_reload_bar_b")
+        second.initialize(context)
+        second.get_service()
+
+        self.assertIsNone(first._status_widget)
+        self.assertIsNone(old_widget.parent())
+        counters = [w for w in main.statusBar().children() if type(w).__name__ == "JobStatusWidget"]
+        self.assertEqual(len(counters), 1)
+
+    def test_the_old_loads_windows_are_closed_and_forgotten(self):
+        # They hold the old service; left open they would show a list that
+        # never updates, and the next "open" would raise the dead one.
+        context = self.make_context()
+        first = self.load_copy("jm_reload_win_a")
+        first.initialize(context)
+        monitor, hosts = MagicMock(), MagicMock()
+        context.register_window(first.WINDOW_KEY, monitor)
+        context.register_window(first.HOST_MONITOR_WINDOW_KEY, hosts)
+
+        self.load_copy("jm_reload_win_b").initialize(context)
+
+        monitor.close.assert_called_once()
+        hosts.close.assert_called_once()
+        self.assertIsNone(context.get_window(first.WINDOW_KEY))
+        self.assertIsNone(context.get_window(first.HOST_MONITOR_WINDOW_KEY))
+
+    def test_a_load_from_before_1_9_is_shut_down_through_its_stop_api(self):
+        # 1.8.x registered only stop_api. Its globals are its module's, which
+        # is where that load's shutdown lives.
+        context = self.make_context()
+        first = self.load_copy("jm_reload_old_a")
+        first.initialize(context)
+        old_service = first.get_service()
+        context.register_window(first.LOAD_TEARDOWN_KEY, None)
+
+        with patch.object(
+            old_service.poller, "shutdown", wraps=old_service.poller.shutdown
+        ) as stopped:
+            self.load_copy("jm_reload_old_b").initialize(context)
+
+        stopped.assert_called_once()
+        self.assertIsNone(first._service)
+
+    def test_initialising_the_same_module_twice_is_not_a_reload(self):
+        context = self.make_context()
+        job_manager.initialize(context)
+        service = job_manager.get_service()
+        job_manager.initialize(context)
+        self.assertIs(job_manager._service, service)
 
     def test_a_reload_still_defers_to_a_different_live_instance(self):
         context = self.make_context()

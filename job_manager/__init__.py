@@ -41,11 +41,11 @@ WINDOW_KEY = "job_monitor"
 #: Job Manager > Host Monitor) never has to build the job monitor first.
 HOST_MONITOR_WINDOW_KEY = "job_manager_host_monitor"
 
-#: Where a load keeps its `stop_api`, for the next load to call. See `_release_previous_api`.
+#: Where a load keeps its `stop_api`; read by loads from before 1.9. See `_retire_previous_load`.
 API_TEARDOWN_KEY = "api_teardown"
 
-#: Same, for the tray icon and task bar progress. See `_release_previous_presence`.
-PRESENCE_TEARDOWN_KEY = "presence_teardown"
+#: Where a load keeps `shutdown`, for the next load to call. See `_retire_previous_load`.
+LOAD_TEARDOWN_KEY = "load_teardown"
 
 _context: Optional[Any] = None
 _service: Optional[Any] = None
@@ -333,57 +333,54 @@ def handle_dropped_file(path: str) -> bool:
     return True
 
 
-def _release_previous_api(context) -> None:
-    """Close the API socket a previous load of this plugin left listening.
+def _retire_previous_load(context) -> None:
+    """Shut down everything a previous load of this plugin left running.
 
-    The host reloads a plugin by re-executing its module and calls no teardown
-    hook, so the old module's server keeps its port and its ``api.json``. The
-    previous load's ``stop_api`` is kept in the host's per-plugin registry,
-    which outlives the re-execution, and it acts on the old module's own
-    globals -- the only place the old server object is still reachable.
+    The host reloads a plugin by re-executing the package as new module objects
+    and calls no teardown hook. The old load's API server kept its port, and
+    its service kept polling: two pollers queried every host, the status bar
+    showed two counters, and every finished job was announced twice. Each load
+    therefore keeps its ``shutdown`` in the host's per-plugin registry, which
+    outlives the re-execution, and the next load calls it before doing anything
+    -- the old module's own globals being the only place its service is still
+    reachable.
+
+    A load from before 1.9 registered only its ``stop_api``; that function's
+    globals are its module's, so its ``shutdown`` is found through them.
     """
-    previous = context.get_window(API_TEARDOWN_KEY)
-    if callable(previous):
+    previous = context.get_window(LOAD_TEARDOWN_KEY)
+    if not callable(previous):
+        stop_previous_api = context.get_window(API_TEARDOWN_KEY)
+        if callable(stop_previous_api):
+            module_globals = getattr(stop_previous_api, "__globals__", None) or {}
+            previous = module_globals.get("shutdown") or stop_previous_api
+    # Calling initialize twice on the same module is not a reload, and must not
+    # take down what this very load is tracking.
+    if callable(previous) and previous is not shutdown:
+        # Its windows first: they hold the old service, and once it is shut
+        # down a monitor left open would show a list that never updates. Each
+        # deregisters itself on close, so the next open builds a live one.
+        for key in (WINDOW_KEY, HOST_MONITOR_WINDOW_KEY):
+            try:
+                window = context.get_window(key)
+                if window is not None:
+                    window.close()
+                    context.register_window(key, None)
+            except Exception:
+                logging.debug("Job Manager: the previous load's %s stayed", key, exc_info=True)
         try:
             previous()
         except Exception:
-            logging.debug("Job Manager: the previous load's API did not stop", exc_info=True)
+            logging.debug("Job Manager: the previous load did not shut down", exc_info=True)
+    # Both: a downgrade to a load that only knows the API key still finds it.
     context.register_window(API_TEARDOWN_KEY, stop_api)
-
-
-def _release_presence() -> None:
-    """Take this load's tray icon down and undo keep-running."""
-    try:
-        from . import notify, presence
-
-        presence.uninstall()
-        notify.shutdown()
-    except Exception:
-        logging.debug("Job Manager: presence not released", exc_info=True)
-
-
-def _release_previous_presence(context) -> None:
-    """Retire the tray icon a previous load of this plugin left up.
-
-    The reasoning of :func:`_release_previous_api`: a reload re-executes the
-    package as new module objects, so the old load's tray icon -- and its
-    keep-running hold on MoleditPy's quit -- stays unless retired here, and the
-    next job the new load tracks puts a second icon beside it.
-    """
-    previous = context.get_window(PRESENCE_TEARDOWN_KEY)
-    if callable(previous):
-        try:
-            previous()
-        except Exception:
-            logging.debug("Job Manager: the previous load's tray did not go", exc_info=True)
-    context.register_window(PRESENCE_TEARDOWN_KEY, _release_presence)
+    context.register_window(LOAD_TEARDOWN_KEY, shutdown)
 
 
 def initialize(context) -> None:
     """Entry point called by the host at plugin load."""
     global _context
-    _release_previous_api(context)
-    _release_previous_presence(context)
+    _retire_previous_load(context)
     _context = context
     # Extensions rather than the Plugin menu. The host has no Extensions menu
     # of its own and creates it on demand, so this is a top-level entry.

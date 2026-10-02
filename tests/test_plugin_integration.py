@@ -96,10 +96,10 @@ class TestInitializeContract(unittest.TestCase):
     def test_initialize_touches_nothing_else(self):
         # No window is created and no molecule is read at load time. The only
         # registry entries are the handles the next load uses to retire this
-        # load's API and tray icon.
+        # one: the full shutdown, and the API alone for loads from before 1.9.
         self.assertEqual(
             list(self.context.windows),
-            [job_manager.API_TEARDOWN_KEY, job_manager.PRESENCE_TEARDOWN_KEY],
+            [job_manager.API_TEARDOWN_KEY, job_manager.LOAD_TEARDOWN_KEY],
         )
         self.assertEqual(self.context.status_messages, [])
 
