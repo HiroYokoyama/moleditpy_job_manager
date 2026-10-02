@@ -30,8 +30,14 @@ def set_badge(count: int) -> bool:
     """
     if not SUPPORTED:
         return False
+    # The application object's, not the class's: setBadgeNumber is an
+    # instance method, and calling it on the class raised a TypeError that the
+    # handler below swallowed -- the badge was silently never set anywhere.
+    app = QGuiApplication.instance()
+    if app is None:
+        return False
     try:
-        QGuiApplication.setBadgeNumber(max(0, int(count)))
+        app.setBadgeNumber(max(0, int(count)))
     except Exception:
         # A platform plugin that does not implement it is not an error worth
         # showing anyone; the status bar counter says the same thing.
