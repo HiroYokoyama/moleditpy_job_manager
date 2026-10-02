@@ -413,6 +413,17 @@ class TestTheMonitorWindow(PresenceTestCase):
         dialog.select_job("nope")
         self.assertIsNone(dialog.selected_job())
 
+    def test_a_native_event_never_hands_back_the_base_result(self):
+        # Returning super().nativeEvent()'s tuple crashed the real Windows
+        # platform before the window had finished opening.
+        from PyQt6.QtWidgets import QDialog
+
+        service = self.service()
+        dialog = self.dialog(service)
+        with patch.object(QDialog, "nativeEvent", side_effect=AssertionError("called")):
+            self.assertEqual(dialog.nativeEvent(b"windows_generic_MSG", 0), (False, 0))
+            self.assertEqual(dialog.nativeEvent(b"xcb_generic_event_t", 0), (False, 0))
+
     def test_a_native_event_off_windows_is_left_to_qt(self):
         service = self.service()
         dialog = self.dialog(service)

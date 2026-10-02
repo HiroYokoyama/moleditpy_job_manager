@@ -1749,7 +1749,10 @@ class JobsDialog(QDialog):
                     return True, 0
             except Exception:
                 logging.debug("Job Manager: task bar message not handled", exc_info=True)
-        return super().nativeEvent(event_type, message)
+        # Not super().nativeEvent(): under PyQt6 6.11 on Windows, handing its
+        # result back crashes Qt with an access violation on the window's very
+        # first message. QWidget's own implementation only returns false.
+        return False, 0
 
     def changeEvent(self, event) -> None:  # noqa: N802 - Qt's spelling
         # Looking at the monitor is what "seen" means for a failed job: the
