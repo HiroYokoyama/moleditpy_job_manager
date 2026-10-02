@@ -1609,6 +1609,10 @@ class JobsDialog(QDialog):
             current.remove_title_listener(self._show_counts)
             current.remove_window(self._taskbar)
         self._presence = None
+        # With or without a presence: the thumbnail icons are this window's.
+        taskbar = getattr(self, "_taskbar", None)
+        if taskbar is not None:
+            taskbar.release()
 
     def _new_job_from_taskbar(self) -> None:
         self.showNormal()

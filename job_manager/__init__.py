@@ -16,7 +16,7 @@ import logging
 from typing import Any, Optional
 
 PLUGIN_NAME = "Job Manager"
-PLUGIN_VERSION = "2.1.0"
+PLUGIN_VERSION = "2.2.0"
 PLUGIN_AUTHOR = "HiroYokoyama"
 
 PLUGIN_DESCRIPTION = "Submit calculations to remote HPC clusters over SSH, track queue status, and fetch results back into MoleditPy. Ready-made command lines for ORCA, Gaussian, CP2K, GAMESS, MOPAC, NWChem, Psi4, PySCF, Quantum ESPRESSO, VASP and xTB; job lists export to CSV or .pmejbs and reopen by drag and drop. Runs on this machine too, with no SSH; chains jobs with each scheduler's own dependency flag; and can hold a job until a chosen time. Installing paramiko adds a backend that keeps one SSH session open and can log in with a password."
@@ -50,6 +50,7 @@ LOAD_TEARDOWN_KEY = "load_teardown"
 _context: Optional[Any] = None
 _service: Optional[Any] = None
 _status_widget: Optional[Any] = None
+_beacon: Optional[Any] = None
 _api_server: Optional[Any] = None
 _api_external = 0
 
@@ -77,6 +78,7 @@ def get_service(create: bool = True, store: Optional[Any] = None) -> Optional[An
         _service.job_finished.connect(_notify_finished)
         _install_status_widget(_service)
         _install_presence(_service)
+        _install_beacon()
     return _service
 
 
@@ -225,11 +227,18 @@ def _install_status_widget(service) -> None:
 
 
 def _install_presence(service) -> None:
-    """The tray menu, task bar progress and title counts. See :mod:`.presence`."""
+    """The tray menu, task bar progress and title counts. See :mod:`.presence`.
+
+    Only inside MoleditPy: every action below asks the plugin context. The
+    standalone monitor and the tray process install their own, wired to their
+    own windows, and one built here first would only be torn down again.
+    """
+    if _context is None:
+        return
     try:
         from . import presence
 
-        main_window = _context.get_main_window() if _context is not None else None
+        main_window = _context.get_main_window()
         presence.install(
             service,
             main_window,
@@ -257,18 +266,54 @@ def _acknowledge_failures() -> None:
         logging.debug("Job Manager: failures not acknowledged", exc_info=True)
 
 
+def _install_beacon() -> None:
+    """Say a Job Manager runs in this MoleditPy, and answer a standalone launch.
+
+    Only once the plugin has a service: a MoleditPy where the Job Manager was
+    never opened tracks nothing, and a standalone monitor started beside it
+    has nothing to defer to. See :mod:`.instances`.
+    """
+    global _beacon
+    if _beacon is not None or _context is None:
+        return
+    try:
+        from . import instances
+        from .beacon import InstanceBeacon
+        from .store import default_data_dir
+
+        _beacon = InstanceBeacon(
+            default_data_dir(),
+            instances.ROLE_MOLEDITPY,
+            {
+                instances.ACTION_SHOW_MONITOR: lambda: show_monitor(_context),
+                instances.ACTION_SHOW_HOST_MONITOR: lambda: show_host_monitor_standalone(_context),
+            },
+        )
+        _beacon.start()
+    except Exception:
+        logging.debug("Job Manager: not registered as a running instance", exc_info=True)
+        _beacon = None
+
+
 def _take_tracking_back() -> None:
     """Stop the tray process a previous MoleditPy handed its jobs to.
 
     Before the job list is read: that process may be part way through saving
     it, and two trackers would query every host twice and announce every job
-    ending twice. See :mod:`.handoff`.
+    ending twice. See :mod:`.handoff` and :mod:`.instances`.
     """
     try:
-        from . import handoff
+        from . import handoff, instances
         from .store import default_data_dir
 
-        handoff.stop_running_tray(default_data_dir())
+        directory = default_data_dir()
+        for data in instances.live_instances(directory):
+            if data.get("role") == instances.ROLE_TRAY:
+                instances.send_request(directory, int(data["pid"]), instances.ACTION_STOP)
+                if not instances.wait_until_gone(directory, int(data["pid"])):
+                    logging.warning("Job Manager: the background tray process did not stop")
+        # A tray process from 2.0 or 2.1, which knows only its own stop file.
+        handoff.stop_running_tray(directory)
     except Exception:
         logging.debug("Job Manager: the tray process was not stopped", exc_info=True)
 
@@ -631,12 +676,18 @@ def submit_job(request: dict) -> dict:
 
 def shutdown() -> None:
     """Stop polling and release worker threads (called on plugin reload)."""
-    global _service, _status_widget, _api_server
+    global _service, _status_widget, _api_server, _beacon
     # First: the socket is the one thing that can still bring in work, and a
     # request arriving while the service is being torn down would find half a
     # plugin. Unconditional, since a listening server outlives a reload.
     stop_api()
     _api_server = None
+    if _beacon is not None:
+        try:
+            _beacon.stop()
+        except Exception:
+            logging.debug("Job Manager: the instance beacon did not stop", exc_info=True)
+        _beacon = None
     # Before the service goes: the tray menu and the task bar progress read it,
     # and keep-running must be undone while a main window can still be shown.
     try:

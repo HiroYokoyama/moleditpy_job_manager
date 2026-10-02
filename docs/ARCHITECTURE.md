@@ -285,7 +285,9 @@ working in, so a transfer cut off half way would otherwise leave a truncated
 | `tray.py` | the tray icon's menu, status dot and tooltip, and what happens when MoleditPy closes |
 | `handoff.py` | handing the jobs to a tray process of their own: heartbeat, stop request, commands. Pure stdlib |
 | `settings_dialog.py` | every standing preference, in one window |
-| `standalone.py` | that tray process: its heartbeat, its windows, and when it ends |
+| `instances.py` | which Job Managers are running, and asking one to show itself. Pure stdlib |
+| `beacon.py` | this process's registry entry, refreshed, and its answers to requests |
+| `standalone.py` | the Job Manager without MoleditPy: a monitor opened by hand, and the tray process |
 | `win_taskbar.py` | `ITaskbarList3` through ctypes: progress and thumbnail buttons on a Windows task bar button |
 | `webhook.py` | the same line posted to a chat room (Slack, Discord, generic JSON) |
 | `api_core.py` | what an API request *means*: routing, validation, serialisation. Pure stdlib |

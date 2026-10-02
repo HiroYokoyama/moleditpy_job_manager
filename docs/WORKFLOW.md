@@ -657,7 +657,8 @@ Its menu is the same, with **Open MoleditPy** and **Quit Job Manager** at the
 bottom; its Settings has everything but the local API, which MoleditPy serves. Opening MoleditPy — from there or any other way — takes the jobs back:
 the plugin asks the tray process to stop and waits for it before reading the
 job list, so the two never track the same jobs at once. Opening the standalone
-Job Manager by hand does the same.
+Job Manager by hand while it runs brings up the tray process's own monitor
+instead (see *Standalone* in the README).
 
 Nothing is handed over when no job is active, and nothing when you chose **Quit
 MoleditPy** from the tray, which means quit everything. Off by default, since

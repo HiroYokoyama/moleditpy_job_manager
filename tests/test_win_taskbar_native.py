@@ -24,7 +24,7 @@ pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 is not installed")
 
 from PyQt6.QtWidgets import QApplication, QWidget  # noqa: E402
 
-from job_manager import handoff, notify, presence, win_taskbar  # noqa: E402
+from job_manager import handoff, instances, notify, presence, win_taskbar  # noqa: E402
 from job_manager.icon import plugin_icon  # noqa: E402
 from job_manager.models import STATE_RUNNING, Job  # noqa: E402
 from job_manager.service import JobService  # noqa: E402
@@ -101,10 +101,13 @@ class TestTheComObject(NativeTestCase):
     def test_the_registered_message_exists(self):
         self.assertGreaterEqual(win_taskbar.button_created_message(), 0xC000)
 
-    def test_an_icon_is_made_from_png(self):
+    def test_an_icon_is_made_from_png_and_given_back(self):
         hicon = win_taskbar._hicon_for(plugin_icon())
         self.assertNotEqual(hicon, 0)
-        ctypes.windll.user32.DestroyIcon(ctypes.c_void_p(hicon))
+        win_taskbar.destroy_icon(hicon)
+        # A destroyed handle is no longer an icon.
+        info = ctypes.create_string_buffer(64)
+        self.assertEqual(ctypes.windll.user32.GetIconInfo(ctypes.c_void_p(hicon), info), 0)
 
 
 class TestTheBadge(NativeTestCase):
@@ -226,20 +229,48 @@ class TestTheHandOffForReal(NativeTestCase):
         package_dir = os.path.dirname(os.path.abspath(presence.__file__))
         command = handoff.standalone_command(package_dir, ["moleditpy"])
         env = dict(os.environ, MOLEDITPY_JOB_MANAGER_DIR=self.tmp, QT_QPA_PLATFORM="windows")
-        process = subprocess.Popen(command, cwd=os.path.dirname(package_dir), env=env)
+        process = subprocess.Popen(
+            command,
+            cwd=os.path.dirname(package_dir),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        self.addCleanup(process.wait, 15)
         self.addCleanup(process.kill)
 
         deadline = time.monotonic() + 60
-        while time.monotonic() < deadline and handoff.live_tray(self.tmp) is None:
+        tray = None
+        while time.monotonic() < deadline and tray is None:
             self.assertIsNone(process.poll(), "the tray process exited on its own")
+            found = [
+                d
+                for d in instances.live_instances(self.tmp)
+                if d.get("role") == instances.ROLE_TRAY
+            ]
+            tray = found[0] if found else None
             time.sleep(0.2)
-        beat = handoff.live_tray(self.tmp)
-        self.assertIsNotNone(beat, "no heartbeat within a minute")
-        self.assertEqual(beat["relaunch"], ["moleditpy"])
+        self.assertIsNotNone(tray, "no heartbeat within a minute")
 
-        self.assertTrue(handoff.stop_running_tray(self.tmp, timeout=30))
+        # A standalone launch beside it: brings the tray process's monitor up
+        # and starts nothing of its own.
+        launch = subprocess.run(
+            [sys.executable, os.path.join(package_dir, "__main__.py")],
+            env=env,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        self.assertEqual(launch.returncode, 0, launch.stderr)
+        self.assertIn("already running", launch.stderr)
+        self.assertEqual([d["pid"] for d in instances.live_instances(self.tmp)], [tray["pid"]])
+
+        # And a MoleditPy coming back stops it, as _take_tracking_back does.
+        instances.send_request(self.tmp, int(tray["pid"]), instances.ACTION_STOP)
+        self.assertTrue(instances.wait_until_gone(self.tmp, int(tray["pid"]), timeout=30))
         self.assertEqual(process.wait(timeout=30), 0)
-        self.assertFalse(os.path.exists(handoff.tray_path(self.tmp)))
 
 
 if __name__ == "__main__":

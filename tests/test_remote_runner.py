@@ -81,7 +81,7 @@ class RunnerHarness(unittest.TestCase):
                 pass
             if process.stderr:
                 process.stderr.close()
-        kill_dispatched_jobs(self.dir)
+        kill_dispatched_jobs(self.dir, shell=BASH)
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     # --- driving it ---------------------------------------------------------
@@ -147,7 +147,10 @@ class RunnerHarness(unittest.TestCase):
             # condition. Report its stderr immediately instead of spending
             # the whole timeout waiting for a marker that will never appear.
             process = self.processes[-1] if self.processes else None
-            if process is not None and process.poll() is not None:
+            # Checked again once it has exited: the runner may have done what
+            # was waited for -- or the wait may be for its exit -- between
+            # the check above and this one. Failing then failed a passing run.
+            if process is not None and process.poll() is not None and not predicate():
                 stderr = (process.stderr.read() if process.stderr else "").strip()
                 self.fail(
                     f"runner exited with rc={process.returncode} while waiting for {what}; "
@@ -545,6 +548,37 @@ class TestEntryNames(unittest.TestCase):
         stdout = f"queue {entry_name(2, 'bbb')}\nrunning {entry_name(1, 'aaa')}\nnonsense\n"
 
         self.assertEqual(parse_listing(stdout), {"bbb": "queue", "aaa": "running"})
+
+
+@needs_bash
+class TestTheTeardownKillsWhatBashRecorded(unittest.TestCase):
+    """The harness's own teardown, which once killed the wrong process."""
+
+    def test_a_pid_written_by_bash_is_killed_through_bash(self):
+        # What the runner records: $! of a job that then execs. Under Git Bash
+        # that is an MSYS pid, which os.kill would read as a Windows one.
+        tmp = tempfile.mkdtemp(prefix="teardown_")
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        pids = os.path.join(tmp, "pids")
+        os.makedirs(pids)
+        record = bash_path(os.path.join(pids, "aaa"))
+        job = subprocess.Popen(
+            [BASH, "-c", f"echo $$ > '{record}'; exec sleep 30"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        self.addCleanup(job.wait, 10)
+        self.addCleanup(job.kill)
+        written = os.path.join(pids, "aaa")
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if os.path.exists(written) and os.path.getsize(written):
+                break
+            time.sleep(0.05)
+
+        self.assertEqual(kill_dispatched_jobs(tmp, shell=BASH), 1)
+        self.assertIsNotNone(job.wait(timeout=10))
 
 
 if __name__ == "__main__":
