@@ -78,7 +78,7 @@ SCENARIOS = {
 }
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="windows only")
+@pytest.mark.skipif(not os.environ.get("JM_NATIVE_DIAG"), reason="diag step only")
 @pytest.mark.parametrize("name", sorted(SCENARIOS))
 def test_scenario(name):
     env = dict(os.environ, QT_QPA_PLATFORM="windows")

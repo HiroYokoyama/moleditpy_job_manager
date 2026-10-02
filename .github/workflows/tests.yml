@@ -89,7 +89,9 @@ jobs:
         env:
           QT_QPA_PLATFORM: windows
         run: |
-          python -m pytest tests/test_zz_native_diag.py -v -s
+          $env:JM_NATIVE_DIAG = "1"
+          python -m pytest tests/test_zz_native_diag.py -v -s -p no:xdist
+          $env:JM_NATIVE_DIAG = ""
           python -m pytest tests/test_win_taskbar_native.py tests/test_win_taskbar.py -v -rs > native.log 2>&1
           $code = $LASTEXITCODE
           type native.log
