@@ -19,7 +19,7 @@ from PyQt6.QtCore import QEvent, Qt
 from PyQt6.QtWidgets import QLabel
 
 from . import taskbar
-from .models import STATE_RUNNING
+from .presence import count_jobs, summary_text
 from .service import JobService
 from .theme import CY_GREEN, CY_RED
 
@@ -53,29 +53,11 @@ class JobStatusWidget(QLabel):
 
     def counts(self) -> dict:
         """Running / waiting / blocked, counted off the live store."""
-        store = self.service.store
-        running = waiting = blocked = 0
-        blocked_ids = store.blocked_ids()
-        for job in store.active_jobs():
-            if job.id in blocked_ids:
-                blocked += 1
-            elif job.state == STATE_RUNNING:
-                running += 1
-            else:
-                waiting += 1
-        return {"running": running, "waiting": waiting, "blocked": blocked}
+        return count_jobs(self.service.store)
 
     def summary(self, counts: Optional[dict] = None) -> str:
         """The text shown, or "" when there is nothing to report."""
-        counts = self.counts() if counts is None else counts
-        parts = []
-        if counts["running"]:
-            parts.append(f"{counts['running']} running")
-        if counts["waiting"]:
-            parts.append(f"{counts['waiting']} queued")
-        if counts["blocked"]:
-            parts.append(f"{counts['blocked']} blocked")
-        return "  ".join(parts)
+        return summary_text(self.counts() if counts is None else counts)
 
     def refresh(self) -> None:
         # Counted once: this runs on every job update, and each pass walks the

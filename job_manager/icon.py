@@ -22,8 +22,11 @@ _cached: Optional[QIcon] = None
 
 #: The sizes Qt is asked to bake. A QIcon built from a single pixmap is scaled
 #: by the window manager wherever it needs another size, and a 16 px title bar
-#: scaling down a 256 px bitmap is where thin bonds turn to mush.
-_SIZES = (16, 24, 32, 48, 64, 128, 256)
+#: scaling down a 256 px bitmap is where thin bonds turn to mush. Windows asks
+#: for its small and large icon at the display scale -- 20 and 40 at 125 %,
+#: 28 and 56 at 175 % -- and Qt shrank the next size up for each, which is why
+#: the task bar button looked soft at anything but 100 % and 150 %.
+_SIZES = (16, 20, 24, 28, 30, 32, 36, 40, 48, 56, 60, 64, 72, 80, 96, 128, 256)
 
 
 def plugin_icon() -> QIcon:

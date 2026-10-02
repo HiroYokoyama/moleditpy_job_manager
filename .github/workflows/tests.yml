@@ -81,6 +81,23 @@ jobs:
             exit 1
           }
 
+      # The rest of the suite runs offscreen, where a window has no HWND the
+      # shell knows: the ITaskbarList3 vtable calls, the thumbnail-button
+      # WM_COMMAND route and the tray would only ever meet stand-ins. Run once
+      # more on the real platform, and fail if that tier skipped.
+      - name: Task bar and tray on a real Windows desktop
+        env:
+          QT_QPA_PLATFORM: windows
+        run: |
+          python -m pytest tests/test_win_taskbar_native.py tests/test_win_taskbar.py -v -rs > native.log 2>&1
+          $code = $LASTEXITCODE
+          type native.log
+          if ($code -ne 0) { exit $code }
+          if (Select-String -Path native.log -Pattern "test_win_taskbar_native.py::Test(TheComObject|TheMonitorWindow|TheHandOffForReal)\S* SKIPPED" -Quiet) {
+            echo "::error::The native task bar tests skipped; this step exists to run them."
+            exit 1
+          }
+
   # -------------------------------------------------------------------------
   # GUI tests — real PyQt6, headless. Roughly half of this plugin is dialogs
   # and a QTimer-driven poller; the pytest-only job above skips all of it.

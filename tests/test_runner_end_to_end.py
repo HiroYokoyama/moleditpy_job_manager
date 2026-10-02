@@ -195,8 +195,9 @@ class TestBashEndToEnd(EndToEndCase):
         self.wait_for(lambda: os.path.exists(self.marker()), what="the job to run")
 
         self.wait_for(
-            lambda: poll_runner(self.transport(), self.host, [job]).get(job.id)
-            in ("DONE", "FAILED"),
+            lambda: (
+                poll_runner(self.transport(), self.host, [job]).get(job.id) in ("DONE", "FAILED")
+            ),
             what="the poll to see it finish",
         )
         self.assertEqual(poll_runner(self.transport(), self.host, [job])[job.id], "DONE")

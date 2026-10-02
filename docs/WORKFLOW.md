@@ -631,6 +631,60 @@ to how MoleditPy looks. Untick **Notify me when a job ends** in the monitor to
 stop it. A desktop with no notification service simply shows nothing; the job
 is tracked either way.
 
+### The tray icon and the task bar
+
+Once the plugin is tracking anything, it has an icon in the notification area.
+Its dot is the state of the list: green while something runs, amber while
+everything waits in a queue, red for a blocked chain or a failure you have not
+looked at yet. Opening the monitor counts as looking. Hover for the counts;
+click to open the monitor (on macOS a click opens the menu instead).
+
+Right-click for the rest: **Open Job Monitor**, **New Job...**, **Host
+Monitor...**, **Refresh Now**, the active jobs (choose one to open the monitor
+with it selected, clearing a filter that would hide it), the notification and
+flash switches, and **Quit MoleditPy**. Quit goes through MoleditPy's own close,
+so unsaved work is still asked about, and Cancel there cancels the quit.
+
+**Keep tracking jobs after MoleditPy closes**, in the same menu, lets MoleditPy
+quit for real while jobs are still running. As it closes, the Job Manager starts
+again on its own — the same package, run as a separate small process with only
+its tray icon — and MoleditPy's own process, with its 3D view and molecules,
+ends. The new icon says how many jobs it took over; polling, notifications,
+chat messages and auto-download all carry on. Results are downloaded but not
+opened, since there is no MoleditPy to open them in.
+
+Its menu is the same, with **Open MoleditPy** and **Quit Job Manager** at the
+bottom. Opening MoleditPy — from there or any other way — takes the jobs back:
+the plugin asks the tray process to stop and waits for it before reading the
+job list, so the two never track the same jobs at once. Opening the standalone
+Job Manager by hand does the same.
+
+Nothing is handed over when no job is active, and nothing when you chose **Quit
+MoleditPy** from the tray, which means quit everything. Off by default, since
+closing the window has always ended the application.
+
+A MoleditPy packaged as a single executable has no separate Python to start the
+tray process with. There the option keeps MoleditPy's own process alive with its
+window hidden instead, and the menu gains **Show MoleditPy** to bring it back.
+That only takes effect while the tray icon exists — a desktop with no
+notification area could otherwise be left with a process nothing can reach.
+
+When a job ends, the task bar button flashes (the Dock icon bounces on macOS)
+until you look, unless MoleditPy is already in front. Untick **Flash the task
+bar when a job ends** in the tray menu to stop it.
+
+On Windows the job monitor's own task bar button also carries a progress bar
+for the current batch — every job that has been active since the list was last
+idle. Five jobs with three ended is 60 %; a single job, or a batch where nothing
+has ended yet, pulses. Yellow means a chain is blocked; red means a failure you
+have not seen. Hovering the button shows the monitor's thumbnail with three
+buttons under it: **Refresh now**, **New job** and **Host monitor**. MoleditPy's
+own button gets the same progress bar only with **Show the count on the app
+icon** ticked, for the same reason the badge is off by default.
+
+The monitor's title starts with the counts — `2 running, 1 queued - Job
+Manager ...` — because the task bar and Alt+Tab cut a long title from the end.
+
 ### Being told somewhere else: Slack, Discord, Teams
 
 A desktop notification reaches whoever is sitting at this machine, and a job

@@ -32,6 +32,20 @@ class TestTheIcon(IconTestCase):
         sizes = {s.width() for s in plugin_icon_module.plugin_icon().availableSizes()}
         self.assertTrue({16, 32, 256}.issubset(sizes), sizes)
 
+    def test_it_has_the_sizes_windows_asks_for_at_every_display_scale(self):
+        # SM_CXSMICON / SM_CXICON at 100, 125, 150, 175 and 200 %. Qt shrank
+        # the next size up for a missing one, and the task bar button went soft.
+        sizes = {s.width() for s in plugin_icon_module.plugin_icon().availableSizes()}
+        for small, large in ((16, 32), (20, 40), (24, 48), (28, 56), (32, 64)):
+            self.assertIn(small, sizes)
+            self.assertIn(large, sizes)
+
+    def test_a_requested_size_is_served_unscaled(self):
+        icon = plugin_icon_module.plugin_icon()
+        for size in (20, 40, 56):
+            pixmap = icon.pixmap(size, size)
+            self.assertEqual((pixmap.width(), pixmap.height()), (size, size))
+
     def test_it_is_the_same_drawing_the_page_uses(self):
         # One definition. Two would drift, and the tab and the task bar would
         # stop being recognisably the same plugin.
