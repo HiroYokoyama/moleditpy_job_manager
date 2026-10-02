@@ -208,7 +208,8 @@ class TestTheRealTray(NativeTestCase):
         self.assertIn("1 running", shown.tray.tray.toolTip())
         # Not until the Job Manager is opened in this session.
         self.assertEqual(_app.quitOnLastWindowClosed(), self.original_quit)
-        shown.tray.mark_opened()
+        with patch("job_manager.handoff.can_hand_off", return_value=False):
+            shown.tray.mark_opened()
         self.assertFalse(_app.quitOnLastWindowClosed())
 
         shown.detach()
