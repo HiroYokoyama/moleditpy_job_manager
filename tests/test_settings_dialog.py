@@ -208,6 +208,22 @@ class TestDesktop(SettingsTestCase):
         self.assertTrue(self.saved("keep_running_in_tray"))
         tray.apply_keep_running.assert_called_once()
 
+    def test_only_if_opened_is_on_and_follows_keep_tracking(self):
+        self.assertTrue(JobStore(self.tmp).get_pref("keep_running_only_if_opened"))
+        dialog = self.dialog()
+        self.assertTrue(dialog.chk_only_if_opened.isChecked())
+        self.assertFalse(dialog.chk_only_if_opened.isEnabled())
+        with patch("job_manager.presence.current", return_value=None):
+            dialog.chk_keep_tracking.setChecked(True)
+        self.assertTrue(dialog.chk_only_if_opened.isEnabled())
+
+    def test_only_if_opened_is_saved_and_applied_to_the_tray(self):
+        tray = MagicMock()
+        with patch("job_manager.presence.current", return_value=MagicMock(tray=tray)):
+            self.dialog().chk_only_if_opened.setChecked(False)
+        self.assertFalse(self.saved("keep_running_only_if_opened"))
+        tray.apply_keep_running.assert_called_once()
+
     def test_keep_tracking_without_a_tray_is_still_saved(self):
         with patch("job_manager.presence.current", return_value=None):
             self.dialog().chk_keep_tracking.setChecked(True)

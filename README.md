@@ -92,7 +92,8 @@ fetch, open.
   closes**: MoleditPy quits for real, and
   the Job Manager carries on alone in the tray — polling, notifying and
   downloading — until you open MoleditPy again, which takes the jobs back. Off
-  by default.
+  by default; and by default only for a session in which you opened the Job
+  Manager (**Only if the Job Manager was opened in that session**).
 - **On the Windows task bar**, the job monitor's button shows the batch's
   progress — green filling as jobs end, yellow for a blocked chain, red for an
   unseen failure — and its thumbnail carries *Refresh now*, *New job* and

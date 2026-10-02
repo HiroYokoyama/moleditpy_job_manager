@@ -40,6 +40,7 @@ from .store import MAX_POLL_INTERVAL, MIN_POLL_INTERVAL, RECOMMENDED_MIN_POLL_IN
 from .theme import CY_AMBER, apply_theme
 
 KEEP_TRACKING_TEXT = "Keep tracking jobs after MoleditPy closes"
+ONLY_IF_OPENED_TEXT = "Only if the Job Manager was opened in that session"
 
 
 class SettingsDialog(QDialog):
@@ -176,6 +177,17 @@ class SettingsDialog(QDialog):
         )
         self.chk_keep_tracking.toggled.connect(self._on_keep_tracking_toggled)
         form.addRow(self.chk_keep_tracking)
+        self.chk_only_if_opened = self._tick(
+            ONLY_IF_OPENED_TEXT, "keep_running_only_if_opened", True, refresh=False
+        )
+        self.chk_only_if_opened.setToolTip(
+            "When the Job Manager was never opened while MoleditPy ran, closing "
+            "MoleditPy closes it too, even with jobs still active."
+        )
+        self.chk_only_if_opened.setEnabled(self.chk_keep_tracking.isChecked())
+        self.chk_keep_tracking.toggled.connect(self.chk_only_if_opened.setEnabled)
+        self.chk_only_if_opened.toggled.connect(self._on_keep_tracking_toggled)
+        form.addRow(self.chk_only_if_opened)
         return group
 
     def _api_group(self) -> QGroupBox:
@@ -292,4 +304,4 @@ class SettingsDialog(QDialog):
         self._sync_api_status()
 
 
-__all__ = ["KEEP_TRACKING_TEXT", "SettingsDialog"]
+__all__ = ["KEEP_TRACKING_TEXT", "ONLY_IF_OPENED_TEXT", "SettingsDialog"]

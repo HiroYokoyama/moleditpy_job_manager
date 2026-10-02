@@ -254,6 +254,18 @@ def _install_presence(service) -> None:
         logging.debug("Job Manager: no tray or task bar presence", exc_info=True)
 
 
+def _mark_opened() -> None:
+    """A Job Manager window was opened here: see TrayController.keep_running."""
+    try:
+        from . import presence
+
+        current = presence.current()
+        if current is not None and current.tray is not None:
+            current.tray.mark_opened()
+    except Exception:
+        logging.debug("Job Manager: opening not recorded", exc_info=True)
+
+
 def _acknowledge_failures() -> None:
     """The monitor is in front of the user: stop flagging failures as unseen."""
     try:
@@ -512,6 +524,7 @@ def show_monitor(context=None) -> None:
         window.show()
         window.raise_()
         window.activateWindow()
+        _mark_opened()
         _acknowledge_failures()
         return
     try:
@@ -521,6 +534,7 @@ def show_monitor(context=None) -> None:
         window = JobsDialog(service, parent=None)
         context.register_window(WINDOW_KEY, window)
         window.show()
+        _mark_opened()
         _acknowledge_failures()
     except Exception as exc:
         logging.exception("Job Manager: could not open the job monitor")
@@ -580,6 +594,7 @@ def show_host_monitor_standalone(context=None) -> None:
         window.show()
         window.raise_()
         window.activateWindow()
+        _mark_opened()
         return
     try:
         from .host_monitor import HostMonitorDialog
@@ -589,6 +604,7 @@ def show_host_monitor_standalone(context=None) -> None:
         context.register_window(HOST_MONITOR_WINDOW_KEY, window)
         window.finished.connect(lambda *_: context.register_window(HOST_MONITOR_WINDOW_KEY, None))
         window.show()
+        _mark_opened()
     except Exception as exc:
         logging.exception("Job Manager: could not open the host monitor")
         context.show_status_message(f"Job Manager: {exc}", 5000)
