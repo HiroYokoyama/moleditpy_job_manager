@@ -206,6 +206,9 @@ class TestTheRealTray(NativeTestCase):
         self.assertIsNotNone(shown.tray.tray)
         self.assertIs(shown.tray.tray.contextMenu(), shown.tray.menu)
         self.assertIn("1 running", shown.tray.tray.toolTip())
+        # Not until the Job Manager is opened in this session.
+        self.assertEqual(_app.quitOnLastWindowClosed(), self.original_quit)
+        shown.tray.mark_opened()
         self.assertFalse(_app.quitOnLastWindowClosed())
 
         shown.detach()
