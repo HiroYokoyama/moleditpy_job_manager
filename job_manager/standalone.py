@@ -87,8 +87,19 @@ class _StandaloneWindows(QObject):
     def select_job(self, job_id: str) -> None:
         self.open_monitor().select_job(job_id)
 
+    def start_web(self, wait_for_port: bool = False) -> None:
+        from . import web_service
+
+        try:
+            web_service.resume(self.service, wait_for_port=wait_for_port)
+        except Exception:
+            logging.warning("Job Manager: the web monitor did not start", exc_info=True)
+
     def stop(self) -> None:
         """Everything this process put up, taken down. Called after the loop ends."""
+        from . import web_service
+
+        web_service.shutdown_for(self.service)
         if self.beacon is not None:
             self.beacon.stop()
             self.beacon = None
@@ -122,6 +133,9 @@ class StandaloneMonitor(_StandaloneWindows):
             },
             quit_label="Quit Job Manager",
         )
+        # Opened by hand is opened: see TrayController.keep_running.
+        if self.presence.tray is not None:
+            self.presence.tray.mark_opened()
         self._start_beacon(instances.ROLE_STANDALONE)
         if host_view:
             self.open_host_monitor()
@@ -171,10 +185,15 @@ class StandaloneTray(_StandaloneWindows):
         count = len(self.service.store.active_jobs())
         tray = notify.ensure_tray()
         if tray is not None:
+            note = (
+                f"Still tracking {count} job(s) from here."
+                if count
+                else "Still running here, in the tray."
+            )
             try:
                 tray.showMessage(
                     "MoleditPy job manager",
-                    f"Still tracking {count} job(s) from here.",
+                    note,
                     notify._icon(),
                     notify.TIMEOUT_MS,
                 )
@@ -202,6 +221,8 @@ def run(
         return 0
     if not tray.start():
         tray.start_as_window()
+    # The MoleditPy handing over may still hold the port the saved links name.
+    tray.start_web(wait_for_port=True)
     try:
         return app.exec()
     finally:
@@ -212,6 +233,7 @@ def run_monitor(app: QApplication, service, data_dir: str, host_view: bool = Fal
     """A monitor opened by hand, already known to be the only one running."""
     windows = StandaloneMonitor(app, service, data_dir)
     windows.start(host_view)
+    windows.start_web()
     try:
         return app.exec()
     finally:

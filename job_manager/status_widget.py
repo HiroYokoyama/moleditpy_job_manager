@@ -70,9 +70,11 @@ class JobStatusWidget(QLabel):
         if self.service.store.get_pref("taskbar_badge", False):
             taskbar.set_badge(sum(counts.values()))
         # Hidden rather than empty: an always-present blank label steals status
-        # bar width from the host for a plugin the user may never use.
-        self.setVisible(bool(text))
-        if not text:
+        # bar width from the host for a plugin the user may never use. Hidden
+        # too when switched off in Settings; the badge above is its own choice.
+        shown = bool(self.service.store.get_pref("status_bar_counter", True))
+        self.setVisible(bool(text) and shown)
+        if not text or not shown:
             self.setText("")
             self._color = ""
             return

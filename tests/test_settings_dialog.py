@@ -42,7 +42,10 @@ class SettingsTestCase(unittest.TestCase):
 class TestItHoldsEverything(SettingsTestCase):
     def test_the_groups(self):
         titles = [group.title() for group in self.dialog().findChildren(QGroupBox)]
-        self.assertEqual(titles, ["Polling", "Results", "When a job ends", "Desktop", "Local API"])
+        self.assertEqual(
+            titles,
+            ["Polling", "Results", "When a job ends", "Desktop", "Web Monitor", "Local API"],
+        )
 
     def test_the_tray_process_has_no_api_to_offer(self):
         # The API is served by MoleditPy; switching it on from the tray process
@@ -228,6 +231,62 @@ class TestDesktop(SettingsTestCase):
         with patch("job_manager.presence.current", return_value=None):
             self.dialog().chk_keep_tracking.setChecked(True)
         self.assertTrue(self.saved("keep_running_in_tray"))
+
+
+class TestStatusBarCounter(SettingsTestCase):
+    def test_it_is_on_by_default_and_saved(self):
+        dialog = self.dialog()
+        self.assertTrue(dialog.chk_status_counter.isChecked())
+        dialog.chk_status_counter.setChecked(False)
+        self.assertFalse(self.saved("status_bar_counter"))
+
+    def test_a_job_manager_on_its_own_has_no_status_bar_to_offer(self):
+        self.assertTrue(self.dialog(standalone=True).chk_status_counter.isHidden())
+
+
+class TestWebMonitor(SettingsTestCase):
+    def setUp(self):
+        super().setUp()
+        from job_manager import web_service
+
+        self.web = web_service.for_service(self.service)
+        self.addCleanup(web_service.shutdown_for, self.service)
+
+    def test_off_by_default(self):
+        dialog = self.dialog()
+        self.assertFalse(dialog.chk_web.isChecked())
+        self.assertFalse(dialog.btn_web.isEnabled())
+
+    def test_ticking_it_serves_and_names_the_port(self):
+        dialog = self.dialog()
+        dialog.chk_web.setChecked(True)
+        self.assertTrue(self.web.running)
+        self.assertTrue(self.saved("host_monitor_web"))
+        self.assertIn(str(self.web.port), dialog.lbl_web.text())
+        self.assertTrue(dialog.btn_web.isEnabled())
+
+    def test_unticking_it_stops_and_is_remembered(self):
+        self.web.start()
+        dialog = self.dialog()
+        self.assertTrue(dialog.chk_web.isChecked())
+        dialog.chk_web.setChecked(False)
+        self.assertFalse(self.web.running)
+        self.assertFalse(self.saved("host_monitor_web"))
+
+    def test_a_failed_start_is_shown_and_the_tick_comes_back_off(self):
+        dialog = self.dialog()
+        with (
+            patch.object(self.web, "start", return_value=False),
+            patch("job_manager.settings_dialog.QMessageBox.warning") as warn,
+        ):
+            dialog.chk_web.setChecked(True)
+        warn.assert_called_once()
+        self.assertFalse(dialog.chk_web.isChecked())
+
+    def test_the_tray_process_offers_it_too(self):
+        # It serves the page once MoleditPy has closed.
+        titles = [g.title() for g in self.dialog(standalone=True).findChildren(QGroupBox)]
+        self.assertIn("Web Monitor", titles)
 
 
 class TestLocalApi(SettingsTestCase):

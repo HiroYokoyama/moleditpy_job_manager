@@ -184,6 +184,26 @@ class TestOpeningIsRecorded(PluginEntryTestCase):
         tray.mark_opened.assert_not_called()
 
 
+class TestTheWebViewAtLoad(PluginEntryTestCase):
+    def test_left_on_it_serves_at_load(self):
+        with patch("job_manager.web_service.resume") as resume:
+            job_manager._resume_web(MagicMock(get_pref=lambda key, default=None: True))
+        resume.assert_called_once()
+
+    def test_off_it_builds_nothing(self):
+        with patch("job_manager.web_service.resume") as resume:
+            job_manager._resume_web(MagicMock(get_pref=lambda key, default=None: False))
+        resume.assert_not_called()
+        self.assertIsNone(job_manager._service)
+
+    def test_shutdown_takes_the_socket_down(self):
+        job_manager.initialize(self.context)
+        service = job_manager.get_service()
+        with patch("job_manager.web_service.shutdown_for") as down:
+            job_manager.shutdown()
+        down.assert_called_once_with(service)
+
+
 class TestShowSubmit(PluginEntryTestCase):
     def test_opens_the_monitor_then_the_wizard(self):
         job_manager.initialize(self.context)

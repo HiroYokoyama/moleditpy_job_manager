@@ -61,6 +61,15 @@ class HostMonitorTestCase(DialogTestCase):
     def _transport_for(self, host):
         return self.transports.setdefault(host.id, CountingTransport())
 
+    def web(self):
+        from job_manager import web_service
+
+        web = web_service.for_service(self.service, create=False)
+        if web is None:
+            web = web_service.for_service(self.service)
+            self.addCleanup(web_service.shutdown_for, self.service)
+        return web
+
     def monitor(self):
         from job_manager.host_monitor import HostMonitorDialog
 
@@ -227,7 +236,7 @@ class TestWhatItCosts(HostMonitorTestCase):
 
         dialog.reject()
 
-        self.assertFalse(dialog._timer.isActive())
+        self.assertFalse(dialog.sampler._timer.isActive())
         self.assertEqual(self.transports[self.host.id].closes, 1)
 
     def test_a_host_still_answering_is_not_asked_again(self):
@@ -236,7 +245,7 @@ class TestWhatItCosts(HostMonitorTestCase):
         dialog = self.monitor()
         transport = self.transports[self.host.id]
         before = transport.runs
-        dialog._busy.add(self.host.id)
+        dialog.sampler._busy.add(self.host.id)
 
         dialog._sample_all()
 
@@ -277,7 +286,7 @@ class TestWhatItCosts(HostMonitorTestCase):
 
         self.assertEqual(transport.closes, 0)  # not run inline
         self.assertEqual(len(pool.queued), 1)  # queued for the pool instead
-        self.assertEqual(dialog._transports, {})  # forgotten immediately regardless
+        self.assertEqual(dialog.sampler._transports, {})  # forgotten immediately regardless
 
     def test_a_host_that_would_prompt_for_a_password_is_left_alone(self):
         from job_manager.models import BACKEND_PARAMIKO
@@ -312,7 +321,7 @@ class TestWhatItCosts(HostMonitorTestCase):
     def test_the_interval_is_adjustable(self):
         dialog = self.monitor()
         dialog.spin_interval.setValue(30)
-        self.assertEqual(dialog._timer.interval(), 30000)
+        self.assertEqual(dialog.sampler._timer.interval(), 30000)
 
     def test_a_host_that_failed_is_asked_less_often(self):
         self.transports[self.host.id] = CountingTransport(fail="timed out")
@@ -330,12 +339,12 @@ class TestWhatItCosts(HostMonitorTestCase):
     def test_the_wait_doubles_while_it_keeps_failing(self):
         self.transports[self.host.id] = CountingTransport(fail="timed out")
         dialog = self.monitor()
-        first = dialog._backoff[self.host.id]
+        first = dialog.sampler._backoff[self.host.id]
 
         for _ in range(20):
             dialog._sample_all()
 
-        self.assertGreater(dialog._backoff[self.host.id], first)
+        self.assertGreater(dialog.sampler._backoff[self.host.id], first)
 
     def test_a_host_that_comes_back_is_asked_normally_again(self):
         transport = CountingTransport(fail="timed out")
@@ -346,8 +355,8 @@ class TestWhatItCosts(HostMonitorTestCase):
         for _ in range(5):
             dialog._sample_all()
 
-        self.assertNotIn(self.host.id, dialog._backoff)
-        self.assertNotIn(self.host.id, dialog._skip_ticks)
+        self.assertNotIn(self.host.id, dialog.sampler._backoff)
+        self.assertNotIn(self.host.id, dialog.sampler._skip_ticks)
 
 
 class TestTheButtonOnTheMonitor(DialogTestCase):
@@ -852,7 +861,7 @@ class TestTheChosenIntervalSticks(HostMonitorTestCase):
         again = self.monitor()
 
         self.assertEqual(again.spin_interval.value(), 2)
-        self.assertEqual(again._timer.interval(), 2000)
+        self.assertEqual(again.sampler._timer.interval(), 2000)
 
     def test_the_backend_default_applies_only_until_then(self):
         from job_manager.host_monitor import OPENSSH_INTERVAL_SECONDS
@@ -951,7 +960,7 @@ class TestDisabledHosts(HostMonitorTestCase):
     def test_a_disabled_host_is_skipped_by_sampling(self):
         self._add_disabled_host()
         dialog = self.monitor()
-        ids = [host.id for host in dialog._hosts()]
+        ids = [host.id for host in dialog.sampler.hosts()]
         self.assertNotIn("disabled_one", ids)
         self.assertIn(self.host.id, ids)
 
@@ -1074,114 +1083,68 @@ class TestClosingItOnlyTearsDownOnce(HostMonitorTestCase):
         # without ever being shown would keep its timer and go on asking every
         # host over SSH for the rest of the session.
         dialog = self.monitor()
-        self.assertTrue(dialog._timer.isActive())
+        self.assertTrue(dialog.sampler._timer.isActive())
         dialog.close()
-        self.assertFalse(dialog._timer.isActive())
+        self.assertFalse(dialog.sampler._timer.isActive())
 
     def test_a_window_never_shown_hands_its_transports_back(self):
         dialog = self.monitor()
         dialog._sample_all()
-        self.assertTrue(dialog._transports)
+        self.assertTrue(dialog.sampler._transports)
         dialog.close()
-        self.assertFalse(dialog._transports)
+        self.assertFalse(dialog.sampler._transports)
 
     def test_tearing_down_twice_is_harmless(self):
         dialog = self.monitor()
         dialog.close()
         dialog.reject()
-        self.assertFalse(dialog._timer.isActive())
+        self.assertFalse(dialog.sampler._timer.isActive())
 
 
 class TestTheWebView(HostMonitorTestCase):
-    """The button, the remembered choice, and what the page is handed."""
+    """The web view belongs to the service now, not to this window."""
 
-    def test_it_does_not_listen_until_asked(self):
+    def test_opening_the_window_starts_no_socket(self):
         # A socket nobody asked for is the wrong thing to open by surprise,
         # and this window opens on its own for anyone who uses the plugin.
-        dialog = self.monitor()
-        self.assertIsNone(dialog._web)
+        self.monitor()
+        self.assertFalse(self.web().running)
 
-    def test_starting_it_serves_and_is_remembered(self):
+    def test_closing_the_window_leaves_the_web_view_serving(self):
+        # The reported blank page: the socket went with the window, and a
+        # phone's saved link loaded nothing until the window was reopened.
+        web = self.web()
+        web.start()
         dialog = self.monitor()
-        self.assertTrue(dialog._start_web(announce=False))
-        self.addCleanup(dialog._stop_web)
-        self.assertTrue(dialog._web.running)
-        self.assertTrue(self.store.get_pref("host_monitor_web", False))
-
-    def test_a_remembered_choice_starts_it_on_the_next_open(self):
-        self.store.set_pref("host_monitor_web", True)
-        dialog = self.monitor()
-        self.addCleanup(dialog._stop_web)
-        self.assertIsNotNone(dialog._web)
-        self.assertTrue(dialog._web.running)
-
-    def test_stopping_it_is_remembered_too(self):
-        dialog = self.monitor()
-        dialog._start_web(announce=False)
-        dialog._stop_web()
-        self.assertIsNone(dialog._web)
-        self.assertFalse(self.store.get_pref("host_monitor_web", True))
-
-    def test_closing_the_window_releases_the_socket_but_keeps_the_choice(self):
-        # Closing the window is not the statement "never serve this again":
-        # clearing the preference here would make it unrememberable.
-        dialog = self.monitor()
-        dialog._start_web(announce=False)
-        server = dialog._web
         dialog._teardown()
-        self.assertFalse(server.running)
-        self.assertTrue(self.store.get_pref("host_monitor_web", False))
+        self.assertTrue(web.running)
 
-    def test_the_snapshot_carries_the_hosts_stats_and_active_jobs(self):
-        from job_manager.models import STATE_RUNNING
-
-        self.store.add_job(
-            Job(
-                id="live",
-                name="myjob",
-                host_id=self.host.id,
-                host_name=self.host.name,
-                state=STATE_RUNNING,
-            )
-        )
+    def test_the_window_and_the_page_share_one_probe_per_host(self):
+        web = self.web()
+        web.start()
+        web._on_request()
         dialog = self.monitor()
-        snapshot = dialog._web_snapshot()
-        entry = snapshot["hosts"][0]
-        self.assertEqual(entry["name"], self.host.name)
-        self.assertGreater(entry["load_fraction"], 0)
-        self.assertIn("myjob", [job["name"] for job in entry["jobs"]])
+        self.assertIs(dialog.sampler, web.sampler)
+        self.assertEqual(len(self.transports), 1)
 
-    def test_the_snapshot_leaves_finished_jobs_out(self):
-        from job_manager.models import STATE_DONE
-
-        self.store.add_job(
-            Job(
-                id="old",
-                name="finished",
-                host_id=self.host.id,
-                host_name=self.host.name,
-                state=STATE_DONE,
-            )
-        )
+    def test_closing_the_window_keeps_sampling_while_the_page_is_watched(self):
+        web = self.web()
+        web.start()
+        web._on_request()
         dialog = self.monitor()
-        names = [j["name"] for j in dialog._web_snapshot()["hosts"][0]["jobs"]]
-        self.assertNotIn("finished", names)
+        dialog._teardown()
+        self.assertTrue(web.sampler._timer.isActive())
+        self.assertEqual(self.transports[self.host.id].closes, 0)
 
-    def test_the_snapshot_is_plain_data(self):
-        # It crosses onto the HTTP thread, where touching a widget or a
-        # transport would be a data race rather than a wrong number.
-        import json
-
+    def test_a_sample_the_page_took_is_on_the_card_at_once(self):
+        web = self.web()
+        web.start()
+        web._on_request()
+        # A probe still in flight, so the window's own ask is skipped and the
+        # card can only have its numbers from what the page's sampling took.
+        web.sampler._busy.add(self.host.id)
         dialog = self.monitor()
-        json.dumps(dialog._web_snapshot())
-
-    def test_a_failed_probe_reaches_the_page_rather_than_a_stale_reading(self):
-        dialog = self.monitor()
-        dialog._latest.clear()
-        dialog._sample(self.host)
-        # The error path stores a HostStats carrying the message.
-        self.store.set_pref("host_monitor_web", False)
-        self.assertIn("hosts", dialog._web_snapshot())
+        self.assertEqual(dialog.cards[self.host.id].meter_load.detail, "20%")
 
 
 class TestTheWebDialog(HostMonitorTestCase):
@@ -1200,18 +1163,16 @@ class TestTheWebDialog(HostMonitorTestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def dialog_for(self, dialog):
+    def dialog_for(self):
         from job_manager.web_monitor_dialog import WebMonitorDialog
 
-        window = WebMonitorDialog(dialog, parent=None)
+        window = WebMonitorDialog(self.web(), parent=None)
         self.addCleanup(window.deleteLater)
         return window
 
     def test_the_link_names_the_machine_rather_than_a_placeholder(self):
-        monitor = self.monitor()
-        monitor._start_web(announce=False)
-        self.addCleanup(monitor._stop_web)
-        window = self.dialog_for(monitor)
+        self.web().start()
+        window = self.dialog_for()
         text = window.row_tailnet.field.text()
         self.assertIn("mybox.tail1234.ts.net", text)
         self.assertNotIn("<machine>", text)
@@ -1221,28 +1182,22 @@ class TestTheWebDialog(HostMonitorTestCase):
         # dialog cannot be selected, let alone copied.
         from PyQt6.QtWidgets import QLineEdit
 
-        monitor = self.monitor()
-        monitor._start_web(announce=False)
-        self.addCleanup(monitor._stop_web)
-        window = self.dialog_for(monitor)
+        self.web().start()
+        window = self.dialog_for()
         self.assertIsInstance(window.row_tailnet.field, QLineEdit)
-        self.assertIn(monitor._web.token, window.row_tailnet.field.text())
+        self.assertIn(self.web().server.token, window.row_tailnet.field.text())
 
     def test_copy_puts_the_link_on_the_clipboard(self):
         from PyQt6.QtWidgets import QApplication
 
-        monitor = self.monitor()
-        monitor._start_web(announce=False)
-        self.addCleanup(monitor._stop_web)
-        window = self.dialog_for(monitor)
+        self.web().start()
+        window = self.dialog_for()
         window.row_tailnet.button.click()
         self.assertEqual(QApplication.clipboard().text(), window.row_tailnet.field.text())
 
     def test_run_publishes_the_port_that_is_actually_bound(self):
-        monitor = self.monitor()
-        monitor._start_web(announce=False)
-        self.addCleanup(monitor._stop_web)
-        window = self.dialog_for(monitor)
+        self.web().start()
+        window = self.dialog_for()
         seen = {}
 
         def fake(port):
@@ -1256,13 +1211,11 @@ class TestTheWebDialog(HostMonitorTestCase):
             ),
         ):
             window.btn_serve.click()
-        self.assertEqual(seen["port"], monitor._web.port)
+        self.assertEqual(seen["port"], self.web().server.port)
 
     def test_a_tailscale_failure_is_shown_and_not_claimed_as_success(self):
-        monitor = self.monitor()
-        monitor._start_web(announce=False)
-        self.addCleanup(monitor._stop_web)
-        window = self.dialog_for(monitor)
+        self.web().start()
+        window = self.dialog_for()
         shown = {}
 
         def warn(parent, title, text):
@@ -1282,15 +1235,12 @@ class TestTheWebDialog(HostMonitorTestCase):
     def test_unpublish_is_offered_only_after_this_dialog_published(self):
         # Tailscale may already be serving something that is not ours, and a
         # reset would withdraw that too.
-        monitor = self.monitor()
-        monitor._start_web(announce=False)
-        self.addCleanup(monitor._stop_web)
-        window = self.dialog_for(monitor)
+        self.web().start()
+        window = self.dialog_for()
         self.assertFalse(window.btn_unserve.isEnabled())
 
     def test_nothing_is_offered_while_the_server_is_stopped(self):
-        monitor = self.monitor()
-        window = self.dialog_for(monitor)
+        window = self.dialog_for()
         self.assertFalse(window.btn_serve.isEnabled())
         self.assertEqual(window.row_tailnet.field.text(), "")
 
@@ -1315,10 +1265,8 @@ class TestTheRunButtonDoesNotFreezeTheWindow(HostMonitorTestCase):
     def dialog(self):
         from job_manager.web_monitor_dialog import WebMonitorDialog
 
-        monitor = self.monitor()
-        monitor._start_web(announce=False)
-        self.addCleanup(monitor._stop_web)
-        window = WebMonitorDialog(monitor, parent=None)
+        self.web().start()
+        window = WebMonitorDialog(self.web(), parent=None)
         self.addCleanup(window.deleteLater)
         return window
 
@@ -1374,7 +1322,7 @@ class TestTheRunButtonDoesNotFreezeTheWindow(HostMonitorTestCase):
         self.assertFalse(window.btn_serve.isEnabled())
 
 
-class TestTheLinkSurvivesTheWindowClosing(HostMonitorTestCase):
+class TestTheLinkSurvivesARestart(HostMonitorTestCase):
     """What the persisted token buys, from the dialog's side."""
 
     def setUp(self):
@@ -1387,45 +1335,38 @@ class TestTheLinkSurvivesTheWindowClosing(HostMonitorTestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def test_reopening_the_window_keeps_the_same_link(self):
-        first = self.monitor()
-        first._start_web(announce=False)
-        token = first._web.token
-        first._teardown()
+    def test_restarting_keeps_the_same_link(self):
+        self.web().start()
+        token = self.web().server.token
+        self.web().stop(remember=False)
 
-        second = self.monitor()
-        second._start_web(announce=False)
-        self.addCleanup(second._stop_web)
-        self.assertEqual(second._web.token, token)
+        self.web().start()
+        self.assertEqual(self.web().server.token, token)
 
     def test_renewing_changes_it_on_the_running_server(self):
-        monitor = self.monitor()
-        monitor._start_web(announce=False)
-        self.addCleanup(monitor._stop_web)
-        before = monitor._web.token
-        after = monitor._renew_web_token()
+        self.web().start()
+        before = self.web().server.token
+        after = self.web().renew_token()
         self.assertNotEqual(after, before)
-        self.assertEqual(monitor._web.token, after)
+        self.assertEqual(self.web().server.token, after)
 
     def test_the_dialog_asks_before_cutting_old_links_off(self):
         from job_manager.web_monitor_dialog import WebMonitorDialog
         from PyQt6.QtWidgets import QMessageBox
 
-        monitor = self.monitor()
-        monitor._start_web(announce=False)
-        self.addCleanup(monitor._stop_web)
-        window = WebMonitorDialog(monitor, parent=None)
+        self.web().start()
+        window = WebMonitorDialog(self.web(), parent=None)
         self.addCleanup(window.deleteLater)
-        before = monitor._web.token
+        before = self.web().server.token
 
         with unittest.mock.patch.object(
             QMessageBox, "question", return_value=QMessageBox.StandardButton.No
         ):
             window.btn_renew.click()
-        self.assertEqual(monitor._web.token, before, "declining still replaced the token")
+        self.assertEqual(self.web().server.token, before, "declining still replaced the token")
 
         with unittest.mock.patch.object(
             QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes
         ):
             window.btn_renew.click()
-        self.assertNotEqual(monitor._web.token, before)
+        self.assertNotEqual(self.web().server.token, before)

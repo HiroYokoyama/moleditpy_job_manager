@@ -100,6 +100,8 @@ DEFAULT_PREFS: Dict[str, Any] = {
     "taskbar_progress": True,
     #: Off by default: closing the main window has always quit MoleditPy.
     "keep_running_in_tray": False,
+    #: The "Jobs: ..." counter in MoleditPy's status bar.
+    "status_bar_counter": True,
     #: ...and only for a MoleditPy session in which the Job Manager was opened:
     #: one that merely resumed tracking at load closes with MoleditPy.
     "keep_running_only_if_opened": True,

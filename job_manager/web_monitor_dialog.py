@@ -72,11 +72,12 @@ class _CopyRow(QWidget):
 
 
 class WebMonitorDialog(QDialog):
-    """Reached from the Host Monitor's "Web..." button."""
+    """Reached from Settings. ``web`` is the service's
+    :class:`~job_manager.web_service.WebService`."""
 
-    def __init__(self, monitor, parent: Optional[QWidget] = None) -> None:
+    def __init__(self, web, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.monitor = monitor
+        self.web = web
         #: Whether *this dialog* ran the publish. Tailscale can already be
         #: serving something else, which is not ours to withdraw.
         self._served = False
@@ -158,17 +159,16 @@ class WebMonitorDialog(QDialog):
     # ------------------------------------------------------------------
 
     def _server(self):
-        return getattr(self.monitor, "_web", None)
+        return self.web.server
 
     def _running(self) -> bool:
-        server = self._server()
-        return server is not None and server.running
+        return self.web.running
 
     def _toggle(self) -> None:
         if self._running():
-            self.monitor._stop_web()
-        else:
-            self.monitor._start_web()
+            self.web.stop()
+        elif not self.web.start():
+            QMessageBox.warning(self, "Web Monitor", f"Could not start: {self.web.error}")
         self._refresh()
 
     def _run_off_thread(self, work, done) -> None:
@@ -191,7 +191,7 @@ class WebMonitorDialog(QDialog):
             self._refresh()
             QMessageBox.warning(self, "Tailscale", message)
 
-        run_async(self.monitor.service.pool, work, on_success=finished, on_error=failed, quiet=True)
+        run_async(self.web.service.pool, work, on_success=finished, on_error=failed, quiet=True)
 
     def _serve_on_tailnet(self) -> None:
         """One click: run the command shown, then say what happened."""
@@ -240,7 +240,7 @@ class WebMonitorDialog(QDialog):
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
-        self.monitor._renew_web_token()
+        self.web.renew_token()
         self._refresh()
 
     def _refresh(self) -> None:

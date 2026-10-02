@@ -1,17 +1,15 @@
 """Live load and memory for every host, while the window is open.
 
-Deliberately not part of polling: sampling stops the moment this window
-closes, so a Job Manager left open overnight touches no login node. The
-transport is held open per host for the same reason -- rebuilding a
-connection every two seconds would cost more than the measurement.
+Deliberately not part of polling. The sampling itself is
+:mod:`.host_sampler`'s, shared with the web view; this window holds it while
+it is open and draws what it reports.
 """
 
 from __future__ import annotations
 
 import logging
-import time
 from collections import deque
-from typing import Deque, Dict, List, Optional
+from typing import Deque, Dict, Optional
 
 from PyQt6.QtCore import QRectF, QSize, Qt, QTimer
 from PyQt6.QtGui import QColor, QFont, QPainter, QPainterPath, QPalette, QPen
@@ -23,7 +21,6 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -33,10 +30,8 @@ from PyQt6.QtWidgets import (
 )
 
 from . import PLUGIN_VERSION, host_stats
-from .credentials import needs_password
 from .models import (
     ACTIVE_STATES,
-    SCHEDULER_WINDOWS,
     STATE_CANCELLED,
     STATE_DONE,
     STATE_DOWNLOADING,
@@ -45,7 +40,6 @@ from .models import (
     STATE_NEW,
     STATE_RUNNING,
     STATE_UPLOADING,
-    TERMINAL_STATES,
     HostProfile,
 )
 from .theme import (
@@ -58,22 +52,16 @@ from .theme import (
 )
 
 from .window_utils import make_independent
-from .tasks import run_async
 
 #: How many samples a graph keeps. At the default interval that is about two
 #: minutes of history, which is enough to see a job start.
 HISTORY = 60
 
-#: Two seconds suits a backend that keeps its connection (paramiko, local).
-#: OpenSSH spawns a fresh ssh process per command -- a fresh TCP connect,
-#: handshake and auth every tick -- and a burst of them trips sshd's own
-#: connection throttling, which shows up here as a timeout on a healthy host.
-DEFAULT_INTERVAL_SECONDS = 2
-OPENSSH_INTERVAL_SECONDS = 10
-
-#: A host that fails is asked less often, doubling up to this, rather than
-#: every tick for as long as the window is open.
-MAX_BACKOFF_TICKS = 16
+from .host_sampler import (  # noqa: E402,F401 - re-exported for callers of this module
+    DEFAULT_INTERVAL_SECONDS,
+    MAX_BACKOFF_TICKS,
+    OPENSSH_INTERVAL_SECONDS,
+)
 
 #: A real space that keeps a label its full height while it has nothing to
 #: say. Written as the character, never ``&nbsp;``: QLabel's AutoText format
@@ -847,46 +835,36 @@ class HostMonitorDialog(QDialog):
         self._scroll: Optional[QScrollArea] = None
         #: Set by :meth:`_teardown`, which several close routes reach.
         self._torn_down = False
-        #: Held open while this window is: see the module docstring.
-        self._transports: Dict[str, object] = {}
-        #: Hosts with a probe still in flight, so a slow host does not queue
-        #: up one worker per tick.
-        self._busy: set = set()
-        #: Ticks still to skip for a host that failed, and the size of the
-        #: skip it earned. Both cleared by a sample that works.
-        self._skip_ticks: Dict[str, int] = {}
-        self._backoff: Dict[str, int] = {}
-        #: The last good sample per host, kept because the web view is served
-        #: from a thread that must not read a widget to find out what it says.
-        self._latest: Dict[str, object] = {}
-        #: When each host was last asked, so one with its own interval is
-        #: sampled on that and not on every tick of the window's timer.
-        self._last_sample: Dict[str, float] = {}
-        self._web = None
+        from . import host_sampler
+
+        #: Shared with the web view: see :mod:`.host_sampler`.
+        self.sampler = host_sampler.for_service(service)
         self._build_ui()
-        self._timer = QTimer(self)
-        self._timer.timeout.connect(self._sample_all)
-        # The stored choice wins; the per-backend default is only a starting
-        # point, not a correction applied over the top of it.
-        stored = int(self.service.store.get_pref("host_monitor_interval", 0) or 0)
         # Blocked: setValue emits valueChanged, which would record the
         # backend's default as the user's own choice on open.
         self.spin_interval.blockSignals(True)
-        self.spin_interval.setValue(stored or self._default_interval())
+        self.spin_interval.setValue(self.sampler.interval_seconds())
         self.spin_interval.blockSignals(False)
-        self._timer.start(self._tick_seconds() * 1000)
         if self.btn_history.isChecked():
             self._set_history(True)
         # `setChecked` above happens before the signal connection, so it
         # never emitted `toggled`; apply the style explicitly here instead.
         self._set_dark(bool(self.btn_dark.isChecked()))
-        # Off the first time this window is ever opened, on every time after
-        # that if it was left on: a listening socket nobody asked for is the
-        # wrong thing to start by surprise, but asking twice for the same
-        # answer is the wrong thing to do to someone who uses it daily.
-        if self.service.store.get_pref("host_monitor_web", False):
-            self._start_web(announce=False)
-        self._sample_all()
+        self.sampler.sampled.connect(self._on_sampled)
+        self.sampler.sample_failed.connect(self._on_sample_failed)
+        self.sampler.ticking.connect(self._sync_cards)
+        # What the web view had sampled before this window opened is shown at
+        # once rather than after the next round.
+        for host_id, stats in list(self.sampler._latest.items()):
+            if host_id in self.cards and not stats.error:
+                self.cards[host_id].show_stats(stats)
+        # The first holder gets a sample from acquire(); joining one already
+        # running asks again now rather than leaving this window blank until
+        # the next tick.
+        joining = self.sampler.active
+        self.sampler.acquire(self)
+        if joining:
+            self._sample_all()
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -924,13 +902,6 @@ class HostMonitorDialog(QDialog):
         self.btn_dark.toggled.connect(self._set_dark)
         top.addWidget(self.btn_dark)
 
-        self.btn_web = QPushButton("Web...")
-        self.btn_web.setToolTip(
-            "Serve this view, read-only, on 127.0.0.1 for a browser -- and show the\n"
-            "tailscale serve command that puts it on your tailnet."
-        )
-        self.btn_web.clicked.connect(self._open_web_dialog)
-        top.addWidget(self.btn_web)
         layout.addLayout(top)
 
         scroll = QScrollArea()
@@ -969,6 +940,9 @@ class HostMonitorDialog(QDialog):
         for signal, slot in (
             (self.service.jobs_changed, self._request_card_refresh),
             (self.service.job_updated, self._on_job_updated),
+            (self.sampler.sampled, self._on_sampled),
+            (self.sampler.sample_failed, self._on_sample_failed),
+            (self.sampler.ticking, self._sync_cards),
         ):
             try:
                 signal.disconnect(slot)
@@ -1047,8 +1021,8 @@ class HostMonitorDialog(QDialog):
         self._empty_label.setVisible(not self.cards)
         self._relayout()
         self._refresh_card_jobs()
-        if hasattr(self, "_timer"):
-            self._timer.setInterval(self._tick_seconds() * 1000)
+        if hasattr(self, "sampler"):
+            self.sampler.reschedule()
 
     def _sync_cards(self) -> None:
         """Rebuild the cards if the host list has changed since they were made."""
@@ -1082,7 +1056,7 @@ class HostMonitorDialog(QDialog):
     def _set_interval(self, seconds: int) -> None:
         """Apply the cadence and save setting."""
         self.service.store.set_pref("host_monitor_interval", int(seconds))
-        self._timer.setInterval(self._tick_seconds() * 1000)
+        self.sampler.reschedule()
 
     def _set_history(self, shown: bool) -> None:
         """Open or close the graphs on every card at once and save setting."""
@@ -1132,242 +1106,26 @@ class HostMonitorDialog(QDialog):
 
     # --- sampling -----------------------------------------------------------
 
-    def _default_interval(self) -> int:
-        """The cadence the slowest backend in the list can stand."""
-        from .models import BACKEND_OPENSSH
-
-        hosts = list(self.service.store.host_list())
-        if any(host.backend == BACKEND_OPENSSH for host in hosts):
-            return OPENSSH_INTERVAL_SECONDS
-        return DEFAULT_INTERVAL_SECONDS
-
-    def _interval_for(self, host: HostProfile) -> int:
-        """Seconds between samples of one host: its own, else the window's."""
-        own = int(getattr(host, "monitor_interval", 0) or 0)
-        return own if own > 0 else max(1, int(self.spin_interval.value()))
-
-    def _tick_seconds(self) -> int:
-        """The timer runs as often as the most eager sampled host wants."""
-        seconds = [
-            self._interval_for(host)
-            for host in self.service.store.host_list()
-            if getattr(host, "enabled", True) and getattr(host, "monitor_usage", True)
-        ]
-        return max(1, min(seconds or [int(self.spin_interval.value())]))
-
-    def _hosts(self) -> List[HostProfile]:
-        return [
-            host
-            for host in self.service.store.host_list()
-            if host.id in self.cards
-            and getattr(host, "enabled", True)
-            and getattr(host, "monitor_usage", True)
-            and not needs_password(self.service, host)
-        ]
-
-    def _transport_for(self, host: HostProfile):
-        transport = self._transports.get(host.id)
-        if transport is None:
-            transport = self.service.transport_for(host)
-            self._transports[host.id] = transport
-        return transport
-
     def _sample_all(self) -> None:
-        # Cheap tuple comparison; there is no store signal for host edits.
-        self._sync_cards()
-        now = time.monotonic()
-        tick = self._tick_seconds()
-        for host in self._hosts():
-            # Only a host slower than the tick is gated on the clock; the rest
-            # are asked every tick, as they always were. Half a tick of slack,
-            # so a timer firing a hair early does not skip a whole interval.
-            last = self._last_sample.get(host.id)
-            interval = self._interval_for(host)
-            if interval > tick and last is not None and now - last + tick / 2.0 < interval:
-                continue
-            if host.id in self._busy:
-                # Still waiting on the last probe; stacking more would only
-                # make a slow host slower.
-                continue
-            waiting = self._skip_ticks.get(host.id, 0)
-            if waiting:
-                # Backing off after a failure, so as not to hammer an
-                # unreachable host every tick.
-                self._skip_ticks[host.id] = waiting - 1
-                continue
-            self._last_sample[host.id] = now
-            self._sample(host)
+        """Ask now, rather than at the next tick. The sampler re-reads the
+        host list first, which is what rebuilds the cards."""
+        self.sampler.sample_all()
 
-    def _sample(self, host: HostProfile) -> None:
-        card = self.cards.get(host.id)
+    def _on_sampled(self, host_id: str, stats) -> None:
+        card = self.cards.get(host_id)
+        if card is not None:
+            card.show_stats(stats)
+
+    def _on_sample_failed(self, host_id: str, message: str, retry_seconds: int) -> None:
+        card = self.cards.get(host_id)
         if card is None:
             return
-        self._busy.add(host.id)
-        command = host_stats.command_for(host.scheduler == SCHEDULER_WINDOWS)
-        host_id = host.id
-        # Resolved on the GUI thread: concurrent workers reading/writing
-        # self._transports without a lock would be a data race.
-        try:
-            transport = self._transport_for(host)
-        except Exception as exc:
-            self._busy.discard(host_id)
-            if host_id in self.cards:
-                self.cards[host_id].show_error(str(exc))
-            return
-
-        def work() -> str:
-            result = transport.run(command, timeout=max(15, int(host.connect_timeout or 10)))
-            return result.stdout
-
-        def ok(text: str) -> None:
-            self._busy.discard(host_id)
-            self._backoff.pop(host_id, None)
-            self._skip_ticks.pop(host_id, None)
-            parsed = host_stats.parse(text)
-            self._latest[host_id] = parsed
-            if host_id in self.cards:
-                self.cards[host_id].show_stats(parsed)
-            self._publish_web()
-
-        def failed(message: str) -> None:
-            self._busy.discard(host_id)
-            # A failed probe drops the connection, so the next tick builds a
-            # new one instead of reusing an already-closed socket.
-            self._close_transport(host_id)
-            waited = min(MAX_BACKOFF_TICKS, max(1, self._backoff.get(host_id, 0) * 2 or 1))
-            self._backoff[host_id] = waited
-            self._skip_ticks[host_id] = waited
-            if host_id in self.cards:
-                seconds = waited * self._interval_for(host)
-                self.cards[host_id].show_error(f"{message} - retrying in {seconds}s")
-            self._latest[host_id] = host_stats.HostStats(error=message)
-            self._publish_web()
-
-        run_async(self.service.pool, work, on_success=ok, on_error=failed, quiet=True)
-
-    # --- the web view -------------------------------------------------------
-
-    def _web_snapshot(self) -> dict:
-        """Everything the page shows, as plain data.
-
-        Built on the GUI thread and handed over finished. The HTTP thread gets
-        a dict and never a widget, a transport or a store cursor -- reading any
-        of those from a request handler is the bug this shape exists to make
-        impossible.
-        """
-
-        by_host: Dict[str, list] = {}
-        for job in self.service.store.job_list():
-            # Excluding TERMINAL_STATES, not "not in ACTIVE_STATES": that set
-            # is about which jobs the poller must still contact the host for,
-            # and leaves out DOWNLOADING, QUEUED and BLOCKED -- all of which
-            # are exactly what someone opens this page to look at.
-            if job.state in TERMINAL_STATES:
-                continue
-            by_host.setdefault(job.host_id, []).append(
-                {"name": job.name, "state": primary_state_word(job)}
-            )
-
-        hosts = []
-        for host in self.service.store.host_list():
-            if host.id not in self.cards:
-                continue
-            stats = self._latest.get(host.id)
-            if not getattr(host, "monitor_usage", True):
-                # A value left from before sampling was switched off would be
-                # served as if it were current.
-                stats = None
-            entry = {
-                "name": host.name,
-                "jobs": by_host.get(host.id, []),
-                "summary": "",
-                "error": "",
-                "load_fraction": 0.0,
-                "memory_fraction": 0.0,
-                "load_detail": "",
-                "memory_detail": "",
-            }
-            if stats is not None:
-                entry["summary"] = stats.summary
-                entry["error"] = stats.error
-                entry["load_fraction"] = stats.load_fraction
-                entry["memory_fraction"] = stats.memory_fraction
-                if stats.load:
-                    entry["load_detail"] = f"{stats.load[0]:.2f}"
-                if stats.mem_total_mb and stats.mem_free_mb:
-                    entry["memory_detail"] = (
-                        f"{stats.mem_used_mb / 1024:.1f}/{stats.mem_total_mb / 1024:.1f} GB"
-                    )
-            if not getattr(host, "monitor_usage", True):
-                entry["summary"] = NOT_SAMPLED
-            hosts.append(entry)
-        return {"hosts": hosts, "generated": time.strftime("%H:%M:%S")}
-
-    def _publish_web(self) -> None:
-        if self._web is not None and self._web.running:
-            self._web.publish(self._web_snapshot())
-
-    def _start_web(self, announce: bool = True) -> bool:
-        from .web_monitor import DEFAULT_PORT, WebMonitorServer, ensure_web_token
-
-        if self._web is not None and self._web.running:
-            return True
-        # Read from disk, not minted here: a link saved on a phone has to keep
-        # working after this window is closed and reopened.
-        server = WebMonitorServer(ensure_web_token(self.service.store.directory))
-        try:
-            server.start(int(self.service.store.get_pref("host_monitor_web_port", DEFAULT_PORT)))
-        except OSError as exc:
-            self._web = None
-            if announce:
-                QMessageBox.warning(self, "Web Monitor", f"Could not start: {exc}")
-            else:
-                logging.warning("Job Manager: web monitor did not start: %s", exc)
-            return False
-        self._web = server
-        self.service.store.set_pref("host_monitor_web", True)
-        self._publish_web()
-        return True
-
-    def _stop_web(self) -> None:
-        if self._web is not None:
-            self._web.stop()
-        self._web = None
-        self.service.store.set_pref("host_monitor_web", False)
-
-    def _renew_web_token(self) -> str:
-        """Mint a new secret, cutting off every link and cookie already out."""
-        from .web_monitor import ensure_web_token
-
-        token = ensure_web_token(self.service.store.directory, renew=True)
-        if self._web is not None:
-            self._web.set_token(token)
-        return token
-
-    def _open_web_dialog(self) -> None:
-        from .web_monitor_dialog import WebMonitorDialog
-
-        dialog = WebMonitorDialog(self, parent=self)
-        dialog.exec()
+        if retry_seconds:
+            card.show_error(f"{message} - retrying in {retry_seconds}s")
+        else:
+            card.show_error(message)
 
     # --- teardown -----------------------------------------------------------
-
-    def _close_transport(self, host_id: str) -> None:
-        """Hand a transport's teardown to the pool instead of closing it here:
-        paramiko's close() can block on a host that has gone quiet. Popped
-        from ``self._transports`` immediately either way, so a probe stops
-        seeing it as open the moment this returns."""
-        transport = self._transports.pop(host_id, None)
-        if transport is None:
-            return
-
-        def close() -> None:
-            try:
-                transport.close()
-            except Exception:  # pragma: no cover - closing must never raise here
-                pass
-
-        run_async(self.service.pool, close, quiet=True)
 
     def _save_settings(self) -> None:
         """Save user preferences for Host Monitor only upon closing."""
@@ -1391,17 +1149,11 @@ class HostMonitorDialog(QDialog):
         if self._torn_down:
             return
         self._torn_down = True
-        self._timer.stop()
-        # The socket goes, the preference stays: closing the window is not the
-        # same statement as "do not serve this again", and clearing it here
-        # would make the remembered choice unrememberable.
-        if self._web is not None:
-            self._web.stop()
-            self._web = None
+        # Released, not stopped: the web view may still be holding it, and the
+        # sampler hands the connections back when the last holder lets go.
+        self.sampler.release(self)
         self._save_settings()
         self._disconnect_signals()
-        for host_id in list(self._transports):
-            self._close_transport(host_id)
 
     def done(self, r: int) -> None:
         # Where accept(), reject() and a close on a *visible* window all arrive.

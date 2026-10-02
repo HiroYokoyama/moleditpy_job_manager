@@ -620,7 +620,8 @@ queue id, a state.
 
 ### Being told when a job ends
 
-The status bar counter and the icon badge both answer "how many are running",
+The status bar counter (**Show the job count in MoleditPy's status bar** in
+**Settings...** hides it) and the icon badge both answer "how many are running",
 which is a number you have to go and look at. For a calculation that runs for
 hours the useful moment is the *transition*, so a desktop notification is
 raised when a job finishes, fails, or disappears from the queue — naming the
@@ -645,12 +646,13 @@ with it selected, clearing a filter that would hide it), **Settings...**, and
 **Quit MoleditPy**. Quit goes through MoleditPy's own close,
 so unsaved work is still asked about, and Cancel there cancels the quit.
 
-**Keep tracking jobs after MoleditPy closes**, under **Desktop** in **Settings...**, lets MoleditPy
-quit for real while jobs are still running. As it closes, the Job Manager starts
-again on its own — the same package, run as a separate small process with only
-its tray icon — and MoleditPy's own process, with its 3D view and molecules,
-ends. The new icon says how many jobs it took over; polling, notifications,
-chat messages and auto-download all carry on. Results are downloaded but not
+**Keep the Job Manager running after MoleditPy closes**, under **Desktop** in
+**Settings...**, lets MoleditPy quit for real while the Job Manager stays. As it
+closes, the Job Manager starts again on its own — the same package, run as a
+separate small process with only its tray icon — and MoleditPy's own process,
+with its 3D view and molecules, ends. The new icon says how many jobs it took
+over, if any; polling, notifications, chat messages, auto-download and the web
+monitor all carry on. Results are downloaded but not
 opened, since there is no MoleditPy to open them in.
 
 Its menu is the same, with **Open MoleditPy** and **Quit Job Manager** at the
@@ -660,8 +662,10 @@ job list, so the two never track the same jobs at once. Opening the standalone
 Job Manager by hand while it runs brings up the tray process's own monitor
 instead (see *Standalone* in the README).
 
-Nothing is handed over when no job is active, and nothing when you chose **Quit
-MoleditPy** from the tray, which means quit everything. Off by default, since
+It is handed over with no job active as well: the tray menu, and the web
+monitor if it is on, are still worth having with the queue empty. Nothing is
+handed over when you chose **Quit MoleditPy** from the tray, which means quit
+everything. Off by default, since
 closing the window has always ended the application.
 
 **Only if the Job Manager was opened in that session**, just below it and on by

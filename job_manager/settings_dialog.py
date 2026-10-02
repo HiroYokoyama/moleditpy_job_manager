@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QSpinBox,
     QVBoxLayout,
@@ -39,12 +40,13 @@ from . import PLUGIN_VERSION, webhook, win_taskbar
 from .store import MAX_POLL_INTERVAL, MIN_POLL_INTERVAL, RECOMMENDED_MIN_POLL_INTERVAL
 from .theme import CY_AMBER, apply_theme
 
-KEEP_TRACKING_TEXT = "Keep tracking jobs after MoleditPy closes"
+KEEP_TRACKING_TEXT = "Keep the Job Manager running after MoleditPy closes"
+WEB_SERVE_TEXT = "Serve the Host Monitor to a browser (read-only, 127.0.0.1)"
 ONLY_IF_OPENED_TEXT = "Only if the Job Manager was opened in that session"
 
 
 class SettingsDialog(QDialog):
-    """Polling, results, being told, the desktop, and the local API."""
+    """Polling, results, being told, the desktop, the web view and the local API."""
 
     def __init__(self, service, parent: Optional[QWidget] = None, standalone: bool = False):
         super().__init__(parent)
@@ -59,6 +61,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(self._results_group())
         layout.addWidget(self._job_end_group())
         layout.addWidget(self._desktop_group())
+        layout.addWidget(self._web_group())
         if not standalone:
             layout.addWidget(self._api_group())
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
@@ -68,6 +71,7 @@ class SettingsDialog(QDialog):
         self._update_interval_warning()
         self._sync_chat_controls()
         self._sync_api_status()
+        self._sync_web_status()
 
     # --- the groups ----------------------------------------------------------
 
@@ -167,13 +171,19 @@ class SettingsDialog(QDialog):
         # Windows only: elsewhere the tick would change nothing anyone can see.
         self.chk_taskbar_progress.setVisible(win_taskbar.AVAILABLE)
         form.addRow(self.chk_taskbar_progress)
+        self.chk_status_counter = self._tick(
+            "Show the job count in MoleditPy's status bar", "status_bar_counter", True
+        )
+        # MoleditPy's own window: there is none in a Job Manager run on its own.
+        self.chk_status_counter.setVisible(not self.standalone)
+        form.addRow(self.chk_status_counter)
         self.chk_keep_tracking = self._tick(
             KEEP_TRACKING_TEXT, "keep_running_in_tray", False, refresh=False
         )
         self.chk_keep_tracking.setToolTip(
-            "When MoleditPy closes with jobs still active, the Job Manager carries on "
-            "by itself in the tray -- polling, notifying and downloading -- until "
-            "MoleditPy is opened again."
+            "When MoleditPy closes, the Job Manager carries on by itself in the "
+            "tray -- polling, notifying, downloading and serving the web view, "
+            "with or without jobs -- until MoleditPy is opened again."
         )
         self.chk_keep_tracking.toggled.connect(self._on_keep_tracking_toggled)
         form.addRow(self.chk_keep_tracking)
@@ -188,6 +198,26 @@ class SettingsDialog(QDialog):
         self.chk_keep_tracking.toggled.connect(self.chk_only_if_opened.setEnabled)
         self.chk_only_if_opened.toggled.connect(self._on_keep_tracking_toggled)
         form.addRow(self.chk_only_if_opened)
+        return group
+
+    def _web_group(self) -> QGroupBox:
+        group = QGroupBox("Web Monitor")
+        form = QFormLayout(group)
+        self.chk_web = QCheckBox(WEB_SERVE_TEXT)
+        self.chk_web.setToolTip(
+            "Hosts and active jobs on a page any browser on this machine can "
+            "open -- or a phone, once published with Tailscale. Hosts are "
+            "sampled only while the page is being looked at."
+        )
+        self.chk_web.toggled.connect(self._on_web_toggled)
+        form.addRow(self.chk_web)
+        row = QHBoxLayout()
+        self.lbl_web = QLabel("")
+        row.addWidget(self.lbl_web, 1)
+        self.btn_web = QPushButton("Links and Tailscale...")
+        self.btn_web.clicked.connect(self._open_web_dialog)
+        row.addWidget(self.btn_web)
+        form.addRow(row)
         return group
 
     def _api_group(self) -> QGroupBox:
@@ -297,6 +327,40 @@ class SettingsDialog(QDialog):
             text = ""
         self.lbl_api.setText(text)
 
+    def _web(self):
+        from . import web_service
+
+        return web_service.for_service(self.service)
+
+    def _on_web_toggled(self, enabled: bool) -> None:
+        web = self._web()
+        if enabled and not web.running:
+            if not web.start():
+                QMessageBox.warning(self, "Web Monitor", f"Could not start: {web.error}")
+        elif not enabled and web.running:
+            web.stop()
+        self._sync_web_status()
+
+    def _sync_web_status(self) -> None:
+        web = self._web()
+        self.chk_web.blockSignals(True)
+        self.chk_web.setChecked(web.running)
+        self.chk_web.blockSignals(False)
+        if web.running:
+            self.lbl_web.setText(f"Serving on 127.0.0.1:{web.port}")
+        elif self.store.get_pref("host_monitor_web", False):
+            # Waiting for the port a closing MoleditPy still holds, or failed.
+            self.lbl_web.setText(web.error or "Starting...")
+        else:
+            self.lbl_web.setText("Off")
+        self.btn_web.setEnabled(web.running)
+
+    def _open_web_dialog(self) -> None:
+        from .web_monitor_dialog import WebMonitorDialog
+
+        WebMonitorDialog(self._web(), self).exec()
+        self._sync_web_status()
+
     def _open_api_dialog(self) -> None:
         from .api_dialog import ApiDialog
 
@@ -304,4 +368,4 @@ class SettingsDialog(QDialog):
         self._sync_api_status()
 
 
-__all__ = ["KEEP_TRACKING_TEXT", "ONLY_IF_OPENED_TEXT", "SettingsDialog"]
+__all__ = ["KEEP_TRACKING_TEXT", "ONLY_IF_OPENED_TEXT", "WEB_SERVE_TEXT", "SettingsDialog"]

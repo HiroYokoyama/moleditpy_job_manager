@@ -16,7 +16,7 @@ import logging
 from typing import Any, Optional
 
 PLUGIN_NAME = "Job Manager"
-PLUGIN_VERSION = "2.2.1"
+PLUGIN_VERSION = "2.3.0"
 PLUGIN_AUTHOR = "HiroYokoyama"
 
 PLUGIN_DESCRIPTION = "Submit calculations to remote HPC clusters over SSH, track queue status, and fetch results back into MoleditPy. Ready-made command lines for ORCA, Gaussian, CP2K, GAMESS, MOPAC, NWChem, Psi4, PySCF, Quantum ESPRESSO, VASP and xTB; job lists export to CSV or .pmejbs and reopen by drag and drop. Runs on this machine too, with no SSH; chains jobs with each scheduler's own dependency flag; and can hold a job until a chosen time. Installing paramiko adds a backend that keeps one SSH session open and can log in with a password."
@@ -503,6 +503,25 @@ def initialize(context) -> None:
     # After tracking, so an API that is on adopts the service that resume
     # already built rather than making a second one.
     _resume_api(store)
+    _resume_web(store)
+
+
+def _resume_web(store: Optional[Any] = None) -> None:
+    """Serve the web view at load when the user left it on.
+
+    It used to start only with the Host Monitor window, so a saved link on a
+    phone loaded a blank page until someone opened that window at the desk.
+    A session with it off still builds no service.
+    """
+    store = store if store is not None else (_service.store if _service is not None else None)
+    if store is None or not store.get_pref("host_monitor_web", False):
+        return
+    try:
+        from . import web_service
+
+        web_service.resume(get_service(store=store))
+    except Exception:
+        logging.warning("Job Manager: the web monitor did not start", exc_info=True)
 
 
 def run(mw) -> None:
@@ -719,6 +738,13 @@ def shutdown() -> None:
             logging.debug("Job Manager: status widget teardown failed", exc_info=True)
         _status_widget = None
     if _service is not None:
+        try:
+            from . import web_service
+
+            # The socket and the sampler, before the service they read.
+            web_service.shutdown_for(_service)
+        except Exception:
+            logging.debug("Job Manager: web monitor teardown failed", exc_info=True)
         try:
             _service.shutdown()
         except Exception:

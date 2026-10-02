@@ -79,21 +79,24 @@ fetch, open.
   no jobs. Optionally the same count goes on the application icon in the **OS
   task bar** — the Dock on macOS, the task bar button on Windows, the launcher
   entry on Linux — which is off by default, since the icon is MoleditPy's
-  rather than this plugin's.
+  rather than this plugin's. The status bar counter can be switched off in
+  Settings.
 - **One Settings window** — **Settings...** in the monitor's toolbar, in the
   tray menu, or under Extensions → Job Manager — holds every standing
   preference: the poll interval, where results go and whether they open,
-  notifications and chat alerts, the task bar and the tray, and the local API.
+  notifications and chat alerts, the task bar and the tray, the web monitor
+  and the local API.
 - **A tray icon** that says the same at a glance — a green dot while jobs run,
   amber while they wait, red when one failed and you have not looked yet — and
   whose right-click menu opens the monitor, starts a new job, refreshes, lists
   the active jobs (pick one to jump to it), opens Settings and quits
-  MoleditPy. Optionally (in Settings) **keep tracking jobs after MoleditPy
-  closes**: MoleditPy quits for real, and
-  the Job Manager carries on alone in the tray — polling, notifying and
-  downloading — until you open MoleditPy again, which takes the jobs back. Off
-  by default; and by default only for a session in which you opened the Job
-  Manager (**Only if the Job Manager was opened in that session**).
+  MoleditPy. Optionally (in Settings) **keep the Job Manager running after
+  MoleditPy closes**: MoleditPy quits for real, and the Job Manager carries on
+  alone in the tray — polling, notifying, downloading and serving the web
+  monitor, with or without jobs — until you open MoleditPy again, which takes
+  the jobs back. Off by default; and by default only for a session in which you
+  opened the Job Manager (**Only if the Job Manager was opened in that
+  session**).
 - **On the Windows task bar**, the job monitor's button shows the batch's
   progress — green filling as jobs end, yellow for a blocked chain, red for an
   unseen failure — and its thumbnail carries *Refresh now*, *New job* and
@@ -192,9 +195,18 @@ Every route, every field and the security model: [docs/API.md](docs/API.md).
 
 ### Checking on it from a phone
 
-The **Host Monitor** can serve itself as a web page — the same cards, the same
-meters, the same job lists — for a browser instead of a Qt window. Press
-**Web...** in the Host Monitor's top bar.
+The **Host Monitor** can be served as a web page — the same cards, the same
+meters, the same job lists — for a browser instead of a Qt window. Tick
+**Serve the Host Monitor to a browser** under **Web Monitor** in
+**Settings...**; **Links and Tailscale...** beside it has the link and the
+commands below.
+
+It serves whenever that is ticked, with or without the Host Monitor window open,
+and from the tray process too once MoleditPy has closed. The hosts are sampled
+only while someone is looking: a request starts sampling, and it stops six
+minutes after the last one (longer than the page's slowest refresh). The first
+load of an idle page names the hosts and says it is waiting for the first
+reading; the numbers follow on the page's next refresh.
 
 The page is **read-only**. There is no route on it that cancels, submits,
 downloads or deletes anything, so a link that gets away from you costs a look
@@ -309,9 +321,9 @@ and, finding one, brings *that* one's Job Monitor (or Host Monitor, with
 `--host-monitor`) to the front and exits. A second tracker beside the first
 would ask every host twice and announce every finished job twice. Two MoleditPy
 windows each run the plugin, as before: that is MoleditPy's choice to start
-twice, not this plugin's. Closing a standalone window with jobs still running
-hands them to the tray process, exactly as closing MoleditPy does, when
-**Keep tracking jobs after MoleditPy closes** is on in Settings.
+twice, not this plugin's. Closing a standalone window hands over to the tray
+process, exactly as closing MoleditPy does, when **Keep the Job Manager running
+after MoleditPy closes** is on in Settings.
 
 ### Launch via Batch File (.bat) & Desktop Shortcut
 
