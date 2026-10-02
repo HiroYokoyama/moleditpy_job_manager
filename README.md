@@ -80,11 +80,16 @@ fetch, open.
   task bar** — the Dock on macOS, the task bar button on Windows, the launcher
   entry on Linux — which is off by default, since the icon is MoleditPy's
   rather than this plugin's.
+- **One Settings window** — **Settings...** in the monitor's toolbar, in the
+  tray menu, or under Extensions → Job Manager — holds every standing
+  preference: the poll interval, where results go and whether they open,
+  notifications and chat alerts, the task bar and the tray, and the local API.
 - **A tray icon** that says the same at a glance — a green dot while jobs run,
   amber while they wait, red when one failed and you have not looked yet — and
   whose right-click menu opens the monitor, starts a new job, refreshes, lists
-  the active jobs (pick one to jump to it) and quits MoleditPy. Optionally
-  **keep tracking jobs after MoleditPy closes**: MoleditPy quits for real, and
+  the active jobs (pick one to jump to it), opens Settings and quits
+  MoleditPy. Optionally (in Settings) **keep tracking jobs after MoleditPy
+  closes**: MoleditPy quits for real, and
   the Job Manager carries on alone in the tray — polling, notifying and
   downloading — until you open MoleditPy again, which takes the jobs back. Off
   by default.
@@ -97,7 +102,7 @@ fetch, open.
 - **Be told** when a job ends: a desktop notification names the job and the
   host when it finishes, fails or vanishes from the queue. On by default, and
   one checkbox away from off. The same line can go to **Slack, Discord or
-  Teams** — paste an incoming-webhook URL under *Chat alerts...* and it reaches
+  Teams** — paste an incoming-webhook URL under *Settings → Chat webhook...* and it reaches
   you away from the machine. Nothing is installed for it; see
   [docs/WORKFLOW.md](docs/WORKFLOW.md#being-told-somewhere-else-slack-discord-teams).
 - **Read the request from the input** rather than asking for it twice: ORCA,
@@ -344,8 +349,8 @@ A login node is not a status API, so:
 - one `squeue`/`qstat` per **host** per cycle, no matter how many jobs you have;
 - 120 s by default. You *can* go faster — down to 5 s, which is useful against
   your own workstation or while debugging — but anything under 30 s is flagged
-  with a **fast polling** warning next to the field explaining what it costs
-  the login node;
+  with a **fast polling** warning next to the field (in **Settings...**)
+  explaining what it costs the login node;
 - the timer stops entirely when no job is active;
 - a host that errors backs off exponentially, up to 15 minutes;
 - any one host can override the interval (**Hosts… ▸ Monitoring ▸ Poll jobs

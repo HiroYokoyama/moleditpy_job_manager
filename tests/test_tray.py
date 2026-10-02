@@ -72,6 +72,7 @@ class TrayTestCase(unittest.TestCase):
     def presence(self, service, main_window=None) -> Presence:
         shown = Presence(service, main_window, self.actions)
         self.addCleanup(shown.detach)
+        self._shown = shown
         return shown
 
     def menu_texts(self, controller) -> list:
@@ -193,17 +194,15 @@ class TestMenu(TrayTestCase):
     def test_an_ampersand_in_a_name_is_shown_not_underlined(self):
         self.assertEqual(menu_label("A&B"), "A&&B")
 
-    def test_the_toggles_write_their_preferences(self):
-        service = self.service()
-        shown = self.presence(service)
-        notify_action = self.action(shown.tray, "Notify me when a job ends")
-        self.assertTrue(notify_action.isChecked())
-        notify_action.trigger()
-        self.assertFalse(service.store.get_pref("notify_on_finish"))
-
-        flash = self.action(shown.tray, "Flash the task bar when a job ends")
-        flash.trigger()
-        self.assertFalse(service.store.get_pref("flash_on_finish"))
+    def test_settings_open_from_the_menu(self):
+        # The switches are in the Settings window, not duplicated here.
+        self.actions["settings"] = MagicMock()
+        shown = self.presence(self.service())
+        texts = self.menu_texts(shown.tray)
+        for gone in ("Notify me when a job ends", "Flash the task bar when a job ends"):
+            self.assertNotIn(gone, texts)
+        self.action(shown.tray, "Settings...").trigger()
+        self.actions["settings"].assert_called_once()
 
 
 class TestIconAndTooltip(TrayTestCase):
@@ -286,16 +285,23 @@ class TestKeepRunning(TrayTestCase):
         self.presence(self.service(keep_running_in_tray=True))
         self.assertTrue(self.app.quitOnLastWindowClosed())
 
-    def test_the_menu_toggle_applies_at_once(self):
+    def test_the_settings_tick_applies_at_once(self):
+        from job_manager.settings_dialog import SettingsDialog
+
         self.app.setQuitOnLastWindowClosed(True)
         service = self.service()
-        shown = self.presence(service)
-        self.action(shown.tray, "Keep tracking jobs after MoleditPy closes").trigger()
-        self.assertTrue(service.store.get_pref("keep_running_in_tray"))
-        self.assertFalse(self.app.quitOnLastWindowClosed())
+        self.presence(service)
+        dialog = SettingsDialog(service)
+        self.addCleanup(dialog.deleteLater)
+        import job_manager.presence as presence_module
 
-        self.action(shown.tray, "Keep tracking jobs after MoleditPy closes").trigger()
-        self.assertTrue(self.app.quitOnLastWindowClosed())
+        with patch.object(presence_module, "current", return_value=self._shown):
+            dialog.chk_keep_tracking.setChecked(True)
+            self.assertTrue(service.store.get_pref("keep_running_in_tray"))
+            self.assertFalse(self.app.quitOnLastWindowClosed())
+
+            dialog.chk_keep_tracking.setChecked(False)
+            self.assertTrue(self.app.quitOnLastWindowClosed())
 
     def test_detach_restores_quitting_and_brings_the_window_back(self):
         self.app.setQuitOnLastWindowClosed(True)
@@ -430,8 +436,10 @@ class TestHandOff(TrayTestCase):
         self.assertEqual(messages, [])
 
     def test_the_menu_has_no_show_moleditpy(self):
-        shown = self.presence(self.service(keep_running_in_tray=True))
-        self.assertIn("Keep tracking jobs after MoleditPy closes", self.menu_texts(shown.tray))
+        main = MagicMock()
+        main.isVisible.return_value = False
+        shown = self.presence(self.service(keep_running_in_tray=True), main_window=main)
+        self.assertNotIn("Show MoleditPy", self.menu_texts(shown.tray))
 
 
 class TestTheStandaloneMenu(TrayTestCase):
@@ -445,7 +453,7 @@ class TestTheStandaloneMenu(TrayTestCase):
         texts = self.menu_texts(self.standalone(["moleditpy"]).tray)
         self.assertIn("Quit Job Manager", texts)
         self.assertNotIn("Quit MoleditPy", texts)
-        self.assertNotIn("Keep tracking jobs after MoleditPy closes", texts)
+        self.assertIn("Settings...", texts)
 
     def test_it_can_start_moleditpy_again(self):
         shown = self.standalone(["moleditpy", "--flag"])

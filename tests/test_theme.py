@@ -185,7 +185,9 @@ class TestStateColours(DialogTestCase):
         self.assertIn("border-left", BANNER_STYLE)
 
     def test_interval_warning_uses_amber(self):
-        dialog = JobsDialog(self.service)
+        from job_manager.settings_dialog import SettingsDialog
+
+        dialog = SettingsDialog(self.service)
         self.addCleanup(dialog.deleteLater)
         self.assertIn(theme.CY_AMBER, dialog.lbl_interval_warning.styleSheet())
 

@@ -253,31 +253,6 @@ class TestJobsDialog(DialogTestCase):
         self.dialog = JobsDialog(self.service)
         self.addCleanup(self.dialog.deleteLater)
 
-    def test_interval_spinbox_reflects_the_store(self):
-        self.assertEqual(self.dialog.spin_interval.value(), self.store.poll_interval)
-
-    def test_interval_floor_is_enforced_by_the_widget(self):
-        self.dialog.spin_interval.setValue(0)
-        self.assertGreaterEqual(self.dialog.spin_interval.value(), 5)
-
-    def test_a_fast_interval_is_accepted_but_flagged(self):
-        self.dialog.spin_interval.setValue(10)
-        self.assertEqual(self.store.poll_interval, 10)
-        self.assertTrue(self.dialog.lbl_interval_warning.text())
-        self.assertIn("login node", self.dialog.lbl_interval_warning.toolTip())
-
-    def test_the_warning_clears_when_the_interval_is_courteous(self):
-        self.dialog.spin_interval.setValue(10)
-        self.dialog.spin_interval.setValue(120)
-        self.assertEqual(self.dialog.lbl_interval_warning.text(), "")
-
-    def test_no_warning_at_the_default_interval(self):
-        self.assertEqual(self.dialog.lbl_interval_warning.text(), "")
-
-    def test_changing_the_interval_persists_and_reschedules(self):
-        self.dialog.spin_interval.setValue(300)
-        self.assertEqual(JobStore(self.tmp).get_pref("poll_interval"), 300)
-
     def test_buttons_are_disabled_without_a_selection(self):
         self.assertFalse(self.dialog.btn_cancel.isEnabled())
         self.assertFalse(self.dialog.btn_download.isEnabled())
@@ -312,59 +287,24 @@ class TestJobsDialog(DialogTestCase):
         self.dialog._refresh_now()
         self.assertIn("rate limited", self.dialog.txt_log.toPlainText())
 
-    def test_auto_open_preference_is_persisted(self):
-        self.dialog.chk_auto_open.setChecked(False)
-        self.assertFalse(JobStore(self.tmp).get_pref("open_result_after_download"))
-
-    def test_the_chat_tick_sits_beside_the_desktop_one(self):
-        # Both say "tell me when a job ends", so they belong in the same row of
-        # the monitor -- not in the wizard, which is per-submission.
-        from PyQt6.QtWidgets import QHBoxLayout
-
-        rows = [
-            row
-            for row in self.dialog.findChildren(QHBoxLayout)
-            if row.indexOf(self.dialog.chk_notify) >= 0
-        ]
-        self.assertEqual(len(rows), 1)
-        row = rows[0]
-        self.assertEqual(row.indexOf(self.dialog.chk_chat), row.indexOf(self.dialog.chk_notify) + 1)
-
-    def test_the_chat_tick_is_unusable_until_a_room_is_set(self):
-        # A tick that can be set with nothing behind it claims messages are
-        # going out while none are, and only a job ending disproves it.
-        self.assertFalse(self.dialog.chk_chat.isEnabled())
-        self.assertFalse(self.dialog.chk_chat.isChecked())
-
-    def test_the_chat_tick_is_persisted(self):
-        self.store.set_pref("notify_webhook", "https://hooks.slack.com/services/T/B/x")
-        self.dialog._sync_chat_controls()
-        self.assertTrue(self.dialog.chk_chat.isEnabled())
-
-        self.dialog.chk_chat.setChecked(True)
-
-        self.assertTrue(JobStore(self.tmp).get_pref("notify_chat"))
-
-    def test_syncing_the_row_does_not_write_the_setting_back(self):
-        # It runs whenever the URL might have changed; letting setChecked
-        # through would overwrite the user's own choice on every open.
-        self.store.set_pref("notify_webhook", "https://hooks.slack.com/services/T/B/x")
-        self.store.set_pref("notify_chat", True)
-        self.dialog._sync_chat_controls()
-        self.store.set_pref("notify_chat", False)
-
-        self.dialog._sync_chat_controls()
-
-        self.assertFalse(self.store.get_pref("notify_chat"))
+    def test_the_preferences_are_one_button_away(self):
+        # They were a row of ticks here and an interval in the toolbar; all of
+        # them now live in the Settings window.
+        self.assertEqual(self.dialog.btn_settings.text(), "Settings...")
+        for gone in ("chk_auto_open", "chk_notify", "chk_chat", "spin_interval"):
+            self.assertFalse(hasattr(self.dialog, gone), gone)
+        with patch("job_manager.settings_dialog.SettingsDialog.exec") as shown:
+            self.dialog.btn_settings.click()
+        shown.assert_called_once()
 
     def test_results_ready_does_not_open_when_auto_open_is_off(self):
-        self.dialog.chk_auto_open.setChecked(False)
+        self.store.set_pref("open_result_after_download", False)
         with patch("job_manager.jobs_dialog.open_in_host") as opener:
             self.service.results_ready.emit("j1", ["/tmp/a.out"])
         opener.assert_not_called()
 
     def test_results_ready_opens_when_auto_open_is_on(self):
-        self.dialog.chk_auto_open.setChecked(True)
+        self.store.set_pref("open_result_after_download", True)
         with patch("job_manager.jobs_dialog.open_in_host", return_value=True) as opener:
             self.service.results_ready.emit("j1", ["/tmp/a.out"])
         opener.assert_called_once_with("/tmp/a.out")

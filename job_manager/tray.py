@@ -33,8 +33,6 @@ from .presence import summary_text, tray_state
 from .theme import CY_AMBER, CY_GREEN, CY_RED
 
 _DOT_COLORS = {"busy": CY_GREEN, "queued": CY_AMBER, "error": CY_RED}
-
-KEEP_TRACKING_LABEL = "Keep tracking jobs after MoleditPy closes"
 _ICON_SIZES = (16, 20, 24, 32, 40, 48, 64)
 
 #: How many jobs the menu lists before saying how many more there are.
@@ -192,29 +190,22 @@ class TrayController(QObject):
             self._add(sub, f"{len(jobs) - MENU_JOB_LIMIT} more...", self.actions.get("monitor"))
 
         menu.addSeparator()
-        self._toggle(menu, "Notify me when a job ends", "notify_on_finish", True)
-        self._toggle(menu, "Flash the task bar when a job ends", "flash_on_finish", True)
+        # The switches themselves live in the one Settings window, not here
+        # too: two copies of a preference is one more place to look.
+        self._add(menu, "Settings...", self.actions.get("settings"))
         if self.standalone:
             menu.addSeparator()
             if self.relaunch:
                 self._add(menu, "Open MoleditPy", self.open_moleditpy)
             self._add(menu, "Quit Job Manager", self.quit_application)
             return
-        keep = self._toggle(menu, KEEP_TRACKING_LABEL, "keep_running_in_tray", False)
-        keep.toggled.connect(lambda _checked: self.apply_keep_running())
 
         menu.addSeparator()
-        if self.main_window is not None and not self._main_visible():
+        # Only the fallback ever hides MoleditPy's window; after a hand-off
+        # MoleditPy is gone, and the tray process offers Open MoleditPy.
+        if self.main_window is not None and not self._main_visible() and not self.hands_off():
             self._add(menu, "Show MoleditPy", self.show_main_window)
         self._add(menu, "Quit MoleditPy", self.quit_application)
-
-    def _toggle(self, menu: QMenu, text: str, pref: str, default: bool) -> QAction:
-        store = self.service.store
-        action = menu.addAction(text)
-        action.setCheckable(True)
-        action.setChecked(bool(store.get_pref(pref, default)))
-        action.toggled.connect(lambda checked, key=pref: store.set_pref(key, bool(checked)))
-        return action
 
     def _listed_jobs(self):
         jobs = list(self.service.store.active_jobs())
@@ -387,4 +378,4 @@ class TrayController(QObject):
             self.menu = None
 
 
-__all__ = ["KEEP_TRACKING_LABEL", "MENU_JOB_LIMIT", "TrayController", "menu_label", "status_icon"]
+__all__ = ["MENU_JOB_LIMIT", "TrayController", "menu_label", "status_icon"]

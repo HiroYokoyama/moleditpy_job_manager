@@ -107,6 +107,30 @@ class TestTheComObject(NativeTestCase):
         ctypes.windll.user32.DestroyIcon(ctypes.c_void_p(hicon))
 
 
+class TestTheBadge(NativeTestCase):
+    """ "Show the count on the app icon": Qt draws it as the task bar button's
+    overlay icon. Whether Explorer then shows it is a Windows setting
+    (Taskbar > Show badges on taskbar apps); what is ours is that Qt takes it."""
+
+    def test_the_count_is_accepted_and_cleared_on_a_real_window(self):
+        from job_manager import taskbar
+
+        self.window()
+        self.assertTrue(taskbar.SUPPORTED)
+        self.assertTrue(taskbar.set_badge(3))
+        QApplication.processEvents()
+        self.assertTrue(taskbar.set_badge(120))
+        self.assertTrue(taskbar.clear_badge())
+
+    def test_a_window_opened_after_the_badge_does_not_break(self):
+        from job_manager import taskbar
+
+        self.assertTrue(taskbar.set_badge(2))
+        self.addCleanup(taskbar.clear_badge)
+        self.window()
+        QApplication.processEvents()
+
+
 class TestTheMonitorWindow(NativeTestCase):
     def dialog(self):
         from job_manager.jobs_dialog import JobsDialog

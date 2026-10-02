@@ -16,7 +16,7 @@ import logging
 from typing import Any, Optional
 
 PLUGIN_NAME = "Job Manager"
-PLUGIN_VERSION = "2.0.1"
+PLUGIN_VERSION = "2.1.0"
 PLUGIN_AUTHOR = "HiroYokoyama"
 
 PLUGIN_DESCRIPTION = "Submit calculations to remote HPC clusters over SSH, track queue status, and fetch results back into MoleditPy. Ready-made command lines for ORCA, Gaussian, CP2K, GAMESS, MOPAC, NWChem, Psi4, PySCF, Quantum ESPRESSO, VASP and xTB; job lists export to CSV or .pmejbs and reopen by drag and drop. Runs on this machine too, with no SSH; chains jobs with each scheduler's own dependency flag; and can hold a job until a chosen time. Installing paramiko adds a backend that keeps one SSH session open and can log in with a password."
@@ -238,6 +238,7 @@ def _install_presence(service) -> None:
                 "submit": lambda: show_submit(_context),
                 "host_monitor": lambda: show_host_monitor_standalone(_context),
                 "select_job": lambda job_id: show_job(job_id, _context),
+                "settings": lambda: show_settings(_context),
             },
         )
     except Exception:
@@ -411,6 +412,7 @@ def initialize(context) -> None:
         "Extensions/Job Manager/Host Monitor", lambda: show_host_monitor_standalone(context)
     )
     context.add_menu_action("Extensions/Job Manager/Submit Job...", lambda: show_submit(context))
+    context.add_menu_action("Extensions/Job Manager/Settings...", lambda: show_settings(context))
     # Its own entry rather than a tick in the monitor's preferences row: this
     # is where the token is read from, and a user following the API
     # documentation should not have to open a job window to find it.
@@ -489,6 +491,19 @@ def show_job(job_id: str, context=None) -> None:
     window = context.get_window(WINDOW_KEY)
     if window is not None and hasattr(window, "select_job"):
         window.select_job(job_id)
+
+
+def show_settings(context=None) -> None:
+    """Every standing preference, in one window, from the menu or the tray."""
+    context = context or _context
+    try:
+        from .settings_dialog import SettingsDialog
+
+        SettingsDialog(get_service(), None).exec()
+    except Exception as exc:
+        logging.exception("Job Manager: could not open the settings")
+        if context is not None:
+            context.show_status_message(f"Job Manager: {exc}", 5000)
 
 
 def show_submit(context=None) -> None:

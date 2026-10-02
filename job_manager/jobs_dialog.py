@@ -25,7 +25,6 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QAbstractItemView,
-    QCheckBox,
     QDialog,
     QFileDialog,
     QHBoxLayout,
@@ -37,7 +36,6 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
-    QSpinBox,
     QSplitter,
     QStyledItemDelegate,
     QTableView,
@@ -46,7 +44,7 @@ from PyQt6.QtWidgets import (
 )
 
 
-from . import PLUGIN_VERSION, webhook
+from . import PLUGIN_VERSION
 from .credentials import ensure_password
 from .models import (
     STATE_BLOCKED,
@@ -72,9 +70,6 @@ from .tasks import run_async
 from .window_utils import make_independent
 from .store import (
     JOB_EXTENSION,
-    MAX_POLL_INTERVAL,
-    MIN_POLL_INTERVAL,
-    RECOMMENDED_MIN_POLL_INTERVAL,
 )
 
 #: Job lists this window opens -- archived or not. .json covers files written
@@ -363,7 +358,6 @@ class JobsDialog(QDialog):
         self._build_ui()
         self._connect_service()
         self._update_buttons()
-        self._update_interval_warning()
         # Elapsed is only redrawn when the model changes, which is on a poll
         # result -- without a separate repaint it advanced in jumps.
         self._ticker = QTimer(self)
@@ -406,21 +400,15 @@ class JobsDialog(QDialog):
         toolbar.addWidget(self.btn_reload)
         toolbar.addWidget(self.btn_host_monitor)
         toolbar.addStretch(1)
-        toolbar.addWidget(QLabel("Poll every"))
-        self.spin_interval = QSpinBox()
-        self.spin_interval.setRange(MIN_POLL_INTERVAL, MAX_POLL_INTERVAL)
-        self.spin_interval.setSingleStep(30)
-        self.spin_interval.setSuffix(" s")
-        self.spin_interval.setValue(self.service.store.poll_interval)
-        self.spin_interval.setToolTip(
-            "One status query per host per cycle. "
-            f"{RECOMMENDED_MIN_POLL_INTERVAL} s or slower is the courteous setting."
+        # Every standing preference lives behind this one button: they were a
+        # row of ticks here, the interval in this toolbar, and switches only in
+        # the tray menu, and nobody could say where to look.
+        self.btn_settings = QPushButton("Settings...")
+        self.btn_settings.setToolTip(
+            "Polling, results, notifications, the task bar and the tray, the local API."
         )
-        self.spin_interval.valueChanged.connect(self._on_interval_changed)
-        toolbar.addWidget(self.spin_interval)
-        self.lbl_interval_warning = QLabel("")
-        self.lbl_interval_warning.setStyleSheet(f"color: {CY_AMBER};")
-        toolbar.addWidget(self.lbl_interval_warning)
+        self.btn_settings.clicked.connect(self.open_settings)
+        toolbar.addWidget(self.btn_settings)
         layout.addLayout(toolbar)
 
         self.lbl_archive = QLabel("")
@@ -585,54 +573,6 @@ class JobsDialog(QDialog):
         list_actions.addStretch(1)
         layout.addLayout(list_actions)
 
-        # Preferences, not actions, so on a line of their own.
-        actions = QHBoxLayout()
-        self.chk_auto_open = QCheckBox("Open results automatically")
-        self.chk_auto_open.setChecked(
-            bool(self.service.store.get_pref("open_result_after_download", True))
-        )
-        self.chk_auto_open.toggled.connect(
-            lambda checked: self.service.store.set_pref("open_result_after_download", checked)
-        )
-        actions.addWidget(self.chk_auto_open)
-
-        self.chk_taskbar_badge = QCheckBox("Show the count on the app icon")
-        self.chk_taskbar_badge.setToolTip(
-            "Show the number of active jobs on MoleditPy's own icon, and on Windows "
-            "the progress of the current batch on its task bar button."
-        )
-        self.chk_taskbar_badge.setChecked(bool(self.service.store.get_pref("taskbar_badge", False)))
-        self.chk_taskbar_badge.toggled.connect(self._on_taskbar_badge_toggled)
-        actions.addWidget(self.chk_taskbar_badge)
-
-        self.chk_notify = QCheckBox("Notify me when a job ends")
-        self.chk_notify.setToolTip("Raise a desktop notification when a tracked job ends.")
-        self.chk_notify.setChecked(bool(self.service.store.get_pref("notify_on_finish", True)))
-        self.chk_notify.toggled.connect(
-            lambda checked: self.service.store.set_pref("notify_on_finish", bool(checked))
-        )
-        actions.addWidget(self.chk_notify)
-
-        self.chk_chat = QCheckBox("Post to chat")
-        self.chk_chat.toggled.connect(
-            lambda checked: self.service.store.set_pref("notify_chat", bool(checked))
-        )
-        actions.addWidget(self.chk_chat)
-
-        # Just the ellipsis: a fourth labelled control here pushed the window's
-        # minimum width past a laptop screen.
-        self.btn_chat = QPushButton("...")
-        self.btn_chat.setMaximumWidth(36)
-        self.btn_chat.setToolTip(
-            "Also post to Slack, Discord or Teams when a job ends, so the news "
-            "reaches you away from this machine."
-        )
-        self.btn_chat.clicked.connect(self._edit_chat_webhook)
-        actions.addWidget(self.btn_chat)
-        self._sync_chat_controls()
-        actions.addStretch(1)
-        layout.addLayout(actions)
-
         self.lbl_status = QLabel("")
         layout.addWidget(self.lbl_status)
 
@@ -663,37 +603,11 @@ class JobsDialog(QDialog):
     def _on_job_updated(self, _job_id: str = "") -> None:
         self._update_buttons()
 
-    def _on_taskbar_badge_toggled(self, enabled: bool) -> None:
-        self.service.store.set_pref("taskbar_badge", bool(enabled))
-        # Applied now, not at the next poll, so switching off clears the icon.
-        from .taskbar import clear_badge
+    def open_settings(self) -> None:
+        """Every standing preference, in one window. See settings_dialog.py."""
+        from .settings_dialog import SettingsDialog
 
-        if not enabled:
-            clear_badge()
-        self.service.jobs_changed.emit()
-
-    def _edit_chat_webhook(self) -> None:
-        from .chat_webhook_dialog import ChatWebhookDialog
-
-        dialog = ChatWebhookDialog(self.service.store, self, pool=self.service.pool)
-        dialog.exec()
-        self._sync_chat_controls()
-
-    def _sync_chat_controls(self) -> None:
-        """Show the tick as unusable until a room is configured -- a tick set
-        with no webhook behind it would claim to post when nothing is sent."""
-        url = str(self.service.store.get_pref("notify_webhook", "") or "")
-        # Blocked: setChecked here must not overwrite the user's own setting
-        # with the merely-displayed state every time the dialog opens.
-        self.chk_chat.blockSignals(True)
-        self.chk_chat.setChecked(bool(url) and bool(self.service.store.get_pref("notify_chat")))
-        self.chk_chat.blockSignals(False)
-        self.chk_chat.setEnabled(bool(url))
-        self.chk_chat.setToolTip(
-            f"Post to {webhook.service_name(url)} as well, when a job ends."
-            if url
-            else "Set a webhook URL under Chat alerts... first."
-        )
+        SettingsDialog(self.service, self).exec()
 
     # --- helpers ------------------------------------------------------------
 
@@ -953,23 +867,6 @@ class JobsDialog(QDialog):
 
         dialog = HostsDialog(self.service, self)
         dialog.exec()
-
-    def _on_interval_changed(self, value: int) -> None:
-        self.service.store.set_pref("poll_interval", int(value))
-        self.service.poller.reschedule()
-        self._update_interval_warning()
-
-    def _update_interval_warning(self) -> None:
-        """Fast polling is permitted, but never silent."""
-        if not self.service.store.poll_interval_is_aggressive:
-            self.lbl_interval_warning.setText("")
-            self.lbl_interval_warning.setToolTip("")
-            return
-        self.lbl_interval_warning.setText("fast polling")
-        self.lbl_interval_warning.setToolTip(
-            f"Faster than {RECOMMENDED_MIN_POLL_INTERVAL} s queries the login node every "
-            "few seconds, for every host you have jobs on."
-        )
 
     def _refresh_now(self) -> None:
         if not self.service.poller.refresh_now():
@@ -1596,7 +1493,7 @@ class JobsDialog(QDialog):
         dialog.exec()
 
     def _on_results_ready(self, job_id: str, paths: list) -> None:
-        if not self.chk_auto_open.isChecked():
+        if not self.service.store.get_pref("open_result_after_download", True):
             return
         self.open_result_files(paths)
 

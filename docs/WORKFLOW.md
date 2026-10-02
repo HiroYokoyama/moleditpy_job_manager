@@ -627,8 +627,8 @@ raised when a job finishes, fails, or disappears from the queue — naming the
 job and the host.
 
 On by default, unlike the badge: it is transient rather than a lasting change
-to how MoleditPy looks. Untick **Notify me when a job ends** in the monitor to
-stop it. A desktop with no notification service simply shows nothing; the job
+to how MoleditPy looks. Untick **Show a desktop notification** in
+**Settings...** to stop it. A desktop with no notification service simply shows nothing; the job
 is tracked either way.
 
 ### The tray icon and the task bar
@@ -641,11 +641,11 @@ click to open the monitor (on macOS a click opens the menu instead).
 
 Right-click for the rest: **Open Job Monitor**, **New Job...**, **Host
 Monitor...**, **Refresh Now**, the active jobs (choose one to open the monitor
-with it selected, clearing a filter that would hide it), the notification and
-flash switches, and **Quit MoleditPy**. Quit goes through MoleditPy's own close,
+with it selected, clearing a filter that would hide it), **Settings...**, and
+**Quit MoleditPy**. Quit goes through MoleditPy's own close,
 so unsaved work is still asked about, and Cancel there cancels the quit.
 
-**Keep tracking jobs after MoleditPy closes**, in the same menu, lets MoleditPy
+**Keep tracking jobs after MoleditPy closes**, under **Desktop** in **Settings...**, lets MoleditPy
 quit for real while jobs are still running. As it closes, the Job Manager starts
 again on its own — the same package, run as a separate small process with only
 its tray icon — and MoleditPy's own process, with its 3D view and molecules,
@@ -654,7 +654,7 @@ chat messages and auto-download all carry on. Results are downloaded but not
 opened, since there is no MoleditPy to open them in.
 
 Its menu is the same, with **Open MoleditPy** and **Quit Job Manager** at the
-bottom. Opening MoleditPy — from there or any other way — takes the jobs back:
+bottom; its Settings has everything but the local API, which MoleditPy serves. Opening MoleditPy — from there or any other way — takes the jobs back:
 the plugin asks the tray process to stop and waits for it before reading the
 job list, so the two never track the same jobs at once. Opening the standalone
 Job Manager by hand does the same.
@@ -671,7 +671,7 @@ notification area could otherwise be left with a process nothing can reach.
 
 When a job ends, the task bar button flashes (the Dock icon bounces on macOS)
 until you look, unless MoleditPy is already in front. Untick **Flash the task
-bar when a job ends** in the tray menu to stop it.
+bar button** in **Settings...** to stop it.
 
 On Windows the job monitor's own task bar button also carries a progress bar
 for the current batch — every job that has been active since the list was last
@@ -679,8 +679,13 @@ idle. Five jobs with three ended is 60 %; a single job, or a batch where nothing
 has ended yet, pulses. Yellow means a chain is blocked; red means a failure you
 have not seen. Hovering the button shows the monitor's thumbnail with three
 buttons under it: **Refresh now**, **New job** and **Host monitor**. MoleditPy's
-own button gets the same progress bar only with **Show the count on the app
-icon** ticked, for the same reason the badge is off by default.
+own button gets the same progress bar only with **Show the job count on
+MoleditPy's own icon** ticked in Settings, for the same reason the badge is off
+by default. The count itself is Qt's badge: on Windows an overlay on the task
+bar button, which Windows shows only while *Settings → Personalization →
+Taskbar → Show badges on taskbar apps* is on; on macOS the Dock's red number;
+on Linux only a launcher that implements the Unity launcher API, and only when
+the application has a matching desktop file.
 
 The monitor's title starts with the counts — `2 running, 1 queued - Job
 Manager ...` — because the task bar and Alt+Tab cut a long title from the end.
@@ -688,9 +693,9 @@ Manager ...` — because the task bar and Alt+Tab cut a long title from the end.
 ### Being told somewhere else: Slack, Discord, Teams
 
 A desktop notification reaches whoever is sitting at this machine, and a job
-that runs overnight usually ends when nobody is. **Chat alerts...**, beside the
-checkbox in the monitor, posts the same sentence to a chat room instead — which
-is what puts it on a phone.
+that runs overnight usually ends when nobody is. **Chat webhook...**, under
+*When a job ends* in **Settings...**, posts the same sentence to a chat room
+instead — which is what puts it on a phone.
 
 Nothing is installed for it and no account is connected: you paste in a webhook
 URL that your own workspace creates, and the plugin posts a JSON message to it.
@@ -713,18 +718,18 @@ Slack and Discord are recognised by their URL and sent the shape each of them
 expects, since Discord reads `content` and rejects a body with fields it does
 not know.
 
-Paste the URL into **Chat alerts...** and press **Send a test message**: the
+Paste the URL into **Chat webhook...** and press **Send a test message**: the
 answer appears under the field, so a wrong URL is found now rather than when a
 job ends at three in the morning. Press **OK** to keep it, then tick **Post to
-chat** beside the button.
+a chat room** beside the button.
 
 Saving a URL never starts the posting by itself — sending a job's name and the
 host it ran on off this machine is a decision to make deliberately, so it is
 off until that tick. Untick it to pause for a while without losing the URL;
 clear the URL to stop entirely. It cannot be ticked before a room is set,
 because a tick with nothing behind it would claim messages are going out while
-none are. Both live in the monitor's preference row next to
-**Notify me when a job ends**, which remains the switch for being told at all —
+none are. Both live in Settings next to **Show a desktop notification**, which
+remains the switch for being told at all —
 untick that and neither the desktop nor the room hears anything.
 
 Every ending is reported, not just the happy one: *finished*, *failed*,
@@ -796,8 +801,8 @@ transfer finishes, so a download cut off half way never leaves a truncated
 
 The most interesting file — `.out`, then `.log`, `.fchk`, `.hess`, `.xyz` — is
 handed to the application's file openers, which is how ORCA Result Analyzer and
-the Gaussian analyzers pick it up. Untick **Open results automatically** if you
-would rather do that yourself.
+the Gaussian analyzers pick it up. Untick **Open results in MoleditPy when they
+arrive** in Settings if you would rather do that yourself.
 
 Opening a result clears the editor first, so what you are looking at is the
 result and nothing else — the molecule you submitted does not stay on the 2D

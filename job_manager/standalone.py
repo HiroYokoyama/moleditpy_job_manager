@@ -51,6 +51,7 @@ class StandaloneTray(QObject):
                 "submit": self.open_submit,
                 "host_monitor": self.open_host_monitor,
                 "select_job": self.select_job,
+                "settings": self.open_settings,
             },
             standalone=True,
             relaunch=self.relaunch,
@@ -121,6 +122,11 @@ class StandaloneTray(QObject):
         self.host_monitor.show()
         self.host_monitor.raise_()
         self.host_monitor.activateWindow()
+
+    def open_settings(self) -> None:
+        from .settings_dialog import SettingsDialog
+
+        SettingsDialog(self.service, None, standalone=True).exec()
 
     def select_job(self, job_id: str) -> None:
         self.open_monitor().select_job(job_id)
