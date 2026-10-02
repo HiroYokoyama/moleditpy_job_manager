@@ -163,7 +163,9 @@ class TestTheWayBack(unittest.TestCase):
         self.addCleanup(os.chdir, os.getcwd())
         os.chdir(self.tmp)
         command = handoff.relaunch_command(["main.py"], "python")
-        self.assertEqual(os.path.normcase(command[1]), os.path.normcase(os.path.realpath(script)))
+        # samefile: Windows may spell the temp directory in its 8.3 short form.
+        self.assertTrue(os.path.isabs(command[1]))
+        self.assertTrue(os.path.samefile(command[1], script))
 
     def test_a_script_that_is_not_there_offers_nothing(self):
         missing = os.path.join(self.tmp, "gone.py")
