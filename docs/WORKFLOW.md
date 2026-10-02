@@ -664,6 +664,12 @@ Nothing is handed over when no job is active, and nothing when you chose **Quit
 MoleditPy** from the tray, which means quit everything. Off by default, since
 closing the window has always ended the application.
 
+**Only if the Job Manager was opened in that session**, just below it and on by
+default, narrows it further: a MoleditPy in which you never opened the job
+monitor or the host monitor closes as a whole, Job Manager included, even with
+jobs still active. They are not lost — the next MoleditPy picks them up at
+load. Untick it to hand jobs over whenever MoleditPy closes.
+
 A MoleditPy packaged as a single executable has no separate Python to start the
 tray process with. There the option keeps MoleditPy's own process alive with its
 window hidden instead, and the menu gains **Show MoleditPy** to bring it back.

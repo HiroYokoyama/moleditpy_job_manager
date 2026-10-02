@@ -102,6 +102,9 @@ class TrayController(QObject):
         self._saved_quit_on_close: Optional[bool] = None
         self._told_still_running = False
         self._filtering = False
+        #: Whether the user has opened the Job Manager in this MoleditPy. The
+        #: process of its own exists to be used, so it starts out opened.
+        self.opened = standalone
 
     # --- setup ---------------------------------------------------------------
 
@@ -236,10 +239,23 @@ class TrayController(QObject):
     # --- after MoleditPy closes ----------------------------------------------
 
     def keep_running(self) -> bool:
-        """Whether the option is on and can work: there is a tray to live in."""
-        return bool(self.service.store.get_pref("keep_running_in_tray", False)) and (
-            self.tray is not None
-        )
+        """Whether the option is on and can work: there is a tray to live in.
+
+        By default only once the Job Manager has been opened. A MoleditPy that
+        merely loaded the plugin -- resuming tracking of earlier jobs, say --
+        quits as a whole: a tray process the user never asked for in this
+        session, outliving the app they just closed, reads as a leftover.
+        """
+        store = self.service.store
+        if not self.opened and store.get_pref("keep_running_only_if_opened", True):
+            return False
+        return bool(store.get_pref("keep_running_in_tray", False)) and self.tray is not None
+
+    def mark_opened(self) -> None:
+        if self.opened:
+            return
+        self.opened = True
+        self.apply_keep_running()
 
     def hands_off(self) -> bool:
         """Hand over to a separate process, rather than keep MoleditPy alive."""

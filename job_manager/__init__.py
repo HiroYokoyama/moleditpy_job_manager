@@ -16,7 +16,7 @@ import logging
 from typing import Any, Optional
 
 PLUGIN_NAME = "Job Manager"
-PLUGIN_VERSION = "2.2.0"
+PLUGIN_VERSION = "2.2.1"
 PLUGIN_AUTHOR = "HiroYokoyama"
 
 PLUGIN_DESCRIPTION = "Submit calculations to remote HPC clusters over SSH, track queue status, and fetch results back into MoleditPy. Ready-made command lines for ORCA, Gaussian, CP2K, GAMESS, MOPAC, NWChem, Psi4, PySCF, Quantum ESPRESSO, VASP and xTB; job lists export to CSV or .pmejbs and reopen by drag and drop. Runs on this machine too, with no SSH; chains jobs with each scheduler's own dependency flag; and can hold a job until a chosen time. Installing paramiko adds a backend that keeps one SSH session open and can log in with a password."
@@ -252,6 +252,18 @@ def _install_presence(service) -> None:
         )
     except Exception:
         logging.debug("Job Manager: no tray or task bar presence", exc_info=True)
+
+
+def _mark_opened() -> None:
+    """A Job Manager window was opened here: see TrayController.keep_running."""
+    try:
+        from . import presence
+
+        current = presence.current()
+        if current is not None and current.tray is not None:
+            current.tray.mark_opened()
+    except Exception:
+        logging.debug("Job Manager: opening not recorded", exc_info=True)
 
 
 def _acknowledge_failures() -> None:
@@ -512,6 +524,7 @@ def show_monitor(context=None) -> None:
         window.show()
         window.raise_()
         window.activateWindow()
+        _mark_opened()
         _acknowledge_failures()
         return
     try:
@@ -521,6 +534,7 @@ def show_monitor(context=None) -> None:
         window = JobsDialog(service, parent=None)
         context.register_window(WINDOW_KEY, window)
         window.show()
+        _mark_opened()
         _acknowledge_failures()
     except Exception as exc:
         logging.exception("Job Manager: could not open the job monitor")
@@ -580,6 +594,7 @@ def show_host_monitor_standalone(context=None) -> None:
         window.show()
         window.raise_()
         window.activateWindow()
+        _mark_opened()
         return
     try:
         from .host_monitor import HostMonitorDialog
@@ -589,6 +604,7 @@ def show_host_monitor_standalone(context=None) -> None:
         context.register_window(HOST_MONITOR_WINDOW_KEY, window)
         window.finished.connect(lambda *_: context.register_window(HOST_MONITOR_WINDOW_KEY, None))
         window.show()
+        _mark_opened()
     except Exception as exc:
         logging.exception("Job Manager: could not open the host monitor")
         context.show_status_message(f"Job Manager: {exc}", 5000)

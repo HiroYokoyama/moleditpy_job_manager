@@ -139,6 +139,51 @@ class TestShowHostMonitorStandalone(PluginEntryTestCase):
         job_manager.show_host_monitor_standalone(None)
 
 
+class TestOpeningIsRecorded(PluginEntryTestCase):
+    """Keep-running applies only to a Job Manager opened in this MoleditPy."""
+
+    def shown(self):
+        current = MagicMock()
+        patcher = patch("job_manager.presence.current", return_value=current)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return current.tray
+
+    def test_the_monitor_records_it(self):
+        job_manager.initialize(self.context)
+        tray = self.shown()
+        with patch("job_manager.jobs_dialog.JobsDialog"):
+            job_manager.show_monitor(self.context)
+        tray.mark_opened.assert_called_once()
+
+    def test_raising_an_open_monitor_records_it(self):
+        job_manager.initialize(self.context)
+        tray = self.shown()
+        self.context.get_window.return_value = MagicMock()
+        job_manager.show_monitor(self.context)
+        tray.mark_opened.assert_called_once()
+
+    def test_the_host_monitor_records_it(self):
+        job_manager.initialize(self.context)
+        tray = self.shown()
+        with patch("job_manager.host_monitor.HostMonitorDialog"):
+            job_manager.show_host_monitor_standalone(self.context)
+        tray.mark_opened.assert_called_once()
+
+    def test_a_monitor_that_failed_to_open_does_not(self):
+        job_manager.initialize(self.context)
+        tray = self.shown()
+        with patch("job_manager.jobs_dialog.JobsDialog", side_effect=RuntimeError("boom")):
+            job_manager.show_monitor(self.context)
+        tray.mark_opened.assert_not_called()
+
+    def test_loading_alone_does_not(self):
+        tray = self.shown()
+        job_manager.initialize(self.context)
+        job_manager.get_service()
+        tray.mark_opened.assert_not_called()
+
+
 class TestShowSubmit(PluginEntryTestCase):
     def test_opens_the_monitor_then_the_wizard(self):
         job_manager.initialize(self.context)

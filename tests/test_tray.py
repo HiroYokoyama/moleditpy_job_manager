@@ -69,9 +69,13 @@ class TrayTestCase(unittest.TestCase):
         self.addCleanup(service.shutdown)
         return service
 
-    def presence(self, service, main_window=None) -> Presence:
+    def presence(self, service, main_window=None, opened=True) -> Presence:
         shown = Presence(service, main_window, self.actions)
         self.addCleanup(shown.detach)
+        # As the plugin records it when a window is opened; most tests are
+        # about a Job Manager the user has used.
+        if opened and shown.tray is not None:
+            shown.tray.mark_opened()
         self._shown = shown
         return shown
 
@@ -278,6 +282,14 @@ class TestKeepRunning(TrayTestCase):
         self.presence(self.service(keep_running_in_tray=True))
         self.assertFalse(self.app.quitOnLastWindowClosed())
 
+    def test_not_until_the_job_manager_is_opened(self):
+        # Loaded, tracking, never opened: closing MoleditPy ends everything.
+        self.app.setQuitOnLastWindowClosed(True)
+        shown = self.presence(self.service(keep_running_in_tray=True), opened=False)
+        self.assertTrue(self.app.quitOnLastWindowClosed())
+        shown.tray.mark_opened()
+        self.assertFalse(self.app.quitOnLastWindowClosed())
+
     def test_without_a_tray_it_does_not_apply(self):
         # A process with no window and no tray icon could never be quit.
         self.tray_class.isSystemTrayAvailable.return_value = False
@@ -384,6 +396,21 @@ class TestHandOff(TrayTestCase):
         self.assertTrue(command[1].endswith("__main__.py"))
         self.assertIn("--tray", command)
         self.assertIn('["moleditpy"]', command)
+
+    def test_a_job_manager_never_opened_quits_with_moleditpy(self):
+        shown = self.presence(
+            self.service(make_job(state=STATE_RUNNING), keep_running_in_tray=True), opened=False
+        )
+        shown.tray._on_about_to_quit()
+        self.spawn.assert_not_called()
+
+    def test_with_only_if_opened_off_it_hands_off_unopened(self):
+        service = self.service(make_job(state=STATE_RUNNING), keep_running_in_tray=True)
+        service.store.set_pref("keep_running_only_if_opened", False)
+        shown = self.presence(service, opened=False)
+        with patch("job_manager.handoff.relaunch_command", return_value=["moleditpy"]):
+            shown.tray._on_about_to_quit()
+        self.spawn.assert_called_once()
 
     def test_it_is_wired_to_the_application_quitting(self):
         shown = self.presence(
