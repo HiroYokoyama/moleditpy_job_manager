@@ -10,12 +10,17 @@ on:
 permissions:
   contents: read
 
+# Every pytest run has --timeout (pytest-timeout): a test that hangs used to
+# hold its job until it was cancelled, and a cancelled job keeps no log. Five
+# minutes is far past any test's own bounded waits; past it, every thread's
+# stack is dumped and the test fails, so the log names what was stuck.
 jobs:
   # -------------------------------------------------------------------------
   # Standard unit tests — no external dependencies required
   # -------------------------------------------------------------------------
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     strategy:
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
@@ -29,14 +34,14 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: pip install pytest pytest-cov pytest-xdist
+        run: pip install pytest pytest-cov pytest-xdist pytest-timeout
 
       - name: Run tests with coverage
         # -n auto: the script-execution tests spend their time waiting on real
         # bash and PowerShell processes, so the suite parallelises almost
         # perfectly -- 88s to 28s locally. Each test owns its own temp
         # directory and its own processes, so there is nothing shared to race.
-        run: python -m pytest tests/ -v --tb=short -n auto --cov=job_manager --cov-report=term-missing
+        run: python -m pytest tests/ -v --tb=short -n auto --timeout=300 --timeout-method=thread --cov=job_manager --cov-report=term-missing
 
   # -------------------------------------------------------------------------
   # Windows — the only runner that can execute the PowerShell backend.
@@ -49,6 +54,7 @@ jobs:
   # -------------------------------------------------------------------------
   test-windows:
     runs-on: windows-latest
+    timeout-minutes: 25
 
     steps:
       - uses: actions/checkout@v4
@@ -58,10 +64,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      # pytest-timeout: a test that hangs here used to hold the job until it was
-      # cancelled, and a cancelled job keeps no log. Five minutes is far past
-      # any test's own bounded waits; past it, every thread's stack is dumped
-      # and the test fails, so the log names what was stuck.
       - name: Install dependencies
         run: pip install pytest pytest-xdist pytest-timeout PyQt6
 
@@ -94,7 +96,7 @@ jobs:
         env:
           QT_QPA_PLATFORM: windows
         run: |
-          python -m pytest tests/test_win_taskbar_native.py tests/test_win_taskbar.py -v -rs > native.log 2>&1
+          python -m pytest tests/test_win_taskbar_native.py tests/test_win_taskbar.py -v -rs --timeout=300 --timeout-method=thread > native.log 2>&1
           $code = $LASTEXITCODE
           type native.log
           if ($code -ne 0) { exit $code }
@@ -109,6 +111,7 @@ jobs:
   # -------------------------------------------------------------------------
   test-gui:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
 
     steps:
       - uses: actions/checkout@v4
@@ -130,7 +133,7 @@ jobs:
       # real SSHConfig parser -- a stub would test nothing, so those tests skip
       # themselves unless the package is actually here.
       - name: Install dependencies
-        run: pip install pytest pytest-cov PyQt6 paramiko pytest-xdist
+        run: pip install pytest pytest-cov PyQt6 paramiko pytest-xdist pytest-timeout
 
       - name: Run the full suite with real Qt
         env:
@@ -139,7 +142,7 @@ jobs:
         # bash and PowerShell processes, so the suite parallelises almost
         # perfectly -- 88s to 28s locally. Each test owns its own temp
         # directory and its own processes, so there is nothing shared to race.
-        run: python -m pytest tests/ -v --tb=short -n auto --cov=job_manager --cov-report=term-missing
+        run: python -m pytest tests/ -v --tb=short -n auto --timeout=300 --timeout-method=thread --cov=job_manager --cov-report=term-missing
 
   # -------------------------------------------------------------------------
   # Integration tests — clones the main MoleditPy app to enable real
@@ -147,6 +150,7 @@ jobs:
   # -------------------------------------------------------------------------
   test-integration:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
 
     steps:
       - uses: actions/checkout@v4
@@ -167,7 +171,7 @@ jobs:
       # the plugin_interface chain reaches rdkit. Without both, the real-context
       # tier can only ever skip itself.
       - name: Install dependencies
-        run: pip install pytest pytest-cov PyQt6 rdkit
+        run: pip install pytest pytest-cov PyQt6 rdkit pytest-timeout
 
       - name: Clone main MoleditPy application
         run: |
@@ -186,7 +190,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         # -rs prints skip reasons: a silently skipped real-context tier looks
         # exactly like a passing one in the log.
-        run: python -m pytest tests/test_plugin_integration.py tests/test_api.py -v -rs
+        run: python -m pytest tests/test_plugin_integration.py tests/test_api.py -v -rs --timeout=300 --timeout-method=thread
 
       - name: Fail if the real-context tier did not actually run
         env:

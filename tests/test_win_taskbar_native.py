@@ -229,7 +229,15 @@ class TestTheHandOffForReal(NativeTestCase):
         package_dir = os.path.dirname(os.path.abspath(presence.__file__))
         command = handoff.standalone_command(package_dir, ["moleditpy"])
         env = dict(os.environ, MOLEDITPY_JOB_MANAGER_DIR=self.tmp, QT_QPA_PLATFORM="windows")
-        process = subprocess.Popen(command, cwd=os.path.dirname(package_dir), env=env)
+        process = subprocess.Popen(
+            command,
+            cwd=os.path.dirname(package_dir),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        self.addCleanup(process.wait, 15)
         self.addCleanup(process.kill)
 
         deadline = time.monotonic() + 60
@@ -250,6 +258,7 @@ class TestTheHandOffForReal(NativeTestCase):
         launch = subprocess.run(
             [sys.executable, os.path.join(package_dir, "__main__.py")],
             env=env,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=60,

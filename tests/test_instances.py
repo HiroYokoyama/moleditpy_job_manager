@@ -229,6 +229,14 @@ class TestTwoRealProcesses(RegistryTestCase):
         except ImportError:
             self.skipTest("PyQt6 is not installed")
 
+    @staticmethod
+    def _end(process):
+        process.kill()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            pass
+
     def start_answerer(self):
         marker = os.path.join(self.dir, "shown.txt")
         code = _ANSWERER.format(
@@ -238,8 +246,17 @@ class TestTwoRealProcesses(RegistryTestCase):
             directory=self.dir,
         )
         env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
-        process = subprocess.Popen([sys.executable, "-c", code], env=env)
-        self.addCleanup(process.kill)
+        # Nothing of this process's own standard streams: under pytest-xdist
+        # they are the pipes to the controller, and a child holding them can
+        # keep a worker -- and so the whole run -- from ever finishing.
+        process = subprocess.Popen(
+            [sys.executable, "-c", code],
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        self.addCleanup(self._end, process)
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline and not instances.live_instances(self.dir):
             self.assertIsNone(process.poll(), "the stand-in exited on its own")
@@ -271,6 +288,7 @@ class TestTwoRealProcesses(RegistryTestCase):
         launch = subprocess.run(
             [sys.executable, os.path.join(PACKAGE_DIR, "__main__.py")],
             env=env,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=60,

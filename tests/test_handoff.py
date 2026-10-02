@@ -76,15 +76,20 @@ class TestStopping(HandoffTestCase):
         legacy_heartbeat(self.dir)
 
         def tray_process():
-            # What StandaloneTray.tick does: see the request, then leave.
+            # What a 2.0/2.1 tray process did: see the request, then leave.
+            # Bounded, and a daemon: if the request never came, a thread
+            # spinning for ever would keep the test process from exiting.
+            deadline = time.monotonic() + 10
             while not handoff.stop_requested(self.dir):
+                if time.monotonic() > deadline:
+                    return
                 time.sleep(0.02)
             time.sleep(0.2)
             os.remove(handoff.tray_path(self.dir))
 
-        worker = threading.Thread(target=tray_process)
+        worker = threading.Thread(target=tray_process, daemon=True)
         worker.start()
-        self.addCleanup(worker.join, 5)
+        self.addCleanup(worker.join, 15)
 
         self.assertTrue(handoff.stop_running_tray(self.dir, timeout=5, poll=0.02))
         self.assertIsNone(handoff.live_tray(self.dir))
