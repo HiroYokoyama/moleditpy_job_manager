@@ -554,7 +554,7 @@ class SubmitDialog(QDialog):
             self.btn_check_remote.setEnabled(True)
             self.lbl_remote.setText(message)
 
-        self.service.list_remote_dir(host, path, done, failed)
+        self.service.list_remote_dir(host, path, done, failed, owner=self)
 
     def _build_resources_tab(self) -> QWidget:
         page = QWidget()

@@ -290,6 +290,9 @@ working in, so a transfer cut off half way would otherwise leave a truncated
 | `standalone.py` | the Job Manager without MoleditPy: a monitor opened by hand, and the tray process |
 | `win_taskbar.py` | `ITaskbarList3` through ctypes: progress and thumbnail buttons on a Windows task bar button |
 | `webhook.py` | the same line posted to a chat room (Slack, Discord, generic JSON) |
+| `host_sampler.py` | load and memory per host, sampled while the Host Monitor or the web page is looking; one per service |
+| `web_monitor.py` | the read-only page's loopback server, token and HTML. No Qt |
+| `web_service.py` | when the page is served, what it is handed, and starting the sampler for a request |
 | `api_core.py` | what an API request *means*: routing, validation, serialisation. Pure stdlib |
 | `api_server.py` | the loopback HTTP server, the token, and the hop onto the GUI thread |
 | `api_client.py` | the client another program uses, and its command line. Pure stdlib |

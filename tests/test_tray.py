@@ -422,10 +422,13 @@ class TestHandOff(TrayTestCase):
         self.app.aboutToQuit.emit()
         self.spawn.assert_called_once()
 
-    def test_nothing_running_means_nothing_to_hand_over(self):
+    def test_it_stays_with_no_job_running_too(self):
+        # Asked to keep running, it does: the tray menu and the web view are
+        # still worth having with the queue empty.
         shown = self.presence(self.service(keep_running_in_tray=True))
-        shown.tray._on_about_to_quit()
-        self.spawn.assert_not_called()
+        with patch("job_manager.handoff.relaunch_command", return_value=["moleditpy"]):
+            shown.tray._on_about_to_quit()
+        self.spawn.assert_called_once()
 
     def test_the_option_off_means_nothing_is_started(self):
         shown = self.presence(self.service(make_job(state=STATE_RUNNING)))

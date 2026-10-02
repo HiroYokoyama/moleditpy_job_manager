@@ -82,7 +82,7 @@ class TestAHostThatIsNotSampled(HostMonitorTestCase):
         for _ in range(3):
             dialog._sample_all()
         self.assertNotIn("login", self.transports)
-        self.assertNotIn("login", [host.id for host in dialog._hosts()])
+        self.assertNotIn("login", [host.id for host in dialog.sampler.hosts()])
 
     def test_it_keeps_a_card_that_says_so(self):
         from job_manager.host_monitor import NOT_SAMPLED
@@ -102,11 +102,15 @@ class TestAHostThatIsNotSampled(HostMonitorTestCase):
         from job_manager import host_stats
         from job_manager.host_monitor import NOT_SAMPLED
 
+        from job_manager import web_service
+
         dialog = self.monitor()
-        dialog._latest["login"] = host_stats.parse(
+        dialog.sampler._latest["login"] = host_stats.parse(
             "cores=8\nload=4.0 4.0 4.0\nmem_total=64000\nmem_free=100\n"
         )
-        entry = [e for e in dialog._web_snapshot()["hosts"] if e["name"] == "supercomputer"][0]
+        web = web_service.for_service(self.service)
+        self.addCleanup(web_service.shutdown_for, self.service)
+        entry = [e for e in web.snapshot()["hosts"] if e["name"] == "supercomputer"][0]
         self.assertEqual(entry["summary"], NOT_SAMPLED)
         self.assertEqual(entry["load_fraction"], 0.0)
 
@@ -115,7 +119,7 @@ class TestAHostThatIsNotSampled(HostMonitorTestCase):
         self.host.monitor_usage = False
         self.store.add_host(self.host)
         dialog._sample_all()
-        self.assertNotIn(self.host.id, [host.id for host in dialog._hosts()])
+        self.assertNotIn(self.host.id, [host.id for host in dialog.sampler.hosts()])
 
     def test_the_other_hosts_are_still_sampled(self):
         self.monitor()
@@ -139,7 +143,7 @@ class TestAHostWithItsOwnMonitorInterval(HostMonitorTestCase):
         self.store.add_host(slow)
         dialog = self.monitor()
         runs = self.transports["slow"].runs
-        dialog._last_sample["slow"] -= 601
+        dialog.sampler._last_sample["slow"] -= 601
         dialog._sample_all()
         self.assertEqual(self.transports["slow"].runs, runs + 1)
 
@@ -148,19 +152,19 @@ class TestAHostWithItsOwnMonitorInterval(HostMonitorTestCase):
         dialog.spin_interval.setValue(30)
         self.store.add_host(make_host(id="quick", monitor_interval=5))
         dialog._sample_all()
-        self.assertEqual(dialog._timer.interval(), 5_000)
+        self.assertEqual(dialog.sampler._timer.interval(), 5_000)
 
     def test_a_host_that_is_not_sampled_does_not_set_the_pace(self):
         dialog = self.monitor()
         dialog.spin_interval.setValue(30)
         self.store.add_host(make_host(id="off", monitor_usage=False, monitor_interval=1))
         dialog._sample_all()
-        self.assertEqual(dialog._timer.interval(), 30_000)
+        self.assertEqual(dialog.sampler._timer.interval(), 30_000)
 
     def test_no_overrides_is_the_window_setting(self):
         dialog = self.monitor()
         dialog.spin_interval.setValue(17)
-        self.assertEqual(dialog._timer.interval(), 17_000)
+        self.assertEqual(dialog.sampler._timer.interval(), 17_000)
 
 
 class TestTheHostsDialogEditsThem(DialogTestCase):

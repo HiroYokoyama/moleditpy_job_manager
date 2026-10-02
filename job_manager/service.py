@@ -93,7 +93,9 @@ class JobService(QObject):
 
     # --- inspection ---------------------------------------------------------
 
-    def list_remote_dir(self, host: HostProfile, path: str, on_done, on_error=None) -> None:
+    def list_remote_dir(
+        self, host: HostProfile, path: str, on_done, on_error=None, owner=None
+    ) -> None:
         """Names in a remote directory, or an error if it is not one.
 
         For the wizard, when a job is about to be pointed at a directory the
@@ -108,7 +110,9 @@ class JobService(QObject):
             finally:
                 transport.close()
 
-        run_async(self.pool, work, on_success=on_done, on_error=on_error or self.error.emit)
+        run_async(
+            self.pool, work, on_success=on_done, on_error=on_error or self.error.emit, owner=owner
+        )
 
     # --- submission ---------------------------------------------------------
 
@@ -328,7 +332,7 @@ class JobService(QObject):
 
     # --- results ------------------------------------------------------------
 
-    def list_remote_results(self, job: Job, on_ok, on_error) -> None:
+    def list_remote_results(self, job: Job, on_ok, on_error, owner=None) -> None:
         """What is in the job directory, for the download chooser."""
         host = self.store.hosts.get(job.host_id)
         if host is None:
@@ -347,7 +351,7 @@ class JobService(QObject):
             # without editing fetch patterns (it's never matched by one).
             return names
 
-        run_async(self.pool, work, on_success=on_ok, on_error=on_error)
+        run_async(self.pool, work, on_success=on_ok, on_error=on_error, owner=owner)
 
     def download(self, job: Job, into: str = "", names: Optional[Sequence[str]] = None) -> bool:
         """Fetch the job's outputs; emits ``results_ready`` when they land.
@@ -409,7 +413,7 @@ class JobService(QObject):
         """Whether a download for this job has started and not yet ended."""
         return job_id in self._downloads_in_flight
 
-    def fetch_file_to_cache(self, job: Job, filename: str, on_ok, on_error) -> None:
+    def fetch_file_to_cache(self, job: Job, filename: str, on_ok, on_error, owner=None) -> None:
         """Fetch one remote file into this job's cache directory."""
         host = self.store.hosts.get(job.host_id)
         if host is None:
@@ -438,7 +442,7 @@ class JobService(QObject):
             finally:
                 transport.close()
 
-        run_async(self.pool, work, on_success=on_ok, on_error=on_error)
+        run_async(self.pool, work, on_success=on_ok, on_error=on_error, owner=owner)
 
     def cancel(self, job: Job, release_dependents: bool = True) -> None:
         """Cancel one job, and by default let the jobs behind it carry on.
@@ -510,6 +514,7 @@ class JobService(QObject):
         lines: int = 200,
         on_done: Optional[Callable[[str], None]] = None,
         on_error: Optional[Callable[[str], None]] = None,
+        owner=None,
     ) -> None:
         """Asynchronously read the tail of any remote file in the job's directory."""
         host = self.store.hosts.get(job.host_id)
@@ -527,7 +532,7 @@ class JobService(QObject):
 
         success_handler = on_done or self.log_ready.emit
         error_handler = on_error or self.error.emit
-        run_async(self.pool, work, on_success=success_handler, on_error=error_handler)
+        run_async(self.pool, work, on_success=success_handler, on_error=error_handler, owner=owner)
 
     # --- housekeeping -------------------------------------------------------
 

@@ -121,7 +121,7 @@ class TestOutputFileSelectorDialog(unittest.TestCase):
         self.job.local_dir = ""
 
         # Setup mock for service.list_remote_results
-        def fake_list(job, on_ok, on_error):
+        def fake_list(job, on_ok, on_error, owner=None):
             on_ok(["remote_calc.out", "remote_geom.xyz"])
 
         self.service.list_remote_results.side_effect = fake_list
@@ -144,8 +144,8 @@ class TestOutputFileSelectorDialog(unittest.TestCase):
     def test_remote_files_are_greyed_out(self):
         self.job.downloaded_files = []
         self.job.local_dir = ""
-        self.service.list_remote_results.side_effect = lambda job, on_ok, on_error: on_ok(
-            ["remote_calc.out"]
+        self.service.list_remote_results.side_effect = lambda job, on_ok, on_error, owner=None: (
+            on_ok(["remote_calc.out"])
         )
         dialog = OutputFileSelectorDialog(self.service, self.job)
         self.addCleanup(dialog.deleteLater)
@@ -159,8 +159,8 @@ class TestOutputFileSelectorDialog(unittest.TestCase):
     def test_folders_are_built_from_slash_separated_names(self):
         self.job.downloaded_files = []
         self.job.local_dir = ""
-        self.service.list_remote_results.side_effect = lambda job, on_ok, on_error: on_ok(
-            ["top.out", "scratch/benzene.tmp", "scratch/nested/deep.log"]
+        self.service.list_remote_results.side_effect = lambda job, on_ok, on_error, owner=None: (
+            on_ok(["top.out", "scratch/benzene.tmp", "scratch/nested/deep.log"])
         )
         dialog = OutputFileSelectorDialog(self.service, self.job)
         self.addCleanup(dialog.deleteLater)
@@ -182,8 +182,8 @@ class TestOutputFileSelectorDialog(unittest.TestCase):
     def test_a_folder_row_is_not_selectable(self):
         self.job.downloaded_files = []
         self.job.local_dir = ""
-        self.service.list_remote_results.side_effect = lambda job, on_ok, on_error: on_ok(
-            ["scratch/benzene.tmp"]
+        self.service.list_remote_results.side_effect = lambda job, on_ok, on_error, owner=None: (
+            on_ok(["scratch/benzene.tmp"])
         )
         dialog = OutputFileSelectorDialog(self.service, self.job)
         self.addCleanup(dialog.deleteLater)
@@ -208,8 +208,8 @@ class TestOutputFileSelectorDialog(unittest.TestCase):
         self.service.store.hosts = {"h1": host}
         self.job.downloaded_files = []
         self.job.local_dir = ""
-        self.service.list_remote_results.side_effect = lambda job, on_ok, on_error: on_ok(
-            ["remote_calc.out"]
+        self.service.list_remote_results.side_effect = lambda job, on_ok, on_error, owner=None: (
+            on_ok(["remote_calc.out"])
         )
 
         dialog = OutputFileSelectorDialog(self.service, self.job)
@@ -227,8 +227,8 @@ class TestOutputFileSelectorDialog(unittest.TestCase):
         self.service.store.hosts = {"h1": host}
         self.job.downloaded_files = []
         self.job.local_dir = ""
-        self.service.list_remote_results.side_effect = lambda job, on_ok, on_error: on_ok(
-            ["remote_calc.out"]
+        self.service.list_remote_results.side_effect = lambda job, on_ok, on_error, owner=None: (
+            on_ok(["remote_calc.out"])
         )
 
         dialog = OutputFileSelectorDialog(self.service, self.job)

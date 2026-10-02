@@ -959,7 +959,7 @@ class JobsDialog(QDialog):
             self.btn_download.setEnabled(True)
             self._append_message(message)
 
-        self.service.list_remote_results(job, listed, failed)
+        self.service.list_remote_results(job, listed, failed, owner=self)
 
     def _offer_download(self, job: Job, names: list) -> None:
         from .download_dialog import DownloadDialog
@@ -1083,7 +1083,7 @@ class JobsDialog(QDialog):
             if ok and chosen.strip():
                 self._open_tail_for_file(job, chosen.strip())
 
-        self.service.list_remote_results(job, on_files_listed, on_list_error)
+        self.service.list_remote_results(job, on_files_listed, on_list_error, owner=self)
 
     def _open_tail_for_file(self, job: Job, filename: str) -> None:
         from .models import BACKEND_OPENSSH
@@ -1122,7 +1122,7 @@ class JobsDialog(QDialog):
             except RuntimeError:
                 pass
 
-        self.service.tail_file(job, filename, on_done=on_done, on_error=on_err)
+        self.service.tail_file(job, filename, on_done=on_done, on_error=on_err, owner=self)
 
     def _show_details(self) -> None:
         """Everything recorded about this job, including the script that ran."""
@@ -1278,7 +1278,7 @@ class JobsDialog(QDialog):
             self.btn_rebuild.setEnabled(True)
             QMessageBox.warning(self, "Rebuild from folder", f"Could not read {folder}:\n{message}")
 
-        run_async(self.service.pool, work, on_success=done, on_error=failed)
+        run_async(self.service.pool, work, on_success=done, on_error=failed, owner=self)
 
     def _use_rebuilt_list(self, folder: str, result) -> None:
         """Write what the scan found and switch the table to it."""

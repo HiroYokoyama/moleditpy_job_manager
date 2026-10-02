@@ -249,8 +249,9 @@ anything it downloads.
 
 ## The web monitor
 
-The Host Monitor can serve itself as a read-only page (**Web...** in its top
-bar). Three properties define it, and all three have tests holding them:
+The Host Monitor can be served as a read-only page (**Web Monitor** in
+**Settings...**). Three properties define it, and all three have tests holding
+them:
 
 * **It binds `127.0.0.1` only.** Not `0.0.0.0`, and not the Tailscale address
   either. `tests/test_web_monitor.py` proves it by *connecting* over this
@@ -260,9 +261,10 @@ bar). Three properties define it, and all three have tests holding them:
 * **It is read-only.** There is no `do_POST`, `do_PUT`, `do_DELETE` or
   `do_PATCH` on the handler, and a test asserts none of them exists, so a later
   edit cannot quietly add a route that changes something.
-* **It is off until asked.** The first time the window opens, nothing listens.
-  The choice is remembered after that; closing the window releases the socket
-  but keeps the preference.
+* **It is off until asked.** Nothing listens until it is ticked in Settings.
+  The choice is remembered after that, and the socket is opened again at the
+  next start; a process ending releases the socket but keeps the preference.
+  Hosts are sampled only while the page is being requested.
 
 Requests carry a random per-session token, in the link or in a cookie the first
 load leaves behind (`HttpOnly`, `SameSite=Strict`). It is compared with

@@ -278,10 +278,13 @@ class TrayController(QObject):
                 self.show_main_window()
 
     def _on_about_to_quit(self) -> None:
-        """MoleditPy is going: start the tray process if there is anything to track."""
+        """MoleditPy is going: start the tray process, with or without jobs.
+
+        Not only when jobs are active: the user asked for the Job Manager to
+        stay, and it is also what keeps the web view and the tray menu there
+        to submit from.
+        """
         if self._quitting_everything or not self.keep_running() or not self.hands_off():
-            return
-        if not self.service.store.active_jobs():
             return
         package_dir = os.path.dirname(os.path.abspath(__file__))
         command = handoff.standalone_command(

@@ -89,6 +89,32 @@ class TestStarting(StandaloneTestCase):
         message = self.tray_icon.showMessage.call_args[0][1]
         self.assertIn("1 job", message)
 
+    def test_with_no_job_it_still_says_where_it_went(self):
+        self.assertTrue(self.standalone().start())
+        message = self.tray_icon.showMessage.call_args[0][1]
+        self.assertIn("in the tray", message)
+
+    def test_run_serves_the_web_view_when_it_was_left_on(self):
+        from job_manager import web_service
+
+        service = self.service()
+        service.store.set_pref("host_monitor_web", True)
+        seen = {}
+
+        def exec_():
+            seen["running"] = web_service.for_service(service).running
+            return 0
+
+        with (
+            patch.object(self.app, "exec", side_effect=exec_),
+            patch.object(web_service, "PORT_WAIT_SECONDS", 0),
+        ):
+            run(self.app, service, self.dir, ["moleditpy"])
+        self.assertTrue(seen["running"])
+        # And the process ending takes the socket, not the choice.
+        self.assertFalse(web_service.for_service(service).running)
+        self.assertTrue(service.store.get_pref("host_monitor_web", False))
+
     def test_without_a_tray_it_says_so(self):
         self.tray_class.isSystemTrayAvailable.return_value = False
         self.assertFalse(self.standalone().start())
@@ -186,6 +212,14 @@ class TestAMonitorOpenedByHand(StandaloneTestCase):
         with patch.object(windows, "open_host_monitor") as hosts:
             windows.start(host_view=True)
         hosts.assert_called_once()
+
+    def test_opened_by_hand_counts_as_opened(self):
+        # Keep running applies only to a session in which the Job Manager was
+        # opened; one started by hand plainly was.
+        windows = self.monitor()
+        with patch.object(windows, "open_monitor"):
+            windows.start()
+        self.assertTrue(presence.current().tray.opened)
 
     def test_its_tray_menu_reaches_its_own_windows(self):
         # The plugin's menu asks a MoleditPy that is not there.

@@ -177,6 +177,17 @@ class TestStatusBarIndicator(TrackingTestCase):
         # not "visible" either way, so isVisible() would pass for both cases.
         self.assertTrue(widget.isHidden())
 
+    def test_switched_off_in_settings_it_stays_hidden(self):
+        service = self._service(make_job(name="run", state=STATE_RUNNING))
+        service.store.set_pref("status_bar_counter", False)
+        widget = JobStatusWidget(service)
+        self.addCleanup(widget.detach)
+        self.assertTrue(widget.isHidden())
+
+        service.store.set_pref("status_bar_counter", True)
+        service.jobs_changed.emit()
+        self.assertFalse(widget.isHidden())
+
     def test_a_blocked_job_is_called_out_in_the_tooltip(self):
         dead = make_job(name="opt", state=STATE_FAILED)
         service = self._service(dead, make_job(name="stuck", after_job_id=dead.id))

@@ -32,7 +32,7 @@ import shutil
 import subprocess
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 from urllib.parse import parse_qs, urlsplit
 
 from . import PLUGIN_VERSION
@@ -430,10 +430,12 @@ class _Handler(BaseHTTPRequestHandler):
         # be dropped for the http://127.0.0.1 case and never sent back.
         cookie = f"{COOKIE_NAME}={self.server.monitor.token}; Path=/; HttpOnly; SameSite=Strict"
         if path == "/api/status":
+            self.server.monitor.requested()
             body = json.dumps(self.server.monitor.snapshot(), default=str).encode("utf-8")
             self._send(200, body, "application/json; charset=utf-8", cookie)
             return
         if path == "/":
+            self.server.monitor.requested()
             self._send(200, PAGE.encode("utf-8"), "text/html; charset=utf-8", cookie)
             return
         self._send(404, b"No such page.", "text/plain; charset=utf-8")
@@ -465,8 +467,12 @@ ICON_ROUTES = {
 class WebMonitorServer:
     """Owns the socket and the last snapshot the GUI thread published."""
 
-    def __init__(self, token: str = "") -> None:
+    def __init__(self, token: str = "", on_request: Optional[Callable[[], None]] = None) -> None:
         self._token = token or new_token(16)
+        #: Called on the HTTP thread for every authorised page or data request:
+        #: someone is looking, so the hosts are worth sampling. Must not touch
+        #: Qt objects directly -- emit a signal, which Qt queues across.
+        self._on_request = on_request
         self._server: Optional[_Server] = None
         self._thread: Optional[threading.Thread] = None
         self._port = 0
@@ -513,6 +519,16 @@ class WebMonitorServer:
         with self._lock:
             self._snapshot = snapshot
 
+    def requested(self) -> None:
+        if self._on_request is None:
+            return
+        try:
+            self._on_request()
+        except Exception:
+            # A reader's page must not fail because the sampler could not be
+            # woken: it still gets the last snapshot.
+            logging.debug("Job Manager: web monitor request hook failed", exc_info=True)
+
     def snapshot(self) -> Dict[str, Any]:
         with self._lock:
             snapshot = dict(self._snapshot)
@@ -524,10 +540,12 @@ class WebMonitorServer:
 
     # --- lifetime -----------------------------------------------------------
 
-    def start(self, port: int = DEFAULT_PORT) -> int:
+    def start(self, port: int = DEFAULT_PORT, exact: bool = False) -> int:
+        """Listen. ``exact`` refuses to fall back to a free port, for a caller
+        that would rather wait for this one: a saved link names the port."""
         if self.running:
             return self._port
-        server = self._bind(int(port or 0))
+        server = _Server((BIND_HOST, int(port)), _Handler) if exact else self._bind(int(port or 0))
         server.monitor = self
         self._server = server
         self._port = server.server_address[1]
