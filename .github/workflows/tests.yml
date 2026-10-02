@@ -58,13 +58,18 @@ jobs:
         with:
           python-version: "3.12"
 
+      # pytest-timeout: a test that hangs here used to hold the job until it was
+      # cancelled, and a cancelled job keeps no log. Five minutes is far past
+      # any test's own bounded waits; past it, every thread's stack is dumped
+      # and the test fails, so the log names what was stuck.
       - name: Install dependencies
-        run: pip install pytest pytest-xdist PyQt6
+        run: pip install pytest pytest-xdist pytest-timeout PyQt6
 
       - name: Run the suite on Windows
+        timeout-minutes: 20
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest tests/ -v --tb=short -n auto -rs
+        run: python -m pytest tests/ -v --tb=short -n auto -rs --timeout=300 --timeout-method=thread
 
       - name: Fail if the Windows-only tests skipped
         env:
