@@ -338,7 +338,7 @@ class TestHostStyleReload(ApiEntryTestCase):
         self.assertIsNone(context.get_window(first.WINDOW_KEY))
         self.assertIsNone(context.get_window(first.HOST_MONITOR_WINDOW_KEY))
 
-    def test_a_load_from_before_1_9_is_shut_down_through_its_stop_api(self):
+    def test_a_load_from_before_2_0_is_shut_down_through_its_stop_api(self):
         # 1.8.x registered only stop_api. Its globals are its module's, which
         # is where that load's shutdown lives.
         context = self.make_context()

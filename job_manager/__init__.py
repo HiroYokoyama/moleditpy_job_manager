@@ -16,7 +16,7 @@ import logging
 from typing import Any, Optional
 
 PLUGIN_NAME = "Job Manager"
-PLUGIN_VERSION = "1.9.0"
+PLUGIN_VERSION = "2.0.0"
 PLUGIN_AUTHOR = "HiroYokoyama"
 
 PLUGIN_DESCRIPTION = "Submit calculations to remote HPC clusters over SSH, track queue status, and fetch results back into MoleditPy. Ready-made command lines for ORCA, Gaussian, CP2K, GAMESS, MOPAC, NWChem, Psi4, PySCF, Quantum ESPRESSO, VASP and xTB; job lists export to CSV or .pmejbs and reopen by drag and drop. Runs on this machine too, with no SSH; chains jobs with each scheduler's own dependency flag; and can hold a job until a chosen time. Installing paramiko adds a backend that keeps one SSH session open and can log in with a password."
@@ -41,7 +41,7 @@ WINDOW_KEY = "job_monitor"
 #: Job Manager > Host Monitor) never has to build the job monitor first.
 HOST_MONITOR_WINDOW_KEY = "job_manager_host_monitor"
 
-#: Where a load keeps its `stop_api`; read by loads from before 1.9. See `_retire_previous_load`.
+#: Where a load keeps its `stop_api`; read by loads from before 2.0. See `_retire_previous_load`.
 API_TEARDOWN_KEY = "api_teardown"
 
 #: Where a load keeps `shutdown`, for the next load to call. See `_retire_previous_load`.
@@ -361,7 +361,7 @@ def _retire_previous_load(context) -> None:
     -- the old module's own globals being the only place its service is still
     reachable.
 
-    A load from before 1.9 registered only its ``stop_api``; that function's
+    A load from before 2.0 registered only its ``stop_api``; that function's
     globals are its module's, so its ``shutdown`` is found through them.
     """
     previous = context.get_window(LOAD_TEARDOWN_KEY)
