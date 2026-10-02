@@ -131,6 +131,24 @@ class TestPickingWhomToAsk(unittest.TestCase):
         self.assertIsNone(instances.pick_target([]))
 
 
+class TestIsAStandaloneRunning(RegistryTestCase):
+    def test_nothing_running(self):
+        self.assertFalse(instances.standalone_running(self.dir))
+
+    def test_a_tray_process_or_monitor_counts(self):
+        fake_instance(self.dir, 101, instances.ROLE_TRAY)
+        self.assertTrue(instances.standalone_running(self.dir))
+
+    def test_a_moleditpy_does_not(self):
+        fake_instance(self.dir, 101, instances.ROLE_MOLEDITPY)
+        self.assertFalse(instances.standalone_running(self.dir))
+
+    def test_the_one_handing_over_does_not(self):
+        fake_instance(self.dir, 101, instances.ROLE_STANDALONE)
+        self.assertFalse(instances.standalone_running(self.dir, ignore_pid=101))
+        self.assertTrue(instances.standalone_running(self.dir, ignore_pid=999))
+
+
 class TestRequests(RegistryTestCase):
     def test_a_request_is_read_once(self):
         instances.send_request(self.dir, os.getpid(), instances.ACTION_SHOW_MONITOR)

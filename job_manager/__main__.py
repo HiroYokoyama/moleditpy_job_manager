@@ -33,7 +33,16 @@ def main() -> int:
     tray_mode = "--tray" in args
     host_view = any(arg in HOST_MONITOR_FLAGS for arg in args)
 
-    if not tray_mode:
+    if tray_mode:
+        try:
+            after_pid = int(_argument(args, "--after-pid") or 0)
+        except ValueError:
+            after_pid = 0
+        # Before anything is built: a tray process with nothing to do should
+        # not first read the job list, put an icon up and take it down again.
+        if instances.standalone_running(data_dir, after_pid):
+            return 0
+    else:
         # One Job Manager at a time, when it is ours to choose: a launch beside
         # one already running brings that one's window up instead of starting
         # a second tracker. Before the QApplication, so nothing flashes.
@@ -73,10 +82,6 @@ def main() -> int:
                 relaunch = [str(part) for part in json.loads(_argument(args, "--relaunch") or "[]")]
             except (ValueError, TypeError):
                 relaunch = []
-            try:
-                after_pid = int(_argument(args, "--after-pid") or 0)
-            except ValueError:
-                after_pid = 0
             return run(app, service, data_dir, relaunch, after_pid)
 
         from .standalone import run_monitor

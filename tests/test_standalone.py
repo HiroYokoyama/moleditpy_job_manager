@@ -276,6 +276,17 @@ class TestTheCommandLine(StandaloneTestCase):
         # The tray process decides for itself; it never defers by request.
         defer.assert_not_called()
 
+    def test_a_tray_process_with_nothing_to_do_builds_nothing(self):
+        # Exits before the service, so no job list is read and no tray icon
+        # goes up and comes down again.
+        with patch("job_manager.instances.standalone_running", return_value=True) as running:
+            with patch("job_manager.__main__.get_service") as service:
+                code, tray_run, _, _, _ = self.main("--tray", "--after-pid", "77")
+        self.assertEqual(code, 0)
+        self.assertEqual(running.call_args[0][1], 77)
+        service.assert_not_called()
+        tray_run.assert_not_called()
+
     def test_garbled_arguments_are_dropped(self):
         _, tray_run, _, _, _ = self.main("--tray", "--relaunch", "not json", "--after-pid", "x")
         self.assertEqual(tray_run.call_args[0][3], [])
@@ -362,10 +373,13 @@ class TestMoleditPyTakesItBack(unittest.TestCase):
         self.assertNotIn(instances.ACTION_STOP, job_manager._beacon.handlers)
 
     def test_the_service_without_a_plugin_registers_nothing_itself(self):
-        # A standalone monitor or the tray process registers in its own role.
+        # A standalone monitor or the tray process registers in its own role,
+        # and installs its own tray menu: the plugin's would ask a context
+        # that is not there.
         job_manager._context = None
         job_manager.get_service()
         self.assertIsNone(mine(self.dir))
+        self.assertIsNone(presence.current())
 
     def test_loading_the_plugin_stops_the_tray_process_before_reading_jobs(self):
         order = []

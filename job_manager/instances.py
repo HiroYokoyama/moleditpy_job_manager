@@ -154,6 +154,22 @@ def pick_target(instances: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     return None
 
 
+def standalone_running(directory: str, ignore_pid: int = 0) -> bool:
+    """A standalone monitor or tray process is running, other than ``ignore_pid``.
+
+    What a new tray process asks before starting: one of those already tracks.
+    A MoleditPy is not counted -- two of those each run the plugin, and that
+    is accepted -- nor is the process handing over, still registered as the
+    tray process starts.
+    """
+    for data in live_instances(directory):
+        if int(data.get("pid", 0) or 0) == int(ignore_pid or 0):
+            continue
+        if data.get("role") in (ROLE_STANDALONE, ROLE_TRAY):
+            return True
+    return False
+
+
 def send_request(directory: str, pid: int, action: str) -> None:
     """Ask instance ``pid`` to do ``action`` at its next look."""
     _allow_foreground(pid)
@@ -263,6 +279,7 @@ __all__ = [
     "remove_heartbeat",
     "request_pending",
     "send_request",
+    "standalone_running",
     "take_request",
     "wait_until_gone",
     "wait_until_taken",

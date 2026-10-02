@@ -146,17 +146,8 @@ class StandaloneTray(_StandaloneWindows):
         self.after_pid = int(after_pid or 0)
 
     def already_tracked(self) -> bool:
-        """Another standalone monitor or tray process is running: nothing to do.
-
-        The one handing over is not counted, nor is a MoleditPy -- two of those
-        each run the plugin, and that is accepted.
-        """
-        for data in instances.live_instances(self.data_dir):
-            if int(data.get("pid", 0)) == self.after_pid:
-                continue
-            if data.get("role") in (instances.ROLE_STANDALONE, instances.ROLE_TRAY):
-                return True
-        return False
+        """Another standalone monitor or tray process is running: nothing to do."""
+        return instances.standalone_running(self.data_dir, self.after_pid)
 
     def start(self) -> bool:
         """Put the icon up and start beating. False when there is no tray to use."""

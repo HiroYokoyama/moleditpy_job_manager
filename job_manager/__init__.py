@@ -227,11 +227,18 @@ def _install_status_widget(service) -> None:
 
 
 def _install_presence(service) -> None:
-    """The tray menu, task bar progress and title counts. See :mod:`.presence`."""
+    """The tray menu, task bar progress and title counts. See :mod:`.presence`.
+
+    Only inside MoleditPy: every action below asks the plugin context. The
+    standalone monitor and the tray process install their own, wired to their
+    own windows, and one built here first would only be torn down again.
+    """
+    if _context is None:
+        return
     try:
         from . import presence
 
-        main_window = _context.get_main_window() if _context is not None else None
+        main_window = _context.get_main_window()
         presence.install(
             service,
             main_window,
