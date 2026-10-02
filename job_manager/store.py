@@ -92,6 +92,14 @@ DEFAULT_PREFS: Dict[str, Any] = {
     "taskbar_badge": False,
     #: On by default, unlike the badge: transient, not a persistent look change.
     "notify_on_finish": True,
+    #: Flash the task bar button / bounce the Dock icon when a job ends. Like
+    #: a notification it is transient, and Qt skips it for the active window.
+    "flash_on_finish": True,
+    #: Progress on the job monitor's own task bar button (Windows). MoleditPy's
+    #: button only gets it together with the badge, which is opt-in.
+    "taskbar_progress": True,
+    #: Off by default: closing the main window has always quit MoleditPy.
+    "keep_running_in_tray": False,
     #: Incoming-webhook URL (Slack/Discord/Teams/...). Empty until pasted in.
     "notify_webhook": "",
     #: Separate from the URL so pausing chat messages doesn't mean deleting

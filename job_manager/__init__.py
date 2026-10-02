@@ -16,7 +16,7 @@ import logging
 from typing import Any, Optional
 
 PLUGIN_NAME = "Job Manager"
-PLUGIN_VERSION = "1.8.2"
+PLUGIN_VERSION = "1.9.0"
 PLUGIN_AUTHOR = "HiroYokoyama"
 
 PLUGIN_DESCRIPTION = "Submit calculations to remote HPC clusters over SSH, track queue status, and fetch results back into MoleditPy. Ready-made command lines for ORCA, Gaussian, CP2K, GAMESS, MOPAC, NWChem, Psi4, PySCF, Quantum ESPRESSO, VASP and xTB; job lists export to CSV or .pmejbs and reopen by drag and drop. Runs on this machine too, with no SSH; chains jobs with each scheduler's own dependency flag; and can hold a job until a chosen time. Installing paramiko adds a backend that keeps one SSH session open and can log in with a password."
@@ -43,6 +43,9 @@ HOST_MONITOR_WINDOW_KEY = "job_manager_host_monitor"
 
 #: Where a load keeps its `stop_api`, for the next load to call. See `_release_previous_api`.
 API_TEARDOWN_KEY = "api_teardown"
+
+#: Same, for the tray icon and task bar progress. See `_release_previous_presence`.
+PRESENCE_TEARDOWN_KEY = "presence_teardown"
 
 _context: Optional[Any] = None
 _service: Optional[Any] = None
@@ -73,6 +76,7 @@ def get_service(create: bool = True, store: Optional[Any] = None) -> Optional[An
         # when its jobs end.
         _service.job_finished.connect(_notify_finished)
         _install_status_widget(_service)
+        _install_presence(_service)
     return _service
 
 
@@ -220,6 +224,38 @@ def _install_status_widget(service) -> None:
         logging.debug("Job Manager: no status bar indicator", exc_info=True)
 
 
+def _install_presence(service) -> None:
+    """The tray menu, task bar progress and title counts. See :mod:`.presence`."""
+    try:
+        from . import presence
+
+        main_window = _context.get_main_window() if _context is not None else None
+        presence.install(
+            service,
+            main_window,
+            {
+                "monitor": lambda: show_monitor(_context),
+                "submit": lambda: show_submit(_context),
+                "host_monitor": lambda: show_host_monitor_standalone(_context),
+                "select_job": lambda job_id: show_job(job_id, _context),
+            },
+        )
+    except Exception:
+        logging.debug("Job Manager: no tray or task bar presence", exc_info=True)
+
+
+def _acknowledge_failures() -> None:
+    """The monitor is in front of the user: stop flagging failures as unseen."""
+    try:
+        from . import presence
+
+        current = presence.current()
+        if current is not None:
+            current.acknowledge()
+    except Exception:
+        logging.debug("Job Manager: failures not acknowledged", exc_info=True)
+
+
 def _startup_store() -> Optional[Any]:
     """The job list, read once at load for everything that has to peek at it.
 
@@ -315,10 +351,39 @@ def _release_previous_api(context) -> None:
     context.register_window(API_TEARDOWN_KEY, stop_api)
 
 
+def _release_presence() -> None:
+    """Take this load's tray icon down and undo keep-running."""
+    try:
+        from . import notify, presence
+
+        presence.uninstall()
+        notify.shutdown()
+    except Exception:
+        logging.debug("Job Manager: presence not released", exc_info=True)
+
+
+def _release_previous_presence(context) -> None:
+    """Retire the tray icon a previous load of this plugin left up.
+
+    The reasoning of :func:`_release_previous_api`: a reload re-executes the
+    package as new module objects, so the old load's tray icon -- and its
+    keep-running hold on MoleditPy's quit -- stays unless retired here, and the
+    next job the new load tracks puts a second icon beside it.
+    """
+    previous = context.get_window(PRESENCE_TEARDOWN_KEY)
+    if callable(previous):
+        try:
+            previous()
+        except Exception:
+            logging.debug("Job Manager: the previous load's tray did not go", exc_info=True)
+    context.register_window(PRESENCE_TEARDOWN_KEY, _release_presence)
+
+
 def initialize(context) -> None:
     """Entry point called by the host at plugin load."""
     global _context
     _release_previous_api(context)
+    _release_previous_presence(context)
     _context = context
     # Extensions rather than the Plugin menu. The host has no Extensions menu
     # of its own and creates it on demand, so this is a top-level entry.
@@ -379,9 +444,14 @@ def show_monitor(context=None) -> None:
         return
     window = context.get_window(WINDOW_KEY)
     if window is not None:
+        # Restored as well as raised: from the tray, a minimised monitor is
+        # the usual case, and raise_() alone leaves it minimised.
+        if window.isMinimized():
+            window.showNormal()
         window.show()
         window.raise_()
         window.activateWindow()
+        _acknowledge_failures()
         return
     try:
         from .jobs_dialog import JobsDialog
@@ -390,9 +460,21 @@ def show_monitor(context=None) -> None:
         window = JobsDialog(service, parent=None)
         context.register_window(WINDOW_KEY, window)
         window.show()
+        _acknowledge_failures()
     except Exception as exc:
         logging.exception("Job Manager: could not open the job monitor")
         context.show_status_message(f"Job Manager: {exc}", 5000)
+
+
+def show_job(job_id: str, context=None) -> None:
+    """Open the monitor with one job selected -- the tray's job list lands here."""
+    context = context or _context
+    if context is None:
+        return
+    show_monitor(context)
+    window = context.get_window(WINDOW_KEY)
+    if window is not None and hasattr(window, "select_job"):
+        window.select_job(job_id)
 
 
 def show_submit(context=None) -> None:
@@ -526,6 +608,14 @@ def shutdown() -> None:
     # plugin. Unconditional, since a listening server outlives a reload.
     stop_api()
     _api_server = None
+    # Before the service goes: the tray menu and the task bar progress read it,
+    # and keep-running must be undone while a main window can still be shown.
+    try:
+        from . import presence
+
+        presence.uninstall()
+    except Exception:
+        logging.debug("Job Manager: presence teardown failed", exc_info=True)
     if _status_widget is not None:
         try:
             _status_widget.detach()

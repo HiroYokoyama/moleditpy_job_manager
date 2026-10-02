@@ -95,8 +95,12 @@ class TestInitializeContract(unittest.TestCase):
 
     def test_initialize_touches_nothing_else(self):
         # No window is created and no molecule is read at load time. The only
-        # registry entry is the handle the next load uses to retire this API.
-        self.assertEqual(list(self.context.windows), [job_manager.API_TEARDOWN_KEY])
+        # registry entries are the handles the next load uses to retire this
+        # load's API and tray icon.
+        self.assertEqual(
+            list(self.context.windows),
+            [job_manager.API_TEARDOWN_KEY, job_manager.PRESENCE_TEARDOWN_KEY],
+        )
         self.assertEqual(self.context.status_messages, [])
 
     def test_no_project_handlers_are_registered(self):

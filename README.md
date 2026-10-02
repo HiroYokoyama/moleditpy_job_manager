@@ -80,6 +80,18 @@ fetch, open.
   task bar** — the Dock on macOS, the task bar button on Windows, the launcher
   entry on Linux — which is off by default, since the icon is MoleditPy's
   rather than this plugin's.
+- **A tray icon** that says the same at a glance — a green dot while jobs run,
+  amber while they wait, red when one failed and you have not looked yet — and
+  whose right-click menu opens the monitor, starts a new job, refreshes, lists
+  the active jobs (pick one to jump to it) and quits MoleditPy. Optionally
+  **keep running in the tray** after MoleditPy's window is closed, so a long
+  run stays tracked; off by default.
+- **On the Windows task bar**, the job monitor's button shows the batch's
+  progress — green filling as jobs end, yellow for a blocked chain, red for an
+  unseen failure — and its thumbnail carries *Refresh now*, *New job* and
+  *Host monitor* buttons. A job ending flashes the button (bounces the Dock
+  icon on macOS) when MoleditPy is not in front, and the monitor's title leads
+  with the counts, so the task bar's hover text says what is running.
 - **Be told** when a job ends: a desktop notification names the job and the
   host when it finishes, fails or vanishes from the queue. On by default, and
   one checkbox away from off. The same line can go to **Slack, Discord or

@@ -11,6 +11,7 @@ import os
 import json
 import shutil
 import socket
+import sys
 import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
@@ -240,7 +241,24 @@ class TestHostStyleReload(ApiEntryTestCase):
     def test_a_previous_teardown_that_raises_does_not_block_the_load(self):
         context = self.make_context()
         context.register_window(job_manager.API_TEARDOWN_KEY, MagicMock(side_effect=OSError("x")))
+        context.register_window(
+            job_manager.PRESENCE_TEARDOWN_KEY, MagicMock(side_effect=RuntimeError("x"))
+        )
         job_manager.initialize(context)  # must not raise
+
+    def test_the_new_load_retires_the_old_loads_tray(self):
+        # Otherwise every reload leaves one more tray icon behind.
+        context = self.make_context()
+        first = self.load_copy("jm_reload_tray_a")
+        first.initialize(context)
+        first.get_service()
+        old_presence = sys.modules["jm_reload_tray_a.presence"]
+        self.assertIsNotNone(old_presence.current())
+
+        second = self.load_copy("jm_reload_tray_b")
+        second.initialize(context)
+
+        self.assertIsNone(old_presence.current())
 
     def test_a_reload_still_defers_to_a_different_live_instance(self):
         context = self.make_context()

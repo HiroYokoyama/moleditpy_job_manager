@@ -14,6 +14,7 @@ from typing import Any, List, Optional
 
 from PyQt6.QtCore import (
     QAbstractTableModel,
+    QEvent,
     QModelIndex,
     QObject,
     QSortFilterProxyModel,
@@ -343,7 +344,10 @@ class JobsDialog(QDialog):
         self.service = service
         # The version is in the title of every window: a bug report that names
         # it is worth several rounds of asking.
-        self.setWindowTitle(f"Job Manager {PLUGIN_VERSION} - Job Monitor")
+        #: Without the job counts, which :meth:`_show_counts` puts in front.
+        self._base_title = f"Job Manager {PLUGIN_VERSION} - Job Monitor"
+        self._title_counts = ""
+        self.setWindowTitle(self._base_title)
         make_independent(self)
         apply_theme(self)
         self.resize(940, 560)
@@ -366,6 +370,7 @@ class JobsDialog(QDialog):
         self._ticker.setInterval(1000)
         self._ticker.timeout.connect(self._tick_elapsed)
         self._ticker.start()
+        self._attach_presence()
 
     # --- construction -------------------------------------------------------
 
@@ -592,7 +597,10 @@ class JobsDialog(QDialog):
         actions.addWidget(self.chk_auto_open)
 
         self.chk_taskbar_badge = QCheckBox("Show the count on the app icon")
-        self.chk_taskbar_badge.setToolTip("Show the number of active jobs on MoleditPy's own icon.")
+        self.chk_taskbar_badge.setToolTip(
+            "Show the number of active jobs on MoleditPy's own icon, and on Windows "
+            "the progress of the current batch on its task bar button."
+        )
         self.chk_taskbar_badge.setChecked(bool(self.service.store.get_pref("taskbar_badge", False)))
         self.chk_taskbar_badge.toggled.connect(self._on_taskbar_badge_toggled)
         actions.addWidget(self.chk_taskbar_badge)
@@ -1493,11 +1501,11 @@ class JobsDialog(QDialog):
         """Say which list is in use whenever it is not the usual one."""
         store = self.service.store
         if store.using_default_jobs_file():
-            self.setWindowTitle(f"Job Manager {PLUGIN_VERSION} - Job Monitor")
+            self._set_base_title(f"Job Manager {PLUGIN_VERSION} - Job Monitor")
             self.lbl_active_file.setVisible(False)
             self.btn_default_file.setVisible(False)
             return
-        self.setWindowTitle(f"Job Manager {PLUGIN_VERSION} - {os.path.basename(store.jobs_path)}")
+        self._set_base_title(f"Job Manager {PLUGIN_VERSION} - {os.path.basename(store.jobs_path)}")
         if self.viewing_reconstructed():
             self.lbl_active_file.setText(
                 f"<b>Rebuilt from a folder</b> — {store.jobs_path}. Read only: these "
@@ -1670,6 +1678,88 @@ class JobsDialog(QDialog):
         batch = len(files) > 1 and not bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
         self.open_submit_dialog(files=files, batch=batch)
 
+    # --- the task bar and the title ------------------------------------------
+
+    def _attach_presence(self) -> None:
+        """Counts in the title, progress and buttons on the task bar button."""
+        from . import presence, win_taskbar
+
+        self._presence = presence.current()
+        style = self.style()
+        pixmap = style.StandardPixmap
+        self._taskbar = win_taskbar.WindowTaskbar(
+            self,
+            [
+                (1, style.standardIcon(pixmap.SP_BrowserReload), "Refresh now", self._refresh_now),
+                (2, style.standardIcon(pixmap.SP_FileIcon), "New job", self._new_job_from_taskbar),
+                (
+                    3,
+                    style.standardIcon(pixmap.SP_ComputerIcon),
+                    "Host monitor",
+                    self.open_host_monitor,
+                ),
+            ],
+        )
+        if self._presence is not None:
+            self._presence.add_title_listener(self._show_counts)
+            self._presence.add_window(self._taskbar)
+        else:
+            self._show_counts(presence.count_jobs(self.service.store))
+
+    def _detach_presence(self) -> None:
+        current = getattr(self, "_presence", None)
+        if current is not None:
+            current.remove_title_listener(self._show_counts)
+            current.remove_window(self._taskbar)
+        self._presence = None
+
+    def _new_job_from_taskbar(self) -> None:
+        self.showNormal()
+        self.activateWindow()
+        self.open_submit_dialog()
+
+    def _set_base_title(self, title: str) -> None:
+        self._base_title = title
+        self.setWindowTitle(self._title_counts + title)
+
+    def _show_counts(self, counts: dict) -> None:
+        """Counts first: the task bar and Alt+Tab cut a long title from the end."""
+        from .presence import title_prefix
+
+        self._title_counts = title_prefix(counts)
+        self.setWindowTitle(self._title_counts + self._base_title)
+
+    def select_job(self, job_id: str) -> None:
+        """Select ``job_id``, clearing a filter that hides it."""
+        row = self.model.row_of(job_id)
+        if row < 0:
+            return
+        if not self.proxy.mapFromSource(self.model.index(row, 0)).isValid():
+            self.txt_filter.clear()
+        self._select_job(job_id)
+        index = self.proxy.mapFromSource(self.model.index(row, 0))
+        if index.isValid():
+            self.table.scrollTo(index)
+
+    def nativeEvent(self, event_type, message):  # noqa: N802 - Qt's spelling
+        taskbar = getattr(self, "_taskbar", None)
+        if taskbar is not None and event_type == b"windows_generic_MSG":
+            try:
+                if taskbar.handle(message):
+                    return True, 0
+            except Exception:
+                logging.debug("Job Manager: task bar message not handled", exc_info=True)
+        return super().nativeEvent(event_type, message)
+
+    def changeEvent(self, event) -> None:  # noqa: N802 - Qt's spelling
+        # Looking at the monitor is what "seen" means for a failed job: the
+        # tray and the task bar stop showing red once it has been in front.
+        if event.type() == QEvent.Type.ActivationChange and self.isActiveWindow():
+            current = getattr(self, "_presence", None)
+            if current is not None:
+                current.acknowledge()
+        super().changeEvent(event)
+
     # --- lifecycle ----------------------------------------------------------
 
     def _teardown(self) -> None:
@@ -1677,6 +1767,7 @@ class JobsDialog(QDialog):
         continues in the service, which outlives this dialog."""
         if hasattr(self, "_ticker"):
             self._ticker.stop()
+        self._detach_presence()
         self._disconnect_service()
         try:
             from . import forget_window

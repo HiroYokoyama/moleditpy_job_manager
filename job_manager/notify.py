@@ -39,17 +39,31 @@ def _icon():
     return app.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
 
 
+def ensure_tray() -> Optional[QSystemTrayIcon]:
+    """The one tray icon, created and shown on first use. None without a tray.
+
+    Shared with :mod:`job_manager.tray`, which hangs the menu on it: two icons
+    for one plugin would be one too many.
+    """
+    global _tray
+    if not available():
+        return None
+    if _tray is None:
+        _tray = QSystemTrayIcon(_icon())
+        _tray.setToolTip("MoleditPy job manager")
+        _tray.show()
+    return _tray
+
+
 def notify(title: str, message: str) -> bool:
     """Raise a desktop notification. False when the platform has none."""
-    global _tray
     if not available():
         return False
     try:
-        if _tray is None:
-            _tray = QSystemTrayIcon(_icon())
-            _tray.setToolTip("MoleditPy job manager")
-            _tray.show()
-        _tray.showMessage(title, message, _icon(), TIMEOUT_MS)
+        tray = ensure_tray()
+        if tray is None:
+            return False
+        tray.showMessage(title, message, _icon(), TIMEOUT_MS)
     except Exception:
         logging.debug("Job Manager: the notification was refused", exc_info=True)
         return False
@@ -69,4 +83,4 @@ def shutdown() -> None:
     _tray = None
 
 
-__all__ = ["TIMEOUT_MS", "available", "notify", "shutdown"]
+__all__ = ["TIMEOUT_MS", "available", "ensure_tray", "notify", "shutdown"]

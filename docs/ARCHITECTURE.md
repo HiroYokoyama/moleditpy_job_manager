@@ -280,7 +280,10 @@ working in, so a transfer cut off half way would otherwise leave a truncated
 | `tasks.py` | `BackgroundTask` / `run_async` on the shared pool |
 | `status_widget.py` | the job counter in the host's status bar |
 | `taskbar.py` | the same count on the application icon (Dock / task bar / launcher) |
-| `notify.py` | the desktop notification raised when a job ends |
+| `notify.py` | the desktop notification raised when a job ends, and the one tray icon |
+| `presence.py` | what the tray, the task bar and the monitor's title show; the counting is plain functions |
+| `tray.py` | the tray icon's menu, status dot and tooltip, and keeping MoleditPy alive in the tray |
+| `win_taskbar.py` | `ITaskbarList3` through ctypes: progress and thumbnail buttons on a Windows task bar button |
 | `webhook.py` | the same line posted to a chat room (Slack, Discord, generic JSON) |
 | `api_core.py` | what an API request *means*: routing, validation, serialisation. Pure stdlib |
 | `api_server.py` | the loopback HTTP server, the token, and the hop onto the GUI thread |
