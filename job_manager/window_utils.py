@@ -33,4 +33,17 @@ def make_independent(dialog) -> None:
     apply_icon(dialog)
 
 
-__all__ = ["make_independent"]
+def bring_to_front(window) -> None:
+    """Show, restore and raise a window that may be hidden or minimised.
+
+    Restored as well as raised: from the tray a minimised window is the usual
+    case, and raise_() alone leaves it on the task bar.
+    """
+    if window.isMinimized():
+        window.showNormal()
+    window.show()
+    window.raise_()
+    window.activateWindow()
+
+
+__all__ = ["bring_to_front", "make_independent"]

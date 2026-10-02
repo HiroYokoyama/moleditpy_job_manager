@@ -536,13 +536,9 @@ def show_monitor(context=None) -> None:
         return
     window = context.get_window(WINDOW_KEY)
     if window is not None:
-        # Restored as well as raised: from the tray, a minimised monitor is
-        # the usual case, and raise_() alone leaves it minimised.
-        if window.isMinimized():
-            window.showNormal()
-        window.show()
-        window.raise_()
-        window.activateWindow()
+        from .window_utils import bring_to_front
+
+        bring_to_front(window)
         _mark_opened()
         _acknowledge_failures()
         return
@@ -610,9 +606,10 @@ def show_host_monitor_standalone(context=None) -> None:
         return
     window = context.get_window(HOST_MONITOR_WINDOW_KEY)
     if window is not None:
-        window.show()
-        window.raise_()
-        window.activateWindow()
+        from .window_utils import bring_to_front
+
+        # Minimised, it used to stay minimised: show() and raise_() leave it so.
+        bring_to_front(window)
         _mark_opened()
         return
     try:

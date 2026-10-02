@@ -837,7 +837,8 @@ class JobsDialog(QDialog):
     def open_host_monitor(self) -> None:
         """Open the live host panel, or raise the one already up."""
         from . import HOST_MONITOR_WINDOW_KEY, get_context
-        from .host_monitor import HostMonitorDialog
+        from .host_monitor import HostMonitorDialog, find_open
+        from .window_utils import bring_to_front
 
         # One Host Monitor, whichever way it was opened. Extensions > Job
         # Manager > Host Monitor registers its window under this key; this
@@ -847,10 +848,10 @@ class JobsDialog(QDialog):
         existing = self._host_monitor
         if existing is None and context is not None:
             existing = context.get_window(HOST_MONITOR_WINDOW_KEY)
+        if existing is None:
+            existing = find_open(self.service)
         if existing is not None:
-            existing.show()
-            existing.raise_()
-            existing.activateWindow()
+            bring_to_front(existing)
             return
         dialog = HostMonitorDialog(self.service, parent=None)
         self._host_monitor = dialog
@@ -1510,9 +1511,14 @@ class JobsDialog(QDialog):
         target = pick_primary_result(paths, self._log_name_for(paths))
         if not target:
             return
-        opened = open_in_host(target)
-        if opened:
+        from . import get_context
+
+        if open_in_host(target):
             self._append_message(f"Opened {os.path.basename(target)}")
+        elif get_context() is None:
+            # Run on its own there is no MoleditPy to hand it to; saying only
+            # "Downloaded" read as the Open button having done nothing.
+            self._append_message(f"No MoleditPy in this process to open it in; it is at {target}")
         else:
             self._append_message(f"Downloaded {target}")
 
@@ -1615,8 +1621,9 @@ class JobsDialog(QDialog):
             taskbar.release()
 
     def _new_job_from_taskbar(self) -> None:
-        self.showNormal()
-        self.activateWindow()
+        from .window_utils import bring_to_front
+
+        bring_to_front(self)
         self.open_submit_dialog()
 
     def _set_base_title(self, title: str) -> None:

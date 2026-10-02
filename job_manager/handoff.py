@@ -139,10 +139,33 @@ def standalone_command(
     return command
 
 
+def _launched_package(main_module: Any, modules: Dict[str, Any]) -> str:
+    """The package a console-script launcher started, if it has a ``__main__``.
+
+    pip's launcher script does ``from moleditpy.__main__ import main``, so
+    that module is already imported and ``main`` says which package it is.
+    """
+    function = getattr(main_module, "main", None)
+    top = (getattr(function, "__module__", "") or "").split(".")[0]
+    if top and top != "__main__" and f"{top}.__main__" in modules:
+        return top
+    return ""
+
+
 def relaunch_command(
-    argv: Optional[List[str]] = None, executable: Optional[str] = None
+    argv: Optional[List[str]] = None,
+    executable: Optional[str] = None,
+    main_module: Any = None,
+    modules: Optional[Dict[str, Any]] = None,
 ) -> List[str]:
-    """How to start MoleditPy again, read off the process that is running it."""
+    """How to start MoleditPy again, read off the process that is running it.
+
+    Empty when there is no reliable answer: the tray menu then offers no
+    "Open MoleditPy" at all, rather than one that silently starts nothing.
+    """
+    if argv is None:
+        main_module = sys.modules.get("__main__") if main_module is None else main_module
+        modules = sys.modules if modules is None else modules
     argv = list(sys.argv if argv is None else argv)
     executable = executable or sys.executable
     if getattr(sys, "frozen", False):
@@ -154,13 +177,24 @@ def relaunch_command(
         # This package run on its own: there is no MoleditPy to go back to,
         # and "Open MoleditPy" must not open another standalone monitor.
         return []
-    if script.lower().endswith(".exe"):
-        # A console-script launcher (moleditpy.exe in Scripts\\).
-        return [script]
     if os.path.basename(script) == "__main__.py":
         # `python -m moleditpy`: running __main__.py by path would break its
         # relative imports.
         return [executable, "-m", os.path.basename(os.path.dirname(script))]
+    # pip's launcher on Windows strips ".exe" from argv[0], so the script
+    # named there does not exist: `python Scripts\moleditpy` started nothing.
+    launcher = script if script.lower().endswith(".exe") else script + ".exe"
+    if script == launcher or (not os.path.isfile(script) and os.path.isfile(launcher)):
+        package = _launched_package(main_module, modules or {})
+        if package:
+            # The interpreter, not the launcher: a console launcher started
+            # detached opens a console window of its own for the Python it runs.
+            return [executable, "-m", package]
+        return [launcher]
+    # Absolute: the tray process starts it from another working directory.
+    script = os.path.abspath(script)
+    if not os.path.isfile(script):
+        return []
     return [executable, script]
 
 

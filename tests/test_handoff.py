@@ -13,6 +13,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 import unittest
 from unittest.mock import patch
 
@@ -139,10 +140,55 @@ class TestCommands(unittest.TestCase):
 
 
 class TestTheWayBack(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def touch(self, name):
+        path = os.path.join(self.tmp, name)
+        with open(path, "w", encoding="utf-8"):
+            pass
+        return path
+
     def test_a_script(self):
+        script = self.touch("moleditpy")
         self.assertEqual(
-            handoff.relaunch_command(["/opt/bin/moleditpy", "file.mol"], "/usr/bin/python3"),
-            ["/usr/bin/python3", "/opt/bin/moleditpy"],
+            handoff.relaunch_command([script, "file.mol"], "/usr/bin/python3"),
+            ["/usr/bin/python3", script],
+        )
+
+    def test_a_relative_script_is_made_absolute(self):
+        # The tray process starts it from another working directory.
+        script = self.touch("main.py")
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(self.tmp)
+        command = handoff.relaunch_command(["main.py"], "python")
+        self.assertEqual(os.path.normcase(command[1]), os.path.normcase(os.path.realpath(script)))
+
+    def test_a_script_that_is_not_there_offers_nothing(self):
+        missing = os.path.join(self.tmp, "gone.py")
+        self.assertEqual(handoff.relaunch_command([missing], "python"), [])
+
+    def test_pips_windows_launcher_names_a_script_that_is_not_there(self):
+        # argv[0] arrives with ".exe" stripped; running it as a script did nothing.
+        launcher = self.touch("moleditpy.exe")
+        script = launcher[: -len(".exe")]
+        self.assertEqual(handoff.relaunch_command([script], "python.exe"), [launcher])
+
+    def test_the_launchers_package_is_run_with_dash_m(self):
+        launcher = self.touch("moleditpy.exe")
+        main_module = types.SimpleNamespace(main=types.SimpleNamespace(__module__="moleditpy.main"))
+        modules = {"moleditpy.__main__": object()}
+        command = handoff.relaunch_command(
+            [launcher[: -len(".exe")]], "python.exe", main_module, modules
+        )
+        self.assertEqual(command, ["python.exe", "-m", "moleditpy"])
+
+    def test_a_package_without_a_main_module_keeps_the_launcher(self):
+        launcher = self.touch("moleditpy.exe")
+        main_module = types.SimpleNamespace(main=types.SimpleNamespace(__module__="moleditpy.main"))
+        self.assertEqual(
+            handoff.relaunch_command([launcher], "python.exe", main_module, {}), [launcher]
         )
 
     def test_a_console_script_launcher(self):

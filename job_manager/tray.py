@@ -164,9 +164,11 @@ class TrayController(QObject):
 
     # --- the menu ------------------------------------------------------------
 
-    def _add(self, menu: QMenu, text: str, slot, enabled: bool = True) -> QAction:
+    def _add(self, menu: QMenu, text: str, slot) -> QAction:
         action = menu.addAction(text)
-        action.setEnabled(enabled)
+        # An entry with nothing behind it is shown greyed, not clickable and
+        # silently doing nothing.
+        action.setEnabled(slot is not None)
         if slot is not None:
             action.triggered.connect(lambda _checked=False: slot())
         return action
@@ -363,7 +365,17 @@ class TrayController(QObject):
 
     def open_moleditpy(self) -> None:
         """From the tray process: start MoleditPy, which then takes the tracking back."""
-        handoff.spawn_detached(self.relaunch)
+        if handoff.spawn_detached(self.relaunch) or self.tray is None:
+            return
+        try:
+            self.tray.showMessage(
+                "MoleditPy job manager",
+                "MoleditPy could not be started from here; start it as usual.",
+                notify._icon(),
+                notify.TIMEOUT_MS,
+            )
+        except Exception:
+            logging.debug("Job Manager: the failure note was refused", exc_info=True)
 
     # --- teardown --------------------------------------------------------------
 

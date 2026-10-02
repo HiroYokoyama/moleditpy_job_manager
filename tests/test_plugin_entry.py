@@ -129,6 +129,15 @@ class TestShowHostMonitorStandalone(PluginEntryTestCase):
         dialog_cls.assert_not_called()
         existing.raise_.assert_called_once()
 
+    def test_a_minimised_window_is_restored(self):
+        # From the tray it is usually minimised, and show() leaves it so.
+        job_manager.initialize(self.context)
+        existing = MagicMock()
+        existing.isMinimized.return_value = True
+        self.context.get_window.return_value = existing
+        job_manager.show_host_monitor_standalone(self.context)
+        existing.showNormal.assert_called_once()
+
     def test_a_construction_failure_is_reported_not_raised(self):
         job_manager.initialize(self.context)
         with patch("job_manager.host_monitor.HostMonitorDialog", side_effect=RuntimeError("boom")):

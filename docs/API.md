@@ -142,6 +142,8 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8765/api/v1/jobs
 ## Routes
 
 Everything is under `/api/v1`. Replies are JSON objects.
+`GET /ping` lists these routes too, and so does the `404` for a path that
+is not one of them, so a client can find them without this page.
 
 | Method | Path | What it does |
 |---|---|---|

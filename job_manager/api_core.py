@@ -76,6 +76,28 @@ PRESET_FIELDS = {
 }
 
 
+#: Every route, as ``/ping`` and an unknown path list them: a client that
+#: never saw docs/API.md -- a script, an agent -- otherwise had to guess.
+#: Kept in step with the dispatch in :meth:`JobApi.handle` by a test.
+ROUTES = (
+    ("GET", "/ping", "version, and how many jobs and hosts there are"),
+    ("GET", "/hosts", "configured hosts"),
+    ("GET", "/presets", "saved presets; ?host="),
+    ("GET", "/jobs", "tracked jobs; ?state=, ?host=, ?name=, ?limit="),
+    ("POST", "/jobs", "submit a job: host plus command or preset, files"),
+    ("GET", "/jobs/{id}", "one job"),
+    ("DELETE", "/jobs/{id}", "stop tracking a finished job"),
+    ("POST", "/jobs/{id}/cancel", "cancel it on the host"),
+    ("POST", "/jobs/{id}/download", "fetch its results"),
+    ("GET", "/jobs/{id}/log", "tail its log; ?lines=, ?file="),
+    ("GET", "/jobs/{id}/files", "list its remote directory"),
+)
+
+
+def route_list() -> List[str]:
+    return [f"{method} {API_PREFIX}{path} - {what}" for method, path, what in ROUTES]
+
+
 class ApiError(Exception):
     """A request that cannot be served, carrying the status the client gets."""
 
@@ -85,7 +107,10 @@ class ApiError(Exception):
         self.message = str(message)
 
     def payload(self) -> Dict[str, Any]:
-        return {"error": self.message, "status": self.status}
+        payload: Dict[str, Any] = {"error": self.message, "status": self.status}
+        if self.status == 404 and self.message.startswith("Unknown "):
+            payload["routes"] = route_list()
+        return payload
 
 
 class Deferred:
@@ -399,6 +424,7 @@ class JobApi:
             "jobs": len(jobs),
             "active_jobs": sum(1 for job in jobs if job.is_active),
             "hosts": len(self.store.hosts),
+            "routes": route_list(),
         }
 
     def hosts(self) -> Dict[str, Any]:

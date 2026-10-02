@@ -78,6 +78,35 @@ class TestRouting(ApiTestCase):
         self.assertEqual(payload["plugin_version"], PLUGIN_VERSION)
         self.assertEqual(payload["api_version"], api_core.API_VERSION)
 
+    def test_ping_lists_every_route(self):
+        # A client that never saw docs/API.md otherwise had to guess them.
+        _, payload = self.get("/ping")
+        self.assertIn(f"POST {api_core.API_PREFIX}/jobs - ", "\n".join(payload["routes"]))
+        self.assertEqual(len(payload["routes"]), len(api_core.ROUTES))
+
+    def test_an_unknown_path_lists_them_too(self):
+        with self.assertRaises(ApiError) as caught:
+            self.get("/nonsense")
+        self.assertEqual(caught.exception.payload()["routes"], api_core.route_list())
+
+    def test_a_missing_job_does_not_list_routes(self):
+        # The path was right; a list of routes would only bury the answer.
+        with self.assertRaises(ApiError) as caught:
+            self.get("/jobs/nope")
+        self.assertNotIn("routes", caught.exception.payload())
+
+    def test_every_listed_route_is_one_the_api_dispatches(self):
+        job = self.add_job(name="j", state=STATE_DONE)
+        for method, path, _ in api_core.ROUTES:
+            with self.subTest(route=f"{method} {path}"):
+                try:
+                    self.api.handle(
+                        method, api_core.API_PREFIX + path.replace("{id}", job.id), {}, {}
+                    )
+                except ApiError as exc:
+                    self.assertNotEqual(exc.status, 405, exc.message)
+                    self.assertFalse(exc.message.startswith("Unknown"), exc.message)
+
     def test_the_wrong_method_is_a_405_naming_the_right_one(self):
         with self.assertRaises(ApiError) as caught:
             self.api.handle("DELETE", api_core.API_PREFIX + "/hosts", {}, {})

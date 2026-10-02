@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import QApplication
 
 from . import instances, notify, presence
 from .beacon import InstanceBeacon
+from .window_utils import bring_to_front
 
 
 class _StandaloneWindows(QObject):
@@ -54,11 +55,7 @@ class _StandaloneWindows(QObject):
         # A closed monitor has torn its connections down; build a new one.
         if self.monitor is None or not self.monitor.isVisible():
             self.monitor = JobsDialog(self.service)
-        if self.monitor.isMinimized():
-            self.monitor.showNormal()
-        self.monitor.show()
-        self.monitor.raise_()
-        self.monitor.activateWindow()
+        bring_to_front(self.monitor)
         if self.presence is not None:
             self.presence.acknowledge()
         return self.monitor
@@ -67,15 +64,12 @@ class _StandaloneWindows(QObject):
         self.open_monitor().open_submit_dialog()
 
     def open_host_monitor(self):
-        from .host_monitor import HostMonitorDialog
+        from .host_monitor import HostMonitorDialog, find_open
 
         if self.host_monitor is None or not self.host_monitor.isVisible():
-            self.host_monitor = HostMonitorDialog(self.service)
-        if self.host_monitor.isMinimized():
-            self.host_monitor.showNormal()
-        self.host_monitor.show()
-        self.host_monitor.raise_()
-        self.host_monitor.activateWindow()
+            # The job monitor's own button may have opened one already.
+            self.host_monitor = find_open(self.service) or HostMonitorDialog(self.service)
+        bring_to_front(self.host_monitor)
         return self.host_monitor
 
     def open_settings(self) -> None:

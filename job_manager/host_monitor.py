@@ -14,6 +14,7 @@ from typing import Deque, Dict, Optional
 from PyQt6.QtCore import QRectF, QSize, Qt, QTimer
 from PyQt6.QtGui import QColor, QFont, QPainter, QPainterPath, QPalette, QPen
 from PyQt6.QtWidgets import (
+    QApplication,
     QDialog,
     QDialogButtonBox,
     QFrame,
@@ -816,6 +817,9 @@ class HostCard(QFrame):
 class HostMonitorDialog(QDialog):
     """A card per host, refreshed on a timer while this window is open."""
 
+    #: What :func:`find_open` looks for.
+    is_host_monitor = True
+
     #: One card fits comfortably in this much width; fewer wide columns beat
     #: many cramped ones.
     CARD_WIDTH = 320
@@ -1249,4 +1253,23 @@ class _ActiveJobsBar(QWidget):
         self._lbl_count.setText("&nbsp;&nbsp;".join(parts))
 
 
-__all__ = ["HostCard", "HostMonitorDialog", "Sparkline"]
+def find_open(service) -> Optional[HostMonitorDialog]:
+    """The Host Monitor already on screen for ``service``, if any.
+
+    Without MoleditPy there is no window registry: the tray's Host Monitor
+    and the job monitor's button each opened one of their own.
+    """
+    app = QApplication.instance()
+    for widget in app.topLevelWidgets() if app is not None else []:
+        # By marker, not isinstance: the class is replaced in tests.
+        if (
+            getattr(widget, "is_host_monitor", False)
+            and getattr(widget, "service", None) is service
+            and widget.isVisible()
+            and not widget._torn_down
+        ):
+            return widget
+    return None
+
+
+__all__ = ["HostCard", "HostMonitorDialog", "Sparkline", "find_open"]

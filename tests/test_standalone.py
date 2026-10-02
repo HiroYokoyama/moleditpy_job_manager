@@ -232,6 +232,24 @@ class TestAMonitorOpenedByHand(StandaloneTestCase):
         self.assertEqual(tray.actions["host_monitor"], windows.open_host_monitor)
         self.assertEqual(tray.actions["settings"], windows.open_settings)
 
+    def test_the_tray_raises_the_host_monitor_the_job_monitor_opened(self):
+        # No window registry here: each route used to open a window of its own.
+        windows = self.monitor()
+        windows.start()
+        windows.monitor.open_host_monitor()
+        opened = windows.monitor._host_monitor
+        self.addCleanup(opened.close)
+        self.assertIs(windows.open_host_monitor(), opened)
+
+    def test_and_the_job_monitor_raises_the_trays(self):
+        windows = self.monitor()
+        windows.start()
+        opened = windows.open_host_monitor()
+        self.addCleanup(opened.close)
+        with patch("job_manager.host_monitor.HostMonitorDialog") as dialog_cls:
+            windows.monitor.open_host_monitor()
+        dialog_cls.assert_not_called()
+
     def test_closing_it_hands_over_without_a_way_back_to_moleditpy(self):
         # "Open MoleditPy" in the tray process would otherwise start another
         # standalone monitor.
