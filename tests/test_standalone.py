@@ -395,6 +395,51 @@ class TestMoleditPyTakesItBack(unittest.TestCase):
         send.assert_called_once_with(self.dir, 4242, instances.ACTION_STOP)
         wait.assert_called_once_with(self.dir, 4242)
 
+    def test_taking_over_says_so(self):
+        fake_instance(self.dir, 4242, instances.ROLE_TRAY)
+        with (
+            patch("job_manager.instances.send_request"),
+            patch("job_manager.instances.wait_until_gone", return_value=True),
+            patch("job_manager.handoff.stop_running_tray"),
+        ):
+            self.assertTrue(job_manager._take_tracking_back())
+
+    def test_with_nothing_running_there_is_nothing_taken_over(self):
+        fake_instance(self.dir, 4343, instances.ROLE_MOLEDITPY)
+        self.assertFalse(job_manager._take_tracking_back())
+
+    def test_an_old_tray_process_counts_as_taken_over(self):
+        with (
+            patch("job_manager.handoff.live_tray", return_value={"beat": 0}),
+            patch("job_manager.handoff.stop_running_tray"),
+        ):
+            self.assertTrue(job_manager._take_tracking_back())
+
+    def test_a_taken_over_job_manager_is_kept_running_after_moleditpy(self):
+        # It was running before this MoleditPy started, so closing MoleditPy
+        # must hand it back to a tray process -- not end it because nothing
+        # was opened in this session.
+        context = MagicMock()
+        context.get_window.return_value = None
+        with (
+            patch.object(job_manager, "_take_tracking_back", return_value=True),
+            patch.object(job_manager, "_mark_opened") as opened,
+        ):
+            job_manager.initialize(context)
+        self.assertIsNotNone(job_manager.get_service(create=False))
+        opened.assert_called_once()
+
+    def test_nothing_taken_over_leaves_it_unopened(self):
+        context = MagicMock()
+        context.get_window.return_value = None
+        with (
+            patch.object(job_manager, "_take_tracking_back", return_value=False),
+            patch.object(job_manager, "_mark_opened") as opened,
+        ):
+            job_manager.initialize(context)
+        self.assertIsNone(job_manager.get_service(create=False))
+        opened.assert_not_called()
+
     def test_a_plugin_with_a_service_registers_and_answers(self):
         context = MagicMock()
         context.get_window.return_value = None

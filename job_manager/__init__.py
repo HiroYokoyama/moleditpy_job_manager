@@ -16,7 +16,7 @@ import logging
 from typing import Any, Optional
 
 PLUGIN_NAME = "Job Manager"
-PLUGIN_VERSION = "2.3.2"
+PLUGIN_VERSION = "2.3.3"
 PLUGIN_AUTHOR = "HiroYokoyama"
 
 PLUGIN_DESCRIPTION = "Submit calculations to remote HPC clusters over SSH, track queue status, and fetch results back into MoleditPy. Ready-made command lines for ORCA, Gaussian, CP2K, GAMESS, MOPAC, NWChem, Psi4, PySCF, Quantum ESPRESSO, VASP and xTB; job lists export to CSV or .pmejbs and reopen by drag and drop. Runs on this machine too, with no SSH; chains jobs with each scheduler's own dependency flag; and can hold a job until a chosen time. Installing paramiko adds a backend that keeps one SSH session open and can log in with a password."
@@ -307,13 +307,17 @@ def _install_beacon() -> None:
         _beacon = None
 
 
-def _take_tracking_back() -> None:
+def _take_tracking_back() -> bool:
     """Stop the tray process a previous MoleditPy handed its jobs to.
 
     Before the job list is read: that process may be part way through saving
     it, and two trackers would query every host twice and announce every job
     ending twice. See :mod:`.handoff` and :mod:`.instances`.
+
+    True when there was one to take over from: the Job Manager was already
+    running, so this session counts as having opened it.
     """
+    took_over = False
     try:
         from . import handoff, instances
         from .store import default_data_dir
@@ -321,13 +325,28 @@ def _take_tracking_back() -> None:
         directory = default_data_dir()
         for data in instances.live_instances(directory):
             if data.get("role") == instances.ROLE_TRAY:
+                took_over = True
                 instances.send_request(directory, int(data["pid"]), instances.ACTION_STOP)
                 if not instances.wait_until_gone(directory, int(data["pid"])):
                     logging.warning("Job Manager: the background tray process did not stop")
         # A tray process from 2.0 or 2.1, which knows only its own stop file.
+        if handoff.live_tray(directory) is not None:
+            took_over = True
         handoff.stop_running_tray(directory)
     except Exception:
         logging.debug("Job Manager: the tray process was not stopped", exc_info=True)
+    return took_over
+
+
+def _keep_what_was_taken_over(store: Optional[Any] = None) -> None:
+    """A Job Manager that was running before this MoleditPy keeps running after it.
+
+    Taking it over must not turn "Keep tracking jobs after MoleditPy closes"
+    off for this session: the user had it running, so it is as good as opened
+    here -- and handed back to a tray process on the way out, jobs or not.
+    """
+    get_service(store=store)
+    _mark_opened()
 
 
 def _startup_store() -> Optional[Any]:
@@ -497,9 +516,11 @@ def initialize(context) -> None:
 
     # One store for both peeks: each used to build its own, which parses both
     # files twice at every launch.
-    _take_tracking_back()
+    took_over = _take_tracking_back()
     store = _startup_store()
     _resume_tracking(store)
+    if took_over:
+        _keep_what_was_taken_over(store)
     # After tracking, so an API that is on adopts the service that resume
     # already built rather than making a second one.
     _resume_api(store)
