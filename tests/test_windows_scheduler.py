@@ -102,11 +102,26 @@ class TestScriptShape(unittest.TestCase):
 class TestCommands(unittest.TestCase):
     scheduler = get_scheduler("windows")
 
+    def launcher(self, command: str) -> str:
+        """The command the launcher runs, decoded from the submit command."""
+        import base64
+        import re
+
+        encoded = re.search(r"'-EncodedCommand','([A-Za-z0-9+/=]+)'", command).group(1)
+        return base64.b64decode(encoded).decode("utf-16-le")
+
     def test_submit_redirects_the_streams_to_different_files(self):
         # PowerShell refuses to send stdout and stderr to one file.
+        inner = self.launcher(self.scheduler.submit_command("moleditpy_run.ps1", "job.log"))
+        self.assertIn("-RedirectStandardOutput (Join-Path $d 'job.log')", inner)
+        self.assertIn("-RedirectStandardError (Join-Path $d 'job.log.err')", inner)
+
+    def test_the_process_started_by_the_submission_is_not_redirected(self):
+        # A redirected Start-Process inherits the submitting command's output
+        # pipe, and the submission then waited for the whole job.
         command = self.scheduler.submit_command("moleditpy_run.ps1", "job.log")
-        self.assertIn("-RedirectStandardOutput (Join-Path $d 'job.log')", command)
-        self.assertIn("-RedirectStandardError (Join-Path $d 'job.log.err')", command)
+        self.assertNotIn("-RedirectStandard", command)
+        self.assertIn("-Wait", self.launcher(command))
 
     def test_submit_makes_every_path_absolute(self):
         # Start-Process resolves a relative path against PowerShell's location
@@ -115,8 +130,10 @@ class TestCommands(unittest.TestCase):
         # may be relied on.
         command = self.scheduler.submit_command("moleditpy_run.ps1", "job.log")
         self.assertIn("$d = (Get-Location).Path", command)
-        self.assertIn("(Join-Path $d 'moleditpy_run.ps1')", command)
         self.assertIn("-WorkingDirectory $d", command)
+        inner = self.launcher(command)
+        self.assertIn("(Join-Path $d 'moleditpy_run.ps1')", inner)
+        self.assertIn("-WorkingDirectory $d", inner)
 
     def test_submit_prints_the_process_id(self):
         self.assertTrue(self.scheduler.submit_command("run.ps1", "job.log").endswith("$p.Id"))

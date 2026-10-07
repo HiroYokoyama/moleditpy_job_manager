@@ -206,6 +206,33 @@ class SubmissionCase(unittest.TestCase):
         self.assertEqual(self.run_to_completion(job), STATE_FAILED)
         self.assertEqual(job.rc, 3)
 
+    def test_submitting_a_long_job_does_not_wait_for_it(self):
+        # On Windows, a wrapper started by Start-Process with its output
+        # redirected inherited the submitting command's own output pipe, and
+        # the submission returned only when the job ended.
+        if self.backend != BACKEND_LOCAL:
+            self.skipTest("the release file is written through this machine's own paths")
+        if self.scheduler == SCHEDULER_WINDOWS:
+            command = (
+                "Write-Output 'said something'; "
+                "while (-not (Test-Path 'release')) { Start-Sleep -Milliseconds 100 }"
+            )
+        else:
+            command = "echo 'said something'; while [ ! -f release ]; do sleep 0.1; done"
+        job = self.job("long")
+        started = time.monotonic()
+        self.submit(job, self.preset(command))
+        took = time.monotonic() - started
+        try:
+            # Generous: Windows PowerShell 5.1 can take tens of seconds to start
+            # under a full parallel suite. Before the fix this did not return
+            # at all until the job was released.
+            self.assertLess(took, 60.0, "the submission waited for the job")
+        finally:
+            open(os.path.join(job.remote_dir, "release"), "w").close()
+        self.assertEqual(self.run_to_completion(job), STATE_DONE)
+        self.assertIn("said something", self.log(job))
+
     def test_a_job_with_no_input_at_all_still_runs(self):
         job = self.job("commandonly")
         self.submit(job, self.preset(self.command("bare")))

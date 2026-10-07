@@ -32,6 +32,7 @@ this workspace.
 
 from __future__ import annotations
 
+import base64
 import time
 from typing import Dict, Iterable, List, Sequence
 
@@ -233,26 +234,56 @@ class WindowsScheduler(Scheduler):
     def submit_command(
         self, script_name: str, log_file: str, extra_args: Sequence[str] = ()
     ) -> str:
-        """Start the wrapper detached and print its process id.
+        """Start the wrapper detached and print the process id to track.
 
-        ``-PassThru`` gives the process object, whose ``Id`` is what the poller
-        tracks. stdout and stderr must go to *different* files: PowerShell
-        refuses to redirect both to one.
+        Two steps, because of how Start-Process creates a process. With any
+        ``-Redirect*`` it hands the child every inheritable handle of the
+        caller -- the pipe the plugin reads this command's output through
+        among them -- and the command then does not return until the child
+        exits. Starting the wrapper that way made every submission wait for
+        the whole job.
+
+        So this starts a launcher *without* redirection, which inherits
+        nothing, and the launcher starts the wrapper with its streams
+        redirected and waits for it. The launcher's id is the one printed:
+        it lives exactly as long as the job, which is what polling and
+        chaining ask about, and ``taskkill /T`` on it takes the wrapper and the
+        payload with it.
+
+        The launcher's command is passed encoded, so no quoting of it can go
+        wrong on the way. It finds the job directory as its own working
+        directory: PowerShell starts in the directory its process was given.
+        """
+        encoded = base64.b64encode(self._launch_command(script_name, log_file).encode("utf-16-le"))
+        return (
+            "$d = (Get-Location).Path; "
+            "$p = Start-Process -FilePath powershell "
+            "-ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand',"
+            f"'{encoded.decode('ascii')}' "
+            "-WorkingDirectory $d -WindowStyle Hidden -PassThru; $p.Id"
+        )
+
+    @staticmethod
+    def _launch_command(script_name: str, log_file: str) -> str:
+        """What the launcher runs: the wrapper, its output in the log, waited for.
+
+        stdout and stderr go to *different* files: PowerShell refuses to
+        redirect both to one. Redirected by Start-Process rather than with
+        ``>``, which in Windows PowerShell 5.1 re-encodes to UTF-16.
         """
         err_file = (log_file or "job.log") + ".err"
         # Every path is made absolute against the current location first.
         # Start-Process resolves a relative path against PowerShell's location
         # in pwsh 7 but against the process's working directory in Windows
-        # PowerShell 5.1, and the two are not the same place here -- the caller
-        # got to this directory with Set-Location.
+        # PowerShell 5.1.
         return (
             "$d = (Get-Location).Path; "
-            "$p = Start-Process -FilePath powershell "
+            "Start-Process -FilePath powershell "
             "-ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',"
             f"(Join-Path $d {ps_quote(script_name)}) "
             f"-RedirectStandardOutput (Join-Path $d {ps_quote(log_file)}) "
             f"-RedirectStandardError (Join-Path $d {ps_quote(err_file)}) "
-            "-WorkingDirectory $d -WindowStyle Hidden -PassThru; $p.Id"
+            "-WorkingDirectory $d -WindowStyle Hidden -Wait"
         )
 
     def parse_submit_output(self, stdout: str, stderr: str) -> str:
