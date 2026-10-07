@@ -155,6 +155,11 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
             # pwsh 7. Everything handed to Start-Process is therefore absolute,
             # so neither reading is wrong.
             f"$__moleditpy_dir = {quoted}",
+            # The runner keeps its own log: it is started without redirection
+            # (see ensure_runner_command), so nothing else would catch its
+            # errors.
+            "try { Start-Transcript -LiteralPath "
+            f"{ps_quote(_join(directory, RUNNER_LOG_NAME))} -Force | Out-Null }} catch {{ }}",
             f"$__moleditpy_shell = {_PS_SHELL}",
             "",
             "function Get-DirCount($name) {",
@@ -505,9 +510,13 @@ def ensure_runner_command(directory: str, script_name: str) -> str:
         f"$__moleditpy_shell = {_PS_SHELL}; "
         f"$proc = Start-Process -FilePath $__moleditpy_shell -ArgumentList {_PS_ARGS},"
         f"{ps_quote(_join(directory, script_name))} "
-        f"-WorkingDirectory {quoted} -WindowStyle Hidden -PassThru "
-        f"-RedirectStandardOutput {ps_quote(_join(directory, RUNNER_LOG_NAME))} "
-        f"-RedirectStandardError {ps_quote(_join(directory, RUNNER_LOG_NAME + '.err'))}; "
+        # No -Redirect*: with one, Start-Process creates the child inheriting
+        # every inheritable handle of this process -- the pipe the plugin reads
+        # this command's output through among them. The command then did not
+        # return until the runner exited, which is when the whole queue had
+        # drained: a submission behind an hour-long job waited the hour. The
+        # runner writes its own log instead (Start-Transcript).
+        f"-WorkingDirectory {quoted} -WindowStyle Hidden -PassThru; "
         "Set-Content -Path 'lock\\pid' -Value $proc.Id -Encoding ascii; "
         "'started'"
     )
@@ -579,6 +588,7 @@ def force_command(directory: str, entry: str) -> str:
         f"$__moleditpy_shell = {_PS_SHELL}; "
         f"$proc = Start-Process -FilePath $__moleditpy_shell -ArgumentList {_PS_ARGS},"
         f"{ps_quote(_join(directory, running))} "
+        # Not redirected, for the reason given in ensure_runner_command.
         f"-WorkingDirectory {quoted} -WindowStyle Hidden -PassThru; "
         f"Set-Content -Path {temp} -Value $proc.Id -Encoding ascii; "
         f"Move-Item -LiteralPath {temp} -Destination {pid_file} -Force; "

@@ -64,6 +64,12 @@ clones the main app — so a change that passes only on this machine is not done
 - **Build Windows path constants with explicit backslashes.** `os.path.join`
   uses `/` off Windows, which turns a comparison into a silent mismatch on the
   Linux runner while passing locally.
+- **`Start-Process` with any `-Redirect*` hands the child every inheritable
+  handle** — the pipe the plugin reads the command's output through among them.
+  A command that starts something long-lived that way does not return until
+  that thing exits: the Windows helper used to be started like that, and a
+  submission behind an hour-long job waited the hour. Start detached processes
+  without redirection and let them write their own log.
 - **Two runner flavours must not drift.** `remote_runner.py` (bash) and
   `remote_runner_ps.py` (PowerShell) implement the same protocol; there are
   tests that compare them, and a change to one usually belongs in both.

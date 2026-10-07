@@ -18,6 +18,7 @@ downloaded and announced exactly like one you typed in.
 * [The Python client](#the-python-client)
 * [The command line](#the-command-line)
 * [Routes](#routes)
+* [The host itself](#the-host-itself)
 * [Submitting](#submitting)
 * [Errors](#errors)
 * [Recipes](#recipes)
@@ -125,6 +126,13 @@ python -m job_manager.api_client submit h2o.inp \
 python -m job_manager.api_client jobs --state ACTIVE
 python -m job_manager.api_client log <job id> --lines 50
 python -m job_manager.api_client wait <job id> --download
+
+python -m job_manager.api_client host-status mybox
+python -m job_manager.api_client host-ls mybox /scratch/me/run042 --depth 2
+python -m job_manager.api_client host-stat mybox /scratch/me/run042/mol.out
+python -m job_manager.api_client host-get mybox /scratch/me/run042/mol.out --into .
+python -m job_manager.api_client force <job id>
+python -m job_manager.api_client recheck <job id>
 ```
 
 `wait` exits **0** when the job is `DONE` and **2** otherwise, so a shell script
@@ -149,6 +157,10 @@ is not one of them, so a client can find them without this page.
 |---|---|---|
 | `GET` | `/ping` | Version, and how many jobs and hosts there are |
 | `GET` | `/hosts` | Configured hosts: id, name, target, scheduler, enabled |
+| `GET` | `/hosts/{id}/status` | Cores, load, memory, and the helper queue; `?stats=0` |
+| `GET` | `/hosts/{id}/files` | List any directory on the host; `?path=`, `?depth=` |
+| `GET` | `/hosts/{id}/file` | Whether a path is there, its size and sha256; `?path=`, `?hash=0` |
+| `POST` | `/hosts/{id}/download` | Fetch files by path from anywhere on the host |
 | `GET` | `/presets` | Saved presets; `?host=` narrows to one host |
 | `GET` | `/jobs` | Tracked jobs; `?state=`, `?host=`, `?name=`, `?limit=` |
 | `POST` | `/jobs` | Submit a job — see below. `202` with the new record |
@@ -158,6 +170,11 @@ is not one of them, so a client can find them without this page.
 | `POST` | `/jobs/{id}/download` | Fetch its results |
 | `GET` | `/jobs/{id}/log` | Tail its log; `?lines=`, `?file=` |
 | `GET` | `/jobs/{id}/files` | List its remote directory |
+| `POST` | `/jobs/{id}/force` | Start it now, ahead of the helper queue |
+| `POST` | `/jobs/{id}/recheck` | Look again at a `LOST` job |
+
+`{id}` in a host route is the host's id or its name; a name with a space in it
+is URL-encoded (`my%20box`), which the Python client does for you.
 
 `?state=` takes a state name, or `ACTIVE` / `TERMINAL` for the whole group.
 
@@ -173,6 +190,103 @@ does — or `504` after 120 s.
 `{"wait": true}` to have the reply held until the files are on disk, which is
 what a script that then reads them wants; the `files` field is where they
 landed. `into` picks the folder, `names` picks individual remote files.
+
+## The host itself
+
+Three things an agent used to find out by submitting a throwaway job.
+
+### How busy is it
+
+`GET /hosts/{id}/status` asks the host once — it is not the Host Monitor's
+sampling, which only runs while that window is open:
+
+```json
+{
+  "host": { "id": "...", "name": "mybox", "scheduler": "shell", ... },
+  "stats": { "cores": 8, "threads": 16, "load": [3.1], "loadavg": [2.9, 2.5, 2.2],
+             "mem_total_mb": 64000, "mem_free_mb": 41000, "mem_used_mb": 23000 },
+  "queue": {
+    "kind": "helper",
+    "paused": false,
+    "limits": { "slots": 9999, "cores": 8, "memory": 60000 },
+    "cores_in_use": 6,
+    "memory_in_use_mb": 16000,
+    "running": [ { "job_id": "...", "name": "opt", "cores": 6, "memory_mb": 16000 } ],
+    "waiting": [ { "job_id": "...", "name": "freq", "cores": 4, "position": 1, "ahead": 0 } ]
+  },
+  "jobs": [ { "id": "...", "name": "freq", "state": "PENDING",
+              "queue": "waiting", "position": 1, "ahead": 0 } ]
+}
+```
+
+`cores` is physical cores — what the helper budgets on — and `threads` what
+`nproc` reports. `waiting` is in the order the helper will start it, which is
+strictly first in, first out: `ahead` is how many jobs start before that one.
+
+`queue.kind` is `helper` on a host with the helper queue, `none` on one with no
+queue at all, and `scheduler` on a cluster, whose own queue decides the order
+and is not read here. `jobs` is this plugin's own active jobs on the host either
+way.
+
+A host whose profile has *Sample load and memory in the Host Monitor* switched off — a shared login
+node — is not sampled: `stats` is `null` and `stats_skipped` says why. `?stats=0`
+asks for the queue alone.
+
+### Files anywhere on the host
+
+```
+GET  /hosts/{id}/files?path=/scratch/me/run042&depth=2
+GET  /hosts/{id}/file?path=/scratch/me/run042/mol.out
+POST /hosts/{id}/download   {"paths": ["/scratch/me/run042/mol.out"], "into": "/home/me/res"}
+```
+
+`files` lists a directory; at depth 1 a sub-directory ends in `/`, deeper levels
+list files only, named relative to `path` (at most 4). `file` answers `exists`,
+`type` (`file` or `directory`), and for a file `size` and `sha256` — `?hash=0`
+skips the digest for a file too large to read for it.
+
+`download` fetches each named file under its own name. With no `into` they go
+to a new dated folder under the download directory. A local file that is
+already there is not replaced unless `overwrite` is `true`; it, a missing file,
+and a directory are listed in `skipped` with the reason, and the rest are still
+fetched. The reply waits for the transfer, up to 30 minutes.
+
+These read anything your account on the host can read — the same reach as
+`ssh` to it, which is what they use.
+
+### Starting a small job ahead of the queue
+
+On a host where this plugin keeps the queue (no scheduler), a short check does
+not have to wait behind hours of work. `"force_run": true` on `POST /jobs` starts
+the job as soon as it reaches the host; `POST /jobs/{id}/force` does the same for
+one already waiting. Either way it starts past the job limit, the core and
+memory budgets and everything queued before it, and even while the queue is
+held. The helper counts it as running from then on, so what waits behind it
+waits for its cores too; nothing already running is touched.
+
+It is refused (`400` on submit, `409` on force) on a cluster, whose scheduler
+decides its own order; together with `after_job` or `start_after`, which ask the
+job to wait; and for a job chained behind one that has not finished.
+
+### A job that finished but reads LOST
+
+`LOST` means the queue stopped listing the job and its exit-code file was not
+there. Either can be momentary — a networked filesystem that has not shown the
+file yet — so `POST /jobs/{id}/recheck` asks again:
+
+```json
+{ "previous_state": "LOST", "state": "DONE", "changed": true, "rc": 0,
+  "sentinel": "0", "runner_status": "0", "files": ["mol.out", "job.log"], "job": {...} }
+```
+
+It asks the queue, reads the exit-code file, and on a helper queue the exit code
+the helper recorded in its own directory. A job found finished is treated as if
+a poll had just found it — announced, and downloaded if it was set to be; one the
+queue still lists goes back to being polled. With no evidence it stays `LOST`,
+and `sentinel`, `runner_status` and `files` say what was looked at.
+
+On a helper queue the routine poll already does this second read before calling
+a job `LOST`, so there it should rarely be needed.
 
 ## Submitting
 
@@ -215,6 +329,7 @@ somebody's input by accident is worse than an error.
 | `after_job` | Chain behind this job id, on the same host |
 | `chain_any` | Chain on the predecessor *ending*, not on it succeeding |
 | `start_after` | Hold until then: an epoch second, or `2026-01-31T18:30` |
+| `force_run` | Start it now, ahead of the queue — see [above](#starting-a-small-job-ahead-of-the-queue) |
 
 Naming a `preset` and a field together is fine: the field wins, and the stored
 preset is not modified.
@@ -243,7 +358,7 @@ a person as it is:
 | `403` | The request carried a web page's `Origin` |
 | `404` | No such route, host, preset or job |
 | `405` | The right path, the wrong method |
-| `409` | The request makes no sense here: a disabled host, a finished job to cancel, a job still uploading or downloading, a download already running |
+| `409` | The request makes no sense here: a disabled host, a finished job to cancel, a job still uploading or downloading, a download already running, a job that cannot be forced, a re-check of a job that is not `LOST` |
 | `413` | The body is over 1 MB |
 | `500` | A bug — the message is the exception, and the details are in MoleditPy's log |
 | `503` | MoleditPy did not handle the request within 30 s |

@@ -302,6 +302,24 @@ The flag lives on the host, so it outlasts the dialog, the session, and the
 runner's own comings and goings: a runner that exits and is started again by the
 next submission finds the queue still held.
 
+## Forcing a job to start
+
+A waiting job can be started at once, ahead of the queue (**Force run** in the
+plugin). The helper is not asked to do it: one already up may have been
+started by an older version of the plugin. The plugin does what dispatch does,
+from outside — claims the entry by moving it to `running/`, starts it in its own
+process group, records the pid — and the helper then counts it, holds later jobs
+back for its cores, and reaps it like any other.
+
+The pid file is created **before** the claim, holding the forcing shell's own
+pid, as an exclusive create (`set -C`; `New-Item` without `-Force`). The reaper
+retires a `running/` entry with no live pid, and it runs at the same time as the
+forcing command: claiming first left a moment in which the entry had no pid at
+all, and a reap landing there would retire a job about to start. The exclusive
+create means the placeholder can never replace the pid of a job the helper has
+just started itself; if the helper wins the claim, its own `mv -f` replaces the
+placeholder before it reaps anything, since it does both in one thread.
+
 ## How the plugin sees it
 
 One command per poll lists `<dir> <entry>` for the whole host — the same
@@ -313,6 +331,7 @@ contract the queue-based schedulers meet with a single `squeue`.
 | `running/` | RUNNING |
 | not listed | ended — resolved by the sentinel sweep |
 | `status/` says `blocked` | FAILED, with the reason |
+| not listed, no `.moleditpy_rc`, but `status/` has a code | DONE or FAILED by that code |
 
 A job that has left the queue is resolved by reading its wrapper's own
 `.moleditpy_rc`, exactly as for every other backend. The exit code reported is

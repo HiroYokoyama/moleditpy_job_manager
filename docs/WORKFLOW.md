@@ -552,6 +552,19 @@ The box shows the queue's real state, read from the host when you select it.
 A host set to ask for a password is left alone until you press **Test
 Connection**, so that clicking a name in a list never raises a prompt.
 
+### Starting a small job now
+
+On a host with no queue system, **Force run: start now, ahead of the queue** on
+the wizard starts the job the moment it reaches the host — past the job limit,
+the core and memory budgets, and every job waiting there. It is for a quick
+check that should not sit behind hours of work: it shares the machine with what
+is already running, and the helper counts its cores until it ends, so what is
+queued behind it waits a little longer.
+
+A job already waiting can be started the same way: right-click it in the
+monitor and choose **Force Run Now**. A job chained behind one that has not
+finished cannot be forced, since it would run without what it waits for.
+
 ### Starting later
 
 Tick **Do not start before** and pick a moment. The job is handed over
@@ -810,6 +823,11 @@ Each file arrives under a `.moleditpy-part` name and is renamed once the
 transfer finishes, so a download cut off half way never leaves a truncated
 `.out` sitting in your working directory under its real name.
 
+A `.txt` result opens in the plugin's own text window rather than in
+MoleditPy, and **Open in Text Viewer** in the result chooser shows any file
+that way. **Ctrl+F** searches it — Enter or F3 for the next match, Shift for
+the one before. The same window shows **Tail Log** and **Details**.
+
 The most interesting file — `.out`, then `.log`, `.fchk`, `.hess`, `.xyz` — is
 handed to the application's file openers, which is how ORCA Result Analyzer and
 the Gaussian analyzers pick it up. Untick **Open results in MoleditPy when they
@@ -918,6 +936,13 @@ Ctrl-C / SIGINT, `129` is SIGHUP.
 killed hard (`SIGKILL`, OOM killer), the node fell over, or the job directory
 vanished. The remote directory is still listed in the tooltip; **Download** and
 **Tail Log** still work, and the log usually says why.
+
+A job can also read `LOST` when it did finish: the exit-code file was not
+visible yet when the poll looked, which a networked filesystem can do for a
+moment. Right-click it and choose **Re-check State** to ask the host again — a
+job found finished is corrected and downloaded as usual, and either way the
+window says what was found. On a host with the helper queue the poll already
+reads the helper's own record of the exit code before calling a job `LOST`.
 
 ## What it does not do
 

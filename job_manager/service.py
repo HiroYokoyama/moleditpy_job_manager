@@ -769,11 +769,12 @@ class JobService(QObject):
         on_error,
         overwrite: bool = False,
         owner=None,
-    ) -> str:
-        """Fetch files from anywhere on the host. Returns the folder they go to.
+    ) -> None:
+        """Fetch files from anywhere on the host.
 
-        With no ``into`` they go to a new dated folder under the download root,
-        named for the host, so nothing already on disk is in the way.
+        ``on_done((downloaded, skipped, folder))``. With no ``into`` the folder
+        is a new dated one under the download root, named for the host, so
+        nothing already on disk is in the way.
         """
         local_dir = into or os.path.join(
             self.store.download_root(),
@@ -783,12 +784,14 @@ class JobService(QObject):
         def work() -> tuple:
             transport = self.transport_for(host)
             try:
-                return download_host_paths(transport, host, list(paths), local_dir, overwrite)
+                downloaded, skipped = download_host_paths(
+                    transport, host, list(paths), local_dir, overwrite
+                )
             finally:
                 transport.close()
+            return downloaded, skipped, local_dir
 
         run_async(self.pool, work, on_success=on_done, on_error=on_error, owner=owner)
-        return local_dir
 
     # --- housekeeping -------------------------------------------------------
 

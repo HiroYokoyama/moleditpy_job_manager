@@ -828,19 +828,18 @@ class JobApi:
             raise ApiError(400, f"'{into}' is not a directory on this machine")
         overwrite = self._optional_bool(body, "overwrite", False)
         deferred = Deferred(timeout=DOWNLOAD_TIMEOUT)
-        box: Dict[str, str] = {}
 
-        def done(result: Tuple[List[str], List[Tuple[str, str]]]) -> None:
-            downloaded, skipped = result
+        def done(result: Tuple[List[str], List[Tuple[str, str]], str]) -> None:
+            downloaded, skipped, local_dir = result
             deferred.set_result(
                 {
-                    "into": box.get("into", into),
+                    "into": local_dir,
                     "files": list(downloaded),
                     "skipped": [{"path": path, "reason": reason} for path, reason in skipped],
                 }
             )
 
-        box["into"] = self.service.download_host_paths(
+        self.service.download_host_paths(
             host, paths, into, done, deferred.set_error, overwrite=overwrite
         )
         return deferred

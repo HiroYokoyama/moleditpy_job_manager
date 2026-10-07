@@ -94,6 +94,55 @@ class FakeService:
         self.removed.append(job_id)
         self.store.remove_job(job_id)
 
+    # --- forcing, re-checking, and the host itself ---------------------------
+    #: Each of these answers at once, with whatever the test put in
+    #: ``answers`` -- or reports ``fail_with`` if that is set.
+
+    answers: dict = {}
+    fail_with: str = ""
+    refusal: str = ""
+
+    def _answer(self, key, on_done, on_error, default=None):
+        if self.fail_with:
+            on_error(self.fail_with)
+        else:
+            on_done(self.answers.get(key, default))
+
+    def force_refusal(self, job):
+        return self.refusal
+
+    def force_run(self, job, on_done=None, on_error=None, owner=None):
+        self.forced = getattr(self, "forced", []) + [job.id]
+        if self.fail_with:
+            on_error(self.fail_with)
+            return
+        on_done(job, self.answers.get("force", True))
+
+    def recheck(self, job, on_done=None, on_error=None, owner=None):
+        self._answer("recheck", on_done, on_error, {})
+
+    def host_status(self, host, on_done, on_error, stats=True, owner=None):
+        self.status_calls = getattr(self, "status_calls", []) + [(host.id, stats)]
+        self._answer("status", on_done, on_error, {"stats": None, "queue": None})
+
+    def list_host_path(self, host, path, depth, on_done, on_error, owner=None):
+        self.listed_paths = getattr(self, "listed_paths", []) + [(path, depth)]
+        self._answer("files", on_done, on_error, [])
+
+    def stat_host_path(self, host, path, digest, on_done, on_error, owner=None):
+        self.stated = getattr(self, "stated", []) + [(path, digest)]
+        self._answer("stat", on_done, on_error, {})
+
+    def download_host_paths(
+        self, host, paths, into, on_done, on_error, overwrite=False, owner=None
+    ):
+        self.host_downloads = getattr(self, "host_downloads", []) + [(list(paths), into, overwrite)]
+        if self.fail_with:
+            on_error(self.fail_with)
+            return
+        downloaded, skipped = self.answers.get("download", ([], []))
+        on_done((downloaded, skipped, into or "/downloads/auto"))
+
 
 def when_ready(is_ready: Callable[[], Any], fn: Callable[[], Any], timeout: float = 10.0) -> None:
     """Run *fn* on the GUI thread as soon as *is_ready()* holds.
