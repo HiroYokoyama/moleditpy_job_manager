@@ -1114,7 +1114,7 @@ class JobsDialog(QDialog):
             # Cleared on close so the next tail builds a live window rather
             # than writing into a destroyed one.
             self._tail_dialog.finished.connect(lambda *_: setattr(self, "_tail_dialog", None))
-            self._tail_dialog.show()
+            self._tail_dialog.present()
         else:
             # Both title and refresh callback, so auto-refresh follows the
             # newly selected job rather than the old one.
@@ -1194,7 +1194,7 @@ class JobsDialog(QDialog):
                 self._detail_dialogs.remove(dialog) if dialog in self._detail_dialogs else None
             )
         )
-        dialog.show()
+        dialog.present()
         self._refresh_tail_file(job, filename, dialog)
 
     def _refresh_tail_file(self, job: Job, filename: str, dialog: Any) -> None:
@@ -1816,9 +1816,23 @@ def show_text_window(path: str, parent: Optional[QWidget] = None):
     """Open ``path`` read-only in a text window, and return the window."""
     from .text_dialog import TextDialog
 
-    dialog = TextDialog(f"Job Manager {PLUGIN_VERSION} - {os.path.basename(path)}", "", parent)
+    def reload() -> None:
+        try:
+            dialog.set_text(read_text_for_view(path))
+        except OSError as exc:
+            dialog.set_text(f"Could not read {path}: {exc}")
+
+    # A finished result is read from the top; only a tail starts at the end.
+    dialog = TextDialog(
+        f"Job Manager {PLUGIN_VERSION} - {os.path.basename(path)}",
+        "",
+        parent,
+        on_refresh=reload,
+        follow=False,
+        auto_refresh=False,
+    )
     dialog.set_text(read_text_for_view(path))
-    dialog.show()
+    dialog.present()
     return dialog
 
 

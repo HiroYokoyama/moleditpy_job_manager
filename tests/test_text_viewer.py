@@ -166,7 +166,7 @@ class TestFind(unittest.TestCase):
         self.assertEqual(self.line_of_match(), 3)
         self.assertTrue(self.viewer.find())
         self.assertEqual(self.line_of_match(), 1)
-        self.assertEqual(self.viewer.lbl_find.text(), "Wrapped round")
+        self.assertEqual(self.viewer.lbl_find.text(), "1 of 2, wrapped round")
 
     def test_previous_goes_back(self):
         self.viewer.txt_find.setText("beta")
@@ -211,6 +211,107 @@ class TestFind(unittest.TestCase):
         QTest.keyClick(self.viewer.txt_find, Qt.Key.Key_Return)
         self.assertEqual(self.selected(), "beta")
         self.assertTrue(self.viewer.isVisible())
+
+    def test_the_label_counts_the_matches(self):
+        self.viewer.txt_find.setText("beta")
+        self.viewer.find()
+        self.assertEqual(self.viewer.lbl_find.text(), "1 of 2")
+        self.viewer.find()
+        self.assertEqual(self.viewer.lbl_find.text(), "2 of 2")
+
+    def test_the_bar_has_its_own_close_button(self):
+        self.viewer.show()
+        self.viewer.show_find()
+        self.viewer.btn_close_find.click()
+        self.assertTrue(self.viewer.find_bar.isHidden())
+        self.assertTrue(self.viewer.isVisible())
+
+    def test_escape_in_the_text_closes_the_bar_before_the_window(self):
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtTest import QTest
+
+        self.viewer.show()
+        self.viewer.show_find()
+        self.viewer.view.setFocus()
+        QTest.keyClick(self.viewer.view, Qt.Key.Key_Escape)
+        self.assertTrue(self.viewer.find_bar.isHidden())
+        self.assertTrue(self.viewer.isVisible())
+
+    def test_find_is_in_the_edit_menu(self):
+        self.viewer.show()
+        self.viewer.act_find.trigger()
+        self.assertFalse(self.viewer.find_bar.isHidden())
+
+
+class TestMenus(unittest.TestCase):
+    def test_reload_is_in_the_file_menu_when_there_is_something_to_reload(self):
+        calls = []
+        viewer = TextDialog("t", "x", on_refresh=lambda: calls.append(1), auto_refresh=False)
+        self.addCleanup(viewer.deleteLater)
+        viewer.act_reload.trigger()
+        self.assertEqual(calls, [1])
+        self.assertFalse(hasattr(viewer, "chk_auto_refresh"))
+
+    def test_without_a_source_reload_is_greyed_out(self):
+        viewer = TextDialog("t", "x")
+        self.addCleanup(viewer.deleteLater)
+        self.assertFalse(viewer.act_reload.isEnabled())
+
+    def test_wrap_can_be_turned_off(self):
+        from PyQt6.QtWidgets import QPlainTextEdit
+
+        viewer = TextDialog("t", "x")
+        self.addCleanup(viewer.deleteLater)
+        viewer.act_wrap.setChecked(False)
+        self.assertEqual(viewer.view.lineWrapMode(), QPlainTextEdit.LineWrapMode.NoWrap)
+
+
+class TestFollowingTheEnd(unittest.TestCase):
+    """A refresh used to jump to the end every time, so with auto-refresh on
+    nothing further up a log could be read."""
+
+    LINES = "".join(f"line {i}\n" for i in range(500))
+
+    def setUp(self):
+        self.viewer = TextDialog("t", "", on_refresh=lambda: None, auto_refresh=False)
+        self.addCleanup(self.viewer.deleteLater)
+        self.viewer.resize(400, 200)
+        self.viewer.show()
+        self.bar = self.viewer.view.verticalScrollBar()
+
+    def test_following_keeps_the_end_in_view(self):
+        self.viewer.set_text(self.LINES)
+        self.assertEqual(self.bar.value(), self.bar.maximum())
+        self.viewer.set_text(self.LINES + "line 500\n")
+        self.assertEqual(self.bar.value(), self.bar.maximum())
+
+    def test_scrolling_up_stops_following_and_a_refresh_keeps_the_place(self):
+        self.viewer.set_text(self.LINES)
+        self.bar.setValue(100)
+        self.assertFalse(self.viewer.chk_follow.isChecked())
+        self.viewer.set_text(self.LINES + "line 500\nline 501\n")
+        self.assertEqual(self.bar.value(), 100)
+
+    def test_scrolling_back_to_the_end_follows_again(self):
+        self.viewer.set_text(self.LINES)
+        self.bar.setValue(100)
+        self.bar.setValue(self.bar.maximum())
+        self.assertTrue(self.viewer.chk_follow.isChecked())
+
+    def test_a_result_file_opens_at_the_top(self):
+        tmp = tempfile.mkdtemp(prefix="textfollow_")
+        path = os.path.join(tmp, "result.txt")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(self.LINES)
+        viewer = jobs_dialog.show_text_window(path)
+        self.addCleanup(viewer.close)
+        self.assertEqual(viewer.view.verticalScrollBar().value(), 0)
+        self.assertFalse(viewer.chk_follow.isChecked())
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write("appended\n")
+        viewer.act_reload.trigger()
+        self.assertIn("appended", viewer.view.toPlainText())
+        self.assertEqual(viewer.view.verticalScrollBar().value(), 0)
 
 
 if __name__ == "__main__":
