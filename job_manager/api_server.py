@@ -153,7 +153,7 @@ class _Handler(BaseHTTPRequestHandler):
         if isinstance(payload, Deferred):
             # Waited for here, off the GUI thread, so a slow cluster delays one
             # client rather than freezing MoleditPy.
-            payload = payload.wait(REMOTE_TIMEOUT)
+            payload = payload.wait(payload.timeout or REMOTE_TIMEOUT)
         return status, payload
 
     def _check_origin(self) -> None:

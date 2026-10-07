@@ -722,6 +722,103 @@ def release_command(directory: str, entry: str) -> str:
     )
 
 
+#: What :func:`force_command` prints when it started the job, and when the job
+#: was no longer waiting in the queue to be started. Shared by both flavours.
+FORCED = "forced"
+NOT_QUEUED = "notqueued"
+
+
+def force_command(directory: str, entry: str) -> str:
+    """Start one waiting job now, past the job limit, the budgets and the order.
+
+    For a small check that should not wait behind hours of work. The helper is
+    not asked to do it -- a helper already up may be one an older version of
+    the plugin started, which knows nothing of forcing -- so this does what its
+    dispatch does, from outside: claim the entry by moving it, start it in its
+    own process group, record the pid. The helper then counts it as running,
+    holds later jobs back for its cores, and reaps it like any other.
+
+    The pid file is created *before* the claim, holding this shell's own pid.
+    The helper's reaper moves a running entry with no live pid to ``done/``,
+    and it runs concurrently with this command: claiming first left a moment
+    in which the job was in ``running/`` with no pid at all, and a reap landing
+    there would retire a job that was about to start -- reported LOST once it
+    finished. ``set -C`` makes the placeholder an exclusive create, so it can
+    never overwrite the pid of a job the helper itself has just started. If
+    the helper claims the entry first, its own ``mv -f`` replaces the
+    placeholder before it reaps anything, since it does both in one thread.
+    """
+    entry = require_entry(entry)
+    return (
+        f"cd {quote(directory)} 2>/dev/null || exit 1; "
+        f'[ -f "queue/{entry}" ] || {{ echo {NOT_QUEUED}; exit 0; }}; '
+        f'( set -C; echo $$ > "pids/{entry}" ) 2>/dev/null || {{ echo {NOT_QUEUED}; exit 0; }}; '
+        f'if ! mv "queue/{entry}" "running/{entry}" 2>/dev/null; then '
+        # Cancelled in between: nothing will ever reap this pid file.
+        f'[ -e "done/{entry}" ] && rm -f "pids/{entry}"; echo {NOT_QUEUED}; exit 0; fi; '
+        f"SETSID={SETSID_PREFIX}; "
+        f'( {{ $SETSID nohup bash "running/{entry}" > /dev/null 2>&1 < /dev/null & }} && echo $! ) '
+        f'> "tmp/{entry}.pid" 2>/dev/null; '
+        f'mv -f "tmp/{entry}.pid" "pids/{entry}" 2>/dev/null; echo {FORCED}'
+    )
+
+
+def queue_detail_command(directory: str) -> str:
+    """The queue as the helper sees it: what runs, what waits, and its limits.
+
+    Lines of ``paused 1``, ``limit <name> <value>`` and
+    ``entry <running|queue> <entry> <cores> <memory_mb>``. Read on request
+    only -- one ``awk`` per entry is nothing for a person asking, and too much
+    for every poll.
+    """
+    limits = " ".join((SLOTS_NAME, CORES_NAME, MEMORY_NAME))
+    awk = f"awk '/^{CORES_TAG}/{{c=$3}} /^{MEMORY_TAG}/{{m=$3}} END{{print c+0, m+0}}'"
+    return (
+        f"cd {quote(directory)} 2>/dev/null || exit 0; "
+        f"if [ -f {PAUSED_NAME} ]; then echo paused 1; fi; "
+        f'for n in {limits}; do v=$(cat "$n" 2>/dev/null); '
+        'if [ -n "$v" ]; then echo "limit $n $v"; fi; done; '
+        "for d in running queue; do "
+        'for e in $(ls -1 "$d" 2>/dev/null); do '
+        f'echo "entry $d $e $({awk} "$d/$e" 2>/dev/null)"; '
+        "done; done"
+    )
+
+
+def parse_queue_detail(stdout: str) -> dict:
+    """What :func:`queue_detail_command` printed, in dispatch order.
+
+    Shared by both flavours. ``waiting`` is sorted on the dispatch number, the
+    order the helper itself works through it -- not the text order a listing
+    happens to come back in.
+    """
+    detail: dict = {"paused": False, "limits": {}, "running": [], "waiting": []}
+    for line in (stdout or "").splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        if parts[0] == "paused":
+            detail["paused"] = True
+        elif parts[0] == "limit" and len(parts) == 3 and parts[2].isdigit():
+            detail["limits"][parts[1]] = int(parts[2])
+        elif parts[0] == "entry" and len(parts) >= 3:
+            sequence, job_id = parse_entry(parts[2])
+            if not job_id:
+                continue
+            numbers = [int(p) if p.isdigit() else 0 for p in parts[3:5]] + [0, 0]
+            item = {
+                "entry": parts[2],
+                "sequence": sequence,
+                "job_id": job_id,
+                "cores": max(1, numbers[0]),
+                "memory_mb": numbers[1],
+            }
+            detail["running" if parts[1] == "running" else "waiting"].append(item)
+    detail["running"].sort(key=lambda item: (item["sequence"], item["entry"]))
+    detail["waiting"].sort(key=lambda item: (item["sequence"], item["entry"]))
+    return detail
+
+
 def set_slots_command(directory: str, slots: int) -> str:
     """Change the job limit under a running runner; it re-reads it each pass."""
     return f"cd {quote(directory)} 2>/dev/null && echo {max(1, int(slots))} > {SLOTS_NAME}"
@@ -822,6 +919,11 @@ __all__: List[str] = [
     "AFTER_TAG",
     "CORES_NAME",
     "CORES_TAG",
+    "FORCED",
+    "NOT_QUEUED",
+    "force_command",
+    "parse_queue_detail",
+    "queue_detail_command",
     "VERSION_NAME",
     "MEMORY_NAME",
     "MEMORY_TAG",

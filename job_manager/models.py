@@ -534,6 +534,9 @@ class Job:
     chain_any: bool = False
     #: Epoch second before which the job must not start. 0 means "now".
     start_after: float = 0.0
+    #: Started ahead of the queue on a host with no scheduler: past the job
+    #: limit, the core and memory budgets, and every job waiting before it.
+    force_run: bool = False
     last_error: str = ""
 
     @property

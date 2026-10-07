@@ -39,6 +39,10 @@ MISSING = "MISSING"
 #: directory that has none of the files it was supposed to find.
 PRESENT = "PRESENT"
 
+#: What :meth:`Dialect.stat` prints first: what the path is, if anything.
+FILE = "FILE"
+DIRECTORY = "DIRECTORY"
+
 
 class Dialect:
     """One shell's spelling of the plugin's own housekeeping commands."""
@@ -88,6 +92,27 @@ class Dialect:
 
     def tail(self, path: str, lines: int) -> str:
         return f"tail -n {int(lines)} {self.quote(path)} 2>&1 || true"
+
+    def stat(self, path: str, digest: bool = True) -> str:
+        """What a path is: :data:`FILE` then its size and sha256, :data:`DIRECTORY`,
+        or :data:`MISSING`.
+
+        Three digest tools, because none is everywhere: ``sha256sum`` is GNU,
+        ``shasum`` ships with Perl on macOS and BSD, and ``openssl`` is on
+        nearly every machine that has neither.
+        """
+        quoted = self.quote(path)
+        hashing = (
+            f"; (sha256sum {quoted} || shasum -a 256 {quoted} || openssl dgst -sha256 -r {quoted})"
+            " 2>/dev/null | awk 'NR==1{print $1}'"
+            if digest
+            else ""
+        )
+        return (
+            f"if [ -d {quoted} ]; then echo {DIRECTORY}; "
+            f"elif [ -f {quoted} ]; then echo {FILE}; wc -c < {quoted} | tr -d ' '{hashing}; "
+            f"else echo {MISSING}; fi"
+        )
 
     def copy(self, source: str, destination: str) -> str:
         """Copy one file to another path, both already on this host.
@@ -209,6 +234,20 @@ class PowerShellDialect(Dialect):
             f"{{ Get-Content -LiteralPath {quoted} -Tail {int(lines)} }}"
         )
 
+    def stat(self, path: str, digest: bool = True) -> str:
+        quoted = self.quote(path)
+        hashing = (
+            f"; (Get-FileHash -LiteralPath {quoted} -Algorithm SHA256).Hash.ToLower()"
+            if digest
+            else ""
+        )
+        return (
+            f"if (Test-Path -LiteralPath {quoted} -PathType Container) {{ '{DIRECTORY}' }} "
+            f"elseif (Test-Path -LiteralPath {quoted} -PathType Leaf) {{ '{FILE}'; "
+            f"(Get-Item -LiteralPath {quoted}).Length{hashing} }} "
+            f"else {{ '{MISSING}' }}"
+        )
+
     def copy(self, source: str, destination: str) -> str:
         return (
             f"Copy-Item -LiteralPath {self.quote(source)} "
@@ -292,6 +331,8 @@ def for_host(host) -> Dialect:
 
 
 __all__ = [
+    "DIRECTORY",
+    "FILE",
     "MISSING",
     "PRESENT",
     "POSIX",

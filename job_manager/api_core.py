@@ -23,10 +23,14 @@ import stat
 import threading
 import time
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
+from urllib.parse import unquote
 
 from .models import (
     ACTIVE_STATES,
+    SCHEDULER_SHELL,
+    SCHEDULER_WINDOWS,
     STATE_DOWNLOADING,
+    STATE_LOST,
     STATE_UPLOADING,
     TERMINAL_STATES,
     HostProfile,
@@ -56,6 +60,9 @@ BIND_HOST = "127.0.0.1"
 #: How long a request that has to reach the cluster (a log tail, a directory
 #: listing) may take before the client is told so, rather than hanging.
 REMOTE_TIMEOUT = 120.0
+#: A fetch of files named by path can be large, and the reply is the list of
+#: what landed -- so it is held longer than a listing.
+DOWNLOAD_TIMEOUT = 1800.0
 
 #: Names a submission may set on the preset it builds. Anything else in the
 #: body is either a job field handled explicitly or a mistake worth reporting.
@@ -82,6 +89,10 @@ PRESET_FIELDS = {
 ROUTES = (
     ("GET", "/ping", "version, and how many jobs and hosts there are"),
     ("GET", "/hosts", "configured hosts"),
+    ("GET", "/hosts/{id}/status", "load, memory, cores, and the helper queue; ?stats=0"),
+    ("GET", "/hosts/{id}/files", "list any directory on the host; ?path=, ?depth="),
+    ("GET", "/hosts/{id}/file", "is a path there, its size and sha256; ?path=, ?hash=0"),
+    ("POST", "/hosts/{id}/download", "fetch files by path from anywhere on the host"),
     ("GET", "/presets", "saved presets; ?host="),
     ("GET", "/jobs", "tracked jobs; ?state=, ?host=, ?name=, ?limit="),
     ("POST", "/jobs", "submit a job: host plus command or preset, files"),
@@ -91,6 +102,8 @@ ROUTES = (
     ("POST", "/jobs/{id}/download", "fetch its results"),
     ("GET", "/jobs/{id}/log", "tail its log; ?lines=, ?file="),
     ("GET", "/jobs/{id}/files", "list its remote directory"),
+    ("POST", "/jobs/{id}/force", "start it now, ahead of the helper queue"),
+    ("POST", "/jobs/{id}/recheck", "look again at a LOST job"),
 )
 
 
@@ -122,7 +135,9 @@ class Deferred:
     which has nothing else to do, waits on it.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, timeout: float = REMOTE_TIMEOUT) -> None:
+        #: How long the socket thread waits for this one.
+        self.timeout = float(timeout)
         self._event = threading.Event()
         self._value: Any = None
         self._error: Optional[ApiError] = None
@@ -349,7 +364,9 @@ class JobApi:
         """
         query = dict(query or {})
         body = dict(body or {})
-        parts = [p for p in (path or "").strip("/").split("/") if p]
+        # Unquoted per segment, after the split: a host is addressed by its
+        # name, and a name may have a space in it.
+        parts = [unquote(p) for p in (path or "").strip("/").split("/") if p]
         prefix = [p for p in API_PREFIX.strip("/").split("/") if p]
         if parts[: len(prefix)] != prefix:
             raise ApiError(
@@ -368,6 +385,8 @@ class JobApi:
             return self._require("GET", method, self.ping)
         if head == "hosts" and not rest:
             return self._require("GET", method, self.hosts)
+        if head == "hosts" and len(rest) == 2:
+            return self._host_route(method, rest[0], rest[1], query, body)
         if head == "presets" and not rest:
             return self._require("GET", method, lambda: self.presets(query))
         if head == "jobs":
@@ -402,7 +421,29 @@ class JobApi:
             return self._require("GET", method, lambda: self.log(job_id, query))
         if action == "files":
             return self._require("GET", method, lambda: self.files(job_id))
+        if action == "force":
+            return self._require("POST", method, lambda: self.force(job_id))
+        if action == "recheck":
+            return self._require("POST", method, lambda: self.recheck(job_id))
         raise ApiError(404, f"Unknown job action '{action}'")
+
+    def _host_route(
+        self,
+        method: str,
+        host_ref: str,
+        action: str,
+        query: Mapping[str, str],
+        body: Mapping[str, Any],
+    ) -> Tuple[int, Any]:
+        if action == "status":
+            return self._require("GET", method, lambda: self.host_status(host_ref, query))
+        if action == "files":
+            return self._require("GET", method, lambda: self.host_files(host_ref, query))
+        if action == "file":
+            return self._require("GET", method, lambda: self.host_file(host_ref, query))
+        if action == "download":
+            return self._require("POST", method, lambda: self.host_download(host_ref, body))
+        raise ApiError(404, f"Unknown host action '{action}'")
 
     @staticmethod
     def _require(expected: str, method: str, run: Callable[[], Any]) -> Tuple[int, Any]:
@@ -477,6 +518,9 @@ class JobApi:
         if remote_input and not remote_dir:
             raise ApiError(400, "'remote_input' names a file inside 'remote_dir', which is unset")
         preset = self._preset(host, body)
+        force_run = self._optional_bool(body, "force_run", False)
+        if force_run:
+            self._check_forceable(host, body)
         after_job = None
         after_id = str(body.get("after_job", "") or "").strip()
         if after_id:
@@ -498,8 +542,25 @@ class JobApi:
             chain_any=self._optional_bool(body, "chain_any", False),
             remote_dir=remote_dir,
             remote_input=remote_input,
+            force_run=force_run,
         )
         return {"job": job_payload(job, self.store)}
+
+    @staticmethod
+    def _check_forceable(host: HostProfile, body: Mapping[str, Any]) -> None:
+        """``force_run`` is for a host with no queue system, and means "now"."""
+        if host.scheduler not in (SCHEDULER_SHELL, SCHEDULER_WINDOWS):
+            raise ApiError(
+                400,
+                f"'{host.name}' has a queue system ({host.scheduler}), which decides its own "
+                "order: 'force_run' is for a host with no scheduler.",
+            )
+        if str(body.get("after_job", "") or "").strip():
+            raise ApiError(400, "'force_run' starts a job now; it cannot also wait for 'after_job'")
+        if body.get("start_after"):
+            raise ApiError(
+                400, "'force_run' starts a job now; it cannot also wait for 'start_after'"
+            )
 
     def cancel(self, job_id: str, body: Mapping[str, Any]) -> Dict[str, Any]:
         job = self._job(job_id)
@@ -615,6 +676,196 @@ class JobApi:
             deferred.set_error,
         )
         return deferred
+
+    def force(self, job_id: str) -> Deferred:
+        job = self._job(job_id)
+        refusal = self.service.force_refusal(job)
+        if refusal:
+            raise ApiError(409, refusal)
+        deferred = Deferred()
+
+        def done(current: Job, started: bool) -> None:
+            if not started:
+                deferred.set_error(
+                    f"{current.name} is no longer waiting in the queue: "
+                    "it has started or been cancelled.",
+                    409,
+                )
+                return
+            deferred.set_result({"job": job_payload(current, self.store), "forced": True})
+
+        self.service.force_run(job, on_done=done, on_error=deferred.set_error)
+        return deferred
+
+    def recheck(self, job_id: str) -> Deferred:
+        job = self._job(job_id)
+        if job.state != STATE_LOST:
+            raise ApiError(409, f"{job.name} is {job.state}; only a LOST job is re-checked")
+        deferred = Deferred()
+
+        def done(report: Dict[str, Any]) -> None:
+            current = self._job_or_none(job.id) or job
+            reply = {
+                key: report.get(key)
+                for key in (
+                    "previous_state",
+                    "state",
+                    "changed",
+                    "rc",
+                    "sentinel",
+                    "runner_status",
+                    "files",
+                )
+            }
+            reply["job"] = job_payload(current, self.store)
+            deferred.set_result(reply)
+
+        self.service.recheck(job, on_done=done, on_error=deferred.set_error)
+        return deferred
+
+    # --- the host itself ----------------------------------------------------
+
+    def host_status(self, host_ref: str, query: Mapping[str, str]) -> Deferred:
+        host = self._usable_host(host_ref)
+        stats = self._query_flag(query, "stats", True)
+        skipped = ""
+        if stats and not host.monitor_usage:
+            # The profile says this machine's load is not ours to sample --
+            # a shared login node -- and a request over the API is no
+            # different from the Host Monitor asking.
+            stats = False
+            skipped = "Load sampling is switched off for this host in the Hosts dialog."
+        deferred = Deferred()
+
+        def done(report: Dict[str, Any]) -> None:
+            deferred.set_result(self._status_payload(host, report, skipped))
+
+        self.service.host_status(host, done, deferred.set_error, stats=stats)
+        return deferred
+
+    def _status_payload(
+        self, host: HostProfile, report: Mapping[str, Any], skipped: str
+    ) -> Dict[str, Any]:
+        tracked = [job for job in self.store.job_list() if job.host_id == host.id and job.is_active]
+        detail = report.get("queue")
+        places: Dict[str, Dict[str, Any]] = {}
+        if detail is not None:
+            for item in detail.get("running", []):
+                known = self.store.jobs.get(item["job_id"])
+                item["name"] = known.name if known is not None else ""
+                places[item["job_id"]] = {"queue": "running"}
+            for index, item in enumerate(detail.get("waiting", [])):
+                known = self.store.jobs.get(item["job_id"])
+                item["name"] = known.name if known is not None else ""
+                item["position"] = index + 1
+                item["ahead"] = index
+                places[item["job_id"]] = {"queue": "waiting", "position": index + 1, "ahead": index}
+            running = detail.get("running", [])
+            queue: Dict[str, Any] = {
+                "kind": "helper",
+                "paused": bool(detail.get("paused")),
+                "limits": dict(detail.get("limits", {})),
+                "running": running,
+                "waiting": detail.get("waiting", []),
+                "cores_in_use": sum(item["cores"] for item in running),
+                "memory_in_use_mb": sum(item["memory_mb"] for item in running),
+            }
+        elif host.scheduler in (SCHEDULER_SHELL, SCHEDULER_WINDOWS):
+            queue = {"kind": "none"}
+        else:
+            queue = {"kind": "scheduler", "scheduler": host.scheduler}
+        jobs = []
+        for job in tracked:
+            entry = {"id": job.id, "name": job.name, "state": job.state}
+            entry.update(places.get(job.id, {}))
+            jobs.append(entry)
+        payload: Dict[str, Any] = {
+            "host": host_payload(host),
+            "stats": report.get("stats"),
+            "queue": queue,
+            "jobs": jobs,
+        }
+        if skipped:
+            payload["stats_skipped"] = skipped
+        return payload
+
+    def host_files(self, host_ref: str, query: Mapping[str, str]) -> Deferred:
+        host = self._usable_host(host_ref)
+        path = self._remote_path(query.get("path"))
+        depth = self._int(query.get("depth"), "depth", minimum=1) if query.get("depth") else 1
+        if depth > 4:
+            raise ApiError(400, "'depth' is at most 4")
+        deferred = Deferred()
+        self.service.list_host_path(
+            host,
+            path,
+            depth,
+            lambda names: deferred.set_result(
+                {"path": path, "depth": depth, "entries": list(names)}
+            ),
+            deferred.set_error,
+        )
+        return deferred
+
+    def host_file(self, host_ref: str, query: Mapping[str, str]) -> Deferred:
+        host = self._usable_host(host_ref)
+        path = self._remote_path(query.get("path"))
+        digest = self._query_flag(query, "hash", True)
+        deferred = Deferred()
+        self.service.stat_host_path(host, path, digest, deferred.set_result, deferred.set_error)
+        return deferred
+
+    def host_download(self, host_ref: str, body: Mapping[str, Any]) -> Deferred:
+        host = self._usable_host(host_ref)
+        raw = body.get("paths", body.get("path"))
+        if isinstance(raw, str):
+            raw = [raw]
+        if not isinstance(raw, (list, tuple)) or not raw:
+            raise ApiError(400, "'paths' must be a list of file paths on the host")
+        paths = [self._remote_path(entry) for entry in raw]
+        into = str(body.get("into", "") or "")
+        if into and not os.path.isdir(into):
+            raise ApiError(400, f"'{into}' is not a directory on this machine")
+        overwrite = self._optional_bool(body, "overwrite", False)
+        deferred = Deferred(timeout=DOWNLOAD_TIMEOUT)
+        box: Dict[str, str] = {}
+
+        def done(result: Tuple[List[str], List[Tuple[str, str]]]) -> None:
+            downloaded, skipped = result
+            deferred.set_result(
+                {
+                    "into": box.get("into", into),
+                    "files": list(downloaded),
+                    "skipped": [{"path": path, "reason": reason} for path, reason in skipped],
+                }
+            )
+
+        box["into"] = self.service.download_host_paths(
+            host, paths, into, done, deferred.set_error, overwrite=overwrite
+        )
+        return deferred
+
+    def _usable_host(self, wanted: str) -> HostProfile:
+        host = self._host(wanted)
+        if not host.enabled:
+            raise ApiError(409, f"Host '{host.name}' is disabled in the Hosts dialog")
+        return host
+
+    @staticmethod
+    def _remote_path(value: Any) -> str:
+        path = str(value or "").strip()
+        if not path:
+            raise ApiError(400, "'path' is required: a path on the host")
+        if any(ch in path for ch in ("\n", "\r", "\0")):
+            raise ApiError(400, "A path on the host cannot contain a line break")
+        return path
+
+    @staticmethod
+    def _query_flag(query: Mapping[str, str], key: str, default: bool) -> bool:
+        value = str(query.get(key, "") or "").strip().lower()
+        if not value:
+            return default
+        return value not in ("0", "false", "no", "off")
 
     # --- resolution helpers -------------------------------------------------
 
@@ -788,6 +1039,7 @@ __all__ = [
     "API_VERSION",
     "BIND_HOST",
     "DEFAULT_PORT",
+    "DOWNLOAD_TIMEOUT",
     "ENDPOINT_FILENAME",
     "PRESET_FIELDS",
     "REMOTE_TIMEOUT",

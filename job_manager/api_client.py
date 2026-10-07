@@ -46,6 +46,9 @@ ENDPOINT_FILENAME = "api.json"
 TOKEN_FILENAME = "api_token"
 
 DEFAULT_TIMEOUT = 130.0
+#: The server holds a fetch by path for up to 1800 s; a little longer here, so
+#: the server's own answer arrives rather than this side giving up first.
+DOWNLOAD_TIMEOUT = 1810.0
 #: Terminal states, repeated here rather than imported: this file is meant to
 #: be copyable, and a client that has to import the plugin to know a job has
 #: finished is not.
@@ -244,6 +247,65 @@ class JobManagerClient:
     def forget(self, job_id: str) -> Dict[str, Any]:
         return self.request("DELETE", f"jobs/{job_id}")
 
+    def force(self, job_id: str) -> Dict[str, Any]:
+        """Start a job waiting in a helper queue now, ahead of the rest."""
+        return self.request("POST", f"jobs/{job_id}/force", body={})
+
+    def recheck(self, job_id: str) -> Dict[str, Any]:
+        """Look again at a LOST job; the reply says what was found and its state now."""
+        return self.request("POST", f"jobs/{job_id}/recheck", body={})
+
+    # --- the host itself ----------------------------------------------------
+
+    @staticmethod
+    def _host_path(host: str, action: str) -> str:
+        from urllib.parse import quote
+
+        return f"hosts/{quote(str(host), safe='')}/{action}"
+
+    def host_status(self, host: str, stats: bool = True) -> Dict[str, Any]:
+        """Cores, load, memory, and on a helper queue what runs and what waits."""
+        query = {} if stats else {"stats": "0"}
+        return self.request("GET", self._host_path(host, "status"), query=query)
+
+    def host_files(self, host: str, path: str, depth: int = 1) -> List[str]:
+        """Names under a directory on the host; sub-directories end in ``/``."""
+        reply = self.request(
+            "GET", self._host_path(host, "files"), query={"path": path, "depth": depth}
+        )
+        return list(reply.get("entries", []))
+
+    def host_file(self, host: str, path: str, sha256: bool = True) -> Dict[str, Any]:
+        """``exists``, ``type``, and for a file ``size`` and ``sha256``."""
+        query = {"path": path} if sha256 else {"path": path, "hash": "0"}
+        return self.request("GET", self._host_path(host, "file"), query=query)
+
+    def host_download(
+        self,
+        host: str,
+        paths: Sequence[str],
+        into: str = "",
+        overwrite: bool = False,
+        timeout: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Fetch files by path from anywhere on the host.
+
+        ``files`` in the reply is where each one landed; ``skipped`` says why
+        any did not, a local file that is already there among them unless
+        ``overwrite`` is set.
+        """
+        if isinstance(paths, str):
+            paths = [paths]
+        body: Dict[str, Any] = {"paths": list(paths), "overwrite": bool(overwrite)}
+        if into:
+            body["into"] = os.path.abspath(os.path.expanduser(into))
+        return self.request(
+            "POST",
+            self._host_path(host, "download"),
+            body=body,
+            timeout=timeout or DOWNLOAD_TIMEOUT,
+        )
+
     # --- convenience --------------------------------------------------------
 
     def wait(
@@ -346,6 +408,12 @@ def build_parser() -> argparse.ArgumentParser:
     submit.add_argument("--chain-any", action="store_true", help="Chain on ending, not succeeding")
     submit.add_argument("--start-after", default="", help="Epoch second or 2026-01-31T18:30")
     submit.add_argument("--no-auto-download", action="store_true")
+    submit.add_argument(
+        "--force",
+        action="store_true",
+        dest="force_run",
+        help="Start it now, ahead of the helper queue (hosts with no scheduler)",
+    )
     submit.add_argument("--wait", action="store_true", help="Block until the job finishes")
 
     cancel = sub.add_parser("cancel", help="Cancel a running job")
@@ -374,6 +442,32 @@ def build_parser() -> argparse.ArgumentParser:
 
     forget = sub.add_parser("forget", help="Stop tracking a finished job")
     forget.add_argument("job_id")
+
+    force = sub.add_parser("force", help="Start a waiting job now, ahead of the helper queue")
+    force.add_argument("job_id")
+
+    recheck = sub.add_parser("recheck", help="Look again at a LOST job")
+    recheck.add_argument("job_id")
+
+    status = sub.add_parser("host-status", help="Load, memory and the queue on a host")
+    status.add_argument("host")
+    status.add_argument("--no-stats", action="store_true", help="Only the queue")
+
+    host_ls = sub.add_parser("host-ls", help="List a directory on a host")
+    host_ls.add_argument("host")
+    host_ls.add_argument("path")
+    host_ls.add_argument("--depth", type=int, default=1)
+
+    host_stat = sub.add_parser("host-stat", help="Size and sha256 of a file on a host")
+    host_stat.add_argument("host")
+    host_stat.add_argument("path")
+    host_stat.add_argument("--no-hash", action="store_true")
+
+    host_get = sub.add_parser("host-get", help="Download files from a host by path")
+    host_get.add_argument("host")
+    host_get.add_argument("paths", nargs="+")
+    host_get.add_argument("--into", default="")
+    host_get.add_argument("--overwrite", action="store_true")
 
     return parser
 
@@ -415,6 +509,8 @@ def _submit_fields(args: argparse.Namespace) -> Dict[str, Any]:
             fields["start_after"] = args.start_after
     if args.no_auto_download:
         fields["auto_download"] = False
+    if args.force_run:
+        fields["force_run"] = True
     return fields
 
 
@@ -481,6 +577,37 @@ def _run(client: JobManagerClient, args: argparse.Namespace) -> int:
         return _wait(client, args.job_id, args.interval, args.timeout, args.download, raw)
     elif args.subcommand == "forget":
         _print(client.forget(args.job_id))
+    elif args.subcommand == "force":
+        reply = client.force(args.job_id)
+        _print(reply) if raw else print(_job_line(reply.get("job", {})))
+    elif args.subcommand == "recheck":
+        reply = client.recheck(args.job_id)
+        if raw:
+            _print(reply)
+        else:
+            print(f"{reply.get('previous_state')} -> {reply.get('state')}")
+            print(f"exit-code file: {reply.get('sentinel')}")
+            if reply.get("runner_status"):
+                print(f"helper's record: {reply.get('runner_status')}")
+    elif args.subcommand == "host-status":
+        _print(client.host_status(args.host, stats=not args.no_stats))
+    elif args.subcommand == "host-ls":
+        found = client.host_files(args.host, args.path, args.depth)
+        _print(found) if raw else [print(name) for name in found]
+    elif args.subcommand == "host-stat":
+        _print(client.host_file(args.host, args.path, sha256=not args.no_hash))
+    elif args.subcommand == "host-get":
+        reply = client.host_download(
+            args.host, args.paths, into=args.into, overwrite=args.overwrite
+        )
+        if raw:
+            _print(reply)
+        else:
+            for path in reply.get("files", []):
+                print(path)
+            for skipped in reply.get("skipped", []):
+                print(f"skipped {skipped['path']}: {skipped['reason']}", file=sys.stderr)
+        return 0 if not reply.get("skipped") else 2
     return 0
 
 

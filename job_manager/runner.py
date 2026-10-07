@@ -355,6 +355,7 @@ def submit_to_runner(
     after_job: Optional[Job] = None,
     relay_source_dir: str = "",
     relay_filenames: Sequence[str] = (),
+    force: bool = False,
 ) -> Job:
     """Upload a job and put it in the remote runner's queue.
 
@@ -368,6 +369,9 @@ def submit_to_runner(
     *succeeded*, which a wrapper watching a pid cannot.
 
     ``relay_source_dir``/``relay_filenames``: see :func:`submit_job`.
+
+    ``force`` starts the job the moment it is queued, ahead of everything
+    waiting and past every limit -- see :func:`remote_runner.force_command`.
     """
     scheduler = get_scheduler(host.scheduler)
     flavour = remote_runner.flavour_for(host)
@@ -403,28 +407,7 @@ def submit_to_runner(
     _upload_text(transport, script, remote_paths.join(job.remote_dir, job_script_name))
 
     directory = remote_runner.runner_dir(effective_root(host))
-    setup = transport.run(
-        flavour.setup_command(
-            directory,
-            remote_runner.slots_for(host),
-            host.runner_cores,
-            host.runner_memory_mb,
-        )
-    )
-    runner_script = flavour.build_runner_script(directory)
-    # Named after the plugin's own version, not a content hash: the script is
-    # fixed for the life of a release, so this is an equally reliable way to
-    # tell whether the host already has the current one, and it is a name a
-    # user reading the directory over plain ssh can actually place.
-    script_name = flavour.runner_script_name(PLUGIN_VERSION)
-    if (setup.stdout or "").strip().splitlines()[-1:] != [PLUGIN_VERSION]:
-        # Only when it would differ. The script is the same bytes on every
-        # submission to the same host, and re-uploading it was an scp per job.
-        # The version this replaces is left where it is, deliberately: a
-        # script that ran a job is worth keeping, since the queue is readable
-        # over plain ssh precisely so a user can see what ran.
-        _upload_text(transport, runner_script, remote_paths.join(directory, script_name))
-        transport.run(flavour.store_version_command(directory, PLUGIN_VERSION))
+    script_name = _prepare_runner(transport, host)
 
     # Claimed on the host, not worked out from a listing: the number is the
     # dispatch order, and one derived from the queue restarts the moment a user
@@ -458,8 +441,57 @@ def submit_to_runner(
             f"{(result.stderr or result.stdout).strip()[:300]}"
         )
 
+    if force:
+        # Before the helper is started, so it cannot take the job in its turn
+        # first. A helper already up may still win the claim; then the job
+        # simply started the ordinary way, which is not worth an error.
+        transport.run(flavour.force_command(directory, entry))
+        job.force_run = True
+
     # Only now: a runner started before the job was queued could empty the
     # queue and exit before it arrived.
+    _start_runner(transport, host, script_name, "The job was queued")
+
+    job.remote_job_id = entry
+    job.submitted_at = time.time()
+    job.touch(STATE_SUBMITTED)
+    return job
+
+
+def _prepare_runner(transport: Transport, host: HostProfile) -> str:
+    """Make the helper's directories, push the limits, and make sure the current
+    helper script is on the host. Returns that script's name."""
+    flavour = remote_runner.flavour_for(host)
+    directory = remote_runner.runner_dir(effective_root(host))
+    setup = transport.run(
+        flavour.setup_command(
+            directory,
+            remote_runner.slots_for(host),
+            host.runner_cores,
+            host.runner_memory_mb,
+        )
+    )
+    # Named after the plugin's own version, not a content hash: the script is
+    # fixed for the life of a release, so this is an equally reliable way to
+    # tell whether the host already has the current one, and it is a name a
+    # user reading the directory over plain ssh can actually place.
+    script_name = flavour.runner_script_name(PLUGIN_VERSION)
+    if (setup.stdout or "").strip().splitlines()[-1:] != [PLUGIN_VERSION]:
+        # Only when it would differ. The script is the same bytes on every
+        # submission to the same host, and re-uploading it was an scp per job.
+        # The version this replaces is left where it is, deliberately: a
+        # script that ran a job is worth keeping, since the queue is readable
+        # over plain ssh precisely so a user can see what ran.
+        runner_script = flavour.build_runner_script(directory)
+        _upload_text(transport, runner_script, remote_paths.join(directory, script_name))
+        transport.run(flavour.store_version_command(directory, PLUGIN_VERSION))
+    return script_name
+
+
+def _start_runner(transport: Transport, host: HostProfile, script_name: str, what: str) -> None:
+    """Make sure a helper is up, and say so plainly when one cannot be."""
+    flavour = remote_runner.flavour_for(host)
+    directory = remote_runner.runner_dir(effective_root(host))
     # The versioned name, not the default: the script is named per version, so
     # starting "the runner" by a fixed name starts a file that is not there.
     started = transport.run(flavour.ensure_runner_command(directory, script_name))
@@ -467,14 +499,190 @@ def submit_to_runner(
         # The queue would sit there for ever otherwise, with the job showing
         # PENDING and nothing on the host to move it.
         raise TransportError(
-            f"The job was queued, but the helper script {script_name} is not on the host, "
+            f"{what}, but the helper script {script_name} is not on the host, "
             "so nothing will start it."
         )
 
-    job.remote_job_id = entry
-    job.submitted_at = time.time()
-    job.touch(STATE_SUBMITTED)
-    return job
+
+def force_in_runner(transport: Transport, host: HostProfile, job: Job) -> bool:
+    """Start a job that is waiting in the helper queue, now.
+
+    Returns False when it was no longer waiting -- already started, or
+    cancelled -- which is not an error: there is nothing left to force.
+
+    A helper is made sure of afterwards, because something has to reap the
+    job when it ends; with none up, its entry would sit in ``running/`` and
+    the job would read RUNNING for ever.
+    """
+    if not job.remote_job_id:
+        return False
+    flavour = remote_runner.flavour_for(host)
+    directory = remote_runner.runner_dir(effective_root(host))
+    script_name = _prepare_runner(transport, host)
+    result = transport.run(flavour.force_command(directory, job.remote_job_id))
+    lines = (result.stdout or "").strip().splitlines()
+    if lines[-1:] != [remote_runner.FORCED]:
+        if lines[-1:] == [remote_runner.NOT_QUEUED]:
+            return False
+        raise TransportError(
+            f"Could not start the job (rc={result.rc}): "
+            f"{(result.stderr or result.stdout).strip()[:300]}"
+        )
+    _start_runner(transport, host, script_name, "The job was started")
+    return True
+
+
+def runner_queue(transport: Transport, host: HostProfile) -> dict:
+    """The helper queue on ``host``: what runs, what waits in what order, the limits."""
+    directory = remote_runner.runner_dir(effective_root(host))
+    result = transport.run(remote_runner.flavour_for(host).queue_detail_command(directory))
+    return remote_runner.parse_queue_detail(result.stdout)
+
+
+def recheck_job(transport: Transport, host: HostProfile, job: Job) -> dict:
+    """Look again at a job reported LOST, and say what the host has for it now.
+
+    LOST means the queue no longer listed the job and its exit-code file was
+    not there. Both can be momentary -- a file a networked filesystem has not
+    shown this client yet, a queue that answered half a listing -- so a job
+    that actually finished could be left reading LOST for good. This asks the
+    queue again, reads the exit-code file again, and on a helper queue also
+    the exit code the helper recorded itself, which is a second witness kept
+    in a different directory.
+
+    Works on a copy: what to do with the answer is the caller's decision.
+    Returns ``state`` and ``rc`` (what the job should now read), the raw
+    ``sentinel`` and ``runner_status`` contents, and the job directory's
+    ``files``.
+    """
+    probe = Job.from_dict(job.to_dict())
+    probe.state = STATE_RUNNING
+    probe.rc = None
+    on_runner = bool(remote_runner.parse_entry(probe.remote_job_id)[1])
+    if on_runner:
+        updates = poll_runner(transport, host, [probe])
+    else:
+        updates = poll_host(transport, host, [probe])
+    state = updates.get(probe.id, STATE_RUNNING)
+
+    speak = dialect.for_host(transport.host)
+    paths = [remote_paths.join(job.remote_dir, sentinel_for(job))]
+    if on_runner:
+        directory = remote_runner.runner_dir(effective_root(host))
+        paths.append(remote_paths.join(directory, "status", job.remote_job_id))
+    result = transport.run(speak.read_files(paths, _SENTINEL_MARK))
+    chunks = [chunk.strip() for chunk in (result.stdout or "").split(_SENTINEL_MARK)[1:]]
+    sentinel = chunks[0].splitlines()[0].strip() if chunks and chunks[0] else dialect.MISSING
+    runner_status = ""
+    if on_runner:
+        raw = chunks[1] if len(chunks) > 1 and chunks[1] else dialect.MISSING
+        runner_status = raw.splitlines()[0].strip()
+        if state == STATE_LOST and runner_status.lstrip("-").isdigit():
+            # The wrapper's own file is the better witness and is read first;
+            # the helper's record stands in only when that one is not there.
+            probe.rc = int(runner_status)
+            state = STATE_DONE if probe.rc == 0 else STATE_FAILED
+
+    files: List[str] = []
+    if job.remote_dir:
+        files = list_remote_files(transport, job.remote_dir)
+    return {
+        "state": state,
+        "rc": probe.rc,
+        "sentinel": sentinel,
+        "runner_status": runner_status,
+        "files": files,
+        "last_error": probe.last_error if probe.last_error != job.last_error else "",
+    }
+
+
+def list_host_path(transport: Transport, host: HostProfile, path: str, depth: int = 1) -> List[str]:
+    """What is under a directory on the host, anywhere the user can read.
+
+    One level marks sub-directories with a trailing ``/``; deeper lists files
+    only, named relative to ``path``. The names are shown, never written to a
+    local path, so they are returned as the host spelled them.
+    """
+    require_remote_path(transport, host, path, directory=True)
+    speaker = dialect.for_host(transport.host)
+    depth = max(1, min(int(depth or 1), MAX_FETCH_DEPTH))
+    if depth > 1:
+        result = transport.run(speaker.list_tree(path, depth))
+    else:
+        result = transport.run(speaker.list_dir(path))
+    return [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+
+
+def stat_host_path(transport: Transport, host: HostProfile, path: str, digest: bool = True) -> dict:
+    """Whether a path is there, what it is, and for a file its size and sha256."""
+    result = transport.run(dialect.for_host(transport.host).stat(path, digest))
+    lines = [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+    kind = lines[0] if lines else dialect.MISSING
+    info: dict = {"path": path, "exists": kind in (dialect.FILE, dialect.DIRECTORY)}
+    if kind == dialect.DIRECTORY:
+        info["type"] = "directory"
+    elif kind == dialect.FILE:
+        info["type"] = "file"
+        info["size"] = int(lines[1]) if len(lines) > 1 and lines[1].isdigit() else None
+        if digest:
+            found = lines[2].lower() if len(lines) > 2 else ""
+            # Absent rather than wrong when no digest tool answered.
+            info["sha256"] = (
+                found if len(found) == 64 and all(c in "0123456789abcdef" for c in found) else ""
+            )
+    else:
+        info["type"] = ""
+    return info
+
+
+def download_host_paths(
+    transport: Transport,
+    host: HostProfile,
+    paths: Sequence[str],
+    local_dir: str,
+    overwrite: bool = False,
+) -> tuple:
+    """Fetch named files from anywhere on the host into ``local_dir``.
+
+    Each lands under its own base name. Returns ``(downloaded, skipped)``,
+    where ``skipped`` pairs a remote path with the reason: not a file, a name
+    that is not safe to write, two paths sharing a base name, or a local file
+    already there and ``overwrite`` not given. A file the user has beside
+    their work is not something a fetch should be able to replace silently.
+    """
+    os.makedirs(local_dir, exist_ok=True)
+    downloaded: List[str] = []
+    skipped: List[tuple] = []
+    taken: set = set()
+    for path in paths:
+        name = safe_download_name(remote_paths.basename(str(path).rstrip("/\\")))
+        if not name:
+            skipped.append((path, "not a file name that is safe to write here"))
+            continue
+        if name in taken:
+            skipped.append((path, f"another path in this request is also called {name}"))
+            continue
+        target = os.path.join(local_dir, name)
+        if os.path.exists(target) and not overwrite:
+            skipped.append((path, f"{target} already exists"))
+            continue
+        kind = stat_host_path(transport, host, path, digest=False)
+        if kind.get("type") != "file":
+            skipped.append(
+                (path, "no such file on the host" if not kind["exists"] else "not a file")
+            )
+            continue
+        taken.add(name)
+        staging = target + PARTIAL_SUFFIX
+        try:
+            transport.download(path, staging)
+            os.replace(staging, target)
+        except (TransportError, OSError) as exc:
+            _discard(staging)
+            skipped.append((path, str(exc) or "the transfer failed"))
+            continue
+        downloaded.append(target)
+    return downloaded, skipped
 
 
 def poll_runner(transport: Transport, host: HostProfile, jobs: Sequence[Job]) -> Dict[str, str]:
@@ -508,30 +716,42 @@ def poll_runner(transport: Transport, host: HostProfile, jobs: Sequence[Job]) ->
 
     if finished:
         outcomes = _read_sentinels(transport, finished)
-        blocked = _blocked_entries(transport, directory, finished)
+        statuses = _runner_statuses(transport, directory, finished)
         for job, outcome in zip(finished, outcomes):
-            if job.id in blocked:
+            status = statuses.get(job.id, "")
+            if status == remote_runner.STATUS_BLOCKED:
                 # It never ran at all: the runner set it aside because what it
                 # was waiting for failed, or was never queued.
                 job.last_error = "Queued behind a job that did not succeed; it never started."
                 outcome = STATE_FAILED
+            elif outcome == STATE_LOST and status.lstrip("-").isdigit():
+                # The wrapper's exit-code file is the first witness, and it can
+                # be missing from this read while the job did finish: a
+                # networked filesystem that has not shown it to this client
+                # yet. The helper records the same code in its own directory,
+                # and a finished job is not LOST while that one says otherwise.
+                job.rc = int(status)
+                outcome = STATE_DONE if job.rc == 0 else STATE_FAILED
             if outcome != job.state:
                 updates[job.id] = outcome
     return updates
 
 
-def _blocked_entries(transport: Transport, directory: str, jobs: Sequence[Job]) -> set:
-    """Job ids the runner set aside rather than ran."""
+def _runner_statuses(transport: Transport, directory: str, jobs: Sequence[Job]) -> Dict[str, str]:
+    """What the helper wrote in ``status/`` for each job: its exit code, or
+    :data:`remote_runner.STATUS_BLOCKED` for one it set aside rather than ran.
+    Empty for a job it has written nothing for."""
     speak = dialect.for_host(transport.host)
     paths = [remote_paths.join(directory, "status", job.remote_job_id) for job in jobs]
     result = transport.run(speak.read_files(paths, _SENTINEL_MARK))
     chunks = (result.stdout or "").split(_SENTINEL_MARK)[1:]
-    blocked = set()
+    statuses: Dict[str, str] = {}
     for index, job in enumerate(jobs):
         raw = chunks[index].strip() if index < len(chunks) else ""
-        if raw.splitlines() and raw.splitlines()[0].strip() == remote_runner.STATUS_BLOCKED:
-            blocked.add(job.id)
-    return blocked
+        first = raw.splitlines()[0].strip() if raw.splitlines() else ""
+        if first and first != dialect.MISSING:
+            statuses[job.id] = first
+    return statuses
 
 
 def queue_paused(transport: Transport, host: HostProfile) -> bool:
@@ -990,7 +1210,13 @@ __all__ = [
     "STATE_RUNNING",
     "apply_queue_limits",
     "cancel_job",
+    "download_host_paths",
     "effective_root",
+    "force_in_runner",
+    "list_host_path",
+    "recheck_job",
+    "runner_queue",
+    "stat_host_path",
     "fetch_results",
     "input_name_for",
     "is_plugin_file",

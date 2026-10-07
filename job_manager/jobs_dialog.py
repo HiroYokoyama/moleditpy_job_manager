@@ -88,6 +88,9 @@ BANNER_STYLE = (
 )
 
 
+FORCE_ACTION_TEXT = "Force Run Now"
+RECHECK_ACTION_TEXT = "Re-check State"
+
 COLUMNS = ("Name", "Host", "Queue ID", "State", "After", "Elapsed", "Submitted", "Updated")
 
 _STATE_COLORS = {
@@ -673,6 +676,16 @@ class JobsDialog(QDialog):
             action.setEnabled(button.isEnabled())
             action.setToolTip(button.toolTip())
             action.triggered.connect(button.click)
+        # Menu only: both are occasional, and the button rows are full.
+        job = self.selected_job()
+        live = not self.viewing_archive() and not self.viewing_reconstructed()
+        menu.addSeparator()
+        force = menu.addAction(FORCE_ACTION_TEXT)
+        force.setEnabled(bool(live and job is not None and not self.service.force_refusal(job)))
+        force.triggered.connect(self._force_selected)
+        recheck = menu.addAction(RECHECK_ACTION_TEXT)
+        recheck.setEnabled(bool(live and job is not None and job.state == STATE_LOST))
+        recheck.triggered.connect(self._recheck_selected)
         menu.exec(self.table.viewport().mapToGlobal(position))
 
     def _tick_elapsed(self) -> None:
@@ -942,6 +955,63 @@ class JobsDialog(QDialog):
             return
         self.service.cancel(job)
 
+    def _force_selected(self) -> None:
+        """Start the selected waiting job now, ahead of its host's queue."""
+        job = self.selected_job()
+        if job is None:
+            return
+        refusal = self.service.force_refusal(job)
+        if refusal:
+            QMessageBox.information(self, FORCE_ACTION_TEXT, refusal)
+            return
+        confirm = QMessageBox.question(
+            self,
+            FORCE_ACTION_TEXT,
+            f"Start '{job.name}' now, ahead of the jobs waiting on {job.host_name}?\n\n"
+            "It runs beside whatever is running there already, past the host's job "
+            "limit and its core and memory budgets. Meant for a small, short job.",
+        )
+        if confirm != QMessageBox.StandardButton.Yes or not self._has_credentials(job):
+            return
+        self.service.force_run(job)
+
+    def _recheck_selected(self) -> None:
+        """Ask the host again about a job that was reported LOST."""
+        job = self.selected_job()
+        if job is None or job.state != STATE_LOST or not self._has_credentials(job):
+            return
+        self._append_message(f"Re-checking {job.name} on {job.host_name}...")
+        self.service.recheck(job, on_done=self._show_recheck, owner=self)
+
+    def _show_recheck(self, report: dict) -> None:
+        state = report.get("state", STATE_LOST)
+        lines = []
+        if not report.get("changed"):
+            lines.append(
+                "Still no sign that it finished: there is no exit code for it on the "
+                "host, neither the job's own nor one the helper queue recorded."
+            )
+        elif state in (STATE_DONE, STATE_FAILED):
+            lines.append(
+                f"The host does have an exit code for it ({report.get('rc')}), so it is "
+                f"now {state}."
+            )
+        else:
+            lines.append(f"It is still in the queue on the host: it is now {state}.")
+        lines.append("")
+        lines.append(f"Exit-code file: {report.get('sentinel') or '-'}")
+        if report.get("runner_status"):
+            lines.append(f"Helper queue's record: {report.get('runner_status')}")
+        files = list(report.get("files") or [])
+        if files:
+            shown = ", ".join(files[:12]) + (
+                f", and {len(files) - 12} more" if len(files) > 12 else ""
+            )
+            lines.append(f"In its directory: {shown}")
+        else:
+            lines.append("Its directory on the host is empty or gone.")
+        QMessageBox.information(self, RECHECK_ACTION_TEXT, "\n".join(lines))
+
     def _has_credentials(self, job: Job) -> bool:
         """Prompt for this job's host password before any worker is dispatched."""
         host = self.service.store.hosts.get(job.host_id)
@@ -1176,6 +1246,8 @@ class JobsDialog(QDialog):
             ("Downloaded to", job.local_dir or "-"),
             ("Last error", job.last_error or "-"),
         ]
+        if job.force_run:
+            rows.insert(5, ("Force run", "started ahead of the queue"))
         # The snapshot taken at submit time, not the named preset -- which may
         # since have been edited or deleted.
         preset = job.preset or {}

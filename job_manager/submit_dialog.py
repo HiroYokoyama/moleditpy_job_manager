@@ -37,7 +37,14 @@ from .command_templates import CommandTemplate, extension_of, suggest, templates
 from .credentials import ensure_password
 
 from . import structure_relay
-from .models import HostProfile, Job, SubmitPreset, sanitize_name
+from .models import (
+    SCHEDULER_SHELL,
+    SCHEDULER_WINDOWS,
+    HostProfile,
+    Job,
+    SubmitPreset,
+    sanitize_name,
+)
 from .runner import check_input_name, make_remote_dir
 from .schedulers import (
     format_command,
@@ -70,6 +77,7 @@ RELAY_TITLE = "Reuse another job's file"
 BATCH_TEXT = "Submit each file as its own job"
 CHAIN_TEXT = "Run after the job already queued on this host"
 CHAIN_ANY_TEXT = "...even if that job fails"
+FORCE_TEXT = "Force run: start now, ahead of the queue"
 #: On its own line rather than appended to the chain labels above: a suffix
 #: there made the minimum width wider than the window.
 NOTHING_TO_FOLLOW = (
@@ -698,6 +706,13 @@ class SubmitDialog(QDialog):
         start_layout.addWidget(self.chk_start_at)
         start_layout.addWidget(self.dt_start_at, 1)
 
+        # For a quick check that should not wait behind hours of work. Only
+        # where this plugin is the queue: a cluster's scheduler decides its
+        # own order, and nothing here can ask it to do otherwise.
+        self.chk_force = QCheckBox(FORCE_TEXT)
+        self.chk_force.setVisible(False)
+        self.chk_force.toggled.connect(self._on_force_toggled)
+
         for widget in (
             self.txt_queue,
             self.txt_account,
@@ -737,6 +752,7 @@ class SubmitDialog(QDialog):
         form.addRow(self.chk_chain_any)
         form.addRow(self.lbl_chain)
         form.addRow(start_row)
+        form.addRow(self.chk_force)
         return page
 
     def _browse_download_root(self) -> None:
@@ -806,6 +822,7 @@ class SubmitDialog(QDialog):
             self.cmb_preset.setCurrentIndex(1)
         self._on_preset_changed()
         self._update_queue_fields()
+        self._update_force_row()
         self._update_chain_row()
         # Relay candidates are host-scoped; re-filter now so the dropdown is
         # never stale by the time it is opened, even while unchecked.
@@ -853,9 +870,51 @@ class SubmitDialog(QDialog):
             return 0
         return max(0, int(host.max_concurrent or 0))
 
+    def _update_force_row(self) -> None:
+        """Offer Force run only on a host where this plugin keeps the queue."""
+        host = self.current_host()
+        offered = host is not None and host.scheduler in (SCHEDULER_SHELL, SCHEDULER_WINDOWS)
+        if not offered:
+            self.chk_force.setChecked(False)
+        self.chk_force.setVisible(offered)
+        if host is not None and host.uses_remote_runner:
+            self.chk_force.setToolTip(
+                f"Start this job the moment it reaches {host.name}: ahead of every job "
+                "waiting there, and past the job limit and the core and memory budgets. "
+                "For a small, short job -- it shares the machine with what is running."
+            )
+        else:
+            self.chk_force.setToolTip(
+                "Start this job straight away instead of queueing it behind another "
+                "job on this host. For a small, short job -- it shares the machine "
+                "with what is running."
+            )
+
+    def force_requested(self) -> bool:
+        return not self.chk_force.isHidden() and self.chk_force.isChecked()
+
+    def _on_force_toggled(self, checked: bool) -> None:
+        # "Now" and "not before six" cannot both hold.
+        if checked:
+            self.chk_start_at.setChecked(False)
+        self.chk_start_at.setEnabled(not checked)
+        self._update_chain_row()
+        self._refresh_preview()
+
     def _update_chain_row(self) -> None:
         """Every scheduler can chain; only the mechanism differs."""
         host = self.current_host()
+        if host is not None and self.force_requested():
+            # Forcing is the opposite of waiting for something.
+            self.chk_chain.setVisible(False)
+            self.chk_chain_any.setVisible(False)
+            self.lbl_chain.setVisible(True)
+            waiting = len(self.store.runnable_jobs(host.id))
+            self.lbl_chain.setText(
+                f"Starts as soon as it reaches {host.name}, ahead of the {waiting} "
+                "job(s) there now and past every limit set for the host."
+            )
+            return
         predecessor = self.chain_predecessor()
         try:
             scheduler = get_scheduler(host.scheduler) if host else None
@@ -925,6 +984,8 @@ class SubmitDialog(QDialog):
     def chain_requested(self) -> bool:
         """One predicate for both the preview and the submission, so the two
         can never disagree about whether a dependency applies."""
+        if self.force_requested():
+            return False
         if self.slot_limit():
             return self.chain_predecessor() is not None
         # isHidden(), not isVisible(): a widget on a tab the user switched away
@@ -1625,6 +1686,14 @@ class SubmitDialog(QDialog):
         name = self.txt_job_name.text().strip() or self._default_job_name(files, remote_dir)
         after = self.chain_predecessor() if self.chain_requested() else None
         chain_any = self.chain_any_requested()
+        if self.force_requested() and relay_job is not None and relay_job.is_active:
+            QMessageBox.warning(
+                self,
+                "Submit",
+                f"'{relay_job.name}' has not finished, and this job reuses a file from it, "
+                "so it has to wait for it. Untick Force run, or wait until that job is done.",
+            )
+            return
         if after is None and relay_job is not None and relay_job.is_active:
             # Must not start before the relay source finishes; afterok, not
             # afterany, since a failed source leaves nothing worth copying.
@@ -1643,6 +1712,7 @@ class SubmitDialog(QDialog):
             remote_dir=remote_dir,
             remote_input=self.remote_input(),
             upload_files=upload_files,
+            force_run=self.force_requested(),
         )
         self._remember(host, preset)
         self.accept()
@@ -1666,6 +1736,7 @@ class SubmitDialog(QDialog):
                 after_job=after,
                 start_after=self.selected_start_time(),
                 chain_any=self.chain_any_requested(),
+                force_run=self.force_requested(),
             )
         self._remember(host, preset)
 

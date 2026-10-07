@@ -17,10 +17,15 @@ from typing import Callable, Dict, List, Optional, Sequence
 from PyQt6.QtCore import QObject, QThreadPool, pyqtSignal
 
 from .models import (
+    ACTIVE_STATES,
+    SCHEDULER_WINDOWS,
     STATE_CANCELLED,
     STATE_DONE,
     STATE_DOWNLOADING,
     STATE_FAILED,
+    STATE_LOST,
+    STATE_PENDING,
+    STATE_SUBMITTED,
     STATE_UPLOADING,
     TERMINAL_STATES,
     HostProfile,
@@ -28,15 +33,22 @@ from .models import (
     SubmitPreset,
     sanitize_name,
 )
+from . import remote_runner
 from .poller import JobPoller
 from .runner import (
     MAX_FETCH_DEPTH,
     cancel_in_runner,
     cancel_job,
+    download_host_paths,
     fetch_results,
+    force_in_runner,
+    list_host_path,
     list_remote_files,
+    recheck_job,
     release_in_runner,
     require_remote_path,
+    runner_queue,
+    stat_host_path,
     submit_job,
     submit_to_runner,
     tail_log,
@@ -45,6 +57,11 @@ from .runner import (
 from .store import JobsReload, JobStore
 from .tasks import run_async
 from .transport import create_transport
+
+
+def not_waiting(job: Job) -> str:
+    """Why a force found nothing to start."""
+    return f"{job.name} is no longer waiting in the queue: it has started or been cancelled."
 
 
 class JobService(QObject):
@@ -131,6 +148,7 @@ class JobService(QObject):
         relay_source_dir: str = "",
         relay_filenames: Optional[List[str]] = None,
         upload_files: Optional[List[str]] = None,
+        force_run: bool = False,
     ) -> Job:
         """Create the job record and start the upload/submit on a worker.
 
@@ -144,6 +162,11 @@ class JobService(QObject):
         of ``local_files`` -- a relay uploads a substituted temp copy, but the
         job still belongs to the file the user chose (so results land beside
         that input, not the scratch copy).
+
+        ``force_run`` starts the job ahead of the helper queue on a host that
+        has one. Elsewhere it is only recorded: a host with no queue starts a
+        job at once anyway unless it is chained, and choosing not to chain is
+        the caller's part.
         """
         job = Job(
             name=name or self._default_name(local_files, remote_input, remote_dir),
@@ -161,6 +184,7 @@ class JobService(QObject):
             remote_dir=(remote_dir or "").strip(),
             remote_dir_provided=bool((remote_dir or "").strip()),
             remote_input=(remote_input or "").strip(),
+            force_run=bool(force_run),
         )
         job.touch(STATE_UPLOADING)
         self.store.add_job(job)
@@ -190,6 +214,7 @@ class JobService(QObject):
                         after_job=after_job,
                         relay_source_dir=relay_source_dir,
                         relay_filenames=relay_filenames or (),
+                        force=job.force_run,
                     )
                 return submit_job(
                     transport,
@@ -534,6 +559,236 @@ class JobService(QObject):
         success_handler = on_done or self.log_ready.emit
         error_handler = on_error or self.error.emit
         run_async(self.pool, work, on_success=success_handler, on_error=error_handler, owner=owner)
+
+    # --- jumping the queue, and looking again ---------------------------------
+
+    def force_refusal(self, job: Job) -> str:
+        """Why ``job`` cannot be forced to start now, or "" when it can."""
+        host = self.store.hosts.get(job.host_id)
+        if host is None:
+            return f"Host profile for {job.name} no longer exists"
+        if not host.uses_remote_runner or not remote_runner.parse_entry(job.remote_job_id)[1]:
+            return (
+                f"{job.name} is not in a helper queue. Force run starts a job ahead of "
+                "the helper queue on a host with no queue system of its own; a cluster's "
+                "scheduler decides its own order."
+            )
+        if job.state not in (STATE_SUBMITTED, STATE_PENDING):
+            return f"{job.name} is {job.state}: only a job still waiting can be started early."
+        predecessor = self.store.jobs.get(job.after_job_id) if job.after_job_id else None
+        if predecessor is not None and not predecessor.is_terminal:
+            return (
+                f"{job.name} waits for {predecessor.name}, which has not finished. "
+                "Starting it now would run it without what it waits for."
+            )
+        return ""
+
+    def force_run(
+        self,
+        job: Job,
+        on_done: Optional[Callable[[Job, bool], None]] = None,
+        on_error: Optional[Callable[[str], None]] = None,
+        owner=None,
+    ) -> None:
+        """Start a job waiting in a helper queue now, past the limits and the order.
+
+        The host records it as running and counts its cores, so what waits
+        behind it waits a little longer; nothing already running is touched.
+
+        ``on_done(job, started)``: ``started`` is False when the job had left
+        the queue by the time the host was asked -- started in its turn, or
+        cancelled -- which is not a failure of this call.
+        """
+        fail = on_error or self.error.emit
+        refusal = self.force_refusal(job)
+        if refusal:
+            fail(refusal)
+            return
+        host = self.store.hosts[job.host_id]
+
+        def work() -> bool:
+            transport = self.transport_for(host)
+            try:
+                return force_in_runner(transport, host, job)
+            finally:
+                transport.close()
+
+        def done(started: bool) -> None:
+            if started:
+                job.force_run = True
+                job.touch()
+                self.store.save_jobs()
+                self.job_updated.emit(job.id)
+                self.message.emit(f"Started {job.name} ahead of the queue")
+            elif on_done is None:
+                fail(not_waiting(job))
+            self.poller.prime(job.host_id)
+            if on_done is not None:
+                on_done(job, started)
+
+        run_async(self.pool, work, on_success=done, on_error=fail, owner=owner)
+
+    def recheck(
+        self,
+        job: Job,
+        on_done: Optional[Callable[[dict], None]] = None,
+        on_error: Optional[Callable[[str], None]] = None,
+        owner=None,
+    ) -> None:
+        """Look again at a LOST job, and correct it if the host now says otherwise.
+
+        A job that turns out to have finished is treated as if a poll had just
+        found it: announced, and downloaded if it was set to be. One still in
+        the queue goes back to being polled. ``on_done`` receives what was
+        found, so a caller can show the evidence either way.
+        """
+        fail = on_error or self.error.emit
+        host = self.store.hosts.get(job.host_id)
+        if host is None:
+            fail(f"Host profile for {job.name} no longer exists")
+            return
+        if job.state != STATE_LOST:
+            fail(f"{job.name} is {job.state}; only a LOST job is re-checked.")
+            return
+        if not job.remote_job_id or not job.remote_dir:
+            fail(f"{job.name} never reached the host, so there is nothing to look at.")
+            return
+
+        def work() -> dict:
+            transport = self.transport_for(host)
+            try:
+                return recheck_job(transport, host, job)
+            finally:
+                transport.close()
+
+        def done(report: dict) -> None:
+            previous = job.state
+            state = report.get("state", STATE_LOST)
+            # The user may have removed or changed it while this was out.
+            current = self.store.jobs.get(job.id)
+            if current is not job or job.state != STATE_LOST:
+                state = job.state
+            elif state != STATE_LOST:
+                if report.get("rc") is not None:
+                    job.rc = report["rc"]
+                if report.get("last_error"):
+                    job.last_error = report["last_error"]
+                if state in ACTIVE_STATES:
+                    job.finished_at = 0.0
+                job.touch(state)
+                self.store.save_jobs()
+                self.message.emit(f"Re-checked {job.name}: it is {state}, not LOST")
+                if state in ACTIVE_STATES:
+                    self.job_updated.emit(job.id)
+                    self.poller.prime(job.host_id)
+                else:
+                    self._on_job_state_changed(job.id, state)
+            else:
+                self.message.emit(f"Re-checked {job.name}: still no sign that it finished")
+            result = dict(report)
+            result.update(previous_state=previous, state=state, changed=state != previous)
+            if on_done is not None:
+                on_done(result)
+
+        run_async(self.pool, work, on_success=done, on_error=fail, owner=owner)
+
+    # --- the host itself, outside any job -----------------------------------------
+
+    def host_status(
+        self, host: HostProfile, on_done, on_error, stats: bool = True, owner=None
+    ) -> None:
+        """Load, memory and cores, and on a helper queue what runs and waits.
+
+        One probe, asked for once -- not the Host Monitor's sampling, which
+        only runs while someone is watching it.
+        """
+
+        def work() -> dict:
+            from . import host_stats
+
+            transport = self.transport_for(host)
+            try:
+                report: dict = {"stats": None, "queue": None}
+                if stats:
+                    command = host_stats.command_for(host.scheduler == SCHEDULER_WINDOWS)
+                    result = transport.run(
+                        command, timeout=max(15, int(host.connect_timeout or 10))
+                    )
+                    sample = host_stats.parse(result.stdout)
+                    report["stats"] = {
+                        "cores": sample.cores,
+                        "threads": sample.threads,
+                        "load": list(sample.load),
+                        "loadavg": list(sample.loadavg),
+                        "mem_total_mb": sample.mem_total_mb,
+                        "mem_free_mb": sample.mem_free_mb,
+                        "mem_used_mb": sample.mem_used_mb,
+                    }
+                if host.uses_remote_runner:
+                    report["queue"] = runner_queue(transport, host)
+                return report
+            finally:
+                transport.close()
+
+        run_async(self.pool, work, on_success=on_done, on_error=on_error, owner=owner)
+
+    def list_host_path(
+        self, host: HostProfile, path: str, depth: int, on_done, on_error, owner=None
+    ) -> None:
+        """Names under any directory on the host, not only a job's."""
+
+        def work() -> List[str]:
+            transport = self.transport_for(host)
+            try:
+                return list_host_path(transport, host, path, depth)
+            finally:
+                transport.close()
+
+        run_async(self.pool, work, on_success=on_done, on_error=on_error, owner=owner)
+
+    def stat_host_path(
+        self, host: HostProfile, path: str, digest: bool, on_done, on_error, owner=None
+    ) -> None:
+        """Whether a path exists on the host, and a file's size and sha256."""
+
+        def work() -> dict:
+            transport = self.transport_for(host)
+            try:
+                return stat_host_path(transport, host, path, digest)
+            finally:
+                transport.close()
+
+        run_async(self.pool, work, on_success=on_done, on_error=on_error, owner=owner)
+
+    def download_host_paths(
+        self,
+        host: HostProfile,
+        paths: Sequence[str],
+        into: str,
+        on_done,
+        on_error,
+        overwrite: bool = False,
+        owner=None,
+    ) -> str:
+        """Fetch files from anywhere on the host. Returns the folder they go to.
+
+        With no ``into`` they go to a new dated folder under the download root,
+        named for the host, so nothing already on disk is in the way.
+        """
+        local_dir = into or os.path.join(
+            self.store.download_root(),
+            f"{time.strftime('%Y%m%d_%H%M%S')}_{sanitize_name(host.name)}",
+        )
+
+        def work() -> tuple:
+            transport = self.transport_for(host)
+            try:
+                return download_host_paths(transport, host, list(paths), local_dir, overwrite)
+            finally:
+                transport.close()
+
+        run_async(self.pool, work, on_success=on_done, on_error=on_error, owner=owner)
+        return local_dir
 
     # --- housekeeping -------------------------------------------------------
 

@@ -32,6 +32,8 @@ from .remote_runner import (
     AFTER_TAG,
     CORES_NAME,
     CORES_TAG,
+    FORCED,
+    NOT_QUEUED,
     VERSION_NAME,
     MEMORY_NAME,
     MEMORY_TAG,
@@ -550,6 +552,68 @@ def release_command(directory: str, entry: str) -> str:
     )
 
 
+def force_command(directory: str, entry: str) -> str:
+    """The PowerShell half of :func:`remote_runner.force_command`.
+
+    Same order, for the same reason: the pid file is created first, holding
+    this process's own id, so the reaper never sees the claimed entry without
+    a live pid. New-Item without -Force fails on an existing file, which is the
+    exclusive create ``set -C`` gives the bash flavour.
+    """
+    entry = require_entry(entry)
+    quoted = ps_quote(directory)
+    queued = ps_quote(_join("queue", entry))
+    running = _join("running", entry)
+    finished = ps_quote(_join("done", entry))
+    pid_file = ps_quote(_join("pids", entry))
+    temp = ps_quote(_join("tmp", entry + ".pid"))
+    return (
+        f"Set-Location -LiteralPath {quoted}; "
+        f"if (-not (Test-Path -LiteralPath {queued})) {{ '{NOT_QUEUED}'; exit 0 }}; "
+        f"try {{ New-Item -ItemType File -Path {pid_file} -Value $PID -ErrorAction Stop "
+        f"| Out-Null }} catch {{ '{NOT_QUEUED}'; exit 0 }}; "
+        f"try {{ Move-Item -LiteralPath {queued} -Destination {ps_quote(running)} "
+        "-ErrorAction Stop } catch { "
+        f"if (Test-Path -LiteralPath {finished}) {{ Remove-Item -LiteralPath {pid_file} "
+        f"-Force -ErrorAction SilentlyContinue }}; '{NOT_QUEUED}'; exit 0 }}; "
+        f"$__moleditpy_shell = {_PS_SHELL}; "
+        f"$proc = Start-Process -FilePath $__moleditpy_shell -ArgumentList {_PS_ARGS},"
+        f"{ps_quote(_join(directory, running))} "
+        f"-WorkingDirectory {quoted} -WindowStyle Hidden -PassThru; "
+        f"Set-Content -Path {temp} -Value $proc.Id -Encoding ascii; "
+        f"Move-Item -LiteralPath {temp} -Destination {pid_file} -Force; "
+        f"'{FORCED}'"
+    )
+
+
+def queue_detail_command(directory: str) -> str:
+    """The PowerShell half of :func:`remote_runner.queue_detail_command`.
+
+    The same lines, so :func:`remote_runner.parse_queue_detail` reads both.
+    """
+    quoted = ps_quote(directory)
+    limits = ",".join(ps_quote(name) for name in (SLOTS_NAME, CORES_NAME, MEMORY_NAME))
+    cores_tag = ps_quote(CORES_TAG)
+    memory_tag = ps_quote(MEMORY_TAG)
+    return (
+        f"if (-not (Test-Path -LiteralPath {quoted})) {{ exit 0 }}; "
+        f"Set-Location -LiteralPath {quoted}; "
+        f"if (Test-Path -LiteralPath {ps_quote(PAUSED_NAME)}) {{ 'paused 1' }}; "
+        f"foreach ($n in @({limits})) {{ "
+        "$v = Get-Content -LiteralPath $n -ErrorAction SilentlyContinue | Select-Object -First 1; "
+        'if ($v) { "limit $n $v" } }; '
+        "foreach ($d in @('running','queue')) { "
+        "foreach ($f in @(Get-ChildItem -LiteralPath $d -File -ErrorAction SilentlyContinue)) { "
+        "$c = 0; $m = 0; "
+        "foreach ($line in (Get-Content -LiteralPath $f.FullName -ErrorAction SilentlyContinue)) { "
+        f"if ($line.StartsWith({cores_tag})) {{ $v = $line.Substring({len(CORES_TAG)}).Trim(); "
+        r"if ($v -match '^\d+$') { $c = [int]$v } }; "
+        f"if ($line.StartsWith({memory_tag})) {{ $v = $line.Substring({len(MEMORY_TAG)}).Trim(); "
+        r"if ($v -match '^\d+$') { $m = [int]$v } } }; "
+        '"entry $d $($f.Name) $c $m" } }'
+    )
+
+
 def set_slots_command(directory: str, slots: int) -> str:
     """Change the job limit under a running runner; it re-reads it each pass."""
     path = ps_quote(_join(directory, SLOTS_NAME))
@@ -618,10 +682,12 @@ __all__: List[str] = [
     "cancel_command",
     "enqueue_command",
     "ensure_runner_command",
+    "force_command",
     "is_paused_command",
     "list_command",
     "pause_command",
     "prepare_command",
+    "queue_detail_command",
     "release_command",
     "set_cores_command",
     "set_memory_command",
