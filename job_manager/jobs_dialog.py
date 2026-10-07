@@ -88,7 +88,7 @@ BANNER_STYLE = (
 )
 
 
-COLUMNS = ("Name", "Host", "Queue ID", "State", "After", "Elapsed", "Updated")
+COLUMNS = ("Name", "Host", "Queue ID", "State", "After", "Elapsed", "Submitted", "Updated")
 
 _STATE_COLORS = {
     STATE_RUNNING: CY_GREEN,
@@ -250,6 +250,8 @@ class JobTableModel(QAbstractTableModel):
                     return format_duration(job.elapsed())
                 return f"wait {format_duration(job.waiting())}"
             if column == 6:
+                return format_stamp(job.submitted_at)
+            if column == 7:
                 return format_stamp(job.updated_at)
         elif role == Qt.ItemDataRole.UserRole:
             # The raw value behind the formatted text, so sorting is numeric
@@ -262,6 +264,8 @@ class JobTableModel(QAbstractTableModel):
                     else job.waiting()
                 )
             if column == 6:
+                return job.submitted_at
+            if column == 7:
                 return job.updated_at
             return self.data(index, Qt.ItemDataRole.DisplayRole)
         elif role == Qt.ItemDataRole.ForegroundRole and index.column() == 3:
@@ -455,7 +459,9 @@ class JobsDialog(QDialog):
         self.proxy.setSourceModel(self.model)
         self.table.setModel(self.proxy)
         self.table.setSortingEnabled(True)
-        self.table.horizontalHeader().setSortIndicator(6, Qt.SortOrder.DescendingOrder)
+        self.table.horizontalHeader().setSortIndicator(
+            COLUMNS.index("Submitted"), Qt.SortOrder.DescendingOrder
+        )
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)

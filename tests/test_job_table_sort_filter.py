@@ -130,8 +130,13 @@ class TestSortingTheTable(DialogTestCase):
         # other way around, which is what this proves.
         self.assertLess(names.index("shortrun"), names.index("longrun"))
 
-    def test_default_sort_is_most_recently_updated_first(self):
-        self.assertEqual(self.names_in_order(), ["ccc", "bbb", "aaa"])
+    def test_sorting_by_submitted_uses_the_real_timestamp(self):
+        self.dialog.proxy.sort(COLUMNS.index("Submitted"), Qt.SortOrder.AscendingOrder)
+        self.assertEqual(self.names_in_order(), ["aaa", "ccc", "bbb"])
+
+    def test_default_sort_is_most_recently_submitted_first(self):
+        # c=3, b=2, a=1 by submission; by update it would be b, c, a.
+        self.assertEqual(self.names_in_order(), ["bbb", "ccc", "aaa"])
 
 
 if __name__ == "__main__":
