@@ -28,6 +28,11 @@ from .bash_support import bash_path
 from .fakes import make_preset
 from .test_runner_end_to_end import BASH, ON_WINDOWS, EndToEndCase
 
+#: How long a job may take to start. Generous, because Windows PowerShell 5.1
+#: under a full parallel suite has taken well over the harness's 15 s to start
+#: one; nothing waits this out when it works.
+START_TIMEOUT = 90.0
+
 
 @unittest.skipUnless(BASH, "needs a bash")
 class TestBashForce(EndToEndCase):
@@ -54,7 +59,7 @@ class TestBashForce(EndToEndCase):
 
     def fill_the_only_slot(self) -> Job:
         blocker = self.submit_job("long", self.command_that_waits(self.stop))
-        self.wait_for(lambda: self.listed("running"), what="the long job to start")
+        self.wait_for(lambda: self.listed("running"), timeout=START_TIMEOUT, what="the long job")
         return blocker
 
     def test_a_waiting_job_forced_starts_beside_the_one_holding_the_slot(self):
@@ -65,7 +70,11 @@ class TestBashForce(EndToEndCase):
 
         self.assertTrue(force_in_runner(self.transport(), self.host, quick))
 
-        self.wait_for(lambda: os.path.exists(self.marker("QUICK")), what="the forced job")
+        self.wait_for(
+            lambda: os.path.exists(self.marker("QUICK")),
+            timeout=START_TIMEOUT,
+            what="the forced job",
+        )
         self.assertFalse(os.path.exists(self.stop))
 
     def test_a_forced_submission_starts_at_once(self):
@@ -74,7 +83,11 @@ class TestBashForce(EndToEndCase):
             "quick", self.command_that_touches(self.marker("QUICK")), force=True
         )
 
-        self.wait_for(lambda: os.path.exists(self.marker("QUICK")), what="the forced job")
+        self.wait_for(
+            lambda: os.path.exists(self.marker("QUICK")),
+            timeout=START_TIMEOUT,
+            what="the forced job",
+        )
         self.assertTrue(quick.force_run)
 
     def test_the_forced_job_is_reaped_and_polls_done(self):
@@ -84,6 +97,7 @@ class TestBashForce(EndToEndCase):
         )
         self.wait_for(
             lambda: poll_runner(self.transport(), self.host, [quick]).get(quick.id) == "DONE",
+            timeout=START_TIMEOUT,
             what="the forced job to read DONE",
         )
 
