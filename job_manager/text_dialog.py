@@ -11,14 +11,22 @@ from __future__ import annotations
 import logging
 from typing import Callable, Optional
 
-from PyQt6.QtCore import QTimer
-from PyQt6.QtGui import QCloseEvent, QFontDatabase
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import (
+    QCloseEvent,
+    QFontDatabase,
+    QKeySequence,
+    QShortcut,
+    QTextCursor,
+    QTextDocument,
+)
 from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPlainTextEdit,
     QPushButton,
     QSpinBox,
@@ -28,6 +36,27 @@ from PyQt6.QtWidgets import (
 
 from .theme import apply_theme
 from .window_utils import make_independent
+
+
+class _FindEdit(QLineEdit):
+    """The search field. Takes Enter and Esc for itself: in a dialog both
+    otherwise reach the dialog, where Enter presses a button and Esc closes
+    the whole window instead of just the search."""
+
+    #: True to search backwards.
+    search = pyqtSignal(bool)
+    dismissed = pyqtSignal()
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt's spelling
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.search.emit(bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier))
+            event.accept()
+            return
+        if event.key() == Qt.Key.Key_Escape:
+            self.dismissed.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
 
 class TextDialog(QDialog):
@@ -66,6 +95,7 @@ class TextDialog(QDialog):
         self.view.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         self.view.setPlainText(text)
         layout.addWidget(self.view, 1)
+        layout.addWidget(self._build_find_bar())
 
         bottom_row = QHBoxLayout()
 
@@ -110,6 +140,92 @@ class TextDialog(QDialog):
         box.rejected.connect(self.reject)
         bottom_row.addWidget(box)
         layout.addLayout(bottom_row)
+
+    # --- find ------------------------------------------------------------------
+
+    def _build_find_bar(self) -> QWidget:
+        """Ctrl+F opens it; Enter / F3 finds the next match, with Shift the one
+        before; Esc closes it. Hidden until asked for."""
+        self.find_bar = QWidget()
+        row = QHBoxLayout(self.find_bar)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(QLabel("Find"))
+        self.txt_find = _FindEdit()
+        self.txt_find.setPlaceholderText("Text to find (Enter: next, Shift+Enter: previous)")
+        self.txt_find.setClearButtonEnabled(True)
+        self.txt_find.search.connect(self.find)
+        self.txt_find.dismissed.connect(self.hide_find)
+        # Searching as it is typed, from where the last match began, so the
+        # match grows with the word instead of jumping to the next one.
+        self.txt_find.textEdited.connect(lambda _text: self.find(False, from_start_of_match=True))
+        row.addWidget(self.txt_find, 1)
+        self.chk_case = QCheckBox("Match case")
+        row.addWidget(self.chk_case)
+        self.btn_previous = QPushButton("Previous")
+        self.btn_previous.setAutoDefault(False)
+        self.btn_previous.clicked.connect(lambda: self.find(True))
+        row.addWidget(self.btn_previous)
+        self.btn_next = QPushButton("Next")
+        self.btn_next.setAutoDefault(False)
+        self.btn_next.clicked.connect(lambda: self.find(False))
+        row.addWidget(self.btn_next)
+        self.lbl_find = QLabel("")
+        self.lbl_find.setStyleSheet("color: palette(mid);")
+        row.addWidget(self.lbl_find)
+        self.find_bar.setVisible(False)
+
+        QShortcut(QKeySequence(QKeySequence.StandardKey.Find), self, activated=self.show_find)
+        QShortcut(QKeySequence("F3"), self, activated=lambda: self.find(False))
+        QShortcut(QKeySequence("Shift+F3"), self, activated=lambda: self.find(True))
+        return self.find_bar
+
+    def show_find(self) -> None:
+        # Whatever is selected in the text is what the user most likely wants.
+        selected = self.view.textCursor().selectedText()
+        if selected and "\u2029" not in selected:
+            self.txt_find.setText(selected)
+        self.find_bar.setVisible(True)
+        self.txt_find.setFocus()
+        self.txt_find.selectAll()
+
+    def hide_find(self) -> None:
+        self.find_bar.setVisible(False)
+        self.lbl_find.setText("")
+        self.view.setFocus()
+
+    def find(self, backward: bool = False, from_start_of_match: bool = False) -> bool:
+        """Select the next match, wrapping round the end. Returns whether found."""
+        needle = self.txt_find.text()
+        if not needle:
+            self.lbl_find.setText("")
+            return False
+        if not self.find_bar.isVisible():
+            self.find_bar.setVisible(True)
+        flags = QTextDocument.FindFlag(0)
+        if backward:
+            flags |= QTextDocument.FindFlag.FindBackward
+        if self.chk_case.isChecked():
+            flags |= QTextDocument.FindFlag.FindCaseSensitively
+        if from_start_of_match:
+            cursor = self.view.textCursor()
+            cursor.setPosition(cursor.selectionStart())
+            self.view.setTextCursor(cursor)
+        found = self.view.find(needle, flags)
+        wrapped = False
+        if not found:
+            # Round the end and once more, as every editor's find does.
+            cursor = self.view.textCursor()
+            cursor.movePosition(
+                QTextCursor.MoveOperation.End if backward else QTextCursor.MoveOperation.Start
+            )
+            self.view.setTextCursor(cursor)
+            found = self.view.find(needle, flags)
+            wrapped = found
+        if not found:
+            self.lbl_find.setText("Not found")
+        else:
+            self.lbl_find.setText("Wrapped round" if wrapped else "")
+        return bool(found)
 
     def _stored_interval(self, fallback: int) -> int:
         if self._store is None:

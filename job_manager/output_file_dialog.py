@@ -100,11 +100,15 @@ class OutputFileSelectorDialog(QDialog):
         job: Job,
         parent: Optional[QWidget] = None,
         on_open_callback: Optional[Callable[[str], None]] = None,
+        on_text_callback: Optional[Callable[[str], None]] = None,
     ) -> None:
         super().__init__(parent)
         self.service = service
         self.job = job
         self.on_open_callback = on_open_callback
+        #: Shows a file as plain text. Separate from opening it: any file can
+        #: be read this way, whether or not MoleditPy has a loader for it.
+        self.on_text_callback = on_text_callback
         self._all_items: List[QTreeWidgetItem] = []
         #: (signal, handler) pairs a download in progress has connected on the
         #: service, which outlives this window. See :meth:`_disconnect_download`.
@@ -154,6 +158,14 @@ class OutputFileSelectorDialog(QDialog):
         # The box emits rejected for a Close button; connecting clicked as well
         # would reject twice and emit finished twice.
         box.rejected.connect(self.reject)
+
+        self.btn_text = QPushButton("Open in Text Viewer")
+        self.btn_text.setToolTip(
+            "Read the selected file as plain text here, whatever kind of file it is."
+        )
+        self.btn_text.setEnabled(False)
+        self.btn_text.clicked.connect(self._open_selected_as_text)
+        box.addButton(self.btn_text, QDialogButtonBox.ButtonRole.ActionRole)
 
         self.btn_open_folder = QPushButton("Open Containing Folder")
         self.btn_open_folder.setToolTip("Show the downloaded files in the file manager.")
@@ -441,7 +453,12 @@ class OutputFileSelectorDialog(QDialog):
         if item is not None and not item.isHidden():
             self._open_item(item)
 
-    def _open_item(self, item: QTreeWidgetItem) -> None:
+    def _open_selected_as_text(self) -> None:
+        item = self.tree.currentItem()
+        if item is not None and not item.isHidden():
+            self._open_item(item, as_text=True)
+
+    def _open_item(self, item: QTreeWidgetItem, as_text: bool = False) -> None:
         """Open the clicked/selected item -- a folder header does nothing."""
         is_remote = item.data(0, IS_REMOTE_ROLE)
         if is_remote is None:
@@ -452,7 +469,7 @@ class OutputFileSelectorDialog(QDialog):
         if not is_remote:
             local_path = data
             if os.path.isfile(local_path):
-                self._dispatch_open(local_path)
+                self._dispatch_open(local_path, as_text=as_text)
                 self.accept()
             else:
                 QMessageBox.warning(self, "Open File", f"File not found on disk:\n{local_path}")
@@ -468,7 +485,7 @@ class OutputFileSelectorDialog(QDialog):
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
-        self._download_and_open(item, data)
+        self._download_and_open(item, data, as_text=as_text)
 
     def _disconnect_download(self) -> None:
         """Drop the handlers a pending download left connected. Safe to repeat.
@@ -487,7 +504,9 @@ class OutputFileSelectorDialog(QDialog):
                 pass
         self._pending = []
 
-    def _download_and_open(self, item: QTreeWidgetItem, remote_name: str) -> None:
+    def _download_and_open(
+        self, item: QTreeWidgetItem, remote_name: str, as_text: bool = False
+    ) -> None:
         # One at a time: a double-click reaches this while the button that
         # would have blocked it is disabled, and the second call's handlers
         # then waited on a download the service had already refused.
@@ -522,7 +541,7 @@ class OutputFileSelectorDialog(QDialog):
             if match is None:
                 self.lbl_status.setText(f"Download finished, but {remote_name} was not in it.")
                 return
-            self._dispatch_open(match)
+            self._dispatch_open(match, as_text=as_text)
             self.accept()
 
         def on_error(msg: str) -> None:
@@ -549,13 +568,21 @@ class OutputFileSelectorDialog(QDialog):
 
     def _on_selection_changed(self) -> None:
         item = self.tree.currentItem()
-        if item is not None and item.data(0, IS_REMOTE_ROLE) is not None:
-            self.btn_open.setEnabled(True)
-        else:
-            self.btn_open.setEnabled(False)
+        is_file = item is not None and item.data(0, IS_REMOTE_ROLE) is not None
+        self.btn_open.setEnabled(is_file)
+        self.btn_text.setEnabled(is_file)
 
-    def _dispatch_open(self, path: str) -> None:
+    def _dispatch_open(self, path: str, as_text: bool = False) -> None:
         """Hand the file path to the host opener callback or default open_in_host."""
+        if as_text:
+            if self.on_text_callback is not None:
+                self.on_text_callback(path)
+                return
+            from .jobs_dialog import show_text_window
+
+            # Parented above this chooser, which closes once a file is opened.
+            show_text_window(path, self.parentWidget())
+            return
         if self.on_open_callback is not None:
             self.on_open_callback(path)
             return

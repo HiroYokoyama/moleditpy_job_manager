@@ -88,6 +88,17 @@ BANNER_STYLE = (
 )
 
 
+#: Opened in this plugin's own text window, never handed to MoleditPy.
+#: OpenBabel lists "txt" as an input format (one empty molecule per line), so
+#: with the OpenBabel plugin installed MoleditPy read an output text file as
+#: thousands of molecules on the GUI thread and stopped responding -- after
+#: first clearing the user's document to make room for a structure that was
+#: never coming.
+TEXT_EXTENSIONS = (".txt",)
+#: The most of a text file shown at once; the end is kept, since that is where
+#: an output file says how it finished.
+TEXT_VIEW_LIMIT = 5 * 1024 * 1024
+
 FORCE_ACTION_TEXT = "Force Run Now"
 RECHECK_ACTION_TEXT = "Re-check State"
 
@@ -1568,6 +1579,7 @@ class JobsDialog(QDialog):
             job,
             parent=self,
             on_open_callback=lambda path: self.open_result_files([path]),
+            on_text_callback=self.show_text_file,
         )
         dialog.exec()
 
@@ -1589,6 +1601,9 @@ class JobsDialog(QDialog):
         target = pick_primary_result(paths, self._log_name_for(paths))
         if not target:
             return
+        if is_text_file(target):
+            self.show_text_file(target)
+            return
         from . import get_context
 
         if open_in_host(target):
@@ -1599,6 +1614,21 @@ class JobsDialog(QDialog):
             self._append_message(f"No MoleditPy in this process to open it in; it is at {target}")
         else:
             self._append_message(f"Downloaded {target}")
+
+    def show_text_file(self, path: str) -> None:
+        """A file as plain text, in a window of this plugin's own."""
+        try:
+            dialog = show_text_window(path, self)
+        except OSError as exc:
+            self._append_error(f"Could not read {path}: {exc}")
+            return
+        self._detail_dialogs.append(dialog)
+        dialog.finished.connect(
+            lambda *_: (
+                self._detail_dialogs.remove(dialog) if dialog in self._detail_dialogs else None
+            )
+        )
+        self._append_message(f"Opened {os.path.basename(path)}")
 
     # --- drag and drop ------------------------------------------------------
 
@@ -1776,6 +1806,35 @@ class JobsDialog(QDialog):
         # Accepted, not delegated: QDialog's closeEvent calls reject(), which
         # now tears down as well -- doing both would recurse.
         event.accept()
+
+
+def is_text_file(path: str) -> bool:
+    return os.path.splitext(path or "")[1].lower() in TEXT_EXTENSIONS
+
+
+def show_text_window(path: str, parent: Optional[QWidget] = None):
+    """Open ``path`` read-only in a text window, and return the window."""
+    from .text_dialog import TextDialog
+
+    dialog = TextDialog(f"Job Manager {PLUGIN_VERSION} - {os.path.basename(path)}", "", parent)
+    dialog.set_text(read_text_for_view(path))
+    dialog.show()
+    return dialog
+
+
+def read_text_for_view(path: str, limit: int = TEXT_VIEW_LIMIT) -> str:
+    """The file as text, or its last ``limit`` bytes with a line saying so."""
+    size = os.path.getsize(path)
+    with open(path, "rb") as handle:
+        if size > limit:
+            handle.seek(size - limit)
+        data = handle.read()
+    text = data.decode("utf-8", errors="replace").replace("\r\n", "\n")
+    if size > limit:
+        # Cut at a line boundary, so the first line shown is a whole one.
+        text = text.split("\n", 1)[-1]
+        text = f"[Showing the last {limit // (1024 * 1024)} MB of {size:,} bytes]\n\n" + text
+    return text
 
 
 def pick_primary_result(paths: List[str], log_file: str = "") -> str:
