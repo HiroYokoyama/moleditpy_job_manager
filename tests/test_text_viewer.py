@@ -92,6 +92,22 @@ class TestOpeningAResult(DialogTestCase):
         for viewer in viewers:
             viewer.close()
 
+    def test_the_viewer_holds_a_copy_not_the_file(self):
+        # Read once into memory and closed: an open handle would lock the file
+        # on Windows, and the next download of the same result could not
+        # replace it while the window stayed open.
+        path = os.path.join(self.tmp, "summary.txt")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("first\n")
+        self.dialog.show_text_file(path)
+        viewer = self.dialog._detail_dialogs[-1]
+        self.addCleanup(viewer.close)
+
+        os.replace(path, path + ".old")
+        os.remove(path + ".old")
+
+        self.assertIn("first", viewer.view.toPlainText())
+
     def test_any_other_result_still_goes_to_moleditpy(self):
         path = os.path.join(self.tmp, "mol.xyz")
         with open(path, "w", encoding="utf-8") as handle:
