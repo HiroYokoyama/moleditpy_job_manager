@@ -144,9 +144,9 @@ fetch, open.
 - **Host Monitor Dashboard** — live visual CPU/memory gauges, the host's own 1, 5
   and 15 minute load averages, CPU sparklines, running job names and overall
   progress indicators (`task X/Y done`) with persistent preferences.
-- **Resubmit** a job with one click: same host, same inputs, same resources.
+- **Job ▸ Resubmit** opens a job with the same host, inputs and resources.
 - **Save** the list as a `.pmejbs` file or **export** it as CSV, **clear** it (the old list
-  is archived, never deleted), and **reopen** any saved list — from the button,
+  is archived, never deleted), and **reopen** any saved list — from the **File** menu,
   from File ▸ Import, or by dropping it on the window.
 
 
@@ -381,7 +381,7 @@ A login node is not a status API, so:
   every**): ask a busy supercomputer every ten minutes and your workstation
   every thirty seconds, without one slowing the other;
 - **Refresh Now** is there when you actually need an answer immediately;
-- **Reload List** re-reads the job file, so a job another Job Manager window
+- **View ▸ Reload List** (`Ctrl+R`) re-reads the job file, so a job another Job Manager window
   submitted, finished or removed shows up here. No host is contacted.
 
 ## How completion is detected
