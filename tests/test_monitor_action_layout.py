@@ -7,6 +7,7 @@ import pytest
 pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 is not installed")
 
 from PyQt6.QtCore import Qt  # noqa: E402
+from PyQt6.QtGui import QKeySequence  # noqa: E402
 from PyQt6.QtTest import QTest  # noqa: E402
 from PyQt6.QtWidgets import QAbstractButton, QApplication  # noqa: E402
 
@@ -70,11 +71,12 @@ class TestJobActions(DialogTestCase):
         self.assertIn(self.dialog.job_actions["remove"], self.dialog.menu_job.actions())
 
     def test_the_new_job_shortcut_does_not_pass_a_checkbox_value_as_files(self):
-        self.dialog.show()
-        self.dialog.activateWindow()
-        QApplication.processEvents()
+        # Trigger the action rather than pressing the key: an offscreen or
+        # Xvfb window is not reliably active, so the shortcut may never fire.
+        action = self.dialog.job_actions["new"]
+        self.assertEqual(action.shortcut(), QKeySequence("Ctrl+N"))
         with patch("job_manager.submit_dialog.SubmitDialog") as submit:
-            QTest.keyClick(self.dialog, Qt.Key.Key_N, Qt.KeyboardModifier.ControlModifier)
+            action.trigger()
         submit.assert_called_once()
         submit.return_value.prefill.assert_not_called()
         submit.return_value.exec.assert_called_once()
