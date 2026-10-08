@@ -285,6 +285,7 @@ working in, so a transfer cut off half way would otherwise leave a truncated
 | `tray.py` | the tray icon's menu, status dot and tooltip, and what happens when MoleditPy closes |
 | `handoff.py` | handing the jobs to a tray process of their own: heartbeat, stop request, commands. Pure stdlib |
 | `settings_dialog.py` | every standing preference, in one window |
+| `ui_actions.py` | shared Qt actions for menu entries, shortcuts and monitor toolbar buttons |
 | `instances.py` | which Job Managers are running, and asking one to show itself. Pure stdlib |
 | `beacon.py` | this process's registry entry, refreshed, and its answers to requests |
 | `standalone.py` | the Job Manager without MoleditPy: a monitor opened by hand, and the tray process |

@@ -1,4 +1,4 @@
-"""The two halves that need Qt: the Reload List button, and what a standalone
+"""The two halves that need Qt: the Reload List action, and what a standalone
 launch is wired to when a job ends.
 
 The store-level rules live in ``test_multi_instance_reload.py``, which stays
@@ -93,7 +93,7 @@ class TestTheServiceAnnouncesAReload(ReloadServiceTestCase):
         self.assertFalse(self.service.poller.timer.isActive())
 
 
-class TestTheButton(ReloadServiceTestCase):
+class TestTheReloadAction(ReloadServiceTestCase):
     def setUp(self):
         super().setUp()
         self.transport = None
@@ -101,28 +101,28 @@ class TestTheButton(ReloadServiceTestCase):
         self.dialog = JobsDialog(self.service)
         self.addCleanup(self.dialog.deleteLater)
 
-    def test_it_is_not_the_same_button_as_refresh_now(self):
+    def test_reload_and_refresh_are_separate_actions(self):
         # Refresh Now asks the hosts; this one reads the file. A job the other
         # instance submitted is not in the list Refresh Now asks about at all.
-        self.assertIsNot(self.dialog.btn_reload, self.dialog.btn_refresh)
+        self.assertIsNot(self.dialog.job_actions["reload"], self.dialog.job_actions["refresh"])
 
     def test_clicking_it_brings_in_the_other_instances_job(self):
         self.theirs.add_job(make_job("j1", self.host))
-        self.dialog.btn_reload.click()
+        self.dialog.job_actions["reload"].trigger()
         self.assertEqual(self.dialog.model.rowCount(), 1)
         self.assertIn("1 new", self.dialog.txt_log.toPlainText())
 
     def test_it_says_so_when_there_was_nothing_to_take(self):
-        self.dialog.btn_reload.click()
+        self.dialog.job_actions["reload"].trigger()
         self.assertIn("already up to date", self.dialog.txt_log.toPlainText())
 
     def test_it_asks_no_host_anything(self):
-        # The point of a separate button: a reload must cost no network at all,
+        # The point of a separate action: a reload must cost no network at all,
         # so it can be pressed as often as the user likes and is not rate
         # limited the way Refresh Now is.
         self.theirs.add_job(make_job("j1", self.host))
         with patch.object(self.service.poller, "tick") as tick:
-            self.dialog.btn_reload.click()
+            self.dialog.job_actions["reload"].trigger()
         tick.assert_not_called()
 
     def test_the_selected_row_survives(self):
@@ -132,7 +132,7 @@ class TestTheButton(ReloadServiceTestCase):
         self.assertIsNotNone(self.dialog.selected_job())
         self.theirs.reload_jobs()
         self.theirs.add_job(make_job("other", self.host, updated_at=2000.0))
-        self.dialog.btn_reload.click()
+        self.dialog.job_actions["reload"].trigger()
         selected = self.dialog.selected_job()
         self.assertIsNotNone(selected)
         self.assertEqual(selected.id, "keep")
@@ -143,16 +143,16 @@ class TestTheButton(ReloadServiceTestCase):
         self.dialog.table.selectRow(0)
         self.theirs.reload_jobs()
         self.theirs.remove_job("gone")
-        self.dialog.btn_reload.click()
+        self.dialog.job_actions["reload"].trigger()
         self.assertIsNone(self.dialog.selected_job())
 
     def test_it_is_off_while_an_archive_is_on_screen(self):
         # The table shows a fixed list, so a count of what changed in the live
         # one behind it would describe nothing visible.
         self.dialog._show_archive(os.path.join(self.tmp, "archived.pmejbs"), [])
-        self.assertFalse(self.dialog.btn_reload.isEnabled())
+        self.assertFalse(self.dialog.job_actions["reload"].isEnabled())
         self.dialog._exit_archive()
-        self.assertTrue(self.dialog.btn_reload.isEnabled())
+        self.assertTrue(self.dialog.job_actions["reload"].isEnabled())
 
 
 class TestTheStandaloneLaunch(unittest.TestCase):

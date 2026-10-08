@@ -407,7 +407,16 @@ class JobStore:
             # otherwise read as "every job was removed elsewhere" and empty the
             # table. The next good read takes whatever really changed.
             return JobsReload()
-        disk_jobs, _archived = self.read_job_list(self.jobs_path)
+        records = payload.get("jobs")
+        if not isinstance(records, list) or any(
+            not isinstance(raw, dict) or not isinstance(raw.get("id"), str) or not raw["id"]
+            for raw in records
+        ):
+            logging.warning("Job Manager: malformed job list; keeping the current jobs")
+            return JobsReload()
+        # A second read can fail or see a different document after validation,
+        # turning an unreadable file into apparent removals of every live job.
+        disk_jobs = [Job.from_dict(raw) for raw in records]
         added = updated = removed = 0
         on_disk = set()
         for job in disk_jobs:

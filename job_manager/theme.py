@@ -56,7 +56,13 @@ CY_ACCENT2 = "#1565c0"
 DIALOG_STYLESHEET = f"""
 /* --- push buttons --------------------------------------------------------- */
 
-QPushButton {{
+QToolBar {{
+    border: none;
+    padding: 0px;
+    spacing: 6px;
+}}
+
+QPushButton, QToolButton[jobManagerAction="true"] {{
     background: palette(button);
     color: palette(button-text);
     border: 1px solid palette(mid);
@@ -65,23 +71,23 @@ QPushButton {{
     min-height: 20px;
 }}
 
-QPushButton:hover {{
+QPushButton:hover, QToolButton[jobManagerAction="true"]:hover {{
     background: rgba(41, 121, 255, 0.12);
     border-color: {CY_ACCENT};
     color: {CY_ACCENT};
 }}
 
-QPushButton:pressed {{
+QPushButton:pressed, QToolButton[jobManagerAction="true"]:pressed {{
     background: rgba(41, 121, 255, 0.22);
     border-color: {CY_ACCENT};
 }}
 
-QPushButton:disabled {{
+QPushButton:disabled, QToolButton[jobManagerAction="true"]:disabled {{
     color: palette(mid);
     border-color: palette(mid);
 }}
 
-QPushButton:checked {{
+QPushButton:checked, QToolButton[jobManagerAction="true"]:checked {{
     background: rgba(41, 121, 255, 0.15);
     border-color: {CY_ACCENT};
     color: {CY_ACCENT};

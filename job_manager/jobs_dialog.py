@@ -22,7 +22,7 @@ from PyQt6.QtCore import (
     QTimer,
     QVariant,
 )
-from PyQt6.QtGui import QColor
+from PyQt6.QtGui import QAction, QColor
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -33,12 +33,15 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMenu,
+    QMenuBar,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QSizePolicy,
     QSplitter,
     QStyledItemDelegate,
     QTableView,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -57,6 +60,7 @@ from .models import (
     Job,
 )
 from .service import JobService
+from .ui_actions import action_button, action_toolbar, make_action, populate_menu
 from .theme import (
     CY_AMBER,
     CY_GREEN,
@@ -372,10 +376,11 @@ class JobsDialog(QDialog):
         self._host_monitor: Optional[QDialog] = None
         self._detail_dialogs: List[QDialog] = []
         self.setAcceptDrops(True)
+        self._busy_actions: set[str] = set()
         self.model = JobTableModel(service, self)
         self._build_ui()
         self._connect_service()
-        self._update_buttons()
+        self._update_actions()
         # Elapsed is only redrawn when the model changes, which is on a poll
         # result -- without a separate repaint it advanced in jumps.
         self._ticker = QTimer(self)
@@ -390,45 +395,200 @@ class JobsDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
+        self._create_actions()
+        self._build_menus(layout)
+        self._build_toolbar(layout)
+        self._build_banners(layout)
+        self._build_filter(layout)
+        self._build_table(layout)
+        self._build_job_toolbar(layout)
+        self.lbl_status = QLabel("")
+        layout.addWidget(self.lbl_status)
 
-        toolbar = QHBoxLayout()
-        toolbar.setSpacing(6)
-        self.btn_new = QPushButton("New Job...")
-        self.btn_new.clicked.connect(self.open_submit_dialog)
-        self.btn_hosts = QPushButton("Hosts...")
-        self.btn_hosts.clicked.connect(self.open_hosts_dialog)
-        self.btn_refresh = QPushButton("Refresh Now")
-        self.btn_refresh.setToolTip("Ask every host with active jobs for their status now.")
-        self.btn_refresh.clicked.connect(self._refresh_now)
-        self.btn_reload = QPushButton("Reload List")
-        self.btn_reload.setToolTip(
-            "Re-read the job file from disk, picking up whatever another Job "
-            "Manager window has submitted, finished or removed. Nothing is "
-            "asked of any host."
+    def _create_actions(self) -> None:
+        specs = (
+            ("new", "New Job...", self.open_submit_dialog, "Submit a new calculation."),
+            ("hosts", "Hosts...", self.open_hosts_dialog, "Manage host profiles."),
+            (
+                "refresh",
+                "Refresh Now",
+                self._refresh_now,
+                "Ask every host with active jobs for their status now.",
+            ),
+            (
+                "reload",
+                "Reload List",
+                self._reload_jobs,
+                "Re-read the job file to pick up changes from another Job Manager window.",
+            ),
+            (
+                "host_monitor",
+                "Host Monitor...",
+                self.open_host_monitor,
+                "Live load and memory per host, sampled only while that window is open.",
+            ),
+            (
+                "settings",
+                "Settings...",
+                self.open_settings,
+                "Polling, results, notifications, the task bar and the tray, the local API.",
+            ),
+            ("cancel", "Cancel Job", self._cancel_selected, "Cancel the selected job on its host."),
+            ("download", "Download", self._download_selected, "Choose results to download."),
+            (
+                "open",
+                "Open Result",
+                self._open_selected_result,
+                "Open one of this job's output files in MoleditPy.",
+            ),
+            (
+                "tail",
+                "Tail Log",
+                self._tail_selected,
+                "Read the end of the job's log in a window of its own.",
+            ),
+            (
+                "tail_file",
+                "Tail File...",
+                self._tail_specific_file,
+                "Read the tail of a chosen remote output/log file in the job's directory.",
+            ),
+            (
+                "details",
+                "Details",
+                self._show_details,
+                "Everything recorded about this job, and the script that ran.",
+            ),
+            (
+                "resubmit",
+                "Resubmit",
+                self._resubmit_selected,
+                "Open the submit wizard with this job's host, resources and input files.",
+            ),
+            ("remove", "Remove", self._remove_selected, "Remove the selected job from this list."),
+            (
+                "open_default",
+                "Default List",
+                self._use_default_job_list,
+                "Back to the job list this plugin keeps in ~/.moleditpy/job_manager/.",
+            ),
+            (
+                "open_list",
+                "Open List...",
+                self._open_job_list_file,
+                f"Open a saved job list ({JOB_EXTENSION}). A cleared list opens read only.",
+            ),
+            (
+                "save_as",
+                "Save As...",
+                lambda: self._export(JOB_EXTENSION),
+                f"Save the job list to a {JOB_EXTENSION} file, openable again from here.",
+            ),
+            (
+                "export_csv",
+                "Export CSV...",
+                lambda: self._export(".csv"),
+                "Write one row per job: state, exit code, timings, paths.",
+            ),
+            (
+                "rebuild",
+                "Rebuild from Folder...",
+                self._rebuild_from_folder,
+                "Build a read-only job list from results already on disk.",
+            ),
+            (
+                "archive",
+                "Load Archive...",
+                self._load_archive,
+                "View a previously cleared job list, read only.",
+            ),
+            (
+                "clear",
+                "Clear List...",
+                self._clear_jobs,
+                "Empty the table, saving a dated copy first. Nothing on the host is deleted.",
+            ),
+            (
+                "force",
+                FORCE_ACTION_TEXT,
+                self._force_selected,
+                "Start a waiting helper-queue job now.",
+            ),
+            (
+                "recheck",
+                RECHECK_ACTION_TEXT,
+                self._recheck_selected,
+                "Look for evidence of a lost job.",
+            ),
         )
-        self.btn_reload.clicked.connect(self._reload_jobs)
-        self.btn_host_monitor = QPushButton("Host Monitor...")
-        self.btn_host_monitor.setToolTip(
-            "Live load and memory per host, sampled only while that window is open."
+        self.job_actions: dict[str, QAction] = {
+            key: make_action(self, text, callback, tooltip)
+            for key, text, callback, tooltip in specs
+        }
+        for key, shortcut in (
+            ("new", "Ctrl+N"),
+            ("open_list", "Ctrl+O"),
+            ("save_as", "Ctrl+Shift+S"),
+            ("refresh", "F5"),
+            ("reload", "Ctrl+R"),
+        ):
+            self.job_actions[key].setShortcut(shortcut)
+        self._job_menu_actions = tuple(
+            self.job_actions[key] if key is not None else None
+            for key in (
+                "open",
+                "download",
+                "tail",
+                "tail_file",
+                "details",
+                None,
+                "resubmit",
+                "force",
+                "recheck",
+                None,
+                "cancel",
+                "remove",
+            )
         )
-        self.btn_host_monitor.clicked.connect(self.open_host_monitor)
-        toolbar.addWidget(self.btn_new)
-        toolbar.addWidget(self.btn_hosts)
-        toolbar.addWidget(self.btn_refresh)
-        toolbar.addWidget(self.btn_reload)
-        toolbar.addWidget(self.btn_host_monitor)
-        toolbar.addStretch(1)
-        # Every standing preference lives behind this one button: they were a
-        # row of ticks here, the interval in this toolbar, and switches only in
-        # the tray menu, and nobody could say where to look.
-        self.btn_settings = QPushButton("Settings...")
-        self.btn_settings.setToolTip(
-            "Polling, results, notifications, the task bar and the tray, the local API."
-        )
-        self.btn_settings.clicked.connect(self.open_settings)
-        toolbar.addWidget(self.btn_settings)
-        layout.addLayout(toolbar)
 
+    def _build_menus(self, layout: QVBoxLayout) -> None:
+        self.menu_bar = QMenuBar(self)
+        self.menu_bar.setNativeMenuBar(False)
+        layout.setMenuBar(self.menu_bar)
+        for label, keys in (
+            (
+                "&File",
+                (
+                    "open_default",
+                    "open_list",
+                    "archive",
+                    "rebuild",
+                    None,
+                    "save_as",
+                    "export_csv",
+                    None,
+                    "clear",
+                ),
+            ),
+            ("&View", ("refresh", "reload", "host_monitor")),
+            ("&Tools", ("hosts", "settings")),
+        ):
+            menu = self.menu_bar.addMenu(label)
+            populate_menu(menu, (self.job_actions[key] if key else None for key in keys))
+        self.menu_job = QMenu("&Job", self)
+        populate_menu(self.menu_job, self._job_menu_actions)
+        self.menu_bar.insertMenu(self.menu_bar.actions()[1], self.menu_job)
+
+    def _build_toolbar(self, layout: QVBoxLayout) -> None:
+        self.toolbar = action_toolbar(
+            self, (self.job_actions[key] for key in ("new", "refresh", "host_monitor"))
+        )
+        self.btn_new = self.toolbar.widgetForAction(self.job_actions["new"])
+        self.btn_refresh = self.toolbar.widgetForAction(self.job_actions["refresh"])
+        self.btn_host_monitor = self.toolbar.widgetForAction(self.job_actions["host_monitor"])
+        layout.addWidget(self.toolbar)
+
+    def _build_banners(self, layout: QVBoxLayout) -> None:
         self.lbl_archive = QLabel("")
         self.lbl_archive.setWordWrap(True)
         self.lbl_archive.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
@@ -440,8 +600,7 @@ class JobsDialog(QDialog):
         self.lbl_active_file.setVisible(False)
         active_row = QHBoxLayout()
         active_row.addWidget(self.lbl_active_file, 1)
-        self.btn_default_file = QPushButton("Use the default list")
-        self.btn_default_file.clicked.connect(self._use_default_job_list)
+        self.btn_default_file = action_button(self.job_actions["open_default"], self)
         self.btn_default_file.setVisible(False)
         active_row.addWidget(self.btn_default_file)
         layout.addLayout(active_row)
@@ -454,6 +613,7 @@ class JobsDialog(QDialog):
         archive_row.addWidget(self.btn_back)
         layout.addLayout(archive_row)
 
+    def _build_filter(self, layout: QVBoxLayout) -> None:
         filter_row = QHBoxLayout()
         filter_row.addWidget(QLabel("Filter"))
         self.txt_filter = QLineEdit()
@@ -463,6 +623,7 @@ class JobsDialog(QDialog):
         filter_row.addWidget(self.txt_filter, 1)
         layout.addLayout(filter_row)
 
+    def _build_table(self, layout: QVBoxLayout) -> None:
         splitter = QSplitter(Qt.Orientation.Vertical)
 
         self.table = QTableView()
@@ -487,9 +648,13 @@ class JobsDialog(QDialog):
         header = self.table.horizontalHeader()
         header.setHighlightSections(False)
         header.setStretchLastSection(True)
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        # Stretching Name consumed only the space left by the other columns,
+        # so it collapsed to an ellipsis in a narrow monitor.
+        for column, width in enumerate((180, 100, 75, 90, 90, 85, 115, 115)):
+            header.resizeSection(column, width)
         self.table.setItemDelegateForColumn(3, _StateColorDelegate(self.table))
-        self.table.selectionModel().selectionChanged.connect(lambda *_: self._update_buttons())
+        self.table.selectionModel().selectionChanged.connect(lambda *_: self._update_actions())
         self.table.doubleClicked.connect(lambda *_: self._open_double_clicked())
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_row_menu)
@@ -502,106 +667,31 @@ class JobsDialog(QDialog):
         splitter.setSizes([380, 160])
         layout.addWidget(splitter, 1)
 
-        actions = QHBoxLayout()
-        self.btn_cancel = QPushButton("Cancel Job")
-        self.btn_cancel.clicked.connect(self._cancel_selected)
-        self.btn_download = QPushButton("Download")
-        self.btn_download.clicked.connect(self._download_selected)
-        self.btn_open = QPushButton("Open Result")
-        self.btn_open.setToolTip("Open one of this job's output files in MoleditPy.")
-        self.btn_open.clicked.connect(self._open_selected_result)
-        self.btn_tail = QPushButton("Tail Log")
-        self.btn_tail.setToolTip("Read the end of the job's log in a window of its own.")
-        self.btn_tail.clicked.connect(self._tail_selected)
-        self.btn_tail_file = QPushButton("Tail File...")
-        self.btn_tail_file.setToolTip(
-            "Read the tail of a chosen remote output/log file in the job's directory."
+    def _build_job_toolbar(self, layout: QVBoxLayout) -> None:
+        self.job_toolbar = action_toolbar(
+            self, (self.job_actions[key] for key in ("open", "download", "tail", "details"))
         )
-        self.btn_tail_file.clicked.connect(self._tail_specific_file)
-        self.btn_details = QPushButton("Details")
-        self.btn_details.setToolTip("Everything recorded about this job, and the script that ran.")
-        self.btn_details.clicked.connect(self._show_details)
-        self.btn_resubmit = QPushButton("Resubmit")
-        self.btn_resubmit.setToolTip(
-            "Open the submit wizard prefilled from this job: same host, same "
-            "resources, same input files."
-        )
-        self.btn_resubmit.clicked.connect(self._resubmit_selected)
-        self.btn_remove = QPushButton("Remove")
-        self.btn_remove.clicked.connect(self._remove_selected)
-        # Counterparts to Save As..., for the row that acts on the list as a
-        # whole rather than on one job.
-        self.btn_open_default = QPushButton("Default")
-        self.btn_open_default.setToolTip(
-            "Back to the job list this plugin keeps in ~/.moleditpy/job_manager/."
-        )
-        self.btn_open_default.clicked.connect(self._use_default_job_list)
-        self.btn_open_list = QPushButton("Open...")
-        self.btn_open_list.setToolTip(
-            f"Open a saved job list ({JOB_EXTENSION}). A cleared list opens read only."
-        )
-        self.btn_open_list.clicked.connect(self._open_job_list_file)
-        self.btn_save_as = QPushButton("Save As...")
-        self.btn_save_as.setToolTip(
-            f"Save the job list to a {JOB_EXTENSION} file, openable again from here."
-        )
-        self.btn_save_as.clicked.connect(lambda: self._export(JOB_EXTENSION))
-        self.btn_export_csv = QPushButton("Export CSV")
-        self.btn_export_csv.setToolTip("Write one row per job: state, exit code, timings, paths.")
-        self.btn_export_csv.clicked.connect(lambda: self._export(".csv"))
-        self.btn_rebuild = QPushButton("Rebuild from Folder...")
-        self.btn_rebuild.setToolTip(
-            "Build a job list from results already on disk. The list is read "
-            "only: nothing in it can be submitted or polled."
-        )
-        self.btn_rebuild.clicked.connect(self._rebuild_from_folder)
-        self.btn_archive = QPushButton("Load Archive...")
-        self.btn_archive.setToolTip("View a previously cleared job list, read only.")
-        self.btn_archive.clicked.connect(self._load_archive)
-        self.btn_clear = QPushButton("Clear List...")
-        self.btn_clear.setToolTip(
-            "Empty the table, saving a dated copy first. Nothing on the host is deleted."
-        )
-        self.btn_clear.clicked.connect(self._clear_jobs)
-        # Two rows, split by what they act on: selected job above, whole list
-        # below. Ten buttons on one line ran off a narrow window.
-        for button in (
-            self.btn_cancel,
-            self.btn_download,
-            self.btn_open,
-            self.btn_tail,
-            self.btn_tail_file,
-            self.btn_details,
-            self.btn_resubmit,
-            self.btn_remove,
-        ):
-            actions.addWidget(button)
-        actions.addStretch(1)
-        layout.addLayout(actions)
-
-        list_actions = QHBoxLayout()
-        for button in (
-            self.btn_open_default,
-            self.btn_open_list,
-            self.btn_save_as,
-            self.btn_export_csv,
-            self.btn_rebuild,
-            self.btn_archive,
-            self.btn_clear,
-        ):
-            list_actions.addWidget(button)
-        list_actions.addStretch(1)
-        layout.addLayout(list_actions)
-
-        self.lbl_status = QLabel("")
-        layout.addWidget(self.lbl_status)
+        self.btn_open = self.job_toolbar.widgetForAction(self.job_actions["open"])
+        self.btn_download = self.job_toolbar.widgetForAction(self.job_actions["download"])
+        self.btn_tail = self.job_toolbar.widgetForAction(self.job_actions["tail"])
+        self.btn_details = self.job_toolbar.widgetForAction(self.job_actions["details"])
+        spacer = QWidget(self.job_toolbar)
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.job_toolbar.addWidget(spacer)
+        self.btn_job_actions = QToolButton(self)
+        self.btn_job_actions.setProperty("jobManagerAction", True)
+        self.btn_job_actions.setText("Job Actions")
+        self.btn_job_actions.setMenu(self.menu_job)
+        self.btn_job_actions.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.job_toolbar.addWidget(self.btn_job_actions)
+        layout.addWidget(self.job_toolbar)
 
     def _connect_service(self) -> None:
         # Kept as a list so closeEvent can undo every one: the service outlives
         # this window, and a leaked connection keeps reloading a dead dialog.
         self._connections = [
             (self.service.jobs_changed, self.model.reload),
-            (self.service.jobs_changed, self._update_buttons),
+            (self.service.jobs_changed, self._update_actions),
             (self.service.job_updated, self.model.refresh_job),
             (self.service.job_updated, self._on_job_updated),
             (self.service.message, self._append_message),
@@ -621,7 +711,7 @@ class JobsDialog(QDialog):
         self._connections = []
 
     def _on_job_updated(self, _job_id: str = "") -> None:
-        self._update_buttons()
+        self._update_actions()
 
     def open_settings(self) -> None:
         """Every standing preference, in one window. See settings_dialog.py."""
@@ -660,44 +750,13 @@ class JobsDialog(QDialog):
         self.txt_log.setPlainText(text)
 
     def _show_row_menu(self, position) -> None:
-        """Everything that can be done to the row under the cursor: the same
-        actions as the buttons, driven from them so the two can never
-        disagree."""
         index = self.table.indexAt(position)
         if index.isValid():
             self.table.selectRow(index.row())
-        self._update_buttons()
+        self._update_actions()
         if self.selected_job() is None:
             return
-
-        menu = QMenu(self)
-        for button in (
-            self.btn_tail,
-            self.btn_tail_file,
-            self.btn_details,
-            self.btn_open,
-            self.btn_download,
-            self.btn_resubmit,
-            self.btn_cancel,
-            self.btn_remove,
-        ):
-            if button is self.btn_resubmit or button is self.btn_cancel:
-                menu.addSeparator()
-            action = menu.addAction(button.text())
-            action.setEnabled(button.isEnabled())
-            action.setToolTip(button.toolTip())
-            action.triggered.connect(button.click)
-        # Menu only: both are occasional, and the button rows are full.
-        job = self.selected_job()
-        live = not self.viewing_archive() and not self.viewing_reconstructed()
-        menu.addSeparator()
-        force = menu.addAction(FORCE_ACTION_TEXT)
-        force.setEnabled(bool(live and job is not None and not self.service.force_refusal(job)))
-        force.triggered.connect(self._force_selected)
-        recheck = menu.addAction(RECHECK_ACTION_TEXT)
-        recheck.setEnabled(bool(live and job is not None and job.state == STATE_LOST))
-        recheck.triggered.connect(self._recheck_selected)
-        menu.exec(self.table.viewport().mapToGlobal(position))
+        self.menu_job.exec(self.table.viewport().mapToGlobal(position))
 
     def _tick_elapsed(self) -> None:
         """Repaint the Elapsed cell of every job that is still going."""
@@ -714,80 +773,54 @@ class JobsDialog(QDialog):
         """True while the list in use was rebuilt from a folder."""
         return bool(getattr(self.service.store, "reconstructed", False))
 
-    def _update_buttons(self) -> None:
-        if self.viewing_reconstructed() and not self.viewing_archive():
-            # Everything that would talk to a host is off: these jobs were
-            # read off disk, with no host, queue id or remote directory.
-            # Opening a result, reading the record and exporting still work.
-            job = self.selected_job()
-            for button in (
-                self.btn_new,
-                self.btn_cancel,
-                self.btn_download,
-                self.btn_tail,
-                self.btn_tail_file,
-                self.btn_resubmit,
-                # Nothing else writes a rebuilt list, so there is nothing to
-                # take in from it.
-                self.btn_reload,
-            ):
-                button.setEnabled(False)
-            self.btn_open.setEnabled(bool(job and job.downloaded_files))
-            self.btn_details.setEnabled(job is not None)
-            self.btn_remove.setEnabled(job is not None)
-            for button in (self.btn_save_as, self.btn_export_csv, self.btn_clear):
-                button.setEnabled(True)
-            return
-        self.btn_new.setEnabled(True)
-        self.btn_reload.setEnabled(True)
-        if self.viewing_archive():
-            # The table is showing a fixed list, so a count of what changed in
-            # the live one behind it would describe nothing on screen.
-            self.btn_reload.setEnabled(False)
-            # An archived job's queue id and remote directory may be gone, so
-            # every action that would act on one is off.
-            for button in (
-                self.btn_cancel,
-                self.btn_download,
-                self.btn_open,
-                self.btn_tail,
-                self.btn_tail_file,
-                self.btn_resubmit,
-                self.btn_remove,
-                self.btn_save_as,
-                self.btn_export_csv,
-                self.btn_clear,
-            ):
-                button.setEnabled(False)
-            self.btn_details.setEnabled(self.selected_job() is not None)
-            return
+    def _can_open_result(self, job: Optional[Job]) -> bool:
+        if job is None:
+            return False
+        if job.downloaded_files or (job.downloaded and job.remote_dir):
+            return True
+        host = self.service.store.hosts.get(job.host_id)
+        mirror = host.mirrored_job_dir(job.remote_dir) if host and job.remote_dir else ""
+        return bool(mirror and os.path.isdir(mirror))
 
-        for button in (self.btn_save_as, self.btn_export_csv, self.btn_clear):
-            button.setEnabled(True)
+    def _update_actions(self) -> None:
         job = self.selected_job()
-        has_job = job is not None
-        self.btn_cancel.setEnabled(bool(job and job.is_active))
-        self.btn_download.setEnabled(bool(job and job.remote_dir))
-        mirror_ready = False
-        if job and job.remote_dir:
-            host = self.service.store.hosts.get(job.host_id)
-            if host is not None:
-                mirror_dir = host.mirrored_job_dir(job.remote_dir)
-                mirror_ready = bool(mirror_dir and os.path.isdir(mirror_dir))
-        self.btn_open.setEnabled(
-            bool(
-                job
-                and (job.downloaded_files or (job.downloaded and job.remote_dir) or mirror_ready)
-            )
-        )
-        self.btn_tail.setEnabled(bool(job and job.remote_dir))
-        self.btn_tail_file.setEnabled(bool(job and job.remote_dir))
-        # A command-only job has no input files; the preset snapshot alone
-        # makes it resubmittable.
-        self.btn_resubmit.setEnabled(bool(job and (job.input_files or job.preset)))
-        self.btn_remove.setEnabled(has_job)
-        # Details reads only what is already recorded, so it works archived too.
-        self.btn_details.setEnabled(has_job)
+        archived = self.viewing_archive()
+        reconstructed = self.viewing_reconstructed() and not archived
+        live = not archived and not reconstructed
+        remote = bool(live and job and job.remote_dir)
+        states = {
+            "new": not reconstructed,
+            "reload": live,
+            "cancel": bool(live and job and job.is_active),
+            "download": remote,
+            "tail": remote,
+            "tail_file": remote,
+            "open": bool(
+                not archived
+                and (
+                    (reconstructed and job and job.downloaded_files)
+                    or (live and self._can_open_result(job))
+                )
+            ),
+            "details": job is not None,
+            "resubmit": bool(live and job and (job.input_files or job.preset)),
+            "remove": not archived and job is not None,
+            "save_as": not archived,
+            "export_csv": not archived,
+            "clear": not archived,
+            "force": bool(live and job and not self.service.force_refusal(job)),
+            "recheck": bool(live and job and job.state == STATE_LOST),
+        }
+        for key, action in self.job_actions.items():
+            action.setEnabled(bool(states.get(key, True) and key not in self._busy_actions))
+        self.btn_job_actions.setEnabled(job is not None)
+
+    def _set_action_busy(self, key: str, busy: bool) -> None:
+        if busy:
+            self._busy_actions.add(key)
+        else:
+            self._busy_actions.discard(key)
+        self._update_actions()
 
     # --- actions ------------------------------------------------------------
 
@@ -810,7 +843,7 @@ class JobsDialog(QDialog):
                 self,
                 "Job Manager",
                 "This job list was rebuilt from a folder, so it is read only.\n\n"
-                "Press Default to go back to your own list before submitting.",
+                "Choose File > Default List to go back to your own list before submitting.",
             )
             return
         if not self.service.store.hosts:
@@ -1036,15 +1069,15 @@ class JobsDialog(QDialog):
         job = self.selected_job()
         if job is None or not self._has_credentials(job):
             return
-        self.btn_download.setEnabled(False)
+        self._set_action_busy("download", True)
         self._append_message(f"Listing {job.remote_dir}...")
 
         def listed(names: list) -> None:
-            self.btn_download.setEnabled(True)
+            self._set_action_busy("download", False)
             self._offer_download(job, names)
 
         def failed(message: str) -> None:
-            self.btn_download.setEnabled(True)
+            self._set_action_busy("download", False)
             self._append_message(message)
 
         self.service.list_remote_results(job, listed, failed, owner=self)
@@ -1085,10 +1118,10 @@ class JobsDialog(QDialog):
         job = self.selected_job()
         if job is None:
             return
-        if job.is_terminal and self.btn_open.isEnabled():
+        if job.is_terminal and self.job_actions["open"].isEnabled():
             self._open_selected_result()
             return
-        if self.btn_tail.isEnabled():
+        if self.job_actions["tail"].isEnabled():
             self._tail_selected()
 
     def _tail_selected(self) -> None:
@@ -1351,7 +1384,7 @@ class JobsDialog(QDialog):
         if not folder:
             return
         self.service.store.set_pref("last_rebuild_dir", folder)
-        self.btn_rebuild.setEnabled(False)
+        self._set_action_busy("rebuild", True)
         self._append_message(f"Reading {folder}...")
 
         from .folder_scan import scan_folder
@@ -1361,11 +1394,11 @@ class JobsDialog(QDialog):
             return scan_folder(folder)
 
         def done(result) -> None:
-            self.btn_rebuild.setEnabled(True)
+            self._set_action_busy("rebuild", False)
             self._use_rebuilt_list(folder, result)
 
         def failed(message: str) -> None:
-            self.btn_rebuild.setEnabled(True)
+            self._set_action_busy("rebuild", False)
             QMessageBox.warning(self, "Rebuild from folder", f"Could not read {folder}:\n{message}")
 
         run_async(self.service.pool, work, on_success=done, on_error=failed, owner=self)
@@ -1420,7 +1453,7 @@ class JobsDialog(QDialog):
         self.service.jobs_changed.emit()
         self.service.poller.start()
         self._update_active_file()
-        self._update_buttons()
+        self._update_actions()
         self._append_message(f"Rebuilt {count} job(s) from {folder}")
 
     def _load_archive(self) -> None:
@@ -1520,7 +1553,7 @@ class JobsDialog(QDialog):
         )
         self.lbl_archive.setVisible(True)
         self.btn_back.setVisible(True)
-        self._update_buttons()
+        self._update_actions()
         self._append_message(f"Viewing {os.path.basename(path)} (read only)")
         return True
 
@@ -1530,7 +1563,7 @@ class JobsDialog(QDialog):
         self.model.show_archive(None)
         self.lbl_archive.setVisible(False)
         self.btn_back.setVisible(False)
-        self._update_buttons()
+        self._update_actions()
 
     def _clear_jobs(self) -> None:
         """Empty the table, keeping a dated copy of what was in it."""

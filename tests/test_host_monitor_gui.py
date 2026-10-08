@@ -139,24 +139,24 @@ class TestWhatItShows(HostMonitorTestCase):
         self.store.add_host(make_host(id="second", name="workstation"))
         dialog = self.monitor()
 
-        dialog.btn_history.setChecked(True)
+        dialog.action_history.setChecked(True)
 
         for card in dialog.cards.values():
             self.assertTrue(card.expanded, card.host.name)
 
     def test_pressing_it_again_closes_them(self):
         dialog = self.monitor()
-        dialog.btn_history.setChecked(True)
-        dialog.btn_history.setChecked(False)
+        dialog.action_history.setChecked(True)
+        dialog.action_history.setChecked(False)
         self.assertFalse(dialog.cards[self.host.id].expanded)
 
     def test_the_history_choice_is_remembered(self):
         dialog = self.monitor()
-        dialog.btn_history.setChecked(True)
+        dialog.action_history.setChecked(True)
 
         self.assertTrue(self.store.get_pref("host_monitor_history", False))
         again = self.monitor()
-        self.assertTrue(again.btn_history.isChecked())
+        self.assertTrue(again.action_history.isChecked())
         self.assertTrue(again.cards[self.host.id].expanded)
 
     def test_the_history_is_collected_even_while_it_is_hidden(self):
@@ -478,7 +478,11 @@ class TestTheRowMenu(DialogTestCase):
         # Driven from the buttons, so the two cannot disagree about what is
         # possible for a job.
         entries = {action.text(): action.isEnabled() for action in self.menu_entries()}
-        for button in (self.dialog.btn_tail, self.dialog.btn_download, self.dialog.btn_remove):
+        for button in (
+            self.dialog.btn_tail,
+            self.dialog.btn_download,
+            self.dialog.job_actions["remove"],
+        ):
             self.assertEqual(entries[button.text()], button.isEnabled(), button.text())
 
     def test_no_menu_without_a_job(self):
@@ -643,8 +647,8 @@ class TestOpeningAJobList(DialogTestCase):
         self.addCleanup(self.dialog.deleteLater)
 
     def test_both_buttons_are_there(self):
-        self.assertEqual(self.dialog.btn_open_default.text(), "Default")
-        self.assertEqual(self.dialog.btn_open_list.text(), "Open...")
+        self.assertEqual(self.dialog.job_actions["open_default"].text(), "Default List")
+        self.assertEqual(self.dialog.job_actions["open_list"].text(), "Open List...")
 
     def test_open_goes_back_to_the_plugins_own_list(self):
         import os
@@ -653,7 +657,7 @@ class TestOpeningAJobList(DialogTestCase):
         self.store.use_jobs_file(other)
         self.assertNotEqual(self.store.jobs_path, self.store.default_jobs_path)
 
-        self.dialog.btn_open_default.click()
+        self.dialog.job_actions["open_default"].trigger()
 
         self.assertEqual(self.store.jobs_path, self.store.default_jobs_path)
 
@@ -669,7 +673,7 @@ class TestOpeningAJobList(DialogTestCase):
             patch.object(QFileDialog, "getOpenFileName", return_value=(path, "")),
             patch.object(self.dialog, "open_job_list") as opened,
         ):
-            self.dialog.btn_open_list.click()
+            self.dialog.job_actions["open_list"].trigger()
 
         opened.assert_called_once_with(path)
 
@@ -682,7 +686,7 @@ class TestOpeningAJobList(DialogTestCase):
             patch.object(QFileDialog, "getOpenFileName", return_value=("", "")),
             patch.object(self.dialog, "open_job_list") as opened,
         ):
-            self.dialog.btn_open_list.click()
+            self.dialog.job_actions["open_list"].trigger()
 
         opened.assert_not_called()
 
@@ -739,12 +743,12 @@ class TestTheCardsStack(HostMonitorTestCase):
 class TestTheCardResponds(HostMonitorTestCase):
     def test_dark_mode_is_off_by_default_and_remembered(self):
         dialog = self.monitor()
-        self.assertFalse(dialog.btn_dark.isChecked())
+        self.assertFalse(dialog.action_dark.isChecked())
 
-        dialog.btn_dark.setChecked(True)
+        dialog.action_dark.setChecked(True)
 
         self.assertTrue(self.store.get_pref("host_monitor_dark", False))
-        self.assertTrue(self.monitor().btn_dark.isChecked())
+        self.assertTrue(self.monitor().action_dark.isChecked())
 
     def test_dark_mode_changes_this_window_only(self):
         from PyQt6.QtGui import QPalette
@@ -753,7 +757,7 @@ class TestTheCardResponds(HostMonitorTestCase):
         before = dialog.palette().color(QPalette.ColorRole.Window).name()
         card_before = dialog.cards[self.host.id].styleSheet()
 
-        dialog.btn_dark.setChecked(True)
+        dialog.action_dark.setChecked(True)
 
         self.assertNotEqual(dialog.palette().color(QPalette.ColorRole.Window).name(), before)
         # And the cards follow. They carry a style sheet, which resolves their
@@ -782,8 +786,8 @@ class TestTheDarkToggleGoesBothWays(HostMonitorTestCase):
         dialog = self.monitor()
         before = self.palette_name(dialog)
 
-        dialog.btn_dark.setChecked(True)
-        dialog.btn_dark.setChecked(False)
+        dialog.action_dark.setChecked(True)
+        dialog.action_dark.setChecked(False)
 
         self.assertEqual(self.palette_name(dialog), before)
 
@@ -805,8 +809,8 @@ class TestTheDarkToggleGoesBothWays(HostMonitorTestCase):
         )
         before = {role: dialog.palette().color(role).name() for role in roles}
 
-        dialog.btn_dark.setChecked(True)
-        dialog.btn_dark.setChecked(False)
+        dialog.action_dark.setChecked(True)
+        dialog.action_dark.setChecked(False)
 
         after = {role: dialog.palette().color(role).name() for role in roles}
         self.assertEqual(after, before)
@@ -818,8 +822,8 @@ class TestTheDarkToggleGoesBothWays(HostMonitorTestCase):
         card = dialog.cards[self.host.id]
         before = card.styleSheet()
 
-        dialog.btn_dark.setChecked(True)
-        dialog.btn_dark.setChecked(False)
+        dialog.action_dark.setChecked(True)
+        dialog.action_dark.setChecked(False)
 
         self.assertEqual(card.styleSheet(), before)
 

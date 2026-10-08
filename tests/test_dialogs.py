@@ -254,14 +254,14 @@ class TestJobsDialog(DialogTestCase):
         self.addCleanup(self.dialog.deleteLater)
 
     def test_buttons_are_disabled_without_a_selection(self):
-        self.assertFalse(self.dialog.btn_cancel.isEnabled())
+        self.assertFalse(self.dialog.job_actions["cancel"].isEnabled())
         self.assertFalse(self.dialog.btn_download.isEnabled())
 
     def test_selecting_an_active_job_enables_cancel(self):
         self.service.submit(self.host, make_preset(), "mol", [self.make_input()])
         self.dialog.model.reload()
         self.dialog.table.selectRow(0)
-        self.assertTrue(self.dialog.btn_cancel.isEnabled())
+        self.assertTrue(self.dialog.job_actions["cancel"].isEnabled())
 
     def test_open_result_needs_downloaded_files(self):
         job = self.service.submit(self.host, make_preset(), "mol", [self.make_input()])
@@ -269,7 +269,7 @@ class TestJobsDialog(DialogTestCase):
         self.dialog.table.selectRow(0)
         self.assertFalse(self.dialog.btn_open.isEnabled())
         job.downloaded_files = ["/tmp/mol.out"]
-        self.dialog._update_buttons()
+        self.dialog._update_actions()
         self.assertTrue(self.dialog.btn_open.isEnabled())
 
     def test_service_messages_reach_the_log_pane(self):
@@ -287,14 +287,14 @@ class TestJobsDialog(DialogTestCase):
         self.dialog._refresh_now()
         self.assertIn("rate limited", self.dialog.txt_log.toPlainText())
 
-    def test_the_preferences_are_one_button_away(self):
+    def test_the_preferences_are_available_from_the_settings_action(self):
         # They were a row of ticks here and an interval in the toolbar; all of
         # them now live in the Settings window.
-        self.assertEqual(self.dialog.btn_settings.text(), "Settings...")
+        self.assertEqual(self.dialog.job_actions["settings"].text(), "Settings...")
         for gone in ("chk_auto_open", "chk_notify", "chk_chat", "spin_interval"):
             self.assertFalse(hasattr(self.dialog, gone), gone)
         with patch("job_manager.settings_dialog.SettingsDialog.exec") as shown:
-            self.dialog.btn_settings.click()
+            self.dialog.job_actions["settings"].trigger()
         shown.assert_called_once()
 
     def test_results_ready_does_not_open_when_auto_open_is_off(self):
@@ -891,8 +891,8 @@ class TestPrefillAndResubmit(DialogTestCase):
         self.service.submit(self.host, make_preset(), "staged", [], remote_dir="~/runs/mol42")
         self.dialog.model.reload()
         self.dialog.table.selectRow(0)
-        self.dialog._update_buttons()
-        self.assertTrue(self.dialog.btn_resubmit.isEnabled())
+        self.dialog._update_actions()
+        self.assertTrue(self.dialog.job_actions["resubmit"].isEnabled())
 
     def test_the_wizard_opens_with_the_box_already_ticked(self):
         dialog = SubmitDialog(self.service)
@@ -918,7 +918,7 @@ class TestPrefillAndResubmit(DialogTestCase):
         self.submitted_job()
         self.dialog.model.reload()
         self.dialog.table.selectRow(0)
-        self.assertTrue(self.dialog.btn_resubmit.isEnabled())
+        self.assertTrue(self.dialog.job_actions["resubmit"].isEnabled())
 
     def test_resubmit_without_a_selection_is_a_no_op(self):
         self.dialog._resubmit_selected()
@@ -1066,10 +1066,10 @@ class TestExportAndClearButtons(DialogTestCase):
             self.dialog._export(extension)
         return target
 
-    def test_the_three_buttons_exist(self):
-        self.assertTrue(self.dialog.btn_save_as.isEnabled())
-        self.assertTrue(self.dialog.btn_export_csv.isEnabled())
-        self.assertTrue(self.dialog.btn_clear.isEnabled())
+    def test_export_and_clear_actions_are_enabled_for_the_live_list(self):
+        self.assertTrue(self.dialog.job_actions["save_as"].isEnabled())
+        self.assertTrue(self.dialog.job_actions["export_csv"].isEnabled())
+        self.assertTrue(self.dialog.job_actions["clear"].isEnabled())
 
     def test_exporting_json(self):
         path = self.export_to("jobs.json", ".json")
@@ -1171,15 +1171,15 @@ class TestOpeningAJobList(DialogTestCase):
         self.dialog.open_job_list(self.archived_file())
         self.dialog.table.selectRow(0)
         for button in (
-            self.dialog.btn_cancel,
+            self.dialog.job_actions["cancel"],
             self.dialog.btn_download,
             self.dialog.btn_open,
             self.dialog.btn_tail,
-            self.dialog.btn_resubmit,
-            self.dialog.btn_remove,
-            self.dialog.btn_save_as,
-            self.dialog.btn_export_csv,
-            self.dialog.btn_clear,
+            self.dialog.job_actions["resubmit"],
+            self.dialog.job_actions["remove"],
+            self.dialog.job_actions["save_as"],
+            self.dialog.job_actions["export_csv"],
+            self.dialog.job_actions["clear"],
         ):
             self.assertFalse(button.isEnabled(), button.text())
 
@@ -1196,7 +1196,7 @@ class TestOpeningAJobList(DialogTestCase):
         self.dialog._exit_archive()
         self.assertFalse(self.dialog.viewing_archive())
         self.assertTrue(self.dialog.lbl_archive.isHidden())
-        self.assertTrue(self.dialog.btn_save_as.isEnabled())
+        self.assertTrue(self.dialog.job_actions["save_as"].isEnabled())
 
     def test_an_unflagged_list_is_offered_for_import(self):
         path = self.exported_file()
@@ -1233,7 +1233,10 @@ class TestOpeningAJobList(DialogTestCase):
             self.assertTrue(self.dialog.open_job_list(path))
         self.assertFalse(self.dialog.viewing_archive())
         self.assertTrue(self.dialog.lbl_archive.isHidden())
-        self.assertTrue(self.dialog.btn_remove.isEnabled() or self.dialog.btn_clear.isEnabled())
+        self.assertTrue(
+            self.dialog.job_actions["remove"].isEnabled()
+            or self.dialog.job_actions["clear"].isEnabled()
+        )
         self.assertEqual(self.dialog.model.rowCount(), len(self.store.jobs))
 
     def test_going_back_to_the_default_list_leaves_the_archive_view_too(self):
@@ -1607,7 +1610,7 @@ class TestJobDetails(DialogTestCase):
     def test_details_works_for_an_archived_job(self):
         # It reads only what is recorded, so it needs no host and no network.
         self.dialog._archive_path = "/somewhere/jobs_2026.pmejbs"
-        self.dialog._update_buttons()
+        self.dialog._update_actions()
         self.assertTrue(self.dialog.btn_details.isEnabled())
         self.assertFalse(self.dialog.btn_tail.isEnabled())
 

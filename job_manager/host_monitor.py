@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
-    QPushButton,
+    QMenuBar,
     QScrollArea,
     QSizePolicy,
     QSpinBox,
@@ -53,6 +53,7 @@ from .theme import (
 )
 
 from .window_utils import make_independent
+from .ui_actions import action_button, make_action, populate_menu
 
 #: How many samples a graph keeps. At the default interval that is about two
 #: minutes of history, which is enough to see a job start.
@@ -129,7 +130,7 @@ QScrollArea, QScrollArea > QWidget > QWidget {{
 QLabel {{
     color: {_DARK["text"]};
 }}
-QPushButton {{
+QPushButton, QToolButton[jobManagerAction="true"] {{
     background-color: #21262d;
     color: {_DARK["text"]};
     border: 1px solid #363b42;
@@ -137,16 +138,16 @@ QPushButton {{
     padding: 5px 14px;
     min-height: 20px;
 }}
-QPushButton:hover {{
+QPushButton:hover, QToolButton[jobManagerAction="true"]:hover {{
     background-color: #30363d;
     border-color: {CY_ACCENT};
 }}
-QPushButton:checked {{
+QPushButton:checked, QToolButton[jobManagerAction="true"]:checked {{
     background-color: #1e3a5f;
     border-color: {CY_ACCENT};
     color: {CY_ACCENT};
 }}
-QPushButton:disabled {{
+QPushButton:disabled, QToolButton[jobManagerAction="true"]:disabled {{
     color: {_DARK["mid"]};
     background-color: #17191c;
     border-color: #2a2e33;
@@ -198,7 +199,7 @@ QScrollArea, QScrollArea > QWidget > QWidget {{
 QLabel {{
     color: #1f2328;
 }}
-QPushButton {{
+QPushButton, QToolButton[jobManagerAction="true"] {{
     background-color: #f6f8fa;
     color: #1f2328;
     border: 1px solid #d0d7de;
@@ -206,16 +207,16 @@ QPushButton {{
     padding: 5px 14px;
     min-height: 20px;
 }}
-QPushButton:hover {{
+QPushButton:hover, QToolButton[jobManagerAction="true"]:hover {{
     background-color: #eaeef2;
     border-color: {CY_ACCENT};
 }}
-QPushButton:checked {{
+QPushButton:checked, QToolButton[jobManagerAction="true"]:checked {{
     background-color: #ddf4ff;
     border-color: {CY_ACCENT};
     color: {CY_ACCENT};
 }}
-QPushButton:disabled {{
+QPushButton:disabled, QToolButton[jobManagerAction="true"]:disabled {{
     color: #8b949e;
     background-color: #eceff2;
     border-color: #d0d7de;
@@ -849,11 +850,11 @@ class HostMonitorDialog(QDialog):
         self.spin_interval.blockSignals(True)
         self.spin_interval.setValue(self.sampler.interval_seconds())
         self.spin_interval.blockSignals(False)
-        if self.btn_history.isChecked():
+        if self.action_history.isChecked():
             self._set_history(True)
         # `setChecked` above happens before the signal connection, so it
         # never emitted `toggled`; apply the style explicitly here instead.
-        self._set_dark(bool(self.btn_dark.isChecked()))
+        self._set_dark(bool(self.action_dark.isChecked()))
         self.sampler.sampled.connect(self._on_sampled)
         self.sampler.sample_failed.connect(self._on_sample_failed)
         self.sampler.ticking.connect(self._sync_cards)
@@ -873,40 +874,7 @@ class HostMonitorDialog(QDialog):
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
 
-        top = QHBoxLayout()
-        top.addWidget(QLabel("Refresh every"))
-        self.spin_interval = QSpinBox()
-        self.spin_interval.setRange(1, 60)
-        self.spin_interval.setSuffix(" s")
-        self.spin_interval.setValue(DEFAULT_INTERVAL_SECONDS)
-        self.spin_interval.setMaximum(300)
-        self.spin_interval.setToolTip(
-            "How often each host is asked, while this window is open. Remembered."
-        )
-        self.spin_interval.valueChanged.connect(self._set_interval)
-        top.addWidget(self.spin_interval)
-        top.addStretch(1)
-        self.btn_history = QPushButton("History")
-        self.btn_history.setCheckable(True)
-        self.btn_history.setToolTip(
-            "Show the last two minutes under every card: load in green, memory in blue."
-        )
-        self.btn_history.setChecked(
-            bool(self.service.store.get_pref("host_monitor_history", False))
-        )
-        self.btn_history.toggled.connect(self._set_history)
-        top.addWidget(self.btn_history)
-
-        self.btn_dark = QPushButton("Dark")
-        self.btn_dark.setCheckable(True)
-        self.btn_dark.setToolTip(
-            "Dark colours for this window only; MoleditPy's own theme is not touched."
-        )
-        self.btn_dark.setChecked(bool(self.service.store.get_pref("host_monitor_dark", False)))
-        self.btn_dark.toggled.connect(self._set_dark)
-        top.addWidget(self.btn_dark)
-
-        layout.addLayout(top)
+        self._build_controls(layout)
 
         scroll = QScrollArea()
         self._scroll = scroll
@@ -934,8 +902,57 @@ class HostMonitorDialog(QDialog):
         box.rejected.connect(self.reject)
 
         self._jobs_bar = _ActiveJobsBar(self.service)
-        layout.addWidget(self._jobs_bar)
-        layout.addWidget(box)
+        footer = QHBoxLayout()
+        footer.addWidget(self._jobs_bar, 1)
+        footer.addWidget(box)
+        layout.addLayout(footer)
+
+    def _build_controls(self, layout: QVBoxLayout) -> None:
+        self.action_refresh = make_action(
+            self,
+            "Refresh Now",
+            self._sample_all,
+            "Sample the enabled hosts now.",
+            shortcut="F5",
+        )
+        self.action_history = make_action(
+            self,
+            "Show History",
+            self._set_history,
+            "Show the last two minutes under every card: load in green, memory in blue.",
+            checked=bool(self.service.store.get_pref("host_monitor_history", False)),
+        )
+        self.action_dark = make_action(
+            self,
+            "Dark Colours",
+            self._set_dark,
+            "Dark colours for this window only; MoleditPy's own theme is not touched.",
+            checked=bool(self.service.store.get_pref("host_monitor_dark", False)),
+        )
+        self.action_close = make_action(self, "Close", self.reject, shortcut="Ctrl+W")
+        self.menu_bar = QMenuBar(self)
+        self.menu_bar.setNativeMenuBar(False)
+        layout.setMenuBar(self.menu_bar)
+        populate_menu(
+            self.menu_bar.addMenu("&Monitor"), (self.action_refresh, None, self.action_close)
+        )
+        populate_menu(self.menu_bar.addMenu("&View"), (self.action_history, self.action_dark))
+        top = QHBoxLayout()
+        self.btn_refresh = action_button(self.action_refresh, self)
+        top.addWidget(self.btn_refresh)
+        top.addStretch(1)
+        top.addWidget(QLabel("Refresh every"))
+        self.spin_interval = QSpinBox()
+        self.spin_interval.setRange(1, 60)
+        self.spin_interval.setSuffix(" s")
+        self.spin_interval.setValue(DEFAULT_INTERVAL_SECONDS)
+        self.spin_interval.setMaximum(300)
+        self.spin_interval.setToolTip(
+            "How often each host is asked, while this window is open. Remembered."
+        )
+        self.spin_interval.valueChanged.connect(self._set_interval)
+        top.addWidget(self.spin_interval)
+        layout.addLayout(top)
 
     def _disconnect_signals(self) -> None:
         """Disconnect service signals to prevent memory leaks on re-open."""
@@ -1020,7 +1037,7 @@ class HostMonitorDialog(QDialog):
                 card.setGraphicsEffect(effect)
             elif not host.monitor_usage:
                 card.show_not_sampled()
-            card.restyle(self.palette(), dark=bool(self.btn_dark.isChecked()))
+            card.restyle(self.palette(), dark=bool(self.action_dark.isChecked()))
             self.cards[host.id] = card
         self._empty_label.setVisible(not self.cards)
         self._relayout()
@@ -1135,8 +1152,10 @@ class HostMonitorDialog(QDialog):
         """Save user preferences for Host Monitor only upon closing."""
         try:
             self.service.store.set_pref("host_monitor_interval", int(self.spin_interval.value()))
-            self.service.store.set_pref("host_monitor_history", bool(self.btn_history.isChecked()))
-            self.service.store.set_pref("host_monitor_dark", bool(self.btn_dark.isChecked()))
+            self.service.store.set_pref(
+                "host_monitor_history", bool(self.action_history.isChecked())
+            )
+            self.service.store.set_pref("host_monitor_dark", bool(self.action_dark.isChecked()))
         except (OSError, ValueError, TypeError):
             logging.warning("Job Manager: the host monitor settings were not saved", exc_info=True)
 
@@ -1191,9 +1210,9 @@ class _ActiveJobsBar(QWidget):
         layout.setSpacing(10)
 
         self._lbl_count = QLabel()
+        self._lbl_count.setWordWrap(True)
         self._lbl_count.setStyleSheet(f"color: {CY_ACCENT}; font-weight: bold;")
-        layout.addWidget(self._lbl_count)
-        layout.addStretch(1)
+        layout.addWidget(self._lbl_count, 1)
 
         # Coalesced for the same reason the cards are: one poll emits a
         # signal per job resolved.
@@ -1250,7 +1269,7 @@ class _ActiveJobsBar(QWidget):
         if blocked:
             parts.append(f"<span style='color:{CY_RED};'>{blocked} blocked</span>")
         parts.append(f"<span style='color:{CY_GREY};'>{finished}/{len(all_jobs)} finished</span>")
-        self._lbl_count.setText("&nbsp;&nbsp;".join(parts))
+        self._lbl_count.setText(" &nbsp; ".join(parts))
 
 
 def find_open(service) -> Optional[HostMonitorDialog]:

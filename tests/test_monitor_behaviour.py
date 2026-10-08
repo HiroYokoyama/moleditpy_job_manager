@@ -55,7 +55,7 @@ class TestWhatADoubleClickOpens(DialogTestCase):
         self.store.add_job(job)
         self.dialog.model.reload()
         self.dialog.table.selectRow(0)
-        self.dialog._update_buttons()
+        self.dialog._update_actions()
         return job
 
     def test_a_running_job_opens_its_log(self):
@@ -106,7 +106,7 @@ class TestARebuiltListIsReadOnly(DialogTestCase):
         self.store.use_jobs_file(path)
         self.dialog.model.reload()
         self.dialog.table.selectRow(0)
-        self.dialog._update_buttons()
+        self.dialog._update_actions()
 
     def test_the_window_says_so(self):
         self.dialog._update_active_file()
@@ -114,10 +114,14 @@ class TestARebuiltListIsReadOnly(DialogTestCase):
 
     def test_nothing_can_be_submitted(self):
         self.assertFalse(self.dialog.btn_new.isEnabled())
-        self.assertFalse(self.dialog.btn_resubmit.isEnabled())
+        self.assertFalse(self.dialog.job_actions["resubmit"].isEnabled())
 
     def test_nothing_can_be_cancelled_or_polled(self):
-        for button in (self.dialog.btn_cancel, self.dialog.btn_tail, self.dialog.btn_download):
+        for button in (
+            self.dialog.job_actions["cancel"],
+            self.dialog.btn_tail,
+            self.dialog.btn_download,
+        ):
             self.assertFalse(button.isEnabled())
 
     def test_the_result_can_still_be_opened(self):

@@ -601,7 +601,7 @@ about; against your own workstation it is fine.
 
 **Refresh Now** forces a cycle immediately (rate limited to once every 10 s).
 
-**Reload List** is the other button, and asks a different question. Two Job
+**View ▸ Reload List** (`Ctrl+R`) asks a different question. Two Job
 Managers open at once — a second MoleditPy window, or the standalone monitor
 beside the plugin — share one `jobs.pmejbs`, and each holds the whole list in
 memory. Saving merges, so neither loses the other's jobs, but neither *sees*
@@ -612,7 +612,7 @@ it asks the hosts about.
 
 It costs no network at all, so it is not rate limited. A job either window is
 still uploading or downloading is left exactly as it is — the window doing the
-transfer owns that record until it lands. The button is off while an archive or
+transfer owns that record until it lands. The action is off while an archive or
 a rebuilt list is on screen, where a count of what changed in the live list
 behind it would describe nothing you can see.
 
@@ -769,7 +769,7 @@ webhook you can revoke in the workspace.
 
 ### Hosts at work
 
-**Hosts at Work...**, beside *Refresh Now*, opens a live panel: one card per
+**Host Monitor...**, beside *Refresh Now*, opens a live panel: one card per
 host with its CPU use, its memory, and a graph of each over the last couple of
 minutes. The CPU graph is full when the machine is, which is what a full
 machine means — not some arbitrary hundred.
@@ -784,7 +784,8 @@ against the machine -- because the question the panel is opened for is "is
 there room on that machine?", and a bar answers it from across the room. Green
 while there is room, amber near full, red at full. **Double-click a card** for
 the last two minutes as a graph: green for load, blue for memory. Cards stack
-into as many columns as the window is wide enough for, and **Dark** recolours
+into as many columns as the window is wide enough for. **View ▸ Show History**
+toggles graphs on every card, and **View ▸ Dark Colours** recolours
 this window alone, for a panel left up on a second screen.
 
 It asks each host one small command every **2 seconds** (adjustable, 1-60), and
@@ -862,10 +863,19 @@ not in the helper, so the next submission starts a fresh helper and takes the
 
 ## 7. Keeping, exporting and clearing the list
 
-The row of buttons on the right of the table deals with the list as a whole.
+The **File** menu deals with the list as a whole. The toolbar keeps **New Job**,
+**Refresh Now** and **Host Monitor** visible. Selected-job operations are in the
+**Job** menu, **Job Actions** dropdown and the row's context menu; **Open Result**,
+**Download**, **Tail Log** and **Details** also have buttons below the table.
+Host profiles and preferences are under **Tools ▸ Hosts...** and **Tools ▸ Settings...**.
+On a narrow window, toolbar operations that do not fit are available from the
+arrow at the toolbar's right edge.
 
-| Button | Does |
+| File menu action | Does |
 |---|---|
+| **Default List** | Returns to the plugin's usual live list |
+| **Open List...** | Opens a saved `.pmejbs` list (`Ctrl+O`) |
+| **Rebuild from Folder...** | Builds a read-only list from calculation outputs on disk |
 | **Save As...** | Saves the list to a `.pmejbs` file — the same records the plugin stores, openable again |
 | **Export CSV** | One row per job — state, exit code, timings, remote and local paths, the command |
 | **Load Archive...** | Opens a previously cleared list |
@@ -882,15 +892,17 @@ archived folder** in your file manager; the read-only banner shows its path.
 
 ### Opening a job list
 
-Three ways in: **Load Archive...**, **File ▸ Import** in the main window (the
+Open saved lists with **File ▸ Open List...** (`Ctrl+O`) or **File ▸ Load Archive...**
+in the Job Manager, **File ▸ Import** in the main window (the
 plugin registers `.pmejbs` with the application), or by dropping the file onto
 the Job Manager window.
 
 What happens next depends on the file, not on where it sits:
 
-* **Marked archived** (written by Clear List) — shown **read only**. Every
-  action is disabled, because an archived job's queue id is stale and its remote
-  directory may be long gone. **Back to current jobs** returns you to the live
+* **Marked archived** (written by Clear List) — shown **read only**. Actions that
+  change a job or contact its host are disabled, because its queue id is stale
+  and its remote directory may be long gone. **Details** still shows its record.
+  **Back to current jobs** returns you to the live
   table.
 * **Marked reconstructed** (written by Rebuild from Folder) — shown read only
   as well, and for a stronger reason: those records were read off a disk, so
@@ -900,7 +912,7 @@ What happens next depends on the file, not on where it sits:
 * **Not marked either** (an export, a backup, a colleague's file) — offered as
   the list to work in. Accept and it becomes the file every later change is
   written to, with a banner naming it. This lasts for the session only: a
-  restart comes back to your usual list, and **Use the default list** switches
+  restart comes back to your usual list, and **File ▸ Default List** switches
   back immediately.
 
 The flag lives inside the file, so a cleared list stays read-only after being
