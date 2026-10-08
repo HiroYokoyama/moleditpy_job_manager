@@ -7,6 +7,7 @@ installs only pytest) can exercise it directly.
 
 from __future__ import annotations
 
+import math
 import ntpath
 import os
 import posixpath
@@ -160,9 +161,15 @@ def _coerce(value: Any, default: Any) -> Any:
     if isinstance(default, (int, float)):
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return _NOT_GIVEN
-        if isinstance(default, int) and value != int(value):
+        try:
+            converted = type(default)(value)
+        except (ValueError, OverflowError):
             return _NOT_GIVEN
-        return type(default)(value)
+        if isinstance(converted, float) and not math.isfinite(converted):
+            return _NOT_GIVEN
+        if isinstance(default, int) and value != converted:
+            return _NOT_GIVEN
+        return converted
     if isinstance(default, str):
         return value if isinstance(value, str) else _NOT_GIVEN
     if isinstance(default, list):

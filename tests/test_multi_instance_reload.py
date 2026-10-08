@@ -13,6 +13,7 @@ import shutil
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 from job_manager.models import (
     STATE_DONE,
@@ -196,6 +197,33 @@ class TestItReallyIsTheRoundTrip(ReloadTestCase):
 
 
 class TestAnUnreadableFile(ReloadTestCase):
+    def test_a_malformed_jobs_collection_removes_nothing(self):
+        from job_manager.store import atomic_write_json
+
+        for payload in (
+            {},
+            {"jobs": None},
+            {"jobs": {}},
+            {"jobs": 42},
+            {"jobs": [None]},
+            {"jobs": [{}]},
+            {"jobs": [{"id": []}]},
+            {"jobs": [make_job("j2").to_dict(), None]},
+        ):
+            with self.subTest(payload=payload):
+                self.mine.jobs["j1"] = make_job("j1", state=STATE_DONE)
+                atomic_write_json(self.mine.jobs_path, payload)
+                self.assertEqual(self.mine.reload_jobs().total, 0)
+                self.assertIn("j1", self.mine.jobs)
+
+    def test_reload_uses_the_document_it_already_validated(self):
+        self.mine.add_job(make_job("j1", state=STATE_RUNNING))
+        payload = {"jobs": [make_job("j1", state=STATE_DONE, updated_at=2000.0).to_dict()]}
+        with patch("job_manager.store.read_json", side_effect=[payload, None]):
+            result = self.mine.reload_jobs()
+        self.assertEqual(result.updated, 1)
+        self.assertEqual(self.mine.jobs["j1"].state, STATE_DONE)
+
     def test_a_missing_file_removes_nothing(self):
         # read_json answers {} for a file that is not there, which is exactly
         # what a cleared list looks like -- and reading "not written yet" as

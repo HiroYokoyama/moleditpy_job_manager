@@ -204,3 +204,12 @@ class TestAMalformedRecordKeepsItsDefaults(unittest.TestCase):
         from job_manager.models import Job
 
         self.assertIsNone(Job.from_dict({"rc": "0"}).rc)
+
+    def test_nonfinite_numbers_keep_numeric_defaults(self):
+        for value in (float("nan"), float("inf"), -float("inf")):
+            with self.subTest(value=value):
+                self.assertEqual(HostProfile.from_dict({"port": value}).port, 22)
+                self.assertEqual(Job.from_dict({"submitted_at": value}).submitted_at, 0.0)
+
+    def test_an_integer_too_large_for_a_timestamp_keeps_the_default(self):
+        self.assertEqual(Job.from_dict({"submitted_at": 10**400}).submitted_at, 0.0)
