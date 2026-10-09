@@ -108,10 +108,30 @@ class EndToEndCase(unittest.TestCase):
         self.addCleanup(powershell_patcher.stop)
 
     def _cleanup(self):
-        # The runner exits when its queue empties; give it a moment, then take
-        # the directory away regardless.
-        time.sleep(0.05)
-        shutil.rmtree(self.root, ignore_errors=True)
+        # A marker only proves the payload reached that command. Its wrapper
+        # and detached helper still need the directory to write status and
+        # reap the job. Deleting it after a fixed sleep can strand processes
+        # which then compete with later tests for PowerShell startup time.
+        if os.path.isdir(self.directory):
+            self.wait_for(
+                lambda: (
+                    not self.listed("queue")
+                    and not self.listed("running")
+                    and not os.path.exists(os.path.join(self.directory, "lock"))
+                ),
+                timeout=90.0,
+                what="the detached runner to finish before cleanup",
+            )
+        # Releasing the lock precedes process exit. Windows still holds the
+        # transcript and working directory briefly during that final exit.
+        deadline = time.monotonic() + 15.0
+        while os.path.exists(self.root):
+            try:
+                shutil.rmtree(self.root)
+            except PermissionError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.05)
 
     def marker(self, name: str = "IT_RAN") -> str:
         return os.path.join(self.root, name).replace("\\", "/")
@@ -128,8 +148,8 @@ class EndToEndCase(unittest.TestCase):
         return submit_to_runner(self.transport(), self.host, preset, job, [self.input])
 
     def wait_for(self, predicate, timeout=15.0, what="condition"):
-        deadline = time.time() + timeout
-        while time.time() < deadline:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
             if predicate():
                 return True
             queue = self.listed("queue")
@@ -139,23 +159,37 @@ class EndToEndCase(unittest.TestCase):
             # has exited without processing the job; waiting longer would only
             # hide a shell/path failure.
             if not queue and not running and not self.listed("done"):
-                log = os.path.join(self.directory, remote_runner.RUNNER_LOG_NAME)
-                detail = ""
-                if os.path.exists(log):
-                    with open(log, encoding="utf-8", errors="replace") as handle:
-                        detail = handle.read().strip()[:300]
-                self.fail(f"runner stopped before {what}; queue={queue}; runner.log={detail!r}")
+                self.fail(f"runner stopped before {what}; {self.failure_detail()}")
             time.sleep(0.05)
-        queue = self.listed("queue")
-        log = os.path.join(self.directory, remote_runner.RUNNER_LOG_NAME)
-        detail = ""
-        if os.path.exists(log):
-            with open(log, encoding="utf-8", errors="replace") as handle:
-                detail = handle.read().strip()[:300]
-        self.fail(f"timed out waiting for {what}; queue={queue}; runner.log={detail!r}")
+        self.fail(f"timed out waiting for {what}; {self.failure_detail()}")
+
+    def failure_detail(self):
+        states = {
+            name: self.listed(name) for name in ("queue", "running", "done", "pids", "status")
+        }
+        logs = {}
+        # The transcript header filled the former 300-character diagnostic,
+        # hiding every PowerShell error. Include tails of the helper and job
+        # logs, and the recorded pids/status, from this test's directory only.
+        for folder, _, names in os.walk(self.root):
+            for name in names:
+                path = os.path.join(folder, name)
+                if name.endswith((".log", ".err")) or os.path.basename(folder) in (
+                    "pids",
+                    "status",
+                ):
+                    try:
+                        with open(path, encoding="utf-8", errors="replace") as handle:
+                            logs[os.path.relpath(path, self.root)] = handle.read()[-4000:]
+                    except OSError:
+                        pass
+        return f"states={states!r}; logs={logs!r}"
 
     def listed(self, directory: str):
-        return os.listdir(os.path.join(self.directory, directory))
+        try:
+            return os.listdir(os.path.join(self.directory, directory))
+        except FileNotFoundError:
+            return []
 
 
 @unittest.skipUnless(BASH, "needs a bash")

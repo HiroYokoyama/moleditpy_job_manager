@@ -47,7 +47,6 @@ class TestBashForce(EndToEndCase):
 
     def _release(self):
         open(self.stop, "a").close()
-        time.sleep(0.3)
 
     def command_that_waits(self, path: str) -> str:
         return f"while [ ! -f {bash_path(path)} ]; do sleep 0.1; done"
@@ -58,9 +57,23 @@ class TestBashForce(EndToEndCase):
         return submit_to_runner(self.transport(), self.host, preset, job, [self.input], force=force)
 
     def fill_the_only_slot(self) -> Job:
-        blocker = self.submit_job("long", self.command_that_waits(self.stop))
-        self.wait_for(lambda: self.listed("running"), timeout=START_TIMEOUT, what="the long job")
+        ready = self.marker("BLOCKER_STARTED")
+        blocker = self.submit_job(
+            "long", self.command_that_touches(ready) + "\n" + self.command_that_waits(self.stop)
+        )
+        # A running/ entry precedes both shell launches; it does not prove
+        # the payload has started occupying the slot yet.
+        self.wait_for(lambda: os.path.exists(ready), timeout=START_TIMEOUT, what="the long payload")
         return blocker
+
+    def test_releasing_the_blocker_finishes_its_wrapper_and_runner(self):
+        blocker = self.fill_the_only_slot()
+        self._release()
+        self.wait_for(
+            lambda: poll_runner(self.transport(), self.host, [blocker]).get(blocker.id) == "DONE",
+            timeout=START_TIMEOUT,
+            what="the released blocker to finish",
+        )
 
     def test_a_waiting_job_forced_starts_beside_the_one_holding_the_slot(self):
         self.fill_the_only_slot()
