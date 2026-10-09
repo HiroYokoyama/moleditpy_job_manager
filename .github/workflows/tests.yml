@@ -71,6 +71,7 @@ jobs:
         timeout-minutes: 20
         env:
           QT_QPA_PLATFORM: offscreen
+          PYTHONFAULTHANDLER: "1"
         run: python -m pytest tests/ -v --tb=short -n auto -rs --timeout=300 --timeout-method=thread
 
       - name: Fail if the Windows-only tests skipped

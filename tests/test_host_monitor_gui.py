@@ -79,6 +79,19 @@ class HostMonitorTestCase(DialogTestCase):
 
 
 class TestWhatItShows(HostMonitorTestCase):
+    def test_service_shutdown_stops_sampling_with_a_monitor_still_open(self):
+        dialog = self.monitor()
+        transport = self.transports[self.host.id]
+        self.assertTrue(dialog.sampler.active)
+        self.assertTrue(dialog.sampler._timer.isActive())
+
+        self.service.shutdown()
+
+        self.assertFalse(dialog.sampler.active)
+        self.assertFalse(dialog.sampler._timer.isActive())
+        self.assertEqual(transport.closes, 1)
+        self.assertEqual(dialog.sampler._transports, {})
+
     def test_a_card_for_every_host(self):
         self.store.add_host(make_host(id="second", name="workstation"))
         dialog = self.monitor()
