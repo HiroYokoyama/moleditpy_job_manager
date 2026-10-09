@@ -1475,7 +1475,9 @@ class TestCommandTemplateDropdown(DialogTestCase):
 
     def test_saving_the_current_command(self):
         self.dialog.txt_command.setText("orca [input] > [output]")
-        with patch("job_manager.submit_dialog.QInputDialog.getText", return_value=("Mine", True)):
+        with patch(
+            "job_manager.submission_templates.QInputDialog.getText", return_value=("Mine", True)
+        ):
             self.dialog._save_user_template()
         templates = JobStore(self.tmp).user_templates()
         self.assertEqual(len(templates), 1)
@@ -1492,7 +1494,9 @@ class TestCommandTemplateDropdown(DialogTestCase):
     def test_deleting_a_saved_template(self):
         self.store.add_user_template("Mine", "x")
         self.dialog._reload_templates()
-        with patch("job_manager.submit_dialog.QInputDialog.getItem", return_value=("Mine", True)):
+        with patch(
+            "job_manager.submission_templates.QInputDialog.getItem", return_value=("Mine", True)
+        ):
             self.dialog._delete_user_template()
         self.assertEqual(JobStore(self.tmp).user_templates(), [])
 

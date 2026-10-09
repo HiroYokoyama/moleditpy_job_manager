@@ -16,9 +16,6 @@ from __future__ import annotations
 from typing import Optional
 
 from PyQt6.QtGui import QFontDatabase
-
-from .theme import apply_theme
-from .window_utils import make_independent
 from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -31,14 +28,16 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
-    QTabWidget,
     QTableWidgetItem,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from .models import Job
 from .file_table import FilePathTable
+from .models import Job
+from .theme import apply_theme
+from .window_utils import make_independent
 
 
 class JobDetailsDialog(QDialog):

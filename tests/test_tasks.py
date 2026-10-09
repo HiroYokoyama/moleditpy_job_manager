@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import unittest
+import threading
 
 import pytest
 
 pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 is not installed")
 
 from PyQt6 import sip  # noqa: E402
+from PyQt6.QtCore import QCoreApplication, QEvent  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QLabel, QWidget  # noqa: E402
 
 from job_manager.tasks import gone, run_async  # noqa: E402
@@ -87,6 +89,59 @@ class TestAnOwnerThatHasGone(unittest.TestCase):
     def test_something_that_is_not_qt_is_never_gone(self):
         self.assertFalse(gone(None))
         self.assertFalse(gone(object()))
+
+    def test_worker_answers_and_cleanup_run_in_the_owners_thread(self):
+        pool = HeldPool()
+        window = self.window()
+        seen = []
+        main_thread = threading.get_ident()
+        run_async(
+            pool,
+            lambda: "done",
+            on_success=lambda value: seen.append((value, threading.get_ident())),
+            on_finished=lambda: seen.append(("finished", threading.get_ident())),
+            owner=window,
+        )
+        worker = threading.Thread(target=pool.run)
+        worker.start()
+        worker.join(timeout=5)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(seen, [])
+        _app.processEvents()
+        self.assertEqual(seen, [("done", main_thread), ("finished", main_thread)])
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        self.assertEqual(window.findChildren(type(window.label)), [window.label])
+        self.assertEqual(len(window.children()), 1)
+        sip.delete(window)
+
+    def test_destroying_owner_drops_already_queued_worker_answers(self):
+        pool = HeldPool()
+        window = self.window()
+        seen = []
+        run_async(pool, lambda: "done", on_success=seen.append, owner=window)
+        worker = threading.Thread(target=pool.run)
+        worker.start()
+        worker.join(timeout=5)
+        self.assertFalse(worker.is_alive())
+        sip.delete(window)
+        _app.processEvents()
+        self.assertEqual(seen, [])
+
+    def test_success_callback_can_destroy_its_owner(self):
+        pool = HeldPool()
+        window = self.window()
+        seen = []
+        run_async(
+            pool,
+            lambda: "done",
+            on_success=lambda value: sip.delete(window),
+            on_finished=lambda: seen.append("finished"),
+            owner=window,
+        )
+        pool.run()
+        _app.processEvents()
+        self.assertTrue(sip.isdeleted(window))
+        self.assertEqual(seen, [])
 
 
 if __name__ == "__main__":

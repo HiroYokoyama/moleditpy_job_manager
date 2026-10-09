@@ -11,7 +11,7 @@ import logging
 from typing import Any, Callable, Optional
 
 from PyQt6 import sip
-from PyQt6.QtCore import QObject, QRunnable, QThreadPool, pyqtSignal
+from PyQt6.QtCore import QObject, QRunnable, QThreadPool, pyqtSignal, pyqtSlot
 
 
 class _TaskSignals(QObject):
@@ -76,6 +76,36 @@ def _guarded(owner: QObject, callback: Optional[Callable]) -> Optional[Callable]
     return call
 
 
+class _CallbackReceiver(QObject):
+    """Deliver a task's answer in the owner's thread, for the owner's lifetime."""
+
+    def __init__(self, owner, on_success, on_error, on_finished):
+        super().__init__(owner)
+        self.on_success = on_success
+        self.on_error = on_error
+        self.on_finished = on_finished
+
+    @pyqtSlot(object)
+    def succeeded(self, value):
+        if self.on_success is not None:
+            self.on_success(value)
+
+    @pyqtSlot(str)
+    def failed(self, error):
+        if self.on_error is not None:
+            self.on_error(error)
+
+    @pyqtSlot()
+    def finished(self):
+        try:
+            if self.on_finished is not None:
+                self.on_finished()
+        finally:
+            # A callback may itself close and destroy the owning window.
+            if not gone(self):
+                self.deleteLater()
+
+
 def run_async(
     pool: QThreadPool,
     fn: Callable[[], Any],
@@ -96,13 +126,22 @@ def run_async(
     slots, so Qt does not disconnect them when it is destroyed: a dialog closed
     while its work was in flight had the answer delivered into widgets that no
     longer existed, which raised, or crashed the process outright. With an
-    owner, a callback arriving after it is gone is dropped.
+    owner, a QObject child receives the signals in the owner's thread, and Qt
+    disconnects it automatically when the owner is destroyed.
     """
+    task = BackgroundTask(fn, quiet=quiet)
+    if isinstance(owner, QObject):
+        if not gone(owner):
+            receiver = _CallbackReceiver(owner, on_success, on_error, on_finished)
+            task.signals.succeeded.connect(receiver.succeeded)
+            task.signals.failed.connect(receiver.failed)
+            task.signals.finished.connect(receiver.finished)
+        pool.start(task)
+        return task
     if owner is not None:
         on_success = _guarded(owner, on_success)
         on_error = _guarded(owner, on_error)
         on_finished = _guarded(owner, on_finished)
-    task = BackgroundTask(fn, quiet=quiet)
     if on_success is not None:
         task.signals.succeeded.connect(on_success)
     if on_error is not None:

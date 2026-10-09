@@ -6,25 +6,17 @@ affected rows instead of rebuilding every cell on a timer.
 
 from __future__ import annotations
 
-from html import escape
-
 import logging
 import os
 import time
+from html import escape
 from typing import Any, List, Optional
 
-
 from PyQt6.QtCore import (
-    QAbstractTableModel,
     QEvent,
-    QModelIndex,
-    QObject,
-    QSortFilterProxyModel,
     Qt,
     QTimer,
-    QVariant,
 )
-from PyQt6.QtGui import QAction, QColor
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -41,42 +33,82 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QSplitter,
-    QStyledItemDelegate,
     QTableView,
     QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
-
 from . import PLUGIN_VERSION
 from .credentials import ensure_password
+from .job_actions import (
+    FORCE_ACTION_TEXT as FORCE_ACTION_TEXT,
+)
+from .job_actions import (
+    RECHECK_ACTION_TEXT as RECHECK_ACTION_TEXT,
+)
+from .job_actions import create_job_actions
+from .job_table import (
+    _STATE_COLORS as _STATE_COLORS,
+)
+from .job_table import (
+    COLUMNS as COLUMNS,
+)
+from .job_table import (
+    JobFilterProxyModel as JobFilterProxyModel,
+)
+from .job_table import (
+    JobTableModel as JobTableModel,
+)
+from .job_table import (
+    _StateColorDelegate as _StateColorDelegate,
+)
+from .job_table import (
+    format_duration as format_duration,
+)
+from .job_table import (
+    format_stamp as format_stamp,
+)
 from .models import (
-    STATE_BLOCKED,
     STATE_DONE,
     STATE_FAILED,
     STATE_LOST,
-    STATE_PENDING,
-    STATE_QUEUED,
-    STATE_RUNNING,
     Job,
 )
-from .service import JobService
-from .ui_actions import action_button, action_toolbar, make_action, populate_menu
-from .theme import (
-    CY_AMBER,
-    CY_GREEN,
-    CY_GREY,
-    CY_PURPLE,
-    CY_RED,
-    CY_TEAL,
-    apply_theme,
+from .result_view import (
+    TEXT_EXTENSIONS as TEXT_EXTENSIONS,
 )
-from .tasks import run_async
-from .window_utils import make_independent
+from .result_view import (
+    TEXT_VIEW_LIMIT as TEXT_VIEW_LIMIT,
+)
+from .result_view import (
+    clear_document as clear_document,
+)
+from .result_view import (
+    is_text_file as is_text_file,
+)
+from .result_view import (
+    open_in_host as open_in_host,
+)
+from .result_view import (
+    pick_primary_result as pick_primary_result,
+)
+from .result_view import (
+    read_text_for_view as read_text_for_view,
+)
+from .result_view import (
+    show_text_window as show_text_window,
+)
+from .service import JobService
 from .store import (
     JOB_EXTENSION,
 )
+from .tasks import run_async
+from .theme import (
+    apply_theme,
+)
+from .ui_actions import action_button, action_toolbar, populate_menu
+from .window_utils import make_independent
 
 #: Job lists this window opens -- archived or not. .json covers files written
 #: before the extension existed.
@@ -92,267 +124,6 @@ BANNER_STYLE = (
     f"border: 1px solid palette(mid); border-left: 3px solid {_ACCENT2}; "
     "padding: 6px 10px; border-radius: 4px;"
 )
-
-
-#: Opened in this plugin's own text window, never handed to MoleditPy.
-#: OpenBabel lists "txt" as an input format (one empty molecule per line), so
-#: with the OpenBabel plugin installed MoleditPy read an output text file as
-#: thousands of molecules on the GUI thread and stopped responding -- after
-#: first clearing the user's document to make room for a structure that was
-#: never coming.
-TEXT_EXTENSIONS = (".txt",)
-#: The most of a text file shown at once; the end is kept, since that is where
-#: an output file says how it finished.
-TEXT_VIEW_LIMIT = 5 * 1024 * 1024
-
-FORCE_ACTION_TEXT = "Force Run Now"
-RECHECK_ACTION_TEXT = "Re-check State"
-
-COLUMNS = ("Name", "Host", "Queue ID", "State", "After", "Elapsed", "Submitted", "Updated")
-
-_STATE_COLORS = {
-    STATE_RUNNING: CY_GREEN,
-    STATE_PENDING: CY_AMBER,
-    STATE_DONE: CY_TEAL,
-    STATE_FAILED: CY_RED,
-    STATE_LOST: CY_PURPLE,
-    STATE_QUEUED: CY_GREY,
-    STATE_BLOCKED: CY_RED,
-}
-
-
-def format_duration(seconds: float) -> str:
-    total = int(max(0, seconds))
-    hours, remainder = divmod(total, 3600)
-    minutes, secs = divmod(remainder, 60)
-    if hours:
-        return f"{hours}h {minutes:02d}m"
-    if minutes:
-        return f"{minutes}m {secs:02d}s"
-    return f"{secs}s"
-
-
-def format_stamp(stamp: float) -> str:
-    if not stamp:
-        return "-"
-    return time.strftime("%m-%d %H:%M", time.localtime(stamp))
-
-
-class _StateColorDelegate(QStyledItemDelegate):
-    """Keeps the State column's colour when its row is selected.
-
-    Qt paints selected text with HighlightedText and ignores the model's
-    ForegroundRole while selected, so RUNNING/FAILED/etc. all rendered the
-    same near-black. Overriding the palette colour, not the pen after the
-    fact, is what actually takes effect in both states.
-    """
-
-    def initStyleOption(self, option, index) -> None:  # noqa: N802 - Qt's spelling
-        super().initStyleOption(option, index)
-        color = index.data(Qt.ItemDataRole.ForegroundRole)
-        if color is not None:
-            option.palette.setColor(option.palette.ColorRole.Text, color)
-            option.palette.setColor(option.palette.ColorRole.HighlightedText, color)
-
-
-class JobTableModel(QAbstractTableModel):
-    """Read-only view of the store's job list."""
-
-    def __init__(self, service: JobService, parent: Optional[QWidget] = None) -> None:
-        super().__init__(parent)
-        self.service = service
-        self._rows: List[Job] = []
-        #: When set, the table shows this fixed list instead of the live store.
-        self._archived: Optional[List[Job]] = None
-        self.reload()
-
-    def show_archive(self, jobs: Optional[List[Job]]) -> None:
-        """Display an archived list, or None to go back to the live store."""
-        self._archived = jobs
-        self.reload()
-
-    def reload(self) -> None:
-        self.beginResetModel()
-        if self._archived is not None:
-            self._rows = list(self._archived)
-        else:
-            self._rows = self.service.store.job_list()
-        self.endResetModel()
-
-    def _is_waiting(self, job: Job) -> bool:
-        """True while a chained job is still waiting for its predecessor."""
-        if not job.after_job_id or not job.is_active:
-            return False
-        predecessor = self.service.store.jobs.get(job.after_job_id)
-        return predecessor is not None and predecessor.is_active
-
-    def display_state(self, job: Job) -> str:
-        """What the State column says, which is not always ``job.state``.
-
-        A chained job the queue calls PENDING is either still waiting its turn
-        or waiting for something that already failed, and those two deserve
-        very different reactions from the user.
-        """
-        # The cached set, not chain_blocker: asked twice per row per repaint,
-        # and chain_blocker walks the whole chain each time.
-        if job.id in self.service.store.blocked_ids():
-            return STATE_BLOCKED
-        if self._is_waiting(job):
-            return STATE_QUEUED
-        return job.state
-
-    def predecessor_of(self, job: Job) -> Optional[Job]:
-        if not job.after_job_id:
-            return None
-        return self.service.store.jobs.get(job.after_job_id)
-
-    def job_at(self, row: int) -> Optional[Job]:
-        if 0 <= row < len(self._rows):
-            return self._rows[row]
-        return None
-
-    def row_of(self, job_id: str) -> int:
-        for index, job in enumerate(self._rows):
-            if job.id == job_id:
-                return index
-        return -1
-
-    def refresh_job(self, job_id: str) -> None:
-        row = self.row_of(job_id)
-        if row < 0:
-            self.reload()
-            return
-        self.dataChanged.emit(self.index(row, 0), self.index(row, len(COLUMNS) - 1))
-
-    # --- Qt model interface -------------------------------------------------
-
-    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:
-        return 0 if parent.isValid() else len(self._rows)
-
-    def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
-        return 0 if parent.isValid() else len(COLUMNS)
-
-    def headerData(self, section: int, orientation, role=Qt.ItemDataRole.DisplayRole):
-        if role != Qt.ItemDataRole.DisplayRole:
-            return QVariant()
-        if orientation == Qt.Orientation.Horizontal and 0 <= section < len(COLUMNS):
-            return COLUMNS[section]
-        return QVariant()
-
-    def data(self, index: QModelIndex, role=Qt.ItemDataRole.DisplayRole):
-        if not index.isValid():
-            return QVariant()
-        job = self.job_at(index.row())
-        if job is None:
-            return QVariant()
-
-        if role == Qt.ItemDataRole.DisplayRole:
-            column = index.column()
-            if column == 0:
-                return job.name
-            if column == 1:
-                return job.host_name
-            if column == 2:
-                return job.remote_job_id or "-"
-            if column == 3:
-                state = self.display_state(job)
-                suffix = ""
-                if state == STATE_FAILED and job.rc is not None:
-                    suffix = f" (rc={job.rc})"
-                return f"{state}{suffix}"
-            if column == 4:
-                predecessor = self.predecessor_of(job)
-                if predecessor is None:
-                    return "-"
-                return predecessor.name + ("" if job.chain_any else " (on success)")
-            if column == 5:
-                if job.is_terminal or job.state == STATE_RUNNING or job.started_at:
-                    return format_duration(job.elapsed())
-                return f"wait {format_duration(job.waiting())}"
-            if column == 6:
-                return format_stamp(job.submitted_at)
-            if column == 7:
-                return format_stamp(job.updated_at)
-        elif role == Qt.ItemDataRole.UserRole:
-            # The raw value behind the formatted text, so sorting is numeric
-            # ("10m" vs "2m") rather than string order.
-            column = index.column()
-            if column == 5:
-                return (
-                    job.elapsed()
-                    if (job.is_terminal or job.state == STATE_RUNNING or job.started_at)
-                    else job.waiting()
-                )
-            if column == 6:
-                return job.submitted_at
-            if column == 7:
-                return job.updated_at
-            return self.data(index, Qt.ItemDataRole.DisplayRole)
-        elif role == Qt.ItemDataRole.ForegroundRole and index.column() == 3:
-            color = _STATE_COLORS.get(self.display_state(job))
-            if color:
-                return QColor(color)
-        elif role == Qt.ItemDataRole.ToolTipRole:
-            lines = [f"Remote: {job.remote_dir or '-'}"]
-            if job.local_dir:
-                lines.append(f"Local: {job.local_dir}")
-            if job.submitted_at:
-                lines.append(f"Queue wait: {format_duration(job.waiting())}")
-            if job.started_at or job.is_terminal:
-                lines.append(f"Run time: {format_duration(job.elapsed())}")
-            blocker = self.service.store.chain_blocker(job)
-            if blocker is not None:
-                lines.append(
-                    f"Will never start: it waits for {blocker.name} to succeed, "
-                    f"and that job {blocker.state.lower()}."
-                )
-            if job.last_error:
-                lines.append(f"Error: {job.last_error}")
-            return "\n".join(lines)
-        return QVariant()
-
-
-class JobFilterProxyModel(QSortFilterProxyModel):
-    """Sits between the table and :class:`JobTableModel`: click a header to
-    sort, type to filter, without changing what the model itself holds.
-
-    Sorting reads UserRole, not the formatted text ("10m" vs "2m 05s").
-    Filtering matches any column, not only the job name.
-    """
-
-    def __init__(self, parent: Optional[QObject] = None) -> None:
-        super().__init__(parent)
-        self._search = ""
-        self.setSortCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-
-    def set_search_text(self, text: str) -> None:
-        text = (text or "").strip().lower()
-        if text == self._search:
-            return
-        self._search = text
-        self.invalidateFilter()
-
-    def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
-        left_value = self.sourceModel().data(left, Qt.ItemDataRole.UserRole)
-        right_value = self.sourceModel().data(right, Qt.ItemDataRole.UserRole)
-        if left_value is None or right_value is None:
-            return super().lessThan(left, right)
-        try:
-            return left_value < right_value
-        except TypeError:
-            # A mismatched pair (QVariant() vs a real value) can happen
-            # mid-reload; an approximate text order is no real loss.
-            return str(left_value) < str(right_value)
-
-    def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
-        if not self._search:
-            return True
-        model = self.sourceModel()
-        for column in range(model.columnCount()):
-            value = model.index(source_row, column, source_parent).data(Qt.ItemDataRole.DisplayRole)
-            if value and self._search in str(value).lower():
-                return True
-        return False
 
 
 class JobsDialog(QDialog):
@@ -408,150 +179,31 @@ class JobsDialog(QDialog):
         layout.addWidget(self.lbl_status)
 
     def _create_actions(self) -> None:
-        specs = (
-            ("new", "New Job...", self.open_submit_dialog, "Submit a new calculation."),
-            ("hosts", "Hosts...", self.open_hosts_dialog, "Manage host profiles."),
-            (
-                "refresh",
-                "Refresh Now",
-                self._refresh_now,
-                "Ask every host with active jobs for their status now.",
-            ),
-            (
-                "reload",
-                "Reload List",
-                self._reload_jobs,
-                "Re-read the job file to pick up changes from another Job Manager window.",
-            ),
-            (
-                "host_monitor",
-                "Host Monitor...",
-                self.open_host_monitor,
-                "Live load and memory per host, sampled only while that window is open.",
-            ),
-            (
-                "settings",
-                "Settings...",
-                self.open_settings,
-                "Polling, results, notifications, the task bar and the tray, the local API.",
-            ),
-            ("cancel", "Cancel Job", self._cancel_selected, "Cancel the selected job on its host."),
-            ("download", "Download", self._download_selected, "Choose results to download."),
-            (
-                "open",
-                "Open Result",
-                self._open_selected_result,
-                "Open one of this job's output files in MoleditPy.",
-            ),
-            (
-                "tail",
-                "Tail Log",
-                self._tail_selected,
-                "Read the end of the job's log in a window of its own.",
-            ),
-            (
-                "tail_file",
-                "Tail File...",
-                self._tail_specific_file,
-                "Read the tail of a chosen remote output/log file in the job's directory.",
-            ),
-            (
-                "details",
-                "Details",
-                self._show_details,
-                "Everything recorded about this job, and the script that ran.",
-            ),
-            (
-                "resubmit",
-                "Resubmit",
-                self._resubmit_selected,
-                "Open the submit wizard with this job's host, resources and input files.",
-            ),
-            ("remove", "Remove", self._remove_selected, "Remove the selected job from this list."),
-            (
-                "open_default",
-                "Default List",
-                self._use_default_job_list,
-                "Back to the job list this plugin keeps in ~/.moleditpy/job_manager/.",
-            ),
-            (
-                "open_list",
-                "Open List...",
-                self._open_job_list_file,
-                f"Open a saved job list ({JOB_EXTENSION}). A cleared list opens read only.",
-            ),
-            (
-                "save_as",
-                "Save As...",
-                lambda: self._export(JOB_EXTENSION),
-                f"Save the job list to a {JOB_EXTENSION} file, openable again from here.",
-            ),
-            (
-                "export_csv",
-                "Export CSV...",
-                lambda: self._export(".csv"),
-                "Write one row per job: state, exit code, timings, paths.",
-            ),
-            (
-                "rebuild",
-                "Rebuild from Folder...",
-                self._rebuild_from_folder,
-                "Build a read-only job list from results already on disk.",
-            ),
-            (
-                "archive",
-                "Load Archive...",
-                self._load_archive,
-                "View a previously cleared job list, read only.",
-            ),
-            (
-                "clear",
-                "Clear List...",
-                self._clear_jobs,
-                "Empty the table, saving a dated copy first. Nothing on the host is deleted.",
-            ),
-            (
-                "force",
-                FORCE_ACTION_TEXT,
-                self._force_selected,
-                "Start a waiting helper-queue job now.",
-            ),
-            (
-                "recheck",
-                RECHECK_ACTION_TEXT,
-                self._recheck_selected,
-                "Look for evidence of a lost job.",
-            ),
-        )
-        self.job_actions: dict[str, QAction] = {
-            key: make_action(self, text, callback, tooltip)
-            for key, text, callback, tooltip in specs
+        callbacks = {
+            "_cancel_selected": self._cancel_selected,
+            "_clear_jobs": self._clear_jobs,
+            "_download_selected": self._download_selected,
+            "_export": self._export,
+            "_force_selected": self._force_selected,
+            "_load_archive": self._load_archive,
+            "_open_job_list_file": self._open_job_list_file,
+            "_open_selected_result": self._open_selected_result,
+            "_rebuild_from_folder": self._rebuild_from_folder,
+            "_recheck_selected": self._recheck_selected,
+            "_refresh_now": self._refresh_now,
+            "_reload_jobs": self._reload_jobs,
+            "_remove_selected": self._remove_selected,
+            "_resubmit_selected": self._resubmit_selected,
+            "_show_details": self._show_details,
+            "_tail_selected": self._tail_selected,
+            "_tail_specific_file": self._tail_specific_file,
+            "_use_default_job_list": self._use_default_job_list,
+            "open_host_monitor": self.open_host_monitor,
+            "open_hosts_dialog": self.open_hosts_dialog,
+            "open_settings": self.open_settings,
+            "open_submit_dialog": self.open_submit_dialog,
         }
-        for key, shortcut in (
-            ("new", "Ctrl+N"),
-            ("open_list", "Ctrl+O"),
-            ("save_as", "Ctrl+Shift+S"),
-            ("refresh", "F5"),
-            ("reload", "Ctrl+R"),
-        ):
-            self.job_actions[key].setShortcut(shortcut)
-        self._job_menu_actions = tuple(
-            self.job_actions[key] if key is not None else None
-            for key in (
-                "open",
-                "download",
-                "tail",
-                "tail_file",
-                "details",
-                None,
-                "resubmit",
-                "force",
-                "recheck",
-                None,
-                "cancel",
-                "remove",
-            )
-        )
+        self.job_actions, self._job_menu_actions = create_job_actions(self, callbacks)
 
     def _build_menus(self, layout: QVBoxLayout) -> None:
         self.menu_bar = QMenuBar(self)
@@ -1841,125 +1493,3 @@ class JobsDialog(QDialog):
         # Accepted, not delegated: QDialog's closeEvent calls reject(), which
         # now tears down as well -- doing both would recurse.
         event.accept()
-
-
-def is_text_file(path: str) -> bool:
-    return os.path.splitext(path or "")[1].lower() in TEXT_EXTENSIONS
-
-
-def show_text_window(path: str, parent: Optional[QWidget] = None):
-    """Open ``path`` read-only in a text window, and return the window."""
-    from .text_dialog import TextDialog
-
-    def reload() -> None:
-        try:
-            dialog.set_text(read_text_for_view(path))
-        except OSError as exc:
-            dialog.set_text(f"Could not read {path}: {exc}")
-
-    # A finished result is read from the top; only a tail starts at the end.
-    dialog = TextDialog(
-        f"Job Manager {PLUGIN_VERSION} - {os.path.basename(path)}",
-        "",
-        parent,
-        on_refresh=reload,
-        follow=False,
-        auto_refresh=False,
-    )
-    dialog.set_text(read_text_for_view(path))
-    dialog.present()
-    return dialog
-
-
-def read_text_for_view(path: str, limit: int = TEXT_VIEW_LIMIT) -> str:
-    """The file as text, or its last ``limit`` bytes with a line saying so."""
-    size = os.path.getsize(path)
-    with open(path, "rb") as handle:
-        if size > limit:
-            handle.seek(size - limit)
-        data = handle.read()
-    text = data.decode("utf-8", errors="replace").replace("\r\n", "\n")
-    if size > limit:
-        # Cut at a line boundary, so the first line shown is a whole one.
-        text = text.split("\n", 1)[-1]
-        text = f"[Showing the last {limit // (1024 * 1024)} MB of {size:,} bytes]\n\n" + text
-    return text
-
-
-def pick_primary_result(paths: List[str], log_file: str = "") -> str:
-    """The file to hand to the application: ranked by what an analyzer plugin
-    is most likely to claim, never this plugin's own wrapper log, falling
-    back to the first path."""
-    from .runner import primary_output
-
-    return primary_output(paths, log_file) or (paths or [""])[0]
-
-
-def clear_document(main_window) -> bool:
-    """Empty the editor so a result opens onto a clean canvas.
-
-    Used to depend on the file's extension: built-in .xyz/.mol loaders
-    cleared with the unsaved-changes check skipped (silent data loss), while
-    an analyzer plugin (.out, .log) cleared nothing (two molecules on screen
-    at once). Cleared here for every route, *with* the check.
-
-    Returns True when the document is clear, including on a host too old to
-    have this manager.
-    """
-    manager = getattr(main_window, "edit_actions_manager", None)
-    clear = getattr(manager, "clear_all", None)
-    if not callable(clear):
-        return True
-    try:
-        return clear() is not False
-    except Exception:
-        logging.debug("Job Manager: the document was not cleared", exc_info=True)
-        return True
-
-
-def open_in_host(path: str) -> bool:
-    """Route a downloaded file through the application's own file openers.
-
-    Reuses ``MainWindow.init_manager.load_command_line_file``, which walks
-    registered plugin openers by priority before the built-in loaders, so no
-    analyzer plugin needs to be hard-coded here. Clears the document first --
-    see :func:`clear_document`.
-    """
-    from . import get_context
-
-    context = get_context()
-    if context is None or not path or not os.path.exists(path):
-        return False
-    try:
-        main_window = context.get_main_window()
-    except Exception:
-        logging.debug("Job Manager: no main window available", exc_info=True)
-        return False
-
-    if not clear_document(main_window):
-        return False
-
-    init_manager = getattr(main_window, "init_manager", None)
-    loader = getattr(init_manager, "load_command_line_file", None)
-    if callable(loader):
-        try:
-            loader(path)
-            return True
-        except Exception:
-            logging.warning("Job Manager: host could not open %s", path, exc_info=True)
-            return False
-
-    # Older hosts: dispatch to the highest-priority plugin opener directly.
-    plugin_manager = getattr(main_window, "plugin_manager", None)
-    openers = getattr(plugin_manager, "file_openers", {}) or {}
-    extension = os.path.splitext(path)[1].lower()
-    for opener in openers.get(extension, []):
-        callback = opener.get("callback") if isinstance(opener, dict) else None
-        if not callable(callback):
-            continue
-        try:
-            callback(path)
-            return True
-        except Exception:
-            logging.warning("Job Manager: opener failed for %s", path, exc_info=True)
-    return False
