@@ -13,6 +13,10 @@ Two things have to happen before any ``job_manager`` import:
 import os
 import shutil
 import tempfile
+import sys
+import traceback
+
+import pytest
 
 # Python falls back to os.getcwd() when TMP/TEMP/TMPDIR are all unset, and the
 # working directory of a test run is the repository. Every mkdtemp() in the
@@ -44,6 +48,44 @@ except ImportError:  # pragma: no cover - PyQt6-less environments (CI)
 
 if QApplication is not None:
     _app = QApplication.instance() or QApplication([])
+
+
+@pytest.fixture(autouse=True)
+def finish_deferred_qt_cleanup():
+    yield
+    if QApplication is not None:
+        from PyQt6.QtCore import QCoreApplication, QEvent
+
+        # deleteLater() needs an event-loop turn. Most tests do not exec(),
+        # and processEvents() alone does not flush DeferredDelete events.
+        # Honor each test's cleanup before the next test dispatches callbacks.
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def pytest_sessionstart(session):
+    if not os.environ.get("JOB_MANAGER_QT_DIAGNOSTICS") or QApplication is None:
+        return
+    import faulthandler
+    from PyQt6.QtCore import qInstallMessageHandler
+
+    worker = os.environ.get("PYTEST_XDIST_WORKER", "controller")
+    diagnostic = open(f"qt-diagnostics-{worker}.txt", "a", encoding="utf-8", buffering=1)
+    faulthandler.enable(diagnostic, all_threads=True)
+    previous_exception = sys.excepthook
+
+    def exception(kind, value, tb):
+        traceback.print_exception(kind, value, tb, file=diagnostic)
+        previous_exception(kind, value, tb)
+
+    def message(kind, context, text):
+        print(kind, text, file=diagnostic)
+        if previous_message is not None:
+            previous_message(kind, context, text)
+        else:
+            print(text, file=sys.__stderr__)
+
+    sys.excepthook = exception
+    previous_message = qInstallMessageHandler(message)
 
 
 def pytest_sessionfinish(session, exitstatus):

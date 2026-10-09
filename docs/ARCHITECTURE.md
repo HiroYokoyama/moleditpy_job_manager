@@ -364,6 +364,10 @@ answers when it is destroyed. Receivers delete themselves after completion;
 callbacks may safely destroy their own owner. Operations without a window owner
 retain their existing callback behavior.
 
+Service shutdown stops both polling and host sampling, including an open monitor's
+sampler. It clears pending operations before queuing transport cleanup, then waits
+for the worker pool; clearing afterward would discard queued connection cleanup.
+
 ### Validation
 
 Run `python -m pytest tests/ -q -n auto`, `ruff format job_manager tests`, and

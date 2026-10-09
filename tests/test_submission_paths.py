@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 import sys
 import tempfile
 import time
@@ -47,7 +46,7 @@ from job_manager.runner import (
 from job_manager.transport.local import LocalTransport, find_shell
 from job_manager.transport.wsl import WSLTransport
 
-from .bash_support import BASH
+from .bash_support import BASH, bash_path
 from .runner_support import REAL_PROCESS_TIMEOUT
 
 ON_WINDOWS = os.name == "nt"
@@ -331,10 +330,10 @@ class TestWSLThroughAStub(SubmissionCase):
         return transport
 
     def to_posix(self, path: str) -> str:
-        result = subprocess.run(
-            [BASH, "-c", f"cygpath -a -u '{path}'"], capture_output=True, text=True
-        )
-        return (result.stdout or "").strip() or path
+        # cygpath in a non-login shell can abbreviate TEMP as /tmp, but the
+        # stub's login shell resets that mount. A drive path names the same
+        # directory in both shells instead of a different temporary root.
+        return bash_path(path)
 
     def staged_path(self, path: str) -> str:
         return self.to_posix(path)

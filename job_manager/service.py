@@ -712,10 +712,10 @@ class JobService(QObject):
     def shutdown(self) -> None:
         from . import host_sampler
 
-        # Sampling uses this pool too. Stop its timer and queue connection
-        # cleanup before draining the pool, even if a monitor is still open.
-        host_sampler.shutdown_for(self)
         self.poller.shutdown()
         self.pool.clear()
+        # Sampling uses this pool too. Queue connection cleanup after clearing
+        # pending operations, so that clear() cannot discard the cleanup tasks.
+        host_sampler.shutdown_for(self)
         self.pool.waitForDone(3000)
         logging.debug("Job Manager: service shut down")
