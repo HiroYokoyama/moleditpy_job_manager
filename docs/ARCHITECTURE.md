@@ -300,6 +300,79 @@ working in, so a transfer cut off half way would otherwise leave a truncated
 | `input_scan.py` | the memory and core request stated in an input file |
 | `*_dialog.py` | the windows |
 
+## Component boundaries in 2.5.2
+
+The plugin entry point owns the session service. A window is a view of that
+session; closing the monitor does not stop tracking jobs. The store remains the
+single writer of settings and job records on the GUI thread.
+
+### Submission and execution
+
+`JobService` remains the public QObject facade. `SubmissionWorkflow` owns job
+creation, chaining waits, submission completion and failure handling. Transports,
+signals, the thread pool and poller belong to the service, rather than being
+duplicated in the workflow. A predecessor wait resolves before acquiring the
+transport, and the service hook remains late-bound.
+
+`runner` coordinates blocking host operations. `input_names` owns shell filename
+validation and upload collision detection. Single-job submissions from the UI,
+API and direct runner calls refuse colliding upload names before remote writes.
+The Windows scheduler checks names without case distinctions. Independent batch
+jobs can still use the same filename.
+
+`result_files` owns discovery, fetch patterns, destination containment and atomic
+downloads. It preserves the private staging directory and link containment
+checks. Scheduler modules, transports, and the Bash/PowerShell helper protocols
+remain separate components with their existing execution tests.
+
+### Persistence and API
+
+`JobStore` owns persistence, mutations and dependency-cache invalidation.
+`store_io` owns atomic JSON writes and safe CSV cells. `DependencyGraph` computes
+lanes, predecessors and blockers from the current jobs mapping; store calls
+create a fresh view so replacing a loaded job list cannot retain stale jobs.
+
+The API has three supporting modules: `api_types` for its shared schema, errors
+and deferred responses; `api_security` for token and endpoint files; and
+`api_inputs` for resolving and validating request fields. `api_core` coordinates
+routes and serializes responses. These modules import without Qt. `api_server`
+still binds loopback, defaults to disabled, and queues handlers onto the GUI
+thread. Existing imports from `api_core`, `runner` and `store` are retained.
+
+### Views and callback ownership
+
+| Component | Responsibility |
+|---|---|
+| `file_table` | Ordered file paths, selection, move and remove operations |
+| `input_files_panel` | Picker request, atomic paste validation and path controls |
+| `submission_resources` | Resource, download and queue widgets with explicit callbacks |
+| `submission_templates` | Template selection and user preferences using explicit controls |
+| `host_profile_form` | Connection/resource fields and profile collection |
+| `job_table` | Table model, filters, state colors and display formatting |
+| `job_actions` | Monitor action definitions and shortcuts with explicit callbacks |
+| `host_widgets` | Host cards, meters and history graphs |
+| `result_view` | Bounded text viewing and routing results through host file openers |
+
+Dialogs coordinate these components with the session service. Public dialog
+entry points and existing form attributes remain available. Components take the
+controls or callbacks they need, rather than relying on dialog mixins or a
+general-purpose attribute proxy.
+
+Window-owned background operations connect to QObject receivers parented to the
+window. Qt delivers their slots on the owner's thread and disconnects pending
+answers when it is destroyed. Receivers delete themselves after completion;
+callbacks may safely destroy their own owner. Operations without a window owner
+retain their existing callback behavior.
+
+### Validation
+
+Run `python -m pytest tests/ -q -n auto`, `ruff format job_manager tests`, and
+`ruff check job_manager tests`. CI covers the three headless Python versions,
+real Qt, Windows execution/native taskbar behavior, and the main application's
+PluginContext integration. Boundary regressions cover optional Qt imports,
+legacy shared-type identity, replaced job lists, upload collisions before
+remote writes, standalone widgets and queued callback destruction.
+
 ## The `submit_file()` handoff
 
 Other plugins hand a freshly written input straight to the wizard:

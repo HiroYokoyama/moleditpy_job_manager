@@ -531,6 +531,9 @@ days; the record of them has to outlive an update.
 
 ## Development
 
+See [Architecture](docs/ARCHITECTURE.md) for the service/workflow boundary,
+optional-Qt API modules, reusable form components and callback ownership.
+
 ```bash
 python -m pytest tests/ -v --cov=job_manager --cov-report=term-missing
 ```
