@@ -231,6 +231,9 @@ class TestItRunsWhatIsQueued(RunnerHarness):
 
         self.wait_for(
             lambda: len(self.listing()) == 3 and all(v == "done" for v in self.listing().values()),
+            # Three serial PowerShell launches need the combined per-job budget,
+            # especially while the rest of the suite also starts real shells.
+            timeout=45.0,
             what="all three to finish",
         )
         with open(self.marker("order"), encoding="ascii") as handle:

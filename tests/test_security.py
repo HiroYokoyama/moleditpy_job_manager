@@ -166,10 +166,12 @@ class TestDownloadsStayInTheirDirectory(unittest.TestCase):
         transport = FakeTransport(self.host).when("ls -p -1", stdout="mol.out\n../../.bashrc\n")
         job = Job(id="j1", remote_dir="~/jobs/1", log_file="job.log", fetch_globs=["*"])
         runner.fetch_results(transport, job, self.local)
-        inside = os.path.abspath(self.local) + os.sep
+        # Windows TEMP may use an 8.3 alias (RUNNER~1); resolved staging paths
+        # use its long spelling. Compare the actual destination, not spelling.
+        inside = os.path.normcase(os.path.realpath(self.local)) + os.sep
         for _remote, local_path in transport.downloads:
             self.assertTrue(
-                os.path.abspath(local_path).startswith(inside),
+                os.path.normcase(os.path.realpath(local_path)).startswith(inside),
                 f"{local_path} is outside {self.local}",
             )
         # And the traversal target itself was never created, wherever it lands.
