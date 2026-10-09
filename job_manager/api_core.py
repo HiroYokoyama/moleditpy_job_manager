@@ -19,7 +19,7 @@ import json
 import os
 import secrets
 import socket
-import stat
+import tempfile
 import threading
 import time
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -178,18 +178,19 @@ def write_private_file(path: str, text: str) -> None:
     said plainly in docs/API.md rather than pretended otherwise.
     """
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    temp = f"{path}.tmp{os.getpid()}"
-    handle = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, stat.S_IRUSR | stat.S_IWUSR)
+    handle, temp = tempfile.mkstemp(
+        prefix=os.path.basename(path) + ".tmp-", dir=os.path.dirname(path) or "."
+    )
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as stream:
             stream.write(text)
+        os.replace(temp, path)
     except Exception:
         try:
             os.unlink(temp)
         except OSError:
             pass
         raise
-    os.replace(temp, path)
 
 
 def read_token(directory: str) -> str:

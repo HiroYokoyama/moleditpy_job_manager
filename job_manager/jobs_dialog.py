@@ -6,6 +6,8 @@ affected rows instead of rebuilding every cell on a timer.
 
 from __future__ import annotations
 
+from html import escape
+
 import logging
 import os
 import time
@@ -1528,13 +1530,13 @@ class JobsDialog(QDialog):
         self._set_base_title(f"Job Manager {PLUGIN_VERSION} - {os.path.basename(store.jobs_path)}")
         if self.viewing_reconstructed():
             self.lbl_active_file.setText(
-                f"<b>Rebuilt from a folder</b> — {store.jobs_path}. Read only: these "
+                f"<b>Rebuilt from a folder</b> — {escape(str(store.jobs_path))}. Read only: these "
                 "calculations were found on disk, not submitted from here, so nothing "
                 "in this list can be submitted, cancelled or polled."
             )
         else:
             self.lbl_active_file.setText(
-                f"Working in <b>{store.jobs_path}</b> for this session. "
+                f"Working in <b>{escape(str(store.jobs_path))}</b> for this session. "
                 "Restarting comes back to the usual list."
             )
         self.lbl_active_file.setVisible(True)
@@ -1547,7 +1549,7 @@ class JobsDialog(QDialog):
         self._archive_path = path
         self.model.show_archive(jobs)
         self.lbl_archive.setText(
-            f"Viewing <b>{os.path.basename(path)}</b> ({len(jobs)} jobs) — this list is "
+            f"Viewing <b>{escape(os.path.basename(path))}</b> ({len(jobs)} jobs) — this list is "
             "marked archived, so it is read only. To delete archives permanently, "
             f"open {directory}"
         )

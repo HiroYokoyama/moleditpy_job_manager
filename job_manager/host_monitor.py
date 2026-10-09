@@ -7,6 +7,8 @@ it is open and draws what it reports.
 
 from __future__ import annotations
 
+from html import escape
+
 import logging
 from collections import deque
 from typing import Deque, Dict, Optional
@@ -548,7 +550,7 @@ class HostCard(QFrame):
         outer.setSpacing(6)
 
         header = QHBoxLayout()
-        self.lbl_name = QLabel(f"<b>{host.name}</b>")
+        self.lbl_name = QLabel(f"<b>{escape(str(host.name))}</b>")
         self.lbl_state = QLabel("waiting...")
         header.addWidget(self.lbl_name)
         header.addStretch(1)

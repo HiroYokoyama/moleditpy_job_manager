@@ -547,3 +547,9 @@ one in the log.
 ## License
 
 Licensed under the GNU General Public License v3.0 — see [LICENSE](LICENSE) for details.
+
+
+Downloads in 2.5.1 resolve destination directories before checking containment.
+Subdirectory links leading outside the selected download folder are refused.
+Transfers use a new private staging directory rather than opening a predictable
+`.moleditpy-part` path; successful transfers still replace the result atomically.

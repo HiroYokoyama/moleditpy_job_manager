@@ -7,10 +7,12 @@ Displays all results in a hierarchical folder tree scoped strictly to the job.
 
 from __future__ import annotations
 
+from html import escape
+
 import os
 from typing import Callable, List, Optional, Sequence
 
-from PyQt6.QtCore import QUrl
+from PyQt6.QtCore import QUrl, Qt
 from PyQt6.QtGui import QColor, QDesktopServices
 from PyQt6.QtWidgets import (
     QDialog,
@@ -128,7 +130,9 @@ class OutputFileSelectorDialog(QDialog):
 
         # Headline, filter, tree, buttons -- the same order and the same
         # pieces as the download and tail-file lists.
-        self.lbl_headline = QLabel(f"Select a file from <b>{self.job.name}</b> to open:")
+        self.lbl_headline = QLabel(
+            f"Select a file from <b>{escape(str(self.job.name))}</b> to open:"
+        )
         self.lbl_headline.setWordWrap(True)
         layout.addWidget(self.lbl_headline)
 
@@ -145,6 +149,7 @@ class OutputFileSelectorDialog(QDialog):
         layout.addWidget(self.tree, 1)
 
         self.lbl_status = QLabel("")
+        self.lbl_status.setTextFormat(Qt.TextFormat.PlainText)
         self.lbl_status.setStyleSheet("color: palette(mid); font-size: 11px;")
         layout.addWidget(self.lbl_status)
 

@@ -673,12 +673,9 @@ def download_host_paths(
             )
             continue
         taken.add(name)
-        staging = target + PARTIAL_SUFFIX
         try:
-            transport.download(path, staging)
-            os.replace(staging, target)
+            _download_atomic(transport, path, target, local_dir)
         except (TransportError, OSError) as exc:
-            _discard(staging)
             skipped.append((path, str(exc) or "the transfer failed"))
             continue
         downloaded.append(target)
@@ -1125,7 +1122,7 @@ def fetch_results(
     # against an input named mol.xyz would otherwise write the remote copy back
     # over the user's file. It is the same bytes today, but a truncated
     # download would destroy the original.
-    protected = {os.path.abspath(path) for path in (job.input_files or []) if path}
+    protected = {os.path.realpath(path) for path in (job.input_files or []) if path}
     downloaded: List[str] = []
     for name in names:
         # Belt and braces: the listing is already filtered, but this is the
@@ -1136,14 +1133,14 @@ def fetch_results(
         target = os.path.join(local_dir, *safe.split("/"))
         # And the check that actually holds: whatever the name looked like, the
         # file has to land inside the directory we were asked to write into.
-        root = os.path.abspath(local_dir)
-        if os.path.commonpath([root, os.path.abspath(target)]) != root:
+        root = os.path.realpath(local_dir)
+        if not _inside_directory(root, os.path.realpath(os.path.dirname(target))):
             logging.warning("Job Manager: refusing to write outside %s: %r", local_dir, name)
             continue
         parent = os.path.dirname(target)
         if parent and not os.path.isdir(parent):
             os.makedirs(parent, exist_ok=True)
-        if os.path.abspath(target) in protected:
+        if os.path.realpath(target) in protected:
             logging.debug("Job Manager: not overwriting the input file %s", name)
             continue
         # Into a part file, then renamed. Results land in the directory the
@@ -1151,16 +1148,34 @@ def fetch_results(
         # leave a truncated .out sitting there under its real name, looking
         # exactly like a complete one -- and over the top of the previous
         # attempt's good copy.
-        staging = target + PARTIAL_SUFFIX
         try:
-            transport.download(remote_paths.join(job.remote_dir, name), staging)
-            os.replace(staging, target)
+            _download_atomic(transport, remote_paths.join(job.remote_dir, name), target, local_dir)
         except (TransportError, OSError):
             logging.warning("Job Manager: could not download %s", name)
-            _discard(staging)
             continue
         downloaded.append(target)
     return downloaded
+
+
+def _inside_directory(root: str, path: str) -> bool:
+    try:
+        return os.path.normcase(os.path.commonpath([root, path])) == os.path.normcase(root)
+    except ValueError:
+        # Windows junctions can point to a different drive.
+        return False
+
+
+def _download_atomic(transport: Transport, remote: str, target: str, root: str) -> None:
+    """Stage in a private directory; never open a predictable existing link."""
+    parent = os.path.realpath(os.path.dirname(target))
+    base = os.path.realpath(root)
+    if not _inside_directory(base, parent):
+        raise TransportError("Download destination escapes the selected directory")
+    destination = os.path.join(parent, os.path.basename(target))
+    with tempfile.TemporaryDirectory(prefix=".moleditpy-download-", dir=parent) as staging_dir:
+        staging = os.path.join(staging_dir, "result")
+        transport.download(remote, staging)
+        os.replace(staging, destination)
 
 
 def _discard(path: str) -> None:

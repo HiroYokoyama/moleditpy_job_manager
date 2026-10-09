@@ -389,6 +389,7 @@ class HostsDialog(QDialog):
         self.btn_test = QPushButton("Test Connection")
         self.btn_test.clicked.connect(self._test_connection)
         self.lbl_test = QLabel("")
+        self.lbl_test.setTextFormat(Qt.TextFormat.PlainText)
         self.lbl_test.setWordWrap(True)
         action_row.addWidget(self.btn_test)
         action_row.addWidget(self.lbl_test, 1)
