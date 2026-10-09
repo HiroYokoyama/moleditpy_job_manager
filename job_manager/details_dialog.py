@@ -16,9 +16,6 @@ from __future__ import annotations
 from typing import Optional
 
 from PyQt6.QtGui import QFontDatabase
-
-from .theme import apply_theme
-from .window_utils import make_independent
 from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -31,11 +28,16 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
+    QTableWidgetItem,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
+from .file_table import FilePathTable
 from .models import Job
+from .theme import apply_theme
+from .window_utils import make_independent
 
 
 class JobDetailsDialog(QDialog):
@@ -94,11 +96,43 @@ class JobDetailsDialog(QDialog):
         form.addRow("", self.chk_auto)
         layout.addWidget(box)
 
+        tabs = QTabWidget()
+        files_page = QWidget()
+        files_layout = QVBoxLayout(files_page)
+        for caption, path in (("Remote folder", job.remote_dir), ("Results folder", job.local_dir)):
+            row = QHBoxLayout()
+            row.addWidget(QLabel(caption))
+            field = QLineEdit(path)
+            field.setReadOnly(True)
+            field.setCursorPosition(0)
+            field.setToolTip(path)
+            if caption == "Results folder":
+                self.results_folder_view = field
+            row.addWidget(field, 1)
+            files_layout.addLayout(row)
+        self.file_table = FilePathTable(self)
+        self.file_table.setAccessibleName("Recorded job files")
+        self.file_table.setColumnCount(4)
+        self.file_table.setHorizontalHeaderLabels(["File", "Folder", "Status", "Role"])
+        for role, paths in (("Input", job.input_files), ("Downloaded", job.downloaded_files)):
+            for path in paths:
+                self.file_table.add_path(path)
+                self.file_table.setItem(self.file_table.rowCount() - 1, 3, QTableWidgetItem(role))
+        files_layout.addWidget(self.file_table, 1)
+        self.txt_file_path = QLineEdit()
+        self.txt_file_path.setReadOnly(True)
+        self.txt_file_path.setPlaceholderText(
+            "Select a recorded file to read or copy its full path"
+        )
+        files_layout.addWidget(self.txt_file_path)
+        self.file_table.itemSelectionChanged.connect(self._show_file_path)
+        tabs.addTab(files_page, "Files and folders")
         self.view = QPlainTextEdit()
         self.view.setReadOnly(True)
         self.view.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         self.view.setPlainText(record)
-        layout.addWidget(self.view, 1)
+        tabs.addTab(self.view, "Full record and script")
+        layout.addWidget(tabs, 1)
 
         self.lbl_saved = QLabel("")
         self.lbl_saved.setStyleSheet("color: palette(mid);")
@@ -113,6 +147,12 @@ class JobDetailsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+    def _show_file_path(self) -> None:
+        rows = self.file_table.selected_rows()
+        paths = self.file_table.paths()
+        self.txt_file_path.setText(paths[rows[0]] if rows else "")
+        self.txt_file_path.setCursorPosition(0)
+
     def _browse(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "Results folder", self.txt_local.text())
         if path:
@@ -126,6 +166,9 @@ class JobDetailsDialog(QDialog):
         ]
         self.job.local_dir = self.txt_local.text().strip()
         self.job.auto_download = bool(self.chk_auto.isChecked())
+        self.results_folder_view.setText(self.job.local_dir)
+        self.results_folder_view.setToolTip(self.job.local_dir)
+        self.results_folder_view.setCursorPosition(0)
         self.service.store.save_jobs()
         self.service.jobs_changed.emit()
         # Said plainly rather than in the title bar, which is where the job's

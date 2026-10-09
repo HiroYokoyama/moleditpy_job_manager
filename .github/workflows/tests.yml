@@ -71,7 +71,17 @@ jobs:
         timeout-minutes: 20
         env:
           QT_QPA_PLATFORM: offscreen
+          PYTHONFAULTHANDLER: "1"
+          JOB_MANAGER_QT_DIAGNOSTICS: "1"
         run: python -m pytest tests/ -v --tb=short -n auto -rs --timeout=300 --timeout-method=thread
+
+      - name: Preserve Windows Qt crash diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-qt-diagnostics
+          path: qt-diagnostics-*.txt
+          if-no-files-found: ignore
 
       - name: Fail if the Windows-only tests skipped
         env:

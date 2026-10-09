@@ -15,16 +15,80 @@ the code that was already there.
 
 from __future__ import annotations
 
-import json
 import os
-import secrets
-import socket
-import tempfile
-import threading
-import time
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 from urllib.parse import unquote
 
+from .api_inputs import ApiInputs
+from .api_security import (
+    endpoint_path as endpoint_path,
+)
+from .api_security import (
+    ensure_token as ensure_token,
+)
+from .api_security import (
+    live_endpoint as live_endpoint,
+)
+from .api_security import (
+    new_token as new_token,
+)
+from .api_security import (
+    read_token as read_token,
+)
+from .api_security import (
+    remove_endpoint_file as remove_endpoint_file,
+)
+from .api_security import (
+    token_path as token_path,
+)
+from .api_security import (
+    tokens_match as tokens_match,
+)
+from .api_security import (
+    write_endpoint_file as write_endpoint_file,
+)
+from .api_security import (
+    write_private_file as write_private_file,
+)
+from .api_types import (
+    API_PREFIX as API_PREFIX,
+)
+from .api_types import (
+    API_VERSION as API_VERSION,
+)
+from .api_types import (
+    BIND_HOST as BIND_HOST,
+)
+from .api_types import (
+    DEFAULT_PORT as DEFAULT_PORT,
+)
+from .api_types import (
+    DOWNLOAD_TIMEOUT as DOWNLOAD_TIMEOUT,
+)
+from .api_types import (
+    ENDPOINT_FILENAME as ENDPOINT_FILENAME,
+)
+from .api_types import (
+    PRESET_FIELDS as PRESET_FIELDS,
+)
+from .api_types import (
+    REMOTE_TIMEOUT as REMOTE_TIMEOUT,
+)
+from .api_types import (
+    ROUTES as ROUTES,
+)
+from .api_types import (
+    TOKEN_FILENAME as TOKEN_FILENAME,
+)
+from .api_types import (
+    ApiError as ApiError,
+)
+from .api_types import (
+    Deferred as Deferred,
+)
+from .api_types import (
+    route_list as route_list,
+)
 from .models import (
     ACTIVE_STATES,
     SCHEDULER_SHELL,
@@ -37,257 +101,6 @@ from .models import (
     Job,
     SubmitPreset,
 )
-
-#: Bumped when a response or a request field changes meaning. The path carries
-#: it, so a client written against v1 keeps working when v2 appears beside it.
-API_VERSION = 1
-API_PREFIX = f"/api/v{API_VERSION}"
-
-#: Persistent shared secret. Separate from the endpoint file, which is deleted
-#: when the server stops: a client configured once with the token must not have
-#: to be reconfigured because MoleditPy was restarted.
-TOKEN_FILENAME = "api_token"
-#: Written while the server is listening, removed when it stops. This is how a
-#: client finds the port without being told one.
-ENDPOINT_FILENAME = "api.json"
-
-DEFAULT_PORT = 8765
-#: Loopback only, and not configurable. See docs/API.md: the token is readable
-#: by anything running as this user, so it is not a credential that would make
-#: exposing the port to a network safe.
-BIND_HOST = "127.0.0.1"
-
-#: How long a request that has to reach the cluster (a log tail, a directory
-#: listing) may take before the client is told so, rather than hanging.
-REMOTE_TIMEOUT = 120.0
-#: A fetch of files named by path can be large, and the reply is the list of
-#: what landed -- so it is held longer than a listing.
-DOWNLOAD_TIMEOUT = 1800.0
-
-#: Names a submission may set on the preset it builds. Anything else in the
-#: body is either a job field handled explicitly or a mistake worth reporting.
-PRESET_FIELDS = {
-    "queue": str,
-    "account": str,
-    "walltime": str,
-    "nodes": int,
-    "ntasks": int,
-    "cpus_per_task": int,
-    "memory": str,
-    "modules": list,
-    "pre_commands": list,
-    "extra_directives": list,
-    "submit_options": str,
-    "fetch_globs": list,
-    "auto_download": bool,
-}
-
-
-#: Every route, as ``/ping`` and an unknown path list them: a client that
-#: never saw docs/API.md -- a script, an agent -- otherwise had to guess.
-#: Kept in step with the dispatch in :meth:`JobApi.handle` by a test.
-ROUTES = (
-    ("GET", "/ping", "version, and how many jobs and hosts there are"),
-    ("GET", "/hosts", "configured hosts"),
-    ("GET", "/hosts/{id}/status", "load, memory, cores, and the helper queue; ?stats=0"),
-    ("GET", "/hosts/{id}/files", "list any directory on the host; ?path=, ?depth="),
-    ("GET", "/hosts/{id}/file", "is a path there, its size and sha256; ?path=, ?hash=0"),
-    ("POST", "/hosts/{id}/download", "fetch files by path from anywhere on the host"),
-    ("GET", "/presets", "saved presets; ?host="),
-    ("GET", "/jobs", "tracked jobs; ?state=, ?host=, ?name=, ?limit="),
-    ("POST", "/jobs", "submit a job: host plus command or preset, files"),
-    ("GET", "/jobs/{id}", "one job"),
-    ("DELETE", "/jobs/{id}", "stop tracking a finished job"),
-    ("POST", "/jobs/{id}/cancel", "cancel it on the host"),
-    ("POST", "/jobs/{id}/download", "fetch its results"),
-    ("GET", "/jobs/{id}/log", "tail its log; ?lines=, ?file="),
-    ("GET", "/jobs/{id}/files", "list its remote directory"),
-    ("POST", "/jobs/{id}/force", "start it now, ahead of the helper queue"),
-    ("POST", "/jobs/{id}/recheck", "look again at a LOST job"),
-)
-
-
-def route_list() -> List[str]:
-    return [f"{method} {API_PREFIX}{path} - {what}" for method, path, what in ROUTES]
-
-
-class ApiError(Exception):
-    """A request that cannot be served, carrying the status the client gets."""
-
-    def __init__(self, status: int, message: str) -> None:
-        super().__init__(message)
-        self.status = int(status)
-        self.message = str(message)
-
-    def payload(self) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {"error": self.message, "status": self.status}
-        if self.status == 404 and self.message.startswith("Unknown "):
-            payload["routes"] = route_list()
-        return payload
-
-
-class Deferred:
-    """A reply that is not ready when the handler returns.
-
-    A log tail has to reach the host, and the handler runs on the GUI thread --
-    which is also the thread the answer arrives on, so waiting there would
-    deadlock. The handler returns one of these instead and the socket thread,
-    which has nothing else to do, waits on it.
-    """
-
-    def __init__(self, timeout: float = REMOTE_TIMEOUT) -> None:
-        #: How long the socket thread waits for this one.
-        self.timeout = float(timeout)
-        self._event = threading.Event()
-        self._value: Any = None
-        self._error: Optional[ApiError] = None
-
-    def set_result(self, value: Any) -> None:
-        self._value = value
-        self._event.set()
-
-    def set_error(self, message: str, status: int = 502) -> None:
-        self._error = ApiError(status, str(message))
-        self._event.set()
-
-    def wait(self, timeout: float = REMOTE_TIMEOUT) -> Any:
-        if not self._event.wait(timeout):
-            raise ApiError(504, f"The host did not answer within {int(timeout)} s")
-        if self._error is not None:
-            raise self._error
-        return self._value
-
-
-# --- the token and the endpoint file ----------------------------------------
-
-
-def token_path(directory: str) -> str:
-    return os.path.join(directory, TOKEN_FILENAME)
-
-
-def endpoint_path(directory: str) -> str:
-    return os.path.join(directory, ENDPOINT_FILENAME)
-
-
-def write_private_file(path: str, text: str) -> None:
-    """Write a file only this user can read.
-
-    The mode is applied when the temp file is *created*, before any content is
-    written, so the secret is never on disk world-readable even for an instant.
-    It is a no-op on Windows, where the file inherits the directory's ACL --
-    said plainly in docs/API.md rather than pretended otherwise.
-    """
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    handle, temp = tempfile.mkstemp(
-        prefix=os.path.basename(path) + ".tmp-", dir=os.path.dirname(path) or "."
-    )
-    try:
-        with os.fdopen(handle, "w", encoding="utf-8") as stream:
-            stream.write(text)
-        os.replace(temp, path)
-    except Exception:
-        try:
-            os.unlink(temp)
-        except OSError:
-            pass
-        raise
-
-
-def read_token(directory: str) -> str:
-    try:
-        with open(token_path(directory), "r", encoding="utf-8") as handle:
-            return handle.read().strip()
-    except OSError:
-        return ""
-
-
-def new_token(length: int = 32) -> str:
-    """A secret that is safe to hand to a command line.
-
-    ``token_urlsafe`` draws from the base64url alphabet, so about one token in
-    sixty-four begins with "-". Every one of those breaks
-    ``--token <value>``: argparse reads the leading hyphen as an option name
-    and refuses with "expected one argument", which says nothing about the
-    real problem and cannot be worked around without knowing to write
-    ``--token=<value>`` instead. Rerolling costs nothing and the entropy is
-    unchanged -- the first character is simply drawn from a smaller set.
-    """
-    while True:
-        token = secrets.token_urlsafe(length)
-        if not token.startswith("-"):
-            return token
-
-
-def ensure_token(directory: str, renew: bool = False) -> str:
-    """The shared secret, generating and storing one on first use."""
-    existing = "" if renew else read_token(directory)
-    if existing:
-        return existing
-    token = new_token(32)
-    write_private_file(token_path(directory), token + "\n")
-    return token
-
-
-def write_endpoint_file(directory: str, port: int, token: str) -> str:
-    """Publish where the server is listening, for a client to discover."""
-    path = endpoint_path(directory)
-    write_private_file(
-        path,
-        json.dumps(
-            {
-                "url": f"http://{BIND_HOST}:{int(port)}{API_PREFIX}",
-                "host": BIND_HOST,
-                "port": int(port),
-                "token": token,
-                "api_version": API_VERSION,
-                "pid": os.getpid(),
-                "started_at": time.time(),
-            },
-            indent=2,
-        )
-        + "\n",
-    )
-    return path
-
-
-def live_endpoint(directory: str, timeout: float = 0.5) -> Optional[Dict[str, Any]]:
-    """The endpoint another running instance published, or None.
-
-    Instances share one state directory, so a second MoleditPy finds the first
-    one's ``api.json``. It counts only if it names another process *and* that
-    port still accepts a connection: a crash leaves the file behind, and a
-    stale one must not stop this instance from starting its own server.
-    """
-    try:
-        with open(endpoint_path(directory), "r", encoding="utf-8") as handle:
-            data = json.load(handle)
-        port = int(data["port"])
-        pid = int(data.get("pid", 0))
-    except (OSError, ValueError, KeyError, TypeError):
-        return None
-    if pid == os.getpid() or not 0 < port < 65536:
-        return None
-    try:
-        with socket.create_connection((BIND_HOST, port), timeout=timeout):
-            return data
-    except OSError:
-        return None
-
-
-def remove_endpoint_file(directory: str) -> None:
-    try:
-        os.unlink(endpoint_path(directory))
-    except OSError:
-        pass
-
-
-def tokens_match(presented: str, expected: str) -> bool:
-    """Constant-time comparison; a token is a secret like any other."""
-    if not presented or not expected:
-        return False
-    # As bytes: on str, compare_digest raises for any non-ASCII character.
-    return secrets.compare_digest(str(presented).encode("utf-8"), str(expected).encode("utf-8"))
-
 
 # --- serialisation ----------------------------------------------------------
 
@@ -508,6 +321,12 @@ class JobApi:
         if not host.enabled:
             raise ApiError(409, f"Host '{host.name}' is disabled in the Hosts dialog")
         files = self._files(body)
+        from .input_names import check_upload_names
+
+        try:
+            check_upload_names(files, windows=host.scheduler == SCHEDULER_WINDOWS)
+        except ValueError as exc:
+            raise ApiError(400, str(exc)) from exc
         remote_dir = str(body.get("remote_dir", "") or "").strip()
         remote_input = str(body.get("remote_input", "") or "").strip()
         if not files and not remote_dir:
@@ -846,80 +665,31 @@ class JobApi:
         return deferred
 
     def _usable_host(self, wanted: str) -> HostProfile:
-        host = self._host(wanted)
-        if not host.enabled:
-            raise ApiError(409, f"Host '{host.name}' is disabled in the Hosts dialog")
-        return host
+        return ApiInputs(self.store)._usable_host(wanted)
 
     @staticmethod
     def _remote_path(value: Any) -> str:
-        path = str(value or "").strip()
-        if not path:
-            raise ApiError(400, "'path' is required: a path on the host")
-        if any(ch in path for ch in ("\n", "\r", "\0")):
-            raise ApiError(400, "A path on the host cannot contain a line break")
-        return path
+        return ApiInputs._remote_path(value)
 
     @staticmethod
     def _query_flag(query: Mapping[str, str], key: str, default: bool) -> bool:
-        value = str(query.get(key, "") or "").strip().lower()
-        if not value:
-            return default
-        return value not in ("0", "false", "no", "off")
+        return ApiInputs._query_flag(query, key, default)
 
     # --- resolution helpers -------------------------------------------------
 
     def _host(self, wanted: str) -> HostProfile:
         """A host by id or by name; the name is what a script would name."""
-        if not wanted:
-            raise ApiError(400, "'host' is required: the id or name of a configured host")
-        host = self.store.hosts.get(wanted)
-        if host is not None:
-            return host
-        matches = [h for h in self.store.hosts.values() if h.name.lower() == wanted.lower()]
-        if len(matches) == 1:
-            return matches[0]
-        if len(matches) > 1:
-            raise ApiError(409, f"More than one host is named '{wanted}'; use its id instead")
-        known = ", ".join(sorted(h.name for h in self.store.hosts.values())) or "none configured"
-        raise ApiError(404, f"No host called '{wanted}'. Known hosts: {known}")
+        return ApiInputs(self.store)._host(wanted)
 
     def _job(self, job_id: str) -> Job:
-        job = self._job_or_none(job_id)
-        if job is None:
-            raise ApiError(404, f"No tracked job with id '{job_id}'")
-        return job
+        return ApiInputs(self.store)._job(job_id)
 
     def _job_or_none(self, job_id: str) -> Optional[Job]:
-        return self.store.jobs.get(str(job_id or ""))
+        return ApiInputs(self.store)._job_or_none(job_id)
 
     @staticmethod
     def _files(body: Mapping[str, Any]) -> List[str]:
-        # Imported here, not at the top: this module is deliberately free of
-        # everything but the standard library and .models, and runner pulls in
-        # the schedulers.
-        from .runner import check_input_name
-
-        raw = body.get("files") or []
-        if isinstance(raw, str):
-            raw = [raw]
-        if not isinstance(raw, (list, tuple)):
-            raise ApiError(400, "'files' must be a path or a list of paths")
-        files: List[str] = []
-        for entry in raw:
-            # Absolute, because the server's working directory is MoleditPy's
-            # and has nothing to do with the caller's.
-            path = os.path.abspath(os.path.expanduser(str(entry)))
-            if not os.path.isfile(path):
-                raise ApiError(400, f"No such input file: {entry}")
-            # Refused here as well as in the runner, so a caller is told what
-            # is wrong with its request instead of watching a job fail.
-            try:
-                check_input_name(os.path.basename(path))
-            except ValueError as exc:
-                raise ApiError(400, str(exc)) from exc
-            files.append(path)
-        return files
+        return ApiInputs._files(body)
 
     def _preset(self, host: HostProfile, body: Mapping[str, Any]) -> SubmitPreset:
         """The resource request, from a named preset and/or explicit fields.
@@ -929,81 +699,22 @@ class JobApi:
         a caller that forgot the command would otherwise have silently run
         ORCA on whatever it uploaded.
         """
-        named = str(body.get("preset", "") or "").strip()
-        command = body.get("command")
-        if named:
-            # A copy: the stored preset must not pick up this call's overrides.
-            preset = SubmitPreset.from_dict(self._named_preset(host, named).to_dict())
-            preset.id = SubmitPreset().id
-        elif command:
-            preset = SubmitPreset(host_id=host.id, name="api", command_template="")
-        else:
-            raise ApiError(
-                400,
-                "Give 'command' (the command line to run) or 'preset' (the name "
-                "of a saved preset for this host).",
-            )
-        preset.host_id = host.id
-        if command is not None:
-            preset.command_template = str(command)
-        for key, kind in PRESET_FIELDS.items():
-            if key in body:
-                setattr(preset, key, self._coerce(body[key], key, kind))
-        if not preset.command_template.strip():
-            raise ApiError(400, "The command line is empty")
-        return preset
+        return ApiInputs(self.store)._preset(host, body)
 
     def _named_preset(self, host: HostProfile, named: str) -> SubmitPreset:
-        preset = self.store.presets.get(named)
-        if preset is not None and preset.host_id == host.id:
-            return preset
-        for_host = self.store.presets_for_host(host.id)
-        matches = [p for p in for_host if p.name.lower() == named.lower()]
-        if len(matches) == 1:
-            return matches[0]
-        if len(matches) > 1:
-            raise ApiError(409, f"More than one preset on '{host.name}' is named '{named}'")
-        known = ", ".join(p.name for p in for_host) or "none"
-        raise ApiError(404, f"No preset '{named}' on host '{host.name}'. Known presets: {known}")
+        return ApiInputs(self.store)._named_preset(host, named)
 
     @staticmethod
     def _coerce(value: Any, key: str, kind: type) -> Any:
-        if kind is bool:
-            if not isinstance(value, bool):
-                raise ApiError(400, f"'{key}' must be true or false")
-            return value
-        if kind is int:
-            # bool is an int in Python; a client sending true for 'nodes' has
-            # made a mistake worth reporting rather than reading as 1.
-            if isinstance(value, bool) or not isinstance(value, int):
-                raise ApiError(400, f"'{key}' must be a whole number")
-            if value < 0:
-                raise ApiError(400, f"'{key}' cannot be negative")
-            return value
-        if kind is list:
-            if isinstance(value, str) or not isinstance(value, (list, tuple)):
-                raise ApiError(400, f"'{key}' must be a list of strings")
-            return [str(entry) for entry in value]
-        return str(value)
+        return ApiInputs._coerce(value, key, kind)
 
     @staticmethod
     def _optional_bool(body: Mapping[str, Any], key: str, default: bool) -> bool:
-        if key not in body:
-            return bool(default)
-        value = body[key]
-        if not isinstance(value, bool):
-            raise ApiError(400, f"'{key}' must be true or false")
-        return value
+        return ApiInputs._optional_bool(body, key, default)
 
     @staticmethod
     def _int(value: Any, key: str, minimum: Optional[int] = None) -> int:
-        try:
-            number = int(value)
-        except (TypeError, ValueError) as exc:
-            raise ApiError(400, f"'{key}' must be a whole number") from exc
-        if minimum is not None and number < minimum:
-            raise ApiError(400, f"'{key}' must be at least {minimum}")
-        return number
+        return ApiInputs._int(value, key, minimum)
 
     @staticmethod
     def _start_after(body: Mapping[str, Any]) -> float:
@@ -1012,26 +723,7 @@ class JobApi:
         A number is one already; a string is a local time, which is what a
         person writes into a script and what the wizard's own field shows.
         """
-        value = body.get("start_after", 0)
-        if not value:
-            return 0.0
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return float(value)
-        text = str(value).strip().replace("Z", "")
-        for shape in (
-            "%Y-%m-%dT%H:%M:%S",
-            "%Y-%m-%dT%H:%M",
-            "%Y-%m-%d %H:%M:%S",
-            "%Y-%m-%d %H:%M",
-        ):
-            try:
-                return time.mktime(time.strptime(text, shape))
-            except ValueError:
-                continue
-        raise ApiError(
-            400,
-            "'start_after' must be an epoch second or a local time like 2026-01-31T18:30",
-        )
+        return ApiInputs._start_after(body)
 
 
 __all__ = [

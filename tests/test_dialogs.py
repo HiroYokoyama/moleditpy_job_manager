@@ -691,20 +691,20 @@ class TestSubmitDialog(DialogTestCase):
         self.assertEqual(self.store.jobs, {})
 
     def test_submit_rejects_a_missing_file(self):
-        self.dialog.list_files.addItem(os.path.join(self.tmp, "ghost.inp"))
+        self.dialog.file_table.add_path(os.path.join(self.tmp, "ghost.inp"))
         with patch("job_manager.submit_dialog.QMessageBox.warning") as warn:
             self.dialog._submit()
         warn.assert_called_once()
 
     def test_submit_requires_a_command(self):
-        self.dialog.list_files.addItem(self.make_input())
+        self.dialog.file_table.add_path(self.make_input())
         self.dialog.txt_command.setText("   ")
         with patch("job_manager.submit_dialog.QMessageBox.warning") as warn:
             self.dialog._submit()
         warn.assert_called_once()
 
     def test_a_valid_submission_creates_a_job(self):
-        self.dialog.list_files.addItem(self.make_input())
+        self.dialog.file_table.add_path(self.make_input())
         self.dialog.txt_job_name.setText("opt")
         self.dialog._submit()
         self.assertEqual(len(self.store.jobs), 1)
@@ -714,8 +714,8 @@ class TestSubmitDialog(DialogTestCase):
         self.assertEqual(self.dialog.collect_preset().fetch_globs, ["*.out", "*.gbw"])
 
     def test_removing_a_file_from_the_list(self):
-        self.dialog.list_files.addItem(self.make_input())
-        self.dialog.list_files.setCurrentRow(0)
+        self.dialog.file_table.add_path(self.make_input())
+        self.dialog.file_table.selectRow(0)
         self.dialog._remove_file()
         self.assertEqual(self.dialog.selected_files(), [])
 
@@ -940,7 +940,7 @@ class TestPrefillAndResubmit(DialogTestCase):
     def test_prefill_replaces_rather_than_appends(self):
         dialog = SubmitDialog(self.service)
         self.addCleanup(dialog.deleteLater)
-        dialog.list_files.addItem(self.make_input("stale.inp"))
+        dialog.file_table.add_path(self.make_input("stale.inp"))
         fresh = self.make_input("fresh.inp")
         dialog.prefill(files=[fresh])
         self.assertEqual(dialog.selected_files(), [fresh])
@@ -1475,7 +1475,9 @@ class TestCommandTemplateDropdown(DialogTestCase):
 
     def test_saving_the_current_command(self):
         self.dialog.txt_command.setText("orca [input] > [output]")
-        with patch("job_manager.submit_dialog.QInputDialog.getText", return_value=("Mine", True)):
+        with patch(
+            "job_manager.submission_templates.QInputDialog.getText", return_value=("Mine", True)
+        ):
             self.dialog._save_user_template()
         templates = JobStore(self.tmp).user_templates()
         self.assertEqual(len(templates), 1)
@@ -1492,7 +1494,9 @@ class TestCommandTemplateDropdown(DialogTestCase):
     def test_deleting_a_saved_template(self):
         self.store.add_user_template("Mine", "x")
         self.dialog._reload_templates()
-        with patch("job_manager.submit_dialog.QInputDialog.getItem", return_value=("Mine", True)):
+        with patch(
+            "job_manager.submission_templates.QInputDialog.getItem", return_value=("Mine", True)
+        ):
             self.dialog._delete_user_template()
         self.assertEqual(JobStore(self.tmp).user_templates(), [])
 

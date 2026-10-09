@@ -38,12 +38,6 @@ jobs:
           fi
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
-      - name: Create and push tag
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          git tag "v$VERSION"
-          git push origin "v$VERSION"
-
       - name: Verify version matches plugin source
         run: |
           INPUT="$VERSION"
@@ -59,6 +53,13 @@ jobs:
             echo "ERROR: input version '$INPUT' does not match PLUGIN_VERSION '$FILE_VERSION' in job_manager/__init__.py"
             exit 1
           fi
+
+      - name: Create and push tag
+        if: github.event_name == 'workflow_dispatch'
+        # A mismatched manual version must fail before publishing a tag.
+        run: |
+          git tag "v$VERSION"
+          git push origin "v$VERSION"
 
       - name: Build release package
         run: |

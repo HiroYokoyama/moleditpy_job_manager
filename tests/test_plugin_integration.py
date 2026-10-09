@@ -141,6 +141,9 @@ except ImportError:  # pragma: no cover
 
 @_skipif
 class TestWithRealPluginContext(unittest.TestCase):
+    def setUp(self):
+        self.addCleanup(setattr, job_manager, "_context", job_manager.get_context())
+
     @classmethod
     def setUpClass(cls):
         if not HAS_MAIN_APP:
