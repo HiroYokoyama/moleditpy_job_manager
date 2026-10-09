@@ -7,6 +7,8 @@ to live-tail.
 
 from __future__ import annotations
 
+from html import escape
+
 from typing import Dict, Optional, Sequence
 
 from PyQt6.QtWidgets import (
@@ -58,7 +60,7 @@ class TailFileDialog(QDialog):
         layout = QVBoxLayout(self)
 
         self.lbl_headline = QLabel(
-            f"Select a file from <b>{job_name}</b> to live-tail:"
+            f"Select a file from <b>{escape(str(job_name))}</b> to live-tail:"
             if names
             else "No remote files found in the job directory."
         )
