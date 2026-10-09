@@ -23,6 +23,8 @@ from urllib.parse import parse_qs, urlsplit
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from .http_limits import BoundedServerMixin
+
 from .api_core import (
     API_PREFIX,
     BIND_HOST,
@@ -242,7 +244,7 @@ class _Handler(BaseHTTPRequestHandler):
             logging.debug("Job Manager API: the client went away before the reply")
 
 
-class _Server(ThreadingHTTPServer):
+class _Server(BoundedServerMixin, ThreadingHTTPServer):
     daemon_threads = True
     #: Off deliberately. The default rebinds a port another process is still
     #: listening on in some configurations, and quietly serving a second

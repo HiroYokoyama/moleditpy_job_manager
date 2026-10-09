@@ -35,6 +35,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Dict, Optional
 from urllib.parse import parse_qs, urlsplit
 
+from .http_limits import BoundedServerMixin
 from . import PLUGIN_VERSION
 from .api_core import new_token, write_private_file
 
@@ -325,7 +326,7 @@ def stop_serving_on_tailnet() -> "tuple[bool, str]":
     return _run_tailscale("serve", "reset")
 
 
-class _Server(ThreadingHTTPServer):
+class _Server(BoundedServerMixin, ThreadingHTTPServer):
     daemon_threads = True
     #: Same reasoning as the job API's: rebinding a port another MoleditPy is
     #: still serving would quietly show that one's hosts under this one's URL.
@@ -344,8 +345,12 @@ class _Handler(BaseHTTPRequestHandler):
     server_version = "MoleditPyJobMonitor/1.0"
 
     def log_message(self, fmt: str, *args: Any) -> None:
-        # The default writes every hit to stderr, which is MoleditPy's console.
-        logging.debug("Job Manager web monitor: " + fmt, *args)
+        # The request line contains the bookmark's bearer token. Never log it.
+        logging.debug(
+            "Job Manager web monitor: %s %r",
+            getattr(self, "command", ""),
+            getattr(self, "path", "/").split("?", 1)[0],
+        )
 
     # --- helpers ------------------------------------------------------------
 
@@ -357,6 +362,7 @@ class _Handler(BaseHTTPRequestHandler):
         # keeping yesterday's copy of it would be worse than a slow reload.
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
         # Nothing here loads a script, a font or an image from anywhere, so the
         # strictest policy that still renders the page is the correct one --
         # but connect-src has to be granted explicitly. It falls back to
