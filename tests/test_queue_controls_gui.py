@@ -338,7 +338,7 @@ class TestTheWizardReadsTheInput(DialogTestCase):
         # wrote for a file that has since been removed must not stay behind.
         dialog = self.dialog()
         dialog.add_files([self.orca_input()])
-        dialog.list_files.clear()
+        dialog.file_table.setRowCount(0)
         smaller = os.path.join(self.tmp, "small.inp")
         with open(smaller, "w", encoding="utf-8") as handle:
             handle.write("! B3LYP\n%pal nprocs 2 end\n%maxcore 1000\n* xyz 0 1\nH 0 0 0\n*\n")

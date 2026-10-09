@@ -20,7 +20,6 @@ from PyQt6.QtWidgets import (
     QInputDialog,
     QLabel,
     QLineEdit,
-    QListWidget,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
@@ -35,6 +34,7 @@ from PyQt6.QtWidgets import (
 from . import PLUGIN_VERSION, input_scan
 from .command_templates import CommandTemplate, extension_of, suggest, templates_for
 from .credentials import ensure_password
+from .file_table import FilePathTable
 
 from . import structure_relay
 from .models import (
@@ -184,10 +184,10 @@ class SubmitDialog(QDialog):
         if preset:
             self._apply_preset(SubmitPreset.from_dict(preset))
         if files:
-            self.list_files.clear()
+            self.file_table.setRowCount(0)
             for path in files:
                 if path:
-                    self.list_files.addItem(path)
+                    self.file_table.add_path(path)
             first = os.path.dirname(files[0])
             if first:
                 self.store.set_pref("last_input_dir", first)
@@ -264,17 +264,46 @@ class SubmitDialog(QDialog):
         files_note.setStyleSheet("color: palette(mid);")
         files_note.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         files_layout.addWidget(files_note)
-        self.list_files = QListWidget()
-        files_layout.addWidget(self.list_files)
+        self.file_table = FilePathTable(self)
+        files_layout.addWidget(self.file_table)
+        self.txt_selected_path = QLineEdit()
+        self.txt_selected_path.setReadOnly(True)
+        self.txt_selected_path.setPlaceholderText("Select a file to read or copy its full path")
+        self.txt_selected_path.setAccessibleName("Selected file full path")
+        files_layout.addWidget(self.txt_selected_path)
+        self.file_table.itemSelectionChanged.connect(self._update_file_selection)
         row = QHBoxLayout()
         add = QPushButton("Add files...")
         add.clicked.connect(self._add_files)
-        remove = QPushButton("Remove")
-        remove.clicked.connect(self._remove_file)
+        self.btn_remove_file = QPushButton("Remove selected")
+        self.btn_remove_file.clicked.connect(self._remove_file)
+        self.btn_file_up = QPushButton("Move up")
+        self.btn_file_down = QPushButton("Move down")
+        self.btn_file_up.clicked.connect(lambda: self._move_files(-1))
+        self.btn_file_down.clicked.connect(lambda: self._move_files(1))
         row.addWidget(add)
-        row.addWidget(remove)
+        row.addWidget(self.btn_remove_file)
+        row.addWidget(self.btn_file_up)
+        row.addWidget(self.btn_file_down)
         row.addStretch(1)
         files_layout.addLayout(row)
+        paste_row = QHBoxLayout()
+        self.txt_add_paths = QPlainTextEdit()
+        self.txt_add_paths.setPlaceholderText(
+            "Paste file paths here, one per line (quotes are optional)"
+        )
+        self.txt_add_paths.setAccessibleName("File paths to add")
+        self.txt_add_paths.setMaximumHeight(72)
+        paste_row.addWidget(self.txt_add_paths, 1)
+        paste = QPushButton("Add paths")
+        paste.clicked.connect(self._add_pasted_paths)
+        paste_row.addWidget(paste)
+        files_layout.addLayout(paste_row)
+        self.lbl_file_message = QLabel("")
+        self.lbl_file_message.setTextFormat(Qt.TextFormat.PlainText)
+        self.lbl_file_message.setWordWrap(True)
+        files_layout.addWidget(self.lbl_file_message)
+        self._update_file_selection()
         self.chk_batch = QCheckBox(BATCH_TEXT)
         self.chk_batch.setToolTip(
             "One independent job per file, each running the command below on "
@@ -1084,7 +1113,7 @@ class SubmitDialog(QDialog):
 
     def _reload_templates(self) -> None:
         """Refill the dropdown, most likely program first for these inputs."""
-        files = self.selected_files() if hasattr(self, "list_files") else []
+        files = self.selected_files() if hasattr(self, "file_table") else []
         self.cmb_template.blockSignals(True)
         self.cmb_template.clear()
         self.cmb_template.addItem("Template...", None)
@@ -1238,7 +1267,7 @@ class SubmitDialog(QDialog):
     # --- files --------------------------------------------------------------
 
     def selected_files(self) -> List[str]:
-        return [self.list_files.item(row).text() for row in range(self.list_files.count())]
+        return self.file_table.paths()
 
     def _on_host_picked_by_user(self, _index: int) -> None:
         self._host_chosen_by_user = True
@@ -1319,10 +1348,23 @@ class SubmitDialog(QDialog):
         multi-select there is building one job's input list, not a pile of
         separate calculations.
         """
-        added = [p for p in paths or [] if p and p not in self.selected_files()]
+        seen = {os.path.normcase(os.path.abspath(p)) for p in self.selected_files()}
+        added = []
+        for path in paths or []:
+            if not path:
+                continue
+            path = os.path.abspath(os.path.expanduser(path))
+            key = os.path.normcase(path)
+            if key not in seen:
+                added.append(path)
+                seen.add(key)
         for path in added:
-            self.list_files.addItem(path)
+            self.file_table.add_path(path)
         if added:
+            self.file_table.selectRow(self.file_table.rowCount() - len(added))
+            self.lbl_file_message.setText(
+                f"Added {len(added)} file(s). {self.file_table.rowCount()} total."
+            )
             self.store.set_pref("last_input_dir", os.path.dirname(added[0]))
             if not self.txt_job_name.text().strip():
                 self.txt_job_name.setText(os.path.splitext(os.path.basename(added[0]))[0])
@@ -1416,12 +1458,61 @@ class SubmitDialog(QDialog):
             batch = not bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
         self.add_files(paths, batch=batch)
 
-    def _remove_file(self) -> None:
-        for item in self.list_files.selectedItems():
-            self.list_files.takeItem(self.list_files.row(item))
+    def _update_file_selection(self) -> None:
+        rows = self.file_table.selected_rows()
+        paths = self.selected_files()
+        self.txt_selected_path.setText(paths[rows[0]] if rows else "")
+        self.txt_selected_path.setCursorPosition(0)
+        self.btn_remove_file.setEnabled(bool(rows))
+        self.btn_file_up.setEnabled(bool(rows) and rows[0] > 0)
+        self.btn_file_down.setEnabled(bool(rows) and rows[-1] < len(paths) - 1)
+
+    def _add_pasted_paths(self) -> None:
+        from PyQt6.QtCore import QUrl
+
+        paths = []
+        for line in self.txt_add_paths.toPlainText().splitlines():
+            path = line.strip()
+            if len(path) >= 2 and path[0] == path[-1] and path[0] in ('"', "'"):
+                path = path[1:-1]
+            if not path:
+                continue
+            if path.lower().startswith("file:"):
+                url = QUrl(path)
+                if not url.isLocalFile():
+                    self.lbl_file_message.setText("Use a local file path or file URL.")
+                    return
+                path = url.toLocalFile()
+            path = os.path.abspath(os.path.expanduser(path))
+            if not os.path.isfile(path):
+                self.lbl_file_message.setText(f"File not found: {path}. No paths were added.")
+                return
+            paths.append(path)
+        if not paths:
+            self.lbl_file_message.setText("Enter at least one file path.")
+            return
+        self.add_files(paths)
+        self.txt_add_paths.clear()
+
+    def _files_reordered(self) -> None:
+        self._update_file_selection()
         self._update_batch_row()
         self._update_relay_row()
+        self._reload_templates()
+        files = self.selected_files()
+        if files:
+            self._apply_scanned_resources(files[0])
+        else:
+            self.lbl_scanned.hide()
         self._refresh_preview()
+
+    def _move_files(self, offset: int) -> None:
+        if self.file_table.move_selected(offset):
+            self._files_reordered()
+
+    def _remove_file(self) -> None:
+        self.file_table.remove_selected()
+        self._files_reordered()
 
     # --- preview ------------------------------------------------------------
 
@@ -1611,6 +1702,16 @@ class SubmitDialog(QDialog):
             if confirm != QMessageBox.StandardButton.Yes:
                 return
         batch = self._batch_active() and len(files) > 1
+        names = [os.path.basename(p) for p in files]
+        if host.scheduler == SCHEDULER_WINDOWS:
+            names = [name.casefold() for name in names]
+        if not batch and len(names) != len(set(names)):
+            QMessageBox.warning(
+                self,
+                "Submit",
+                "Two input files have the same filename. Uploading them together would overwrite one.\n\nRename one file, or submit each file as its own job.",
+            )
+            return
         if batch and remote_dir:
             # Guarded in the UI already; asserted here too in case a caller
             # drives the model directly.
