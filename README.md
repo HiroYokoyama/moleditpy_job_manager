@@ -430,6 +430,14 @@ Step 2 needs no input file if the work is already on the host: tick **Work
 already on the host**, give the directory, and **Check** it before you submit.
 See [Work that is already on the host](docs/WORKFLOW.md#work-that-is-already-on-the-host).
 
+### Working with file paths
+
+The New Job input table separates **File**, **Folder**, and **Status**. Select a row to read or copy its full path. Use **Add files…**, drag files onto the dialog, or paste paths one per line and press **Add paths**. Quotes and local file URLs are accepted; an invalid pasted path leaves the list unchanged.
+
+Use **Move up / Move down** to choose which input is first and therefore passed as `{input}`. **Remove selected** works with multiple rows. Files with the same upload filename must be renamed or submitted as separate jobs to avoid overwriting one another.
+
+Job Details has a **Files and folders** tab for recorded input/result paths and a separate **Full record and script** tab.
+
 ### Submit options and supercomputer login nodes
 
 Some sites need arguments on the submit command line itself, not as `#PBS` /
