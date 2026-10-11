@@ -12,11 +12,12 @@ survive updates, restarts and "Reset All Settings".
 
 from __future__ import annotations
 
+import importlib
 import logging
 from typing import Any, Optional
 
 PLUGIN_NAME = "Job Manager"
-PLUGIN_VERSION = "2.5.2"
+PLUGIN_VERSION = "2.5.3"
 PLUGIN_AUTHOR = "HiroYokoyama"
 
 PLUGIN_DESCRIPTION = "Submit calculations to remote HPC clusters over SSH, track queue status, and fetch results back into MoleditPy. Ready-made command lines for ORCA, Gaussian, CP2K, GAMESS, MOPAC, NWChem, Psi4, PySCF, Quantum ESPRESSO, VASP and xTB; job lists export to CSV or .pmejbs and reopen by drag and drop. Runs on this machine too, with no SSH; chains jobs with each scheduler's own dependency flag; and can hold a job until a chosen time. Installing paramiko adds a backend that keeps one SSH session open and can log in with a password."
@@ -53,6 +54,15 @@ _status_widget: Optional[Any] = None
 _beacon: Optional[Any] = None
 _api_server: Optional[Any] = None
 _api_external = 0
+_runtime_modules: dict[str, Any] = {}
+
+
+def _runtime_module(name: str) -> Any:
+    # The host purges sys.modules on reload. Keep the modules that own this
+    # load's resources so its teardown cannot resolve to the new load instead.
+    if name not in _runtime_modules:
+        _runtime_modules[name] = importlib.import_module(f".{name}", __name__)
+    return _runtime_modules[name]
 
 
 def get_context() -> Optional[Any]:
@@ -72,6 +82,8 @@ def get_service(create: bool = True, store: Optional[Any] = None) -> Optional[An
     if _service is None and create:
         from .service import JobService
 
+        for name in ("presence", "notify", "web_service", "taskbar"):
+            _runtime_module(name)
         _service = JobService(store=store)
         # Before the status widget: a host with no status bar still gets told
         # when its jobs end.
@@ -747,9 +759,7 @@ def shutdown() -> None:
     # Before the service goes: the tray menu and the task bar progress read it,
     # and keep-running must be undone while a main window can still be shown.
     try:
-        from . import presence
-
-        presence.uninstall()
+        _runtime_module("presence").uninstall()
     except Exception:
         logging.debug("Job Manager: presence teardown failed", exc_info=True)
     if _status_widget is not None:
@@ -760,10 +770,8 @@ def shutdown() -> None:
         _status_widget = None
     if _service is not None:
         try:
-            from . import web_service
-
             # The socket and the sampler, before the service they read.
-            web_service.shutdown_for(_service)
+            _runtime_module("web_service").shutdown_for(_service)
         except Exception:
             logging.debug("Job Manager: web monitor teardown failed", exc_info=True)
         try:
@@ -775,16 +783,12 @@ def shutdown() -> None:
         # never gets one, and a badge that outlives the plugin would leave
         # MoleditPy's icon claiming jobs are running for the rest of the run.
         try:
-            from .taskbar import clear_badge
-
-            clear_badge()
+            _runtime_module("taskbar").clear_badge()
         except Exception:
             logging.debug("Job Manager: the badge was not cleared", exc_info=True)
         # Same reasoning for the tray icon: one left behind outlives the plugin
         # that put it there, and clicking it would reach nothing.
         try:
-            from . import notify
-
-            notify.shutdown()
+            _runtime_module("notify").shutdown()
         except Exception:
             logging.debug("Job Manager: the tray icon was not removed", exc_info=True)
