@@ -260,6 +260,38 @@ class TestHostStyleReload(ApiEntryTestCase):
 
         self.assertIsNone(old_presence.current())
 
+    def test_reloading_the_same_package_name_removes_the_old_tray(self):
+        name = "jm_reload_same_name"
+        context = self.make_context()
+        first = self.load_copy(name)
+        self.addCleanup(first.shutdown)
+        first.initialize(context)
+        notify = importlib.import_module(name + ".notify")
+        with patch.object(notify, "available", return_value=True):
+            first.get_service()
+        old_presence = sys.modules[name + ".presence"]
+        old_tray = notify._tray
+        self.assertTrue(old_tray.isVisible())
+
+        # The host purges the package and its submodules before re-executing
+        # under the same name; different aliases do not reproduce this bug.
+        for key in [k for k in sys.modules if k == name or k.startswith(name + ".")]:
+            del sys.modules[key]
+        second = self.load_copy(name)
+        second.initialize(context)
+        new_notify = importlib.import_module(name + ".notify")
+        with patch.object(new_notify, "available", return_value=True):
+            service = second.get_service()
+            second.initialize(context)
+
+        self.assertIsNone(old_presence.current())
+        self.assertIsNone(notify._tray)
+        self.assertFalse(old_tray.isVisible())
+        self.assertIsNone(old_tray.contextMenu())
+        self.assertIsNot(new_notify._tray, old_tray)
+        self.assertTrue(new_notify._tray.isVisible())
+        self.assertIs(second.get_service(), service)
+
     def test_the_old_loads_service_stops_polling(self):
         # Two pollers querying every host, and every job ending announced twice.
         context = self.make_context()
