@@ -57,7 +57,7 @@ class TestMetadata(unittest.TestCase):
         # The registry carries this through to the Plugin Installer, which
         # lists an optional dependency and offers the pip command without ever
         # blocking an install on it.
-        self.assertEqual(job_manager.PLUGIN_OPTIONAL_DEPENDENCIES, ["paramiko"])
+        self.assertEqual(job_manager.PLUGIN_OPTIONAL_DEPENDENCIES, ["paramiko", "cryptography"])
 
     def test_the_description_says_what_the_optional_one_buys(self):
         # The Installer's optional section points at the description for what

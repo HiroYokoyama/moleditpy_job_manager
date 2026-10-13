@@ -54,8 +54,15 @@ class _PollTask(QRunnable):
         """The body, callable directly so tests need no thread pool."""
         transport = None
         try:
-            transport = self.transport_factory(self.host)
-            if self.host.uses_remote_runner:
+            if self.host.is_job_server:
+                from .server_backend import backend_for
+
+                updates = backend_for(self.host).poll(self.jobs)
+            else:
+                transport = self.transport_factory(self.host)
+            if self.host.is_job_server:
+                pass
+            elif self.host.uses_remote_runner:
                 updates = poll_runner(transport, self.host, self.jobs)
             else:
                 updates = poll_host(transport, self.host, self.jobs)

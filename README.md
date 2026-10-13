@@ -25,6 +25,12 @@ fetch, open.
 
 ## What it does
 
+- **Use a LAN computational helper.** Select **Job Server (HTTPS)** in Hosts to
+  submit to MoleditPy Job Server, monitor the shared queue, cancel jobs, view logs,
+  and fetch verified results. Its HTTP client is bundled; only **cryptography
+  >=50.0.2** is an additional optional dependency. The existing OpenSSH/local/WSL
+  backends still need no new packages. See [Job Server setup](docs/JOB_SERVER.md).
+
 - **Submit** an input file to SLURM, PBS/Torque, SGE/UGE — or to a plain
   background process on a machine with no queue at all, including **this
   machine**, with no SSH involved.

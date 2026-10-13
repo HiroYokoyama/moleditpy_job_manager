@@ -65,6 +65,7 @@ class HostProfileForm(QWidget):
         right.setContentsMargins(0, 0, 0, 0)
         self.form_box = QGroupBox("Connection")
         form = QFormLayout(self.form_box)
+        self.connection_form = form
 
         self.chk_enabled = QCheckBox("Enabled")
         self.chk_enabled.setChecked(True)
@@ -82,6 +83,7 @@ class HostProfileForm(QWidget):
         self.cmb_backend.addItem(
             "paramiko (keeps one session; private key, agent or password)", BACKEND_PARAMIKO
         )
+        self.cmb_backend.addItem("Job Server (HTTPS)", "job_server")
         self.cmb_backend.addItem("This machine (no SSH)", BACKEND_LOCAL)
         self.cmb_backend.addItem("This machine, inside WSL (no SSH)", BACKEND_WSL)
         self.cmb_backend.currentIndexChanged.connect(self._update_backend_hint)
@@ -147,6 +149,23 @@ class HostProfileForm(QWidget):
         form.addRow("Username", self.txt_username)
         form.addRow("Port", self.spin_port)
         form.addRow("Backend", self.cmb_backend)
+        self.txt_server_url = QLineEdit()
+        self.txt_server_url.setPlaceholderText("https://compute.example.org")
+        self.txt_server_key = QLineEdit()
+        self.txt_server_key.setPlaceholderText(
+            "Credential file path; private key is stored separately"
+        )
+        self.txt_server_ca = QLineEdit()
+        self.txt_server_ca.setPlaceholderText("Optional CA certificate file")
+        self.txt_server_id = QLineEdit()
+        self.txt_server_id.setReadOnly(True)
+        form.addRow("Server URL", self.txt_server_url)
+        form.addRow("Device credential path", self.txt_server_key)
+        form.addRow("CA certificate path", self.txt_server_ca)
+        form.addRow("Server identity", self.txt_server_id)
+        self.btn_server_sign_in = QPushButton("Sign in / Register server device...")
+        self.btn_server_sign_in.clicked.connect(self._server_sign_in)
+        form.addRow("", self.btn_server_sign_in)
         form.addRow("", self.lbl_backend_hint)
         form.addRow("Scheduler", self.cmb_scheduler)
         self.row_distro_label = QLabel("WSL distribution")
@@ -305,13 +324,51 @@ class HostProfileForm(QWidget):
         if path:
             self.txt_equal_path.setText(path)
 
+    def _server_sign_in(self):
+        from .server_backend import show_enrollment
+
+        show_enrollment(
+            self,
+            self.txt_server_url.text().strip(),
+            self.txt_server_key,
+            self.txt_server_ca.text().strip(),
+            self._server_enrolled,
+        )
+
+    def _server_enrolled(self, capabilities):
+        self.txt_server_id.setText(capabilities["server_id"])
+        scheduler = "windows" if capabilities["execution_os"] == "windows" else "shell"
+        self.cmb_scheduler.setCurrentIndex(self.cmb_scheduler.findData(scheduler))
+
+    def set_server_fields_visible(self, visible):
+        for widget in (
+            self.txt_server_url,
+            self.txt_server_key,
+            self.txt_server_ca,
+            self.txt_server_id,
+            self.btn_server_sign_in,
+        ):
+            widget.setVisible(visible)
+            label = self.connection_form.labelForField(widget)
+            if label:
+                label.setVisible(visible)
+
     def _collect(self, host: HostProfile) -> HostProfile:
+        host.server_url = self.txt_server_url.text().strip()
+        host.server_key_path = self.txt_server_key.text().strip()
+        host.server_ca_file = self.txt_server_ca.text().strip()
+        host.server_id = self.txt_server_id.text().strip()
         host.enabled = bool(self.chk_enabled.isChecked())
         host.name = self.txt_name.text().strip() or "cluster"
         host.hostname = self.txt_hostname.text().strip()
         host.username = self.txt_username.text().strip()
         host.port = int(self.spin_port.value())
         host.backend = self.cmb_backend.currentData()
+        if host.is_job_server:
+            host.hostname = host.server_url
+            host.load_profile = False
+            host.login_commands = []
+            host.monitor_usage = False
         host.scheduler = self.cmb_scheduler.currentData()
         host.key_path = self.txt_key.text().strip()
         host.wsl_distro = self.cmb_distro.currentText().strip()
@@ -343,4 +400,14 @@ class HostProfileForm(QWidget):
         poll = int(self.spin_poll_interval.value())
         # 1-4 s would be clamped up anyway; store what will actually happen.
         host.poll_interval = max(MIN_POLL_INTERVAL, poll) if poll else 0
+        if host.is_job_server:
+            from .server_backend import validate_server_url
+
+            host.server_url = validate_server_url(host.server_url) if host.server_url else ""
+            host.hostname = host.server_url
+            host.equal_path = ""
+            host.max_concurrent = 0
+            host.load_profile = host.monitor_usage = host.ask_password = False
+            host.login_commands = []
+            host.submit_options = ""
         return host

@@ -76,6 +76,17 @@ class SubmissionWorkflow:
         to_upload = list(upload_files) if upload_files else list(local_files)
 
         def work() -> Job:
+            if host.is_job_server:
+                from .server_backend import backend_for
+
+                if relay_source_dir or relay_filenames:
+                    raise ValueError("Job Server file relay is not supported")
+                if after_job and after_job.host_id != host.id:
+                    raise ValueError("Job Server predecessor belongs to another host")
+                after_id = self.service._chain_pid(after_job) if after_job else None
+                if after_job and not after_id:
+                    raise ValueError("Job Server predecessor has not been submitted on this host")
+                return backend_for(host).submit(preset, job, to_upload, after_id)
             # Resolved here, not at dispatch: reading the pid too early (before
             # submission) chained the second of two quick submissions behind
             # nothing, so both ran at once.
@@ -171,6 +182,14 @@ class SubmissionWorkflow:
         stored = self.service.store.jobs.get(job.id)
         if stored is not None and stored is not job:
             # The worker mutated its own copy; carry the results across.
+            for field in (
+                "server_job_id",
+                "server_id",
+                "owner_user_id",
+                "execution_os",
+                "last_server_state",
+            ):
+                setattr(stored, field, getattr(job, field))
             stored.remote_dir = job.remote_dir
             stored.remote_job_id = job.remote_job_id
             stored.log_file = job.log_file

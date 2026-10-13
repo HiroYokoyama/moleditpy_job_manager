@@ -276,6 +276,10 @@ class HostsDialog(QDialog):
         self.chk_enabled.setChecked(True)
         self.txt_name.setText("")
         self.txt_hostname.setText("")
+        self.profile_form.txt_server_url.clear()
+        self.profile_form.txt_server_key.clear()
+        self.profile_form.txt_server_ca.clear()
+        self.profile_form.txt_server_id.clear()
         self.txt_username.setText("")
         self.spin_port.setValue(22)
         self.txt_key.setText("")
@@ -318,6 +322,10 @@ class HostsDialog(QDialog):
         self.chk_enabled.setChecked(bool(host.enabled))
         self.txt_name.setText(host.name)
         self.txt_hostname.setText(host.hostname)
+        self.profile_form.txt_server_url.setText(host.server_url)
+        self.profile_form.txt_server_key.setText(host.server_key_path)
+        self.profile_form.txt_server_ca.setText(host.server_ca_file)
+        self.profile_form.txt_server_id.setText(host.server_id)
         self.txt_username.setText(host.username)
         self.spin_port.setValue(int(host.port or 22))
         # Blocked: setting this while restoring a saved host must not trigger
@@ -467,7 +475,12 @@ class HostsDialog(QDialog):
         """The helper is only offered where nothing else is scheduling."""
         # Both no-queue schedulers have a runner; a real cluster does not need
         # one and should not be offered it.
-        shell = self.cmb_scheduler.currentData() in (SCHEDULER_SHELL, SCHEDULER_WINDOWS)
+        server = self.cmb_backend.currentData() == "job_server"
+        shell = not server and self.cmb_scheduler.currentData() in (
+            SCHEDULER_SHELL,
+            SCHEDULER_WINDOWS,
+        )
+        self.spin_max_concurrent.setEnabled(not server)
         self.cmb_concurrency.setEnabled(shell)
         if not shell and self.cmb_concurrency.currentData() == MODE_RUNNER:
             self.cmb_concurrency.setCurrentIndex(self.cmb_concurrency.findData(MODE_LANES))
@@ -530,6 +543,37 @@ class HostsDialog(QDialog):
 
     def _update_backend_hint(self) -> None:
         backend = self.cmb_backend.currentData()
+        server = backend == "job_server"
+        self.profile_form.set_server_fields_visible(server)
+        self.chk_monitor_usage.setEnabled(not server)
+        for index in range(self.cmb_scheduler.count()):
+            item = self.cmb_scheduler.model().item(index)
+            item.setEnabled(
+                not server
+                or self.cmb_scheduler.itemData(index) in (SCHEDULER_SHELL, SCHEDULER_WINDOWS)
+            )
+        if backend == "job_server":
+            from .server_backend import INSTALL_HINT, client_available
+
+            self.lbl_backend_hint.setText(
+                "LAN computational helper. Resources and dependencies are managed by Job Server. Localhost, private LAN or Tailscale only; never expose the server to the internet."
+                if client_available()
+                else INSTALL_HINT
+            )
+            if self.cmb_scheduler.currentData() not in (SCHEDULER_SHELL, SCHEDULER_WINDOWS):
+                self.cmb_scheduler.setCurrentIndex(self.cmb_scheduler.findData(SCHEDULER_SHELL))
+            self._set_ssh_fields_enabled(False)
+            self.txt_remote_root.setEnabled(False)
+            self.txt_equal_path.setEnabled(False)
+            self.chk_monitor_usage.setChecked(False)
+            self.chk_load_profile.setChecked(False)
+            self.chk_ask_password.setChecked(False)
+            self.cmb_distro.setVisible(False)
+            self.row_distro_label.setVisible(False)
+            self.lbl_key_tip.setVisible(False)
+            self._update_concurrency_row()
+            return
+        self.txt_remote_root.setEnabled(True)
         local = backend in (BACKEND_LOCAL, BACKEND_WSL)
         self._set_ssh_fields_enabled(not local)
         self.cmb_distro.setVisible(backend == BACKEND_WSL)
@@ -889,6 +933,11 @@ class HostsDialog(QDialog):
         self.lbl_test.setText("Connecting...")
 
         def work() -> str:
+            if host.is_job_server:
+                from .server_backend import backend_for
+
+                capabilities = backend_for(host).client.request("GET", "/capabilities")
+                return "Job Server (" + capabilities["execution_os"] + ")"
             transport = self.service.transport_for(host)
             try:
                 return transport.test_connection()

@@ -68,6 +68,7 @@ ACTIVE_STATES = frozenset(
 #: States that will never change again on their own.
 TERMINAL_STATES = frozenset({STATE_DONE, STATE_FAILED, STATE_CANCELLED, STATE_LOST})
 
+BACKEND_JOB_SERVER = "job_server"
 BACKEND_OPENSSH = "openssh"
 BACKEND_PARAMIKO = "paramiko"
 #: This machine, no SSH at all.
@@ -290,6 +291,10 @@ class HostProfile:
     #: interval. A slow queue on a busy login node can be asked less often
     #: than a workstation without slowing everything else down.
     poll_interval: int = 0
+    server_url: str = ""
+    server_id: str = ""
+    server_key_path: str = ""
+    server_ca_file: str = ""
 
     @property
     def is_local(self) -> bool:
@@ -318,6 +323,10 @@ class HostProfile:
         return list(PROFILE_COMMANDS) + list(self.login_commands or [])
 
     @property
+    def is_job_server(self) -> bool:
+        return self.backend == BACKEND_JOB_SERVER
+
+    @property
     def uses_remote_runner(self) -> bool:
         """A queue on the host only makes sense where there is not one already.
 
@@ -325,13 +334,20 @@ class HostProfile:
         own runner. A real cluster does not: it already has a scheduler, and a
         second one on the login node is what sysadmins object to.
         """
-        return self.concurrency_mode == MODE_RUNNER and self.scheduler in (
-            SCHEDULER_SHELL,
-            SCHEDULER_WINDOWS,
+        return (
+            not self.is_job_server
+            and self.concurrency_mode == MODE_RUNNER
+            and self.scheduler
+            in (
+                SCHEDULER_SHELL,
+                SCHEDULER_WINDOWS,
+            )
         )
 
     @property
     def target(self) -> str:
+        if self.is_job_server:
+            return self.server_url
         if self.backend == BACKEND_WSL:
             return f"WSL: {self.wsl_distro}" if self.wsl_distro else "WSL"
         if self.is_local:
@@ -368,6 +384,8 @@ class HostProfile:
         root is a path inside the distribution's own filesystem, not one this
         side can open by that name.
         """
+        if self.is_job_server:
+            return ""
         if self.backend == BACKEND_LOCAL:
             root = os.path.expanduser(str(self.remote_root or ""))
             return os.path.abspath(root) if root else ""
@@ -545,6 +563,11 @@ class Job:
     #: limit, the core and memory budgets, and every job waiting before it.
     force_run: bool = False
     last_error: str = ""
+    server_job_id: str = ""
+    server_id: str = ""
+    owner_user_id: str = ""
+    execution_os: str = ""
+    last_server_state: str = ""
 
     @property
     def is_active(self) -> bool:
