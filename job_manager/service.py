@@ -104,6 +104,8 @@ class JobService(QObject):
         return host_id in self._passwords
 
     def transport_for(self, host: HostProfile):
+        if host.is_job_server:
+            raise ValueError("Job Server uses the high-level backend, not a shell transport")
         return create_transport(host, password=self._passwords.get(host.id))
 
     # --- inspection ---------------------------------------------------------
@@ -262,6 +264,10 @@ class JobService(QObject):
             return
 
         def work() -> List[str]:
+            if host.is_job_server:
+                from .server_backend import backend_for
+
+                return [entry["path"] for entry in backend_for(host).files(job)]
             transport = self.transport_for(host)
             try:
                 # As deep as a pattern could ever reach, so the tree shows
@@ -300,6 +306,11 @@ class JobService(QObject):
         self.job_updated.emit(job.id)
 
         def work() -> List[str]:
+            if host.is_job_server:
+                from .server_backend import backend_for
+
+                patterns = [glob.escape(name) for name in names] if names else job.fetch_globs
+                return backend_for(host).fetch(job, local_dir, patterns)
             transport = self.transport_for(host)
             try:
                 # An explicit set of names is passed as patterns, escaped so each
@@ -350,6 +361,11 @@ class JobService(QObject):
             safe_name = safe_relative_name(filename)
             if not safe_name:
                 raise ValueError(f"Unsafe remote filename: {filename}")
+            if host.is_job_server:
+                from .server_backend import backend_for
+
+                target = os.path.join(cache_dir, *safe_name.split("/"))
+                return str(backend_for(host).fetch_file(job, safe_name, target))
             transport = self.transport_for(host)
             try:
                 paths = fetch_results(transport, job, cache_dir, globs=[glob.escape(safe_name)])
@@ -384,7 +400,11 @@ class JobService(QObject):
             # submission finished and put it in the queue after all.
             self.error.emit(f"{job.name} is {job.state} and cannot be cancelled now")
             return
-        dependents = self.store.dependents_of(job.id) if release_dependents else []
+        dependents = (
+            self.store.dependents_of(job.id)
+            if release_dependents and not host.is_job_server
+            else []
+        )
         if dependents:
             # Recorded before the cancel: stops the monitor calling them
             # blocked, and must survive a restart.
@@ -394,6 +414,10 @@ class JobService(QObject):
             self.store.save_jobs()
 
         def work() -> None:
+            if host.is_job_server:
+                from .server_backend import backend_for
+
+                return backend_for(host).cancel(job)
             transport = self.transport_for(host)
             try:
                 if host.uses_remote_runner:
@@ -406,6 +430,12 @@ class JobService(QObject):
                 transport.close()
 
         def done(_result) -> None:
+            if host.is_job_server:
+                job.touch(_result["state"])
+                self.store.save_jobs()
+                self.job_updated.emit(job.id)
+                self.poller.prime(host.id)
+                return
             job.touch(STATE_CANCELLED)
             self.store.save_jobs()
             self.job_updated.emit(job.id)
@@ -421,6 +451,10 @@ class JobService(QObject):
             return
 
         def work() -> str:
+            if host.is_job_server:
+                from .server_backend import backend_for
+
+                return backend_for(host).tail(job, lines)
             transport = self.transport_for(host)
             try:
                 return tail_log(transport, job, lines)
@@ -446,6 +480,10 @@ class JobService(QObject):
             return
 
         def work() -> str:
+            if host.is_job_server:
+                from .server_backend import backend_for
+
+                return backend_for(host).tail_file(job, filename, lines)
             transport = self.transport_for(host)
             try:
                 return tail_remote_file(transport, job, filename, lines)
