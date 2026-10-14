@@ -17,11 +17,13 @@ file into something ``cp`` can read.
 
 from __future__ import annotations
 
+import base64
 import os
+import re
 import shutil
 import subprocess
 import sys
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from .base import CommandResult, Transport, TransportError
 
@@ -46,6 +48,31 @@ def _quote(text: str) -> str:
     would be read as escapes on the way in.
     """
     return "'" + str(text or "").replace("'", "'\"'\"'") + "'"
+
+
+# \\wsl.localhost\<distro>\... and the older \\wsl$\<distro>\... are Windows'
+# names for a distribution's own files. Such a file is already Linux side.
+_WSL_UNC = re.compile(r"^[\\/]{2}(?:wsl\.localhost|wsl\$)[\\/]([^\\/]+)(.*)$", re.IGNORECASE)
+
+# Brackets output that has to be parsed, so whatever the login files print
+# around it is ignored.
+_BEGIN = "@@moleditpy-wsl-begin@@"
+_END = "@@moleditpy-wsl-end@@"
+
+
+def split_wsl_unc(path: str) -> Optional[Tuple[str, str]]:
+    """``(distro, linux_path)`` for a ``\\\\wsl.localhost`` path, else None."""
+    match = _WSL_UNC.match(str(path or ""))
+    if not match:
+        return None
+    rest = match.group(2).replace("\\", "/")
+    return match.group(1), "/" + rest.lstrip("/")
+
+
+def _between_markers(text: str) -> Optional[str]:
+    if _BEGIN not in text or _END not in text.split(_BEGIN, 1)[1]:
+        return None
+    return text.split(_BEGIN, 1)[1].split(_END, 1)[0]
 
 
 def find_wsl() -> str:
@@ -110,6 +137,7 @@ class WSLTransport(Transport):
         self._exe = exe or find_wsl()
         self.shell = shell or self.SHELL
         self.distro = (host.wsl_distro or "").strip()
+        self._running_distro: Optional[str] = None
 
     # --- helpers ------------------------------------------------------------
 
@@ -134,10 +162,13 @@ class WSLTransport(Transport):
         argv += ["--cd", "/", "--", self.shell, flag, command]
         return argv
 
-    def _spawn(self, argv: List[str], timeout: int, what: str) -> CommandResult:
+    def _spawn(
+        self, argv: List[str], timeout: int, what: str, stdin: Optional[str] = None
+    ) -> CommandResult:
         try:
             proc = subprocess.run(
                 argv,
+                input=stdin,
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -181,8 +212,16 @@ class WSLTransport(Transport):
         while the same path with a space in it survives because the Windows
         command line quoted it -- so it worked or failed depending on the
         directory the user happened to be working in.
+
+        The one path not asked about is ``\\\\wsl.localhost\\<distro>\\...`` into
+        the distribution the job runs in: the file is already Linux side, and
+        older wslpath rejects that prefix, so a job saved in the distribution's
+        own home directory could not be submitted to it.
         """
-        absolute = os.path.abspath(windows_path)
+        unc = split_wsl_unc(windows_path)
+        if unc and unc[0].lower() == self.running_distro().lower():
+            return unc[1]
+        absolute = windows_path if unc else os.path.abspath(windows_path)
         result = self.run(f"wslpath -a -u {_quote(absolute)}", timeout=30)
         translated = (result.stdout or "").strip().splitlines()
         if not result.ok or not translated:
@@ -191,6 +230,26 @@ class WSLTransport(Transport):
                 "distribution mounts; a network path is not."
             )
         return translated[-1].strip()
+
+    def running_distro(self) -> str:
+        """The distribution commands land in; "" when it cannot be told.
+
+        With none configured that is WSL's default, which only WSL knows, so it
+        is asked once and remembered.
+        """
+        if self._running_distro is None:
+            name = self.distro
+            if not name:
+                try:
+                    result = self.run(f'printf "%s" "{_BEGIN}$WSL_DISTRO_NAME{_END}"', timeout=30)
+                    name = (_between_markers(result.stdout or "") or "").strip()
+                except TransportError:
+                    name = ""
+            self._running_distro = name
+        return self._running_distro
+
+    def _copy_timeout(self) -> int:
+        return max(60, int(self.host.command_timeout or 60) * 10)
 
     # --- operations ---------------------------------------------------------
 
@@ -201,15 +260,40 @@ class WSLTransport(Transport):
         limit = int(timeout or self.host.command_timeout or 60)
         return self._spawn(self._argv(wrapped), limit, "WSL command")
 
+    def _run_with_input(self, cmd: str, data: str, timeout: int) -> CommandResult:
+        from .. import remote_paths
+
+        wrapped = remote_paths.wrap_login(cmd, self.host.environment_commands())
+        return self._spawn(self._argv(wrapped), timeout, "WSL command", stdin=data)
+
     def upload(self, local_path: str, remote_path: str) -> None:
         from .. import remote_paths
 
-        source = self.to_wsl_path(local_path)
         target = remote_paths.quote(remote_path)
-        result = self.run(
-            f'mkdir -p -- "$(dirname {target})" && cp -f -- {remote_paths.quote(source)} {target}',
-            timeout=max(60, int(self.host.command_timeout or 60) * 10),
-        )
+        mkdir = f'mkdir -p -- "$(dirname {target})"'
+        try:
+            source = self.to_wsl_path(local_path)
+        except TransportError:
+            # A share the distribution does not mount, or another
+            # distribution's files: Windows can still read it, so the bytes go
+            # in through stdin instead of by name.
+            source = ""
+        if source:
+            result = self.run(
+                f"{mkdir} && cp -f -- {remote_paths.quote(source)} {target}",
+                timeout=self._copy_timeout(),
+            )
+        else:
+            try:
+                with open(local_path, "rb") as handle:
+                    encoded = base64.b64encode(handle.read()).decode("ascii")
+            except OSError as exc:
+                raise TransportError(
+                    f"Upload of {os.path.basename(local_path)} into WSL failed: {exc}"
+                ) from exc
+            result = self._run_with_input(
+                f"{mkdir} && base64 -d > {target}", encoded, self._copy_timeout()
+            )
         if not result.ok:
             raise TransportError(
                 f"Upload of {os.path.basename(local_path)} into WSL failed: "
@@ -222,16 +306,40 @@ class WSLTransport(Transport):
         os.makedirs(os.path.dirname(os.path.abspath(local_path)), exist_ok=True)
         # The destination is created first: wslpath translates a path whether or
         # not it exists, but only if its directory does.
-        target = self.to_wsl_path(local_path)
-        result = self.run(
-            f"cp -f -- {remote_paths.quote(remote_path)} {remote_paths.quote(target)}",
-            timeout=max(60, int(self.host.command_timeout or 60) * 10),
-        )
-        if not result.ok:
-            raise TransportError(
-                f"Download of {remote_path} from WSL failed: "
-                f"{(result.stderr or result.stdout).strip()[:300]}"
+        try:
+            target = self.to_wsl_path(local_path)
+        except TransportError:
+            target = ""
+        if target:
+            result = self.run(
+                f"cp -f -- {remote_paths.quote(remote_path)} {remote_paths.quote(target)}",
+                timeout=self._copy_timeout(),
             )
+            if result.ok:
+                return
+        else:
+            # The mirror of upload's stdin route, out through stdout. Markers,
+            # because a login file that echoes would otherwise land in the file.
+            result = self.run(
+                f'printf "%s\\n" "{_BEGIN}" && base64 -- {remote_paths.quote(remote_path)}'
+                f' && printf "%s\\n" "{_END}"',
+                timeout=self._copy_timeout(),
+            )
+            body = _between_markers(result.stdout or "") if result.ok else None
+            if body is not None:
+                try:
+                    data = base64.b64decode("".join(body.split()), validate=True)
+                except ValueError as exc:
+                    raise TransportError(
+                        f"Download of {remote_path} from WSL failed: {exc}"
+                    ) from exc
+                with open(local_path, "wb") as handle:
+                    handle.write(data)
+                return
+        raise TransportError(
+            f"Download of {remote_path} from WSL failed: "
+            f"{(result.stderr or result.stdout).strip()[:300]}"
+        )
 
     def test_connection(self) -> str:
         # Asked outright, so a distribution that cannot run the job script says
@@ -256,5 +364,6 @@ __all__ = [
     "WSLTransport",
     "find_wsl",
     "list_distributions",
+    "split_wsl_unc",
     "wsl_available",
 ]

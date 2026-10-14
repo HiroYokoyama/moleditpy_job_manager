@@ -143,6 +143,98 @@ class TestTheWSLCommandLine(unittest.TestCase):
                 transport.to_wsl_path(r"C:\Users\me\mol.inp")
         self.assertIn("mounts", str(caught.exception))
 
+    def test_a_path_into_the_distribution_itself_is_its_linux_path(self):
+        # wslpath on older WSL rejects \\wsl.localhost, so a file saved in the
+        # distribution's own home directory could not be submitted to it.
+        transport = self.transport(wsl_distro="Ubuntu")
+        with patch.object(WSLTransport, "run") as run:
+            self.assertEqual(
+                transport.to_wsl_path(r"\\wsl.localhost\ubuntu\home\me\job\mol.inp"),
+                "/home/me/job/mol.inp",
+            )
+            self.assertEqual(
+                transport.to_wsl_path(r"\\wsl$\Ubuntu\home\me\mol.inp"), "/home/me/mol.inp"
+            )
+        run.assert_not_called()
+
+    def test_the_default_distribution_is_asked_for_its_name_once(self):
+        transport = self.transport()
+        answer = CommandResult(
+            0, "profile noise\n@@moleditpy-wsl-begin@@Ubuntu@@moleditpy-wsl-end@@", ""
+        )
+        with patch.object(WSLTransport, "run", return_value=answer) as run:
+            for _ in range(2):
+                self.assertEqual(
+                    transport.to_wsl_path(r"\\wsl.localhost\Ubuntu\home\me\mol.inp"),
+                    "/home/me/mol.inp",
+                )
+        self.assertEqual(run.call_count, 1)
+
+    def test_another_distributions_path_still_goes_to_wslpath(self):
+        transport = self.transport(wsl_distro="Debian")
+        with patch.object(
+            WSLTransport, "run", return_value=CommandResult(0, "/mnt/wsl/x\n", "")
+        ) as run:
+            transport.to_wsl_path(r"\\wsl.localhost\Ubuntu\home\me\mol.inp")
+        self.assertIn(r"'\\wsl.localhost\Ubuntu\home\me\mol.inp'", run.call_args.args[0])
+
+    def test_a_file_wsl_cannot_name_is_uploaded_through_stdin(self):
+        import os
+        import tempfile
+
+        transport = self.transport(wsl_distro="Ubuntu")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "mol.inp")
+            with open(path, "wb") as handle:
+                handle.write(b"! B3LYP\r\n")
+            with (
+                patch.object(WSLTransport, "to_wsl_path", side_effect=TransportError("cannot see")),
+                patch.object(
+                    WSLTransport, "_spawn", return_value=CommandResult(0, "", "")
+                ) as spawn,
+            ):
+                transport.upload(path, "/home/me/jobs/1/mol.inp")
+        self.assertIn("base64 -d >", spawn.call_args.args[0][-1])
+        self.assertEqual(base64.b64decode(spawn.call_args.kwargs["stdin"]), b"! B3LYP\r\n")
+
+    def test_a_file_wsl_cannot_name_is_downloaded_through_stdout(self):
+        import os
+        import tempfile
+
+        transport = self.transport(wsl_distro="Ubuntu")
+        encoded = base64.b64encode(b"FINAL ENERGY\n\x00").decode()
+        answer = CommandResult(
+            0,
+            f"noise\n@@moleditpy-wsl-begin@@\n{encoded[:4]}\n{encoded[4:]}\n@@moleditpy-wsl-end@@\n",
+            "",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "out", "mol.out")
+            with (
+                patch.object(WSLTransport, "to_wsl_path", side_effect=TransportError("cannot see")),
+                patch.object(WSLTransport, "run", return_value=answer),
+            ):
+                transport.download("/home/me/jobs/1/mol.out", path)
+            with open(path, "rb") as handle:
+                self.assertEqual(handle.read(), b"FINAL ENERGY\n\x00")
+
+    def test_a_failed_stream_download_is_an_error_not_an_empty_file(self):
+        import os
+        import tempfile
+
+        transport = self.transport(wsl_distro="Ubuntu")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "mol.out")
+            with (
+                patch.object(WSLTransport, "to_wsl_path", side_effect=TransportError("cannot see")),
+                patch.object(
+                    WSLTransport, "run", return_value=CommandResult(1, "", "No such file")
+                ),
+            ):
+                with self.assertRaises(TransportError):
+                    transport.download("/home/me/jobs/1/mol.out", path)
+            self.assertFalse(os.path.exists(path))
+
     def test_a_quote_in_a_path_cannot_end_the_quoting(self):
         self.assertEqual(_quote("a'b"), "'a'\"'\"'b'")
 

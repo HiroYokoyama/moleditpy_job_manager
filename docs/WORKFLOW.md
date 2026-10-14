@@ -297,9 +297,10 @@ it empty for the default one.
 Everything is Linux side: *Remote root* is a path in the distribution
 (`/home/you/moleditpy_jobs`), the wrapper is the same bash script a cluster is
 sent, and the helper queue works as it does anywhere else. Input files are
-translated with `wslpath` and copied in; results are copied back out. A file on
-a drive the distribution does not mount cannot be reached, and the dialog says
-so rather than failing later.
+translated with `wslpath` and copied in; results are copied back out. A file
+already inside the distribution (`\\wsl.localhost\Ubuntu\home\...`) is used by
+its Linux path. A file WSL cannot name, such as one on a network share or in
+another distribution, is streamed in through the command's input instead.
 
 The distribution needs a real `bash`. A container image (`docker-desktop`) does
 not have one, and Test Connection says which distribution is missing it.
