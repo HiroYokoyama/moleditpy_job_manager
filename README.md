@@ -372,6 +372,32 @@ asked.
 
 For exactly what is stored where, see [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md).
 
+### Verified backends
+
+The following configurations have been checked by running real jobs through
+submission, completion tracking, log reading and result download. Local and
+WSL checks cover both direct background mode and the built-in helper queue:
+
+| Backend | Verified environment | Evidence |
+|---|---|---|
+| OpenSSH | Linux hosts without a cluster scheduler | Verified in real use |
+| paramiko | Linux hosts without a cluster scheduler | Verified in real use |
+| This machine — bash | Linux and Git Bash on Windows | Real shell execution in the test suite and CI |
+| This machine — Windows scheduler | Native Windows PowerShell | Real direct and queued job execution in Windows CI |
+| WSL | Windows with Ubuntu, using real `wsl.exe` and bash | Verified locally with version **2.6.3** on **2026-10-14** |
+
+The Ubuntu WSL checks include Windows input files, files accessed through
+`\\wsl.localhost\Ubuntu\...`, an existing job directory, failed-command exit
+codes, and long jobs that keep running after submission returns. Version
+**2.6.3** fixes a WSL launch race that could leave a job pending without a log.
+The real WSL tests run whenever a distribution with bash is available; ordinary
+Windows CI also exercises the WSL transport through a shell-backed stand-in.
+
+OpenSSH and paramiko are verified against real hosts; their automated transport
+tests additionally use mocked connections. SLURM, PBS/Torque and SGE/UGE have
+scheduler unit tests, but have not yet been verified on a real cluster. See
+[Submit options and supercomputer login nodes](#submit-options-and-supercomputer-login-nodes).
+
 ## Polling is deliberately slow
 
 A login node is not a status API, so:
