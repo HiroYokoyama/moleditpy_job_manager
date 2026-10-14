@@ -266,6 +266,22 @@ class WSLTransport(Transport):
         from .. import remote_paths
 
         wrapped = remote_paths.wrap_login(cmd, self.host.environment_commands())
+        # WSL tears down the launching session when its foreground shell exits.
+        # A just-forked child can die before setsid/nohup runs, leaving a queue
+        # lock and PID but no runner or log. Wait for children to detach, rather
+        # than waiting for the calculation itself to finish.
+        wrapped += """
+__moleditpy_wsl_rc=$?
+for __moleditpy_wsl_pid in $(jobs -pr); do
+    __moleditpy_wsl_sid=$(ps -o sid= -p $$)
+    for __moleditpy_wsl_attempt in {1..100}; do
+        __moleditpy_wsl_child_sid=$(ps -o sid= -p "$__moleditpy_wsl_pid")
+        [ "$__moleditpy_wsl_child_sid" != "$__moleditpy_wsl_sid" ] && break
+        sleep 0.01
+    done
+done
+exit "$__moleditpy_wsl_rc"
+"""
         limit = int(timeout or self.host.command_timeout or 60)
         return self._spawn(self._argv(wrapped), limit, "WSL command")
 

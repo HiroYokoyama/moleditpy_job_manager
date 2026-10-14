@@ -412,6 +412,9 @@ class TestRealWSLQueue(SubmissionCase):
     def staged_path(self, path: str) -> str:
         return self.transport.to_wsl_path(path)
 
+    def test_transport_preserves_a_failed_commands_exit_status(self):
+        self.assertEqual(self.transport.run("false").rc, 1)
+
     def test_a_file_inside_the_distribution_is_submitted_by_its_unc_path(self):
         # What a user gets saving a job in the distribution's home directory.
         inside = self.host.remote_root + "/inside"
@@ -423,6 +426,11 @@ class TestRealWSLQueue(SubmissionCase):
         into = os.path.join(self.work, "back")
         fetch_results(self.transport, job, into)
         self.assertIn("from-inside", open(os.path.join(into, "out.txt"), encoding="utf-8").read())
+
+
+@unittest.skipUnless(REAL_WSL_DISTRO, "needs a WSL distribution with bash")
+class TestRealWSLDirect(TestRealWSLQueue):
+    mode = MODE_LANES
 
 
 # The base class is a fixture, not a test case of its own: it has no host that
