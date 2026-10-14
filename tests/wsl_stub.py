@@ -5,7 +5,7 @@ a container distribution with no bash in it -- so the WSL backend would be the
 one submission path with no end-to-end test at all. This accepts exactly the
 command line :class:`~job_manager.transport.wsl.WSLTransport` builds::
 
-    wsl.exe [-d <distro>] --cd / -- <shell> -lc <command>
+    wsl.exe [-d <distro>] --cd / --exec <shell> -lc <command>
 
 and runs ``<command>`` through the real bash this machine has, translating the
 one WSL-specific call the transport makes (``wslpath``) into its Git Bash
@@ -29,7 +29,9 @@ def main(argv: list) -> int:
         args = args[2:]
     if args[:2] == ["--cd", "/"]:
         args = args[2:]
-    if args[:1] != ["--"]:
+    # Only --exec: the real "--" runs the line through the default shell,
+    # which expands every $var early, so a regression has to fail here too.
+    if args[:1] != ["--exec"]:
         sys.stderr.write("wsl_stub: unexpected command line\n")
         return 2
     args = args[1:]

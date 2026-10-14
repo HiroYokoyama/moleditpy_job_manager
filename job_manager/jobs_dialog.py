@@ -588,7 +588,7 @@ class JobsDialog(QDialog):
 
     def _refresh_now(self) -> None:
         if not self.service.poller.refresh_now():
-            self._append_message("Refresh is rate limited; try again in a few seconds.")
+            self._append_message("Refresh is rate limited; try again in a second.")
 
     def _reload_jobs(self) -> None:
         """Take in what another Job Manager instance changed on disk.

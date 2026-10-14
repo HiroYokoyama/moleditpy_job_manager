@@ -224,7 +224,7 @@ class TrayController(QObject):
     def _refresh_now(self) -> None:
         try:
             if not self.service.poller.refresh_now():
-                self.service.message.emit("Refresh is rate limited; try again in a few seconds.")
+                self.service.message.emit("Refresh is rate limited; try again in a second.")
         except Exception:
             logging.debug("Job Manager: refresh from the tray failed", exc_info=True)
 

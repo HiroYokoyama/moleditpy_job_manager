@@ -600,7 +600,7 @@ You can go faster — down to 5 s — but under 30 s the toolbar shows **fast
 polling**. On a shared login node that is the kind of thing admins complain
 about; against your own workstation it is fine.
 
-**Refresh Now** forces a cycle immediately (rate limited to once every 10 s).
+**Refresh Now** forces a cycle immediately (rate limited to once every 1 s).
 
 **View ▸ Reload List** (`Ctrl+R`) asks a different question. Two Job
 Managers open at once — a second MoleditPy window, or the standalone monitor

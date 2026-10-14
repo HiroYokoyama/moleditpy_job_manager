@@ -354,6 +354,77 @@ class TestWSLThroughAStub(SubmissionCase):
         self.assertIn("crossing over", open(os.path.join(into, "out.txt"), encoding="utf-8").read())
 
 
+@unittest.skipUnless(ON_WINDOWS and BASH, "the WSL command line is Windows-only")
+class TestWSLQueueThroughAStub(TestWSLThroughAStub):
+    """WSL with the helper queue -- the default for a WSL host, and the path
+    that claims a queue number. Direct mode alone never exercised it."""
+
+    mode = MODE_RUNNER
+
+    def tearDown(self):
+        directory = remote_runner.runner_dir(self.host.remote_root)
+        self.transport.run(f"rm -rf {directory}/lock")
+
+
+def _real_wsl_distro() -> str:
+    """A WSL distribution with bash, or "" -- the test below needs a real one.
+
+    MOLEDITPY_TEST_WSL_DISTRO picks one; otherwise the first that has bash.
+    """
+    if not ON_WINDOWS:
+        return ""
+    from job_manager.transport.wsl import list_distributions
+
+    wanted = os.environ.get("MOLEDITPY_TEST_WSL_DISTRO", "")
+    for name in [wanted] if wanted else list_distributions():
+        host = HostProfile(name="probe", backend=BACKEND_WSL, wsl_distro=name, load_profile=False)
+        try:
+            WSLTransport(host).test_connection()
+        except Exception:
+            continue
+        return name
+    return ""
+
+
+REAL_WSL_DISTRO = _real_wsl_distro()
+
+
+@unittest.skipUnless(REAL_WSL_DISTRO, "needs a WSL distribution with bash")
+class TestRealWSLQueue(SubmissionCase):
+    """The real wsl.exe, nothing stood in. The stub runs its command through
+    Git Bash directly, so it could not see wsl.exe passing "--" through the
+    default shell -- which expanded every $var and broke the queue claim."""
+
+    backend = BACKEND_WSL
+    mode = MODE_RUNNER
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(self.transport.run, f"rm -rf {self.host.remote_root}")
+
+    def remote_root(self) -> str:
+        return f"/tmp/moleditpy_test_{os.getpid()}_{int(time.time() * 1000)}"
+
+    def make_transport(self):
+        self.host.wsl_distro = REAL_WSL_DISTRO
+        return WSLTransport(self.host)
+
+    def staged_path(self, path: str) -> str:
+        return self.transport.to_wsl_path(path)
+
+    def test_a_file_inside_the_distribution_is_submitted_by_its_unc_path(self):
+        # What a user gets saving a job in the distribution's home directory.
+        inside = self.host.remote_root + "/inside"
+        self.transport.run(f"mkdir -p {inside} && echo from-inside > {inside}/mol.inp")
+        unc = "\\\\wsl.localhost\\" + REAL_WSL_DISTRO + inside.replace("/", "\\") + "\\mol.inp"
+        job = self.job("unc")
+        self.submit(job, self.preset("cat {input} > out.txt"), files=[unc])
+        self.assertEqual(self.run_to_completion(job), STATE_DONE)
+        into = os.path.join(self.work, "back")
+        fetch_results(self.transport, job, into)
+        self.assertIn("from-inside", open(os.path.join(into, "out.txt"), encoding="utf-8").read())
+
+
 # The base class is a fixture, not a test case of its own: it has no host that
 # is guaranteed to exist. Its subclasses carry every assertion.
 del SubmissionCase

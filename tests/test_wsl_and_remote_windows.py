@@ -106,6 +106,25 @@ class TestTheWSLCommandLine(unittest.TestCase):
         self.assertIn("--cd", argv)
         self.assertEqual(argv[argv.index("--cd") + 1], "/")
 
+    def test_the_shell_is_executed_directly_not_through_the_default_one(self):
+        # "--" passes the line through the distribution's default shell, which
+        # expanded $n in the queue-number claim to nothing.
+        argv = self.transport()._argv("echo $n")
+        self.assertNotIn("--", argv)
+        self.assertEqual(argv[argv.index("--exec") + 1], "bash")
+
+    def test_a_missing_bash_under_exec_is_named(self):
+        transport = self.transport(wsl_distro="docker-desktop")
+        failed = unittest.mock.Mock(
+            returncode=1,
+            stdout="",
+            stderr="CreateProcessCommon: execvpe(bash) failed: No such file",
+        )
+        with patch("job_manager.transport.wsl.subprocess.run", return_value=failed):
+            with self.assertRaises(TransportError) as caught:
+                transport.run("echo hi")
+        self.assertIn("docker-desktop", str(caught.exception))
+
     def test_the_command_is_the_last_argument(self):
         argv = self.transport()._argv("echo hi")
         self.assertEqual(argv[-3:], ["bash", "-lc", "echo hi"])

@@ -158,8 +158,12 @@ class WSLTransport(Transport):
         # -c where the host reads the login files itself, for the reason
         # LocalTransport._argv gives: a login shell is 260 ms against 14 ms,
         # and the profile is already in the command.
+        # --exec, never "--": "--" hands the rest of the line to the
+        # distribution's default shell, which expands every $var before bash
+        # sees it. The queue-number claim came back as an empty "echo $n", and
+        # no job could be submitted.
         flag = "-c" if getattr(self.host, "load_profile", False) else "-lc"
-        argv += ["--cd", "/", "--", self.shell, flag, command]
+        argv += ["--cd", "/", "--exec", self.shell, flag, command]
         return argv
 
     def _spawn(
@@ -184,7 +188,12 @@ class WSLTransport(Transport):
         lowered = stderr.lower()
         if "no installed distributions" in lowered or "wsl.exe -l" in lowered:
             raise TransportError(NO_DISTRO_HINT)
-        if f"{self.shell}: not found" in lowered or f"{self.shell}: command not found" in lowered:
+        if (
+            f"{self.shell}: not found" in lowered
+            or f"{self.shell}: command not found" in lowered
+            # What --exec says when the program is missing.
+            or f"execvpe({self.shell}) failed" in lowered
+        ):
             raise TransportError(self.no_shell_hint())
         return CommandResult(proc.returncode, proc.stdout or "", stderr)
 

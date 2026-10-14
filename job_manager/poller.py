@@ -24,8 +24,8 @@ from .transport.base import TransportError
 
 #: Ceiling for the error backoff, in seconds.
 MAX_BACKOFF = 900
-#: A manual refresh may not be spammed faster than this.
-MANUAL_REFRESH_COOLDOWN = 10.0
+#: Only stops a double click or a held F5 from launching overlapping polls.
+MANUAL_REFRESH_COOLDOWN = 1.0
 #: How soon a host is asked after a job is handed to it, instead of waiting a
 #: full interval while the table still says SUBMITTED.
 FIRST_POLL_SECONDS = 5.0
