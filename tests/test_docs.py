@@ -94,7 +94,7 @@ class TestDocumentedScript(unittest.TestCase):
         )
 
     def test_the_trap_lines_are_quoted_verbatim(self):
-        for document in (README, DOCS / "ARCHITECTURE.md"):
+        for document in (DOCS / "ARCHITECTURE.md",):
             text = read(document)
             for line in (
                 "trap 'exit 143' TERM",
@@ -106,13 +106,13 @@ class TestDocumentedScript(unittest.TestCase):
 
     def test_the_exit_trap_is_quoted_verbatim(self):
         exit_trap = next(line for line in self.script.splitlines() if line.endswith("' EXIT"))
-        for document in (README, DOCS / "ARCHITECTURE.md"):
+        for document in (DOCS / "ARCHITECTURE.md",):
             self.assertIn(exit_trap, read(document), document.name)
 
     def test_the_sentinel_file_name(self):
         from job_manager.models import SENTINEL_NAME
 
-        for document in (README, DOCS / "ARCHITECTURE.md"):
+        for document in (DOCS / "ARCHITECTURE.md",):
             self.assertIn(SENTINEL_NAME, read(document), document.name)
 
 

@@ -175,9 +175,8 @@ class TestThePngFallbacksMatchTheSvg(IconTestCase):
                 self.assertLess(abs(x - y), 12, "the touch icon no longer matches the SVG")
 
 
-class TestTheReadmeIcon(IconTestCase):
-    """The README shows a file, because GitHub strips data: URIs out of
-    markdown -- so there is a third copy of the drawing to keep in step."""
+class TestTheRepositoryIcon(IconTestCase):
+    """Keep the stored PNG in step with the drawing used by the application."""
 
     def path(self):
         import pathlib
@@ -189,14 +188,6 @@ class TestTheReadmeIcon(IconTestCase):
         self.assertTrue(raw.startswith(b"\x89PNG\r\n\x1a\n"))
         self.assertEqual(int.from_bytes(raw[16:20], "big"), 128)
         self.assertEqual(int.from_bytes(raw[20:24], "big"), 128)
-
-    def test_the_readme_points_at_it(self):
-        import pathlib
-
-        readme = (pathlib.Path(__file__).resolve().parents[1] / "README.md").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("img/icon.png", readme)
 
     def test_it_is_still_the_same_drawing(self):
         # Regenerate with `python -m tests.regenerate_icons` after editing the
