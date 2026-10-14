@@ -8,375 +8,113 @@
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![MoleditPy](https://img.shields.io/badge/MoleditPy->=4.0.0-3577F7)](https://github.com/HiroYokoyama/python_molecular_editor)
 
-Repo: [https://github.com/HiroYokoyama/moleditpy_job_manager/](https://github.com/HiroYokoyama/moleditpy_job_manager/)
+A [MoleditPy](https://github.com/HiroYokoyama/python_molecular_editor) plugin for
+running calculations over SSH, locally, inside WSL, or through a LAN Job Server.
+Upload inputs, submit jobs, monitor progress, fetch results and open them in the
+editor. It also runs as a standalone desktop application.
 
-A [MoleditPy](https://github.com/HiroYokoyama/python_molecular_editor) plugin that
-runs your calculations on a remote cluster without leaving the editor.
+![Job Manager](img/job-manager.png)
+![Host Monitor](img/host-monitor.png)
 
-MoleditPy can already *write* QM inputs (ORCA / Gaussian / VASP / QE / CP2K Input
-Generator Pro) and *read* the results (ORCA Result Analyzer, Gaussian MO & Freq
-Analyzers, Cube Viewer). Job Manager fills in the middle: upload, submit, watch,
-fetch, open.
+## Features
 
-![job manager](img/job-manager.png)
-![host monitor](img/host-monitor.png)
+- **Submit calculations** to SLURM, PBS/Torque, SGE/UGE, a background process,
+  or [MoleditPy Job Server](docs/JOB_SERVER.md). Native Windows jobs use PowerShell;
+  WSL jobs use bash inside the selected Linux distribution.
+- **Manage workstation resources** with a built-in queue that schedules by
+  physical cores and memory. Pause the queue, change its limits, chain jobs,
+  or schedule a later start. Jobs continue with MoleditPy closed.
+- **Reuse inputs and settings.** Save command templates and resource presets,
+  submit files already on the host, or relay a predecessor's outputs into a new
+  job. ORCA, Gaussian, Psi4, NWChem, Q-Chem and GAMESS inputs can supply their own
+  core and memory requests.
+- **Monitor jobs and hosts.** Sort and filter jobs, browse remote files and logs,
+  and view CPU, memory and load in the Host Monitor. Desktop notifications,
+  task-bar progress, a tray icon and Slack/Discord/Teams webhooks are available.
+- **Collect results.** Download outputs automatically beside the input file and
+  open them through the installed result analyzer. Save job lists as `.pmejbs`,
+  export CSV, or rebuild a read-only list from existing result folders.
+- **Submit from other tools.** ORCA and Gaussian Input Generator Pro provide a
+  **Submit to Cluster...** button. Scripts and other applications can use the
+  optional [local HTTP API](docs/API.md).
 
-<img src="img/icon.png" width="88" alt="">
-
-## What it does
-
-- **Use a LAN computational helper.** Select **Job Server (HTTPS)** in Hosts to
-  submit to MoleditPy Job Server, monitor the shared queue, cancel jobs, view logs,
-  and fetch verified results. Its HTTP client is bundled; only **cryptography
-  >=50.0.2** is an additional optional dependency. The existing OpenSSH/local/WSL
-  backends still need no new packages. See [Job Server setup](docs/JOB_SERVER.md).
-
-- **Submit** an input file to SLURM, PBS/Torque, SGE/UGE — or to a plain
-  background process on a machine with no queue at all, including **this
-  machine**, with no SSH involved.
-- **Submit work that is already there.** Point a job at a directory on the
-  host instead of uploading anything: `~/runs/mol42` and a command is a whole
-  job. Input files are optional throughout — name one that is already in that
-  directory and `{input}` still works, or run a command that needs none. The
-  directory is *checked*, never created, and everything the wrapper writes
-  there carries the job id, so several jobs can share one prepared directory
-  without overwriting each other's results.
-- **Run natively on Windows**, with nothing to install: choose the Windows
-  scheduler and the wrapper, the status checks and the plugin's own commands
-  are all PowerShell, which ships with the OS — including the helper queue,
-  which has a PowerShell runner of its own. It works the same way over SSH to
-  a Windows machine: commands are sent as encoded PowerShell, so the server's
-  default SSH shell may be either `cmd` or PowerShell.
-- **Run inside WSL** from Windows, which is where most calculation programs
-  are actually installed. The job directory, the wrapper and the outputs are
-  all Linux side — the same bash script a cluster is sent — and input files
-  are translated and copied across for you (`wslpath`, so a distribution that
-  mounts its drives somewhere unusual still works).
-- **Chain** jobs — "run this after that one" — using each scheduler's own
-  mechanism (`--dependency=afterok`, `-W depend`, `-hold_jid`), or a wrapper
-  that waits for the previous process where there is no queue at all. Ask for
-  `afterany` instead when the jobs are independent, and see a job marked
-  **BLOCKED** — rather than a permanent, misleading PENDING — for every job
-  stranded by a failure under a dependency the queue can never satisfy, not
-  just the one directly behind it.
-- **Schedule what a workstation can actually run** — the piece `nohup` has no
-  scheduler for. A small helper queue on the host dispatches by **physical
-  cores and memory**, not by a job count: eight single-core jobs run together
-  on an eight-core box, two 90 GB jobs never share 120 GB, and the rest wait.
-  It needs nothing installed, holds the queue in plain numbered shell scripts
-  you can read over `ssh`, keeps moving with MoleditPy closed, and exits by
-  itself the moment the queue is empty. (A dependency-chained mode is there
-  too, for hosts where nothing at all may be left behind.)
-- **Schedule** a start time (`--begin`, `-a`, or a sleep). The job is handed
-  over now; MoleditPy need not be running when it starts.
-- **Rebuild a job list from a folder** of results nobody tracked: fetched by
-  hand, copied off a cluster, or run before this plugin existed. One record
-  per directory that holds outputs, saved beside them as a `.pmejbs` and
-  marked read only — results can be opened from it, but nothing in it can be
-  submitted, cancelled or polled, because there is no host behind any of it.
-- **Track** every job in one table: queue id, state, elapsed time, and what it
-  is queued behind. A double click opens the log while a job runs and the
-  result once it has finished. Status survives closing the window, closing the project,
-  and restarting MoleditPy — tracking resumes by itself at launch when jobs
-  from a previous session are still running.
-- **Watch** without the window open: a counter appears in MoleditPy's own
-  status bar while anything is running, queued or blocked, and opens the
-  monitor when clicked. Nothing is shown, and nothing is polled, when there are
-  no jobs. Optionally the same count goes on the application icon in the **OS
-  task bar** — the Dock on macOS, the task bar button on Windows, the launcher
-  entry on Linux — which is off by default, since the icon is MoleditPy's
-  rather than this plugin's. The status bar counter can be switched off in
-  Settings.
-- **One Settings window** — **Settings...** in the monitor's toolbar, in the
-  tray menu, or under Extensions → Job Manager — holds every standing
-  preference: the poll interval, where results go and whether they open,
-  notifications and chat alerts, the task bar and the tray, the web monitor
-  and the local API.
-- **A tray icon** that says the same at a glance — a green dot while jobs run,
-  amber while they wait, red when one failed and you have not looked yet — and
-  whose right-click menu opens the monitor, starts a new job, refreshes, lists
-  the active jobs (pick one to jump to it), opens Settings and quits
-  MoleditPy. Optionally (in Settings) **keep the Job Manager running after
-  MoleditPy closes**: MoleditPy quits for real, and the Job Manager carries on
-  alone in the tray — polling, notifying, downloading and serving the web
-  monitor, with or without jobs — until you open MoleditPy again, which takes
-  the jobs back. Off by default; and by default only for a session in which you
-  opened the Job Manager (**Only if the Job Manager was opened in that
-  session**).
-- **On the Windows task bar**, the job monitor's button shows the batch's
-  progress — green filling as jobs end, yellow for a blocked chain, red for an
-  unseen failure — and its thumbnail carries *Refresh now*, *New job* and
-  *Host monitor* buttons. A job ending flashes the button (bounces the Dock
-  icon on macOS) when MoleditPy is not in front, and the monitor's title leads
-  with the counts, so the task bar's hover text says what is running.
-- **Be told** when a job ends: a desktop notification names the job and the
-  host when it finishes, fails or vanishes from the queue. On by default, and
-  one checkbox away from off. The same line can go to **Slack, Discord or
-  Teams** — paste an incoming-webhook URL under *Settings → Chat webhook...* and it reaches
-  you away from the machine. Nothing is installed for it; see
-  [docs/WORKFLOW.md](docs/WORKFLOW.md#being-told-somewhere-else-slack-discord-teams).
-- **Read the request from the input** rather than asking for it twice: ORCA,
-  Gaussian, Psi4, NWChem, Q-Chem and GAMESS all state their own memory and
-  cores, so the wizard fills those fields in — ORCA's `%maxcore` is *per core*
-  and is multiplied out, which is the difference between a 3 GB job and a
-  24 GB one. Anything you have already typed is left alone.
-- **Hold** the queue on a host without cancelling anything, change its limits
-  while jobs are already waiting, and **Detect** what the machine really has.
-- **Drop** an input file on the Job Monitor to start: the wizard opens
-  prefilled, named after the file, with its command template chosen. Drop
-  several at once and each becomes its own job by default — hold **Shift**
-  while dropping to keep the old behaviour of one job with every file
-  uploaded to it, for a command that genuinely wants more than one.
-- **Reuse another job's file** in a new one, without copying a path by
-  hand: an ORCA `* xyzfile`, a Gaussian `%oldchk`, anything an input names
-  with a `[prevfile:.ext]` tag. The file is copied on the host itself, from
-  the old job's directory into the new one's — nothing is downloaded here
-  and re-uploaded — so this only ever relays between two jobs on the same
-  host. `[prevfile:.res/.xyz]` reaches one directory down, for a result kept
-  inside a folder of its own. The source job need not have finished yet — the
-  new job is chained to start only once it succeeds, and the copy is written
-  into the job's own script, so it is only ever attempted once the file
-  actually exists.
-- **Sort and filter** the job table: click a header to sort — by the real
-  elapsed seconds and the real timestamp, not the formatted text — and type
-  to filter across every column at once.
-- **Fetch** the outputs automatically when a job ends — next to the input file
-  by default, so results sit where you are already working — then hand them to
-  whichever plugin already claims that file type — a finished ORCA run opens in
-  the ORCA Result Analyzer with no extra configuration.
-- **Tail Remote Logs & Outputs with Tree Picker** — choose any remote file across
-  the calculation directory via an interactive tree browser with instant filtering,
-  featuring auto-refresh (5s for Paramiko/Local, 10s for OpenSSH) enabled by default.
-- **Host Monitor Dashboard** — live visual CPU/memory gauges, the host's own 1, 5
-  and 15 minute load averages, CPU sparklines, running job names and overall
-  progress indicators (`task X/Y done`) with persistent preferences.
-- **Job ▸ Resubmit** opens a job with the same host, inputs and resources.
-- **Save** the list as a `.pmejbs` file or **export** it as CSV, **clear** it (the old list
-  is archived, never deleted), and **reopen** any saved list — from the **File** menu,
-  from File ▸ Import, or by dropping it on the window.
-
-
-### Submitting straight from an input generator
-
-ORCA Input Generator Pro and Gaussian Input Generator Pro show a
-**Submit to Cluster...** button beside Save when this plugin is installed. It
-saves the input and hands it here, prefilled -- no file picker, no retyping the
-job name. Without this plugin the button is not shown at all.
-
-Other plugins can do the same by calling `job_manager.submit_file(paths,
-name="")`, found through the host's plugin list. It is a public API: the name
-and signature will not change without a major version.
-
-### Submitting from another program
-
-A program that is not a MoleditPy plugin — a script, a pipeline, another
-application — can submit jobs and collect the results through a small HTTP API
-on `127.0.0.1`.
-
-It is **off until you switch it on**, under **Extensions ▸ Job Manager ▸ Local
-API...**. Nothing listens on a machine where the plugin is merely installed.
-
-```bash
-python -m job_manager.api_client submit h2o.inp     --host mycluster     --command "/opt/orca/orca {input} > {stem}.out" --cpus 8 --memory 16GB
-
-python -m job_manager.api_client wait <job id> --download
-```
-
-```python
-from job_manager.api_client import JobManagerClient
-
-client = JobManagerClient()          # finds the running MoleditPy itself
-job = client.submit(host="mycluster", files=["h2o.inp"],
-                    command="/opt/orca/orca {input} > {stem}.out")
-final = client.wait(job["id"])
-```
-
-A submission that arrives this way is not a second submission path: it builds
-the same preset the wizard builds and hands it to the same service, so it is
-polled, chained, downloaded and announced exactly like one you typed in. The
-client is standard library only and imports nothing else from the plugin, so it
-can be copied next to whatever program needs it.
-
-Every route, every field and the security model: [docs/API.md](docs/API.md).
-
-### Checking on it from a phone
-
-The **Host Monitor** can be served as a web page — the same cards, the same
-meters, the same job lists — for a browser instead of a Qt window. Tick
-**Serve the Host Monitor to a browser** under **Web Monitor** in
-**Settings...**; **Links and Tailscale...** beside it has the link and the
-commands below.
-
-It serves whenever that is ticked, with or without the Host Monitor window open,
-and from the tray process too once MoleditPy has closed. The hosts are sampled
-only while someone is looking: a request starts sampling, and it stops six
-minutes after the last one (longer than the page's slowest refresh). The first
-load of an idle page names the hosts and says it is waiting for the first
-reading; the numbers follow on the page's next refresh.
-
-The page is **read-only**. There is no route on it that cancels, submits,
-downloads or deletes anything, so a link that gets away from you costs a look
-at what is running, not the run itself.
-
-The socket binds **`127.0.0.1` and nothing else**. Reaching it from somewhere
-else is [Tailscale](https://tailscale.com)'s job:
-
-```bash
-tailscale serve --bg 8770
-```
-
-which puts the same page on `https://<machine>.<tailnet>.ts.net/` behind
-Tailscale's own identity check. The dialog shows that command with a **Copy**
-button and a **Run** button beside it — Run executes it for you and fills in
-your machine's real tailnet name, so the link underneath is one you can copy
-straight to a phone rather than a placeholder to hand-edit. **Unpublish**
-(`tailscale serve reset`) withdraws it again, and is offered only if this
-dialog is what published it.
-
-Keeping the exposure in Tailscale rather than in the plugin is deliberate: this
-process never binds a routable address, never decides whose certificate to
-trust, and never grows an authentication story beyond the token in the link.
-Nothing here needs Tailscale to serve on your own machine.
-
-> **Serve needs HTTPS enabled on your tailnet — enable it once, before Run
-> will work.** Admin console ▸ **DNS** ▸ **HTTPS Certificates**
-> ([how](https://tailscale.com/kb/1153/enabling-https)). It is a tailnet-wide
-> setting, so it takes an admin of that tailnet, and `tailscale serve` cannot
-> obtain a certificate without it. The dialog checks this first and tells you
-> so; without the check, Serve simply waits, which looked like Run hanging.
-> Serving on `127.0.0.1` needs none of this — only the tailnet link does.
-
-The page carries its own controls: a **light/dark button** (it starts from the
-device's own preference, then remembers what you pressed) and a **refresh
-interval**. The footer names the version answering the request.
-
-The link's token is kept in `~/.moleditpy/job_manager/web_monitor_token`, so a
-link saved on a phone keeps working across restarts. It is **not** the API
-token — that one grants full control, and this page is read-only. **New link...**
-in the dialog replaces it, which cuts off every link and cookie already handed
-out.
-
-**What it costs.** The page polls for a fresh snapshot on a timer you set from
-the page itself — **2 s to 5 min, or Paused** — and the choice is remembered in
-that browser. Measured over loopback, per poll:
-
-| Watching | Data per poll | At 4 s | Per hour |
-|---|---|---|---|
-| 1 host, no jobs | ~940 B | 236 B/s | 0.8 MiB |
-| 1 host, 3 jobs | ~1.1 kB | 271 B/s | 0.9 MiB |
-| 3 hosts, 5 jobs each | ~2.1 kB | 514 B/s | 1.8 MiB |
-| 8 hosts, 10 jobs each | ~6.1 kB | 1.5 kB/s | 5.3 MiB |
-
-The page itself is about 9 KiB, once per load. Its icon is fetched from `icon.svg`, `icon.png` and `apple-touch-icon.png`, which are the only routes served without the token — Safari ignores a `data:` favicon and iOS refuses one as a home-screen icon, and a browser fetching an icon does not send the cookie, so an inlined or a gated icon shows nothing there. HTTP headers are most of each
-exchange — the JSON is only 262 B for one idle host — so raising the interval
-saves nearly in proportion: 10 s costs 2.5× less than 4 s, and Paused costs
-nothing. Over Tailscale, add TLS and WireGuard overhead: budget roughly 1.5–2×
-these figures, so a small setup left open on 4G is around 35–50 MiB a day at
-the 4 s default, or under 15 MiB at 10 s.
-
-It is **off the first time the window opens** and remembered afterwards, so a
-listening socket is never something you get by surprise, and never something
-you have to ask for twice.
-
-### What it does not do
-
-**No workflow graph.** Chaining is a straight line: each job waits for one
-predecessor. There is no fan-out, no "run C after both A and B", and no retry
-on failure. For anything branching, write the dependencies by hand in *Extra
-directives* — Job Manager passes them through and tracks the jobs normally.
-
-## Documentation
-
-| Document | Covers |
-|---|---|
-| [docs/WORKFLOW.md](docs/WORKFLOW.md) | the standard path end to end, command templates, reading job states, troubleshooting |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | layers, threading, polling, the sentinel, persistence, the `submit_file()` handoff |
-| [docs/RUNNER.md](docs/RUNNER.md) | the queue that runs on a machine with no scheduler: layout, safety rules, core and memory budgets |
-| [docs/API.md](docs/API.md) | the local HTTP API another program submits through: routes, fields, the client, the token |
-| [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md) | what is stored and where, how keys and passwords are handled, host-key policy, trust boundaries |
+Detailed instructions: [Standard workflow](docs/WORKFLOW.md).
 
 ## Requirements
 
-- MoleditPy 4.x (or Python 3.9+ with PyQt6 for standalone mode)
-- An SSH client. `ssh` and `scp` ship with Windows 10+, macOS and Linux, and the
-  default backend uses them directly — **no pip packages required**.
-- Optional: `pip install paramiko`, only if a host needs password authentication.
+- MoleditPy 4.x, or Python 3.9+ with PyQt6 for standalone use.
+- **SSH destinations:** an SSH client for OpenSSH, or `pip install paramiko`
+  for the optional backend with password authentication.
+- **Local destinations:** bash, or the Windows scheduler with PowerShell.
+- **WSL destinations:** Windows with a WSL distribution that contains bash.
+- **Job Server destinations:** the optional `cryptography>=50.0.2` package.
+  The HTTP client is bundled; see [Job Server setup](docs/JOB_SERVER.md).
 
-## Standalone Mode
+## Usage
 
-Job Manager can be launched directly as a standalone desktop application without running MoleditPy:
+1. Open **Extensions → Job Manager → Job Monitor**, then **Hosts...**.
+   Add a host, choose its backend and scheduler, configure its working directory,
+   and press **Test Connection**.
+2. Select **New Job...**, add inputs, set resources, and choose a command from
+   **Template...**. Check **Script preview** before submitting. Save a preset
+   to reuse the settings.
+3. Watch the job table or open its log. Completed outputs can be downloaded
+   automatically and opened in the appropriate result analyzer.
 
-```bash
-# Run as a module from your Python environment / plugins path:
-python -m job_manager
+Drop an input file onto the Job Monitor to open a prefilled submission. Dropping
+several files creates one job per file; hold **Shift** to submit them together.
+For staged inputs, select **Work already on the host** and check the existing
+remote directory. Command-only jobs need no input file.
 
-# Or run directly inside the plugin folder:
-python __main__.py
-```
+### Command templates and file paths
 
-Standalone is the full plugin minus the MoleditPy window: the same job list in
-`~/.moleditpy/job_manager/`, the same polling, the same automatic downloads —
-and the same notifications when a job ends, on this desktop and in your chat
-room. Opening a result is the one thing it cannot do, since there is no editor
-to open it into.
+Templates cover ORCA, Gaussian, CP2K, GAMESS, MOPAC, NWChem, Psi4, PySCF,
+Quantum ESPRESSO, VASP and xTB. Use the full executable path when needed,
+especially for ORCA: a bare `orca` can resolve to the Linux screen reader.
 
-**One at a time.** A standalone launch first looks for a Job Manager already
-running — another standalone window, the tray process MoleditPy hands its
-jobs to, or the plugin inside an open MoleditPy that has been tracking jobs —
-and, finding one, brings *that* one's Job Monitor (or Host Monitor, with
-`--host-monitor`) to the front and exits. A second tracker beside the first
-would ask every host twice and announce every finished job twice. Two MoleditPy
-windows each run the plugin, as before: that is MoleditPy's choice to start
-twice, not this plugin's. Closing a standalone window hands over to the tray
-process, exactly as closing MoleditPy does, when **Keep the Job Manager running
-after MoleditPy closes** is on in Settings.
+Placeholders accept either `{input}` or `[input]`. Available fields include
+`input`, `stem`, `basename`, `output`, `nodes`, `ntasks`, `cpus`, `memory`,
+`walltime` and `queue`. Save custom commands through **Template... → Save
+current command as...**.
 
-### Launch via Batch File (.bat) & Desktop Shortcut
+The input table shows **File**, **Folder** and **Status**. Add or paste paths,
+or drag files onto the dialog. **Move up / Move down** selects the first input
+used by `{input}`. Inputs with the same upload filename must be renamed or
+submitted separately.
 
-If you want to launch Job Manager with a single double-click from your desktop, create a `.bat` file (e.g. `launch_job_manager.bat`):
+See [command placeholders](docs/COMMAND_PLACEHOLDERS.md) and the
+[standard workflow](docs/WORKFLOW.md#3-submit) for examples and program-specific
+requirements.
 
-```bat
-@echo off
-start "" pythonw -m job_manager
-```
+## Backends
 
-*(Tip: Using `pythonw` launches the GUI cleanly without a persistent black console window).*
+| Backend | Runs on | Requirements and authentication |
+|---|---|---|
+| OpenSSH (default) | Remote Linux or Windows host | `ssh` and `scp`; keys and ssh-agent; inherits `~/.ssh/config` and supports `ProxyJump` |
+| paramiko | Remote Linux or Windows host | Optional `paramiko` package; keys, agent or passwords; `ProxyJump` is refused |
+| This machine | Local Linux, macOS or Windows | No network or authentication; bash or the Windows PowerShell scheduler |
+| WSL | A Linux distribution on this Windows machine | WSL with bash; no SSH or authentication |
+| Job Server (HTTPS) | A LAN computational helper | Optional `cryptography>=50.0.2`; registered device key; bundled HTTP client |
 
-**To create a Desktop Shortcut:**
-1. Save the command above into `launch_job_manager.bat`.
-2. Right-click the `.bat` file and choose **Send to ➔ Desktop (create shortcut)**.
-3. *(Optional)* Right-click the new shortcut ➔ **Properties** ➔ **Change Icon...** to assign a custom icon.
+OpenSSH uses batch mode so a background operation cannot wait for an invisible
+password prompt. For password-only hosts, choose paramiko and enable **Ask for a
+password when connecting**. SSH passwords stay in session memory and are never
+written to disk. Unknown host keys require fingerprint approval.
 
+For WSL, choose the distribution in **Hosts...** and use a Linux **Remote root**
+such as `~/moleditpy_jobs`. Inputs are copied into the distribution and results
+back to Windows. Files within the selected distribution can also be supplied
+through `\\wsl.localhost\Ubuntu\...` paths.
 
-## Four backends
-
-
-| | OpenSSH (default) | paramiko (optional) | This machine | WSL |
-|---|---|---|---|---|
-| Install | nothing | `pip install paramiko` | nothing (needs bash, or the Windows scheduler) | nothing (needs a WSL distribution with bash) |
-| Auth | keys and ssh-agent | keys, agent **and passwords** | none needed | none needed |
-| `~/.ssh/config` | inherited automatically | `HostName`, `User`, `Port`, `IdentityFile` | not applicable | not applicable |
-| `ProxyJump` | yes | refused, with an explanation | not applicable | not applicable |
-| Connection | one process per command (multiplexed on macOS/Linux) | one persistent session | no network at all | no network at all |
-| Job chaining | via the queue's own flag | via the queue's own flag | the wrapper waits for the process | the wrapper waits for the process |
-
-The OpenSSH backend runs `ssh` in batch mode on purpose: a background thread must
-never block on an invisible password prompt — and it also means **no password can
-reach the process table**. If a host only accepts passwords, switch it to the
-paramiko backend and tick *Ask for a password when connecting*.
-
-**Passwords are never written to disk.** They are held in memory for the session,
-asked for again after a restart, and forgotten when you delete the host. Unknown
-host keys are rejected, not silently trusted — you are shown the fingerprint and
-asked.
-
-For exactly what is stored where, see [docs/SECURITY_MODEL.md](docs/SECURITY_MODEL.md).
+See [WSL setup](docs/WORKFLOW.md#running-inside-wsl),
+[Job Server setup](docs/JOB_SERVER.md), and the
+[security model](docs/SECURITY_MODEL.md).
 
 ### Verified backends
 
-The following configurations have been checked by running real jobs through
-submission, completion tracking, log reading and result download. Local and
-WSL checks cover both direct background mode and the built-in helper queue:
+These configurations have been checked with real jobs through submission,
+completion tracking, log reading and result download. Local and WSL checks
+cover both direct background mode and the built-in helper queue.
 
 | Backend | Verified environment | Evidence |
 |---|---|---|
@@ -386,213 +124,166 @@ WSL checks cover both direct background mode and the built-in helper queue:
 | This machine — Windows scheduler | Native Windows PowerShell | Real direct and queued job execution in Windows CI |
 | WSL | Windows with Ubuntu, using real `wsl.exe` and bash | Verified locally with version **2.6.3** on **2026-10-14** |
 
-The Ubuntu WSL checks include Windows input files, files accessed through
-`\\wsl.localhost\Ubuntu\...`, an existing job directory, failed-command exit
-codes, and long jobs that keep running after submission returns. Version
-**2.6.3** fixes a WSL launch race that could leave a job pending without a log.
-The real WSL tests run whenever a distribution with bash is available; ordinary
-Windows CI also exercises the WSL transport through a shell-backed stand-in.
+The Ubuntu checks include Windows input files, `\\wsl.localhost` paths, existing
+job directories, failed-command exit codes and jobs that continue after
+submission returns. Version **2.6.3** fixes a WSL launch race that could leave a
+job pending without a log. Real WSL tests run when a distribution with bash is
+available; Windows CI also tests the transport through a shell-backed stand-in.
 
 OpenSSH and paramiko are verified against real hosts; their automated transport
 tests additionally use mocked connections. SLURM, PBS/Torque and SGE/UGE have
-scheduler unit tests, but have not yet been verified on a real cluster. See
-[Submit options and supercomputer login nodes](#submit-options-and-supercomputer-login-nodes).
+scheduler unit tests, but have not yet been verified on a real cluster. Reports
+with the scheduler version and error text are welcome.
 
-## Polling is deliberately slow
+## Scheduling and monitoring
 
-A login node is not a status API, so:
+On hosts without a cluster scheduler, the helper queue dispatches jobs within
+physical-core and memory budgets. It runs only while work remains, keeps its
+queue in readable files on the host, and supports dependencies, pausing and
+scheduled starts. A chained-lanes mode is also available.
 
-- one `squeue`/`qstat` per **host** per cycle, no matter how many jobs you have;
-- 120 s by default. You *can* go faster — down to 5 s, which is useful against
-  your own workstation or while debugging — but anything under 30 s is flagged
-  with a **fast polling** warning next to the field (in **Settings...**)
-  explaining what it costs the login node;
-- the timer stops entirely when no job is active;
-- a host that errors backs off exponentially, up to 15 minutes;
-- any one host can override the interval (**Hosts… ▸ Monitoring ▸ Poll jobs
-  every**): ask a busy supercomputer every ten minutes and your workstation
-  every thirty seconds, without one slowing the other;
-- **Refresh Now** is there when you actually need an answer immediately;
-- **View ▸ Reload List** (`Ctrl+R`) re-reads the job file, so a job another Job Manager window
-  submitted, finished or removed shows up here. No host is contacted.
+Cluster jobs use the scheduler's own dependency and submission flags. Configure
+**Submit options** on the host or preset for billing groups, resource groups or
+other arguments that belong on the `sbatch`/`qsub` command line. Host options
+come first; arguments are parsed and quoted individually.
 
-## How completion is detected
+Polling uses one queue-status request per host per cycle. The default is
+**120 seconds**, with a minimum of 5 seconds and a warning below 30 seconds.
+Polling stops when no jobs are active; connection failures trigger backoff.
+Use a longer per-host interval for shared login nodes and disable or slow host
+CPU/memory sampling where appropriate. **Refresh Now** requests an update;
+**View → Reload List** (`Ctrl+R`) rereads the saved job list.
 
-Every generated script installs these traps before running your command:
+Generated wrappers write an exit-code sentinel atomically when they exit:
+zero means **DONE**, a nonzero code means **FAILED**, and a missing sentinel
+after the job disappears means **LOST**. Signal traps record termination codes
+such as 143 for SIGTERM. Jobs blocked by a failed dependency show **BLOCKED**.
+
+See the [helper queue](docs/RUNNER.md),
+[job states](docs/WORKFLOW.md#reading-job-states), and
+[troubleshooting](docs/WORKFLOW.md#troubleshooting).
+
+Dependencies form a chain, with one predecessor per job. There is no workflow
+graph or automatic retry; complex cluster dependencies can be supplied through
+extra scheduler directives. Job Server has its own queue and feature limits,
+described in [its setup guide](docs/JOB_SERVER.md).
+
+## Standalone mode
+
+Launch the full Job Manager without opening MoleditPy:
 
 ```bash
-__moleditpy_sentinel=/path/to/job/dir/.moleditpy_rc
-trap '__moleditpy_rc=$?; echo "$__moleditpy_rc" > "$__moleditpy_sentinel.tmp" && mv -f "$__moleditpy_sentinel.tmp" "$__moleditpy_sentinel"' EXIT
-trap 'exit 143' TERM
-trap 'exit 130' INT
-trap 'exit 129' HUP
+python -m job_manager
+python -m job_manager --host-monitor
 ```
 
-The sentinel path is absolute, not the job directory's own name: a command
-template that `cd`s elsewhere without returning (no subshell) leaves the trap
-running there too, and a relative path would follow it — reporting a real
-failure as LOST because the poller looked for the sentinel in the job's actual
-directory and found nothing.
+Alternatively, run `python __main__.py` inside the plugin folder. On Windows,
+use `launch_job_manager.bat` or `launch_host_monitor.bat`; create a desktop
+shortcut to either file for one-click access. They use `pythonw` to avoid a
+persistent console window.
 
-When a job disappears from the queue, the plugin reads that one file: an exit
-code means finished (0 → DONE, anything else → FAILED with the code shown);
-no file means the job was killed before the command returned (→ LOST). This works
-identically on all four schedulers and needs neither `sacct` (often disabled) nor
-site-specific `qstat -f` parsing.
+Standalone uses the same hosts, job list, downloads and notifications as the
+plugin. Opening results in the molecular editor requires MoleditPy.
 
-An `EXIT` trap rather than a trailing `echo`, because a payload that calls `exit`
-itself would never reach a trailing line. The signal traps matter just as much:
-without them a job the scheduler *kills* — walltime, preemption, `scancel`, node
-drain — reaches the `EXIT` trap with `$?` still 0 and is recorded as a clean
-success. `FAILED (rc=143)` is what a walltime kill looks like now.
+A second standalone launch brings the existing Job Manager to the front instead
+of starting another tracker. In **Settings...**, **Keep the Job Manager running
+after MoleditPy closes** can leave it in the tray to poll, notify and download.
+This option is off by default.
 
-## Usage
+## Integrations
 
-1. **Extensions ▸ Job Manager ▸ Job Monitor**, then **Hosts…** to add a cluster:
-   hostname, user, scheduler, and a remote working directory. Press
-   **Test Connection**.
-2. **New Job…** — pick the host, add your input file, fill in walltime / nodes /
-   memory / modules, and choose the command from the **Template…** dropdown,
-   check the **Script preview** tab, and submit. Save the settings as a named
-   preset to reuse them.
-3. Watch the table. When the job finishes its results are downloaded and the main
-   output is opened for you.
+### Input generators and scripts
 
-Step 2 needs no input file if the work is already on the host: tick **Work
-already on the host**, give the directory, and **Check** it before you submit.
-See [Work that is already on the host](docs/WORKFLOW.md#work-that-is-already-on-the-host).
+ORCA and Gaussian Input Generator Pro offer **Submit to Cluster...** beside
+Save when Job Manager is installed. Other plugins can call
+`job_manager.submit_file(paths, name="")` through the host's plugin list.
 
-### Working with file paths
+For external programs, enable **Local API...** under **Extensions → Job
+Manager**. The API is off by default and binds only to `127.0.0.1`.
 
-The New Job input table separates **File**, **Folder**, and **Status**. Select a row to read or copy its full path. Use **Add files…**, drag files onto the dialog, or paste paths one per line and press **Add paths**. Quotes and local file URLs are accepted; an invalid pasted path leaves the list unchanged.
+```bash
+python -m job_manager.api_client submit h2o.inp --host mycluster --command "/opt/orca/orca {input} > {stem}.out" --cpus 8 --memory 16GB
+python -m job_manager.api_client wait JOB_ID --download
+```
 
-Use **Move up / Move down** to choose which input is first and therefore passed as `{input}`. **Remove selected** works with multiple rows. Files with the same upload filename must be renamed or submitted as separate jobs to avoid overwriting one another.
+```python
+from job_manager.api_client import JobManagerClient
 
-Job Details has a **Files and folders** tab for recorded input/result paths and a separate **Full record and script** tab.
+client = JobManagerClient()
+job = client.submit(
+    host="mycluster",
+    files=["h2o.inp"],
+    command="/opt/orca/orca {input} > {stem}.out",
+)
+final = client.wait(job["id"])
+```
 
-### Submit options and supercomputer login nodes
+The client discovers the running Job Manager and uses the same submission
+service as the GUI. See [API documentation](docs/API.md) for authentication,
+endpoints and client examples.
 
-Some sites need arguments on the submit command line itself, not as `#PBS` /
-`#SBATCH` lines in the script: a billing group, a resource group, a PBS Pro
-`select`. **Submit options** puts them between the verb and the script —
-`qsub <these> moleditpy_run.sh`:
+### Web monitor and notifications
 
-- on the **host** (Hosts… ▸ Advanced), for what every job there needs, such
-  as `-W group_list=mygroup`;
-- on the **preset** (New Job… ▸ Resources), for one kind of job, such as
-  `-l select=1:ncpus={cpus}:mem={memory}`. The same placeholders as the
-  command work here.
+Enable **Serve the Host Monitor to a browser** in **Settings... → Web Monitor**
+for a read-only browser dashboard. It binds to `127.0.0.1`; **Links and
+Tailscale...** can publish it to your tailnet after HTTPS certificates are
+enabled. The monitor works from the tray process too, and samples hosts only
+while someone is viewing the page.
 
-The host's come first. They are split the way a shell would split them and
-each word is quoted, so a `;` is an argument and never a second command. The
-**Script preview** tab shows the exact submit line.
-
-A supercomputer's login ("entry") node is shared by hundreds of people. Its
-load is theirs, not yours, and a probe every few seconds is traffic its admins
-ask people not to make. For such a host, **Hosts… ▸ Monitoring**:
-
-- untick **Sample load and memory in the Host Monitor**: its card stays and
-  still lists your jobs, but the host is never probed;
-- or keep sampling but less often, with **Monitor every**;
-- and set **Poll jobs every** to something unhurried, such as 600 s.
-
-> **Tested on a real queue? Not yet.** SLURM, PBS/Torque and SGE/UGE support
-> is written against their documentation and held by unit tests of the exact
-> text each one is sent, but the author has no access to a cluster running
-> them. The no-queue modes (this machine, WSL, SSH to a plain machine,
-> Windows) are what is used day to day. If something is refused or misread
-> on your cluster, please open an issue with the scheduler, its version, and
-> the error text. A report is how that support gets tested.
-
-### Command templates
-
-The dropdown beside the Command field carries a conventional invocation for every
-program MoleditPy writes input for — ORCA, Gaussian, CP2K, GAMESS, MOPAC, NWChem,
-Psi4, PySCF, Quantum ESPRESSO, VASP and xTB — with the caveats that matter
-(ORCA needs its own absolute path to start MPI workers; `g16` writes its own
-`.log`; VASP takes no input filename at all). The list puts the likely program
-first for the input you selected, and never overwrites a command you have
-already written.
-
-Type your own and **Template… ▸ Save current command as…** keeps it in
-`settings.json` alongside your hosts and presets.
-
-Placeholders come in two spellings — `{input}` or `[input]`, whichever fights
-your shell less:
-
-`input`, `stem`, `basename`, `output` (`<stem>.out`), `nodes`, `ntasks`, `cpus`,
-`memory`, `walltime`, `queue`.
-
-Unknown tags are left verbatim, and shell syntax that merely looks like one —
-`awk '{print $1}'`, `if [ -f x ]` — is passed through untouched.
-
-## Standalone Mode
-
-The Job Manager and Host Monitor can be launched directly without running MoleditPy:
-
-- **Job Manager**: `launch_job_manager.bat` or `python -m job_manager`
-- **Host Monitor**: `launch_host_monitor.bat` or `python -m job_manager --host-monitor`
-
-On Windows, create a shortcut to either `.bat` file for one-click desktop access in the background.
+See the [web monitor guide](docs/WEB_MONITOR.md) for setup, access controls,
+refresh intervals and data usage. For desktop alerts and Slack/Discord/Teams
+webhooks, see [notifications](docs/WORKFLOW.md#being-told-when-a-job-ends).
 
 ## Where your data lives
 
-`~/.moleditpy/job_manager/`
+Persistent state is stored in `~/.moleditpy/job_manager/`, outside the plugin
+folder so updates preserve it.
 
-- `settings.json` — host profiles, submit presets, preferences, saved command
-  templates. **No secret is ever written here**: a host profile has no password
-  field, and a key is referenced by path, never copied
-- `jobs.pmejbs` — the tracked jobs. `.pmejbs` is MoleditPy's extension for a job
-  list, the same idea as `.pmeprj` for a project; the contents are plain JSON
-- `archived/jobs_<date>.pmejbs` — lists written out by **Clear List**. Clearing
-  never deletes: delete these yourself when you want them gone
-- `downloads/` — fetched results, one directory per job
-- `api_token` — the local API's shared secret, written on first use and read
-  only by you. Only relevant if you switched the API on; see
-  [docs/API.md](docs/API.md)
-- `api.json` — where the local API is listening, written while it runs and
-  deleted when it stops. This is how a client finds it
+| File or folder | Purpose |
+|---|---|
+| `settings.json` | Hosts, presets, command templates and preferences; SSH passwords are not stored |
+| `jobs.pmejbs` | Tracked jobs, retained across application restarts |
+| `archived/jobs_<date>.pmejbs` | Job lists preserved by **Clear List** |
+| `downloads/` | Fetched results |
+| `api_token` / `api.json` | Local API secret and active endpoint |
+| `web_monitor_token` | Persistent web-monitor access token, separate from the API secret |
 
-A job list carries an `archived` flag inside the file. An archived list opens
-read-only; any other one — an export, a backup, a file from a colleague — can be
-opened as the list you are working in for that session.
+Job lists can be saved, reopened or exported to CSV. Archived lists open read-only.
+Result-folder imports also produce read-only lists. See
+[job-list management](docs/WORKFLOW.md#7-keeping-exporting-and-clearing-the-list)
+and the [security model](docs/SECURITY_MODEL.md) for storage and trust boundaries.
 
-Deliberately **outside** the plugin folder: the Plugin Installer replaces that
-folder wholesale on update, so anything stored there would be lost. Jobs run for
-days; the record of them has to outlive an update.
+## Documentation
+
+| Guide | Covers |
+|---|---|
+| [Standard workflow](docs/WORKFLOW.md) | Setup, submission, results, notifications and troubleshooting |
+| [Job Server](docs/JOB_SERVER.md) | LAN server setup, authentication and supported operations |
+| [Helper queue](docs/RUNNER.md) | Dispatch, dependencies, resource budgets and queue files |
+| [Command placeholders](docs/COMMAND_PLACEHOLDERS.md) | Command fields and expansion rules |
+| [Local API](docs/API.md) | External clients, endpoints and authentication |
+| [Web monitor](docs/WEB_MONITOR.md) | Browser dashboard, Tailscale and data usage |
+| [Architecture](docs/ARCHITECTURE.md) | Service layers, threading, polling and plugin integration |
+| [Security model](docs/SECURITY_MODEL.md) | Credentials, host keys, downloads and trust boundaries |
 
 ## Development
 
-See [Architecture](docs/ARCHITECTURE.md) for the service/workflow boundary,
-optional-Qt API modules, reusable form components and callback ownership.
-
 ```bash
-python -m pytest tests/ -v --cov=job_manager --cov-report=term-missing
+python -m pytest tests/ -q -n auto
+ruff format job_manager tests
+ruff check job_manager tests
 ```
 
-The suite is fully offline — a fake transport records the commands that would
-have been sent, so submit → poll → complete → download is exercised end to end
-without a cluster. GUI tests need PyQt6 and skip themselves without it, which is
-what lets the whole suite run on a bare `pip install pytest`.
+Most protocol and transport tests use fakes or mocks. Execution tests run actual
+bash or PowerShell scripts; WSL tests use a stand-in or a real installed
+distribution. GUI tests require PyQt6. Tests with the real MoleditPy
+`PluginContext` also require a main-app checkout and `rdkit`.
 
-Three tiers skip themselves unless their prerequisites are present:
-
-| Tier | Needs |
-|---|---|
-| GUI (`test_dialogs`, `test_poller`, `test_service`, `test_plugin_entry`) | `PyQt6` |
-| Script execution (`test_script_execution`) | a `bash` on `PATH` |
-| Real `PluginContext` (`TestWithRealPluginContext`) | a `python_molecular_editor` checkout **and** `PyQt6` + `rdkit` — importing the main app pulls in both |
-
-CI runs all three; the integration job fails deliberately if the real-context
-tier skips, since a silently skipped tier is indistinguishable from a passing
-one in the log.
+CI covers Python 3.11–3.13, real Qt, native Windows and integration with
+MoleditPy. Optional test tiers skip when their prerequisites are absent; CI
+enforces the tiers assigned to each job. See [CLAUDE.md](CLAUDE.md) for the
+development and release workflow.
 
 ## License
 
-Licensed under the GNU General Public License v3.0 — see [LICENSE](LICENSE) for details.
-
-
-Downloads in 2.5.1 resolve destination directories before checking containment.
-Subdirectory links leading outside the selected download folder are refused.
-Transfers use a new private staging directory rather than opening a predictable
-`.moleditpy-part` path; successful transfers still replace the result atomically.
+GNU General Public License v3.0. See [LICENSE](LICENSE).
