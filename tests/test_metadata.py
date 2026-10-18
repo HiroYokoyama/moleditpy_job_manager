@@ -32,7 +32,8 @@ class TestMetadata(unittest.TestCase):
             self.assertTrue(hasattr(job_manager, name), f"missing {name}")
 
     def test_version_is_semver(self):
-        self.assertRegex(job_manager.PLUGIN_VERSION, r"^\d+\.\d+\.\d+$")
+        from packaging.version import Version
+        assert Version(job_manager.PLUGIN_VERSION).public == job_manager.PLUGIN_VERSION
 
     def test_name_and_author(self):
         self.assertEqual(job_manager.PLUGIN_NAME, "Job Manager")
