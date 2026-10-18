@@ -485,20 +485,14 @@ class TestTheRowMenu(DialogTestCase):
         from unittest.mock import patch
 
         from PySide6.QtCore import QPoint
-        from PySide6.QtWidgets import QMenu
-
-        captured = {}
-        original = QMenu.exec
-
-        def capture(menu, *args, **kwargs):
-            captured["menu"] = menu
-            return None
-
-        with patch.object(QMenu, "exec", capture):
+        menu = self.dialog.menu_job
+        with patch.object(menu, "exec", return_value=None) as execute:
             self.dialog._show_row_menu(QPoint(1, 1))
-        QMenu.exec = original
-        menu = captured.get("menu")
-        return [] if menu is None else [a for a in menu.actions() if not a.isSeparator()]
+        return (
+            [action for action in menu.actions() if not action.isSeparator()]
+            if execute.called
+            else []
+        )
 
     def test_every_button_is_offered(self):
         labels = [action.text() for action in self.menu_entries()]
