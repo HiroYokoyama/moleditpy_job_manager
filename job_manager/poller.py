@@ -15,7 +15,7 @@ import random
 import time
 from typing import Callable, Dict, List, Optional
 
-from PyQt6.QtCore import QObject, QRunnable, QThreadPool, QTimer, pyqtSignal
+from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Signal
 
 from .models import ACTIVE_STATES, HostProfile, Job
 from .runner import poll_host, poll_runner
@@ -33,8 +33,8 @@ FIRST_POLL_SECONDS = 5.0
 
 class _WorkerSignals(QObject):
     # host_id, {job_id: state}, {job_id: rc}, {job_id: message}
-    finished = pyqtSignal(str, dict, dict, dict)
-    failed = pyqtSignal(str, str)  # host_id, message
+    finished = Signal(str, dict, dict, dict)
+    failed = Signal(str, str)  # host_id, message
 
 
 class _PollTask(QRunnable):
@@ -91,10 +91,10 @@ class _PollTask(QRunnable):
 class JobPoller(QObject):
     """Drives periodic status checks for every host with active jobs."""
 
-    job_updated = pyqtSignal(str, str)  # job_id, new_state
-    host_error = pyqtSignal(str, str)  # host_id, message
-    poll_started = pyqtSignal(str)  # host_id
-    poll_finished = pyqtSignal(str)  # host_id
+    job_updated = Signal(str, str)  # job_id, new_state
+    host_error = Signal(str, str)  # host_id, message
+    poll_started = Signal(str)  # host_id
+    poll_finished = Signal(str)  # host_id
 
     def __init__(
         self,

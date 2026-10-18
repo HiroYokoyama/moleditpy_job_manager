@@ -28,9 +28,9 @@ def read(path):
 
 
 def _poller():
-    """The poller module, or a skip: it imports PyQt6, which the pytest-only
+    """The poller module, or a skip: it imports PySide6, which the pytest-only
     CI job does not install."""
-    pytest.importorskip("PyQt6.QtCore", reason="PyQt6 is not installed")
+    pytest.importorskip("PySide6.QtCore", reason="PySide6 is not installed")
     from job_manager import poller
 
     return poller

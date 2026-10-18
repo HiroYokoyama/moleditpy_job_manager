@@ -11,8 +11,8 @@ from __future__ import annotations
 import logging
 from typing import Callable, Optional
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import (
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import (
     QAction,
     QCloseEvent,
     QFontDatabase,
@@ -21,7 +21,7 @@ from PyQt6.QtGui import (
     QTextCursor,
     QTextDocument,
 )
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
@@ -48,8 +48,8 @@ class _FindEdit(QLineEdit):
     the whole window instead of just the search."""
 
     #: True to search backwards.
-    search = pyqtSignal(bool)
-    dismissed = pyqtSignal()
+    search = Signal(bool)
+    dismissed = Signal()
 
     def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt's spelling
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):

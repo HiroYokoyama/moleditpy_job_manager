@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 import pytest
 
-pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 is not installed")
+pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 
 from job_manager.dialect import PRESENT  # noqa: E402
 from job_manager.models import STATE_DONE  # noqa: E402

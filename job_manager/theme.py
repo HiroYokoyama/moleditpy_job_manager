@@ -14,7 +14,7 @@ at construction time.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QEvent, QObject
+from PySide6.QtCore import QEvent, QObject
 
 # ---------------------------------------------------------------------------
 # State colours -- imported by jobs_dialog and status_widget

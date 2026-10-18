@@ -16,7 +16,7 @@ import logging
 import time
 from typing import Optional
 
-from PyQt6.QtCore import QObject, QTimer, pyqtSignal
+from PySide6.QtCore import QObject, QTimer, Signal
 
 from . import host_sampler
 from .models import TERMINAL_STATES
@@ -36,9 +36,9 @@ class WebService(QObject):
     """Starts and stops the web view, and keeps its snapshot current."""
 
     #: Emitted from the HTTP thread; Qt queues it onto this object's thread.
-    _requested = pyqtSignal()
+    _requested = Signal()
     #: The server started or stopped, for a Settings window that is open.
-    changed = pyqtSignal()
+    changed = Signal()
 
     def __init__(self, service) -> None:
         super().__init__()

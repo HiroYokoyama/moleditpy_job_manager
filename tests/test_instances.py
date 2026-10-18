@@ -198,7 +198,7 @@ _ANSWERER = textwrap.dedent(
     """
     import os, sys
     sys.path.insert(0, {parent!r})
-    from PyQt6.QtCore import QCoreApplication, QTimer
+    from PySide6.QtCore import QCoreApplication, QTimer
     from {package}.beacon import InstanceBeacon
     from {package} import instances
 
@@ -225,9 +225,9 @@ class TestTwoRealProcesses(RegistryTestCase):
     def setUp(self):
         super().setUp()
         try:
-            import PyQt6.QtCore  # noqa: F401
+            import PySide6.QtCore  # noqa: F401
         except ImportError:
-            self.skipTest("PyQt6 is not installed")
+            self.skipTest("PySide6 is not installed")
 
     @staticmethod
     def _end(process):

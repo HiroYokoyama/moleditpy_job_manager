@@ -7,9 +7,9 @@ import unittest.mock
 
 import pytest
 
-pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 is not installed")
+pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 
-from PyQt6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from job_manager import PLUGIN_NAME, PLUGIN_VERSION  # noqa: E402
 from job_manager.about_dialog import REPO_URL, AboutDialog  # noqa: E402
@@ -52,7 +52,7 @@ class TestWhatItSays(AboutTestCase):
     def test_the_repository_is_reachable_and_selectable(self):
         # Clickable is not enough: a machine with no browser configured opens
         # nothing, and then the text itself is the only way to get the URL.
-        from PyQt6.QtCore import Qt
+        from PySide6.QtCore import Qt
 
         links = [
             child

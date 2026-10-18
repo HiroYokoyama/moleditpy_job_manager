@@ -1,12 +1,14 @@
 # Job Manager
 
+This branch targets **MoleditPy 5.0.0a1–5.x** and uses **PySide6**. Plugin licensing is unchanged.
+
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22671687.svg)](https://doi.org/10.5281/zenodo.22671687)
 [![Tests](https://github.com/HiroYokoyama/moleditpy_job_manager/actions/workflows/tests.yml/badge.svg)](https://github.com/HiroYokoyama/moleditpy_job_manager/actions/workflows/tests.yml)
 ![Coverage](https://img.shields.io/badge/coverage-%3E80%25-brightgreen)
 [![GitHub tag](https://img.shields.io/github/v/tag/HiroYokoyama/moleditpy_job_manager?label=version)](https://github.com/HiroYokoyama/moleditpy_job_manager/tags)
 [![GitHub Downloads](https://img.shields.io/github/downloads/HiroYokoyama/moleditpy_job_manager/total)](https://github.com/HiroYokoyama/moleditpy_job_manager/releases)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
-[![MoleditPy](https://img.shields.io/badge/MoleditPy->=4.0.0-3577F7)](https://github.com/HiroYokoyama/python_molecular_editor)
+[![MoleditPy](https://img.shields.io/badge/MoleditPy->=5.0.0a1-3577F7)](https://github.com/HiroYokoyama/python_molecular_editor)
 
 A [MoleditPy](https://github.com/HiroYokoyama/python_molecular_editor) plugin for
 running calculations over SSH, locally, inside WSL, or through a LAN Job Server.
@@ -42,7 +44,7 @@ Detailed instructions: [Standard workflow](docs/WORKFLOW.md).
 
 ## Requirements
 
-- MoleditPy 4.x, or Python 3.9+ with PyQt6 for standalone use.
+- MoleditPy 5.x, or Python 3.10+ with PySide6-Essentials for standalone use.
 - **SSH destinations:** an SSH client for OpenSSH, or `pip install paramiko`
   for the optional backend with password authentication.
 - **Local destinations:** bash, or the Windows scheduler with PowerShell.
@@ -276,7 +278,7 @@ ruff check job_manager tests
 
 Most protocol and transport tests use fakes or mocks. Execution tests run actual
 bash or PowerShell scripts; WSL tests use a stand-in or a real installed
-distribution. GUI tests require PyQt6. Tests with the real MoleditPy
+distribution. GUI tests require PySide6. Tests with the real MoleditPy
 `PluginContext` also require a main-app checkout and `rdkit`.
 
 CI covers Python 3.11–3.13, real Qt, native Windows and integration with

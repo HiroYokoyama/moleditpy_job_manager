@@ -11,7 +11,7 @@ from html import escape
 
 from typing import Dict, Optional, Sequence
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QLabel,

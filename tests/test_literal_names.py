@@ -2,7 +2,7 @@ from html import escape
 from unittest.mock import MagicMock
 import pytest
 
-pytest.importorskip("PyQt6.QtWidgets")
+pytest.importorskip("PySide6.QtWidgets")
 from job_manager.models import Job
 from job_manager.output_file_dialog import OutputFileSelectorDialog
 from job_manager.tail_file_dialog import TailFileDialog

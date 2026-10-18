@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 is not installed")
+pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 
 import job_manager  # noqa: E402
 from job_manager.api_core import ApiError  # noqa: E402
@@ -332,7 +332,7 @@ class TestHostStyleReload(ApiEntryTestCase):
         old_notify.assert_not_called()
 
     def test_the_old_loads_status_bar_counter_is_removed(self):
-        from PyQt6.QtWidgets import QMainWindow
+        from PySide6.QtWidgets import QMainWindow
 
         main = QMainWindow()
         self.addCleanup(main.deleteLater)
@@ -478,7 +478,7 @@ class TestTheApiDialog(ApiEntryTestCase):
         self.assertFalse(job_manager.get_service().store.get_pref("api_enabled"))
 
     def test_the_token_is_masked_until_it_is_asked_for(self):
-        from PyQt6.QtWidgets import QLineEdit
+        from PySide6.QtWidgets import QLineEdit
 
         self.assertEqual(self.dialog.txt_token.echoMode(), QLineEdit.EchoMode.Password)
 
@@ -490,7 +490,7 @@ class TestTheApiDialog(ApiEntryTestCase):
         self.assertNotEqual(job_manager.get_api_server().port, first)
 
     def test_the_new_token_button_replaces_the_token_after_confirmation(self):
-        from PyQt6.QtWidgets import QMessageBox
+        from PySide6.QtWidgets import QMessageBox
 
         self.dialog.chk_enabled.setChecked(True)
         before = self.dialog.txt_token.text()
@@ -499,7 +499,7 @@ class TestTheApiDialog(ApiEntryTestCase):
         self.assertNotEqual(self.dialog.txt_token.text(), before)
 
     def test_declining_the_confirmation_keeps_the_token(self):
-        from PyQt6.QtWidgets import QMessageBox
+        from PySide6.QtWidgets import QMessageBox
 
         self.dialog.chk_enabled.setChecked(True)
         before = self.dialog.txt_token.text()

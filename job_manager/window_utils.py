@@ -11,7 +11,7 @@ with the plugin; only the behaviour changes.
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt
+from PySide6.QtCore import Qt
 
 
 def make_independent(dialog) -> None:

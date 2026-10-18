@@ -119,9 +119,9 @@ class TestInitializeContract(unittest.TestCase):
 
 class TestNoHeavyImportsAtLoad(unittest.TestCase):
     def test_initialize_does_not_import_qt_or_paramiko(self):
-        before = {name for name in sys.modules if name.split(".")[0] in ("PyQt6", "paramiko")}
+        before = {name for name in sys.modules if name.split(".")[0] in ("PySide6", "paramiko")}
         job_manager.initialize(StubPluginContext())
-        after = {name for name in sys.modules if name.split(".")[0] in ("PyQt6", "paramiko")}
+        after = {name for name in sys.modules if name.split(".")[0] in ("PySide6", "paramiko")}
         self.assertEqual(before, after)
 
 
@@ -153,7 +153,7 @@ class TestWithRealPluginContext(unittest.TestCase):
         try:
             from moleditpy.plugins.plugin_interface import PluginContext
         except ImportError as exc:
-            # `import moleditpy` pulls in PyQt6 via utils/constants, so a
+            # `import moleditpy` pulls in PySide6 via utils/constants, so a
             # checkout of the main app is not on its own enough to run this
             # tier. Skip rather than error when its dependencies are absent.
             raise unittest.SkipTest(f"main app present but not importable: {exc}") from exc

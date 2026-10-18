@@ -65,7 +65,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install pytest pytest-xdist pytest-timeout PyQt6
+        run: pip install pytest pytest-xdist pytest-timeout PySide6-Essentials
 
       - name: Run the suite on Windows
         timeout-minutes: 20
@@ -116,7 +116,7 @@ jobs:
           }
 
   # -------------------------------------------------------------------------
-  # GUI tests — real PyQt6, headless. Roughly half of this plugin is dialogs
+  # GUI tests — real PySide6, headless. Roughly half of this plugin is dialogs
   # and a QTimer-driven poller; the pytest-only job above skips all of it.
   # -------------------------------------------------------------------------
   test-gui:
@@ -143,7 +143,7 @@ jobs:
       # real SSHConfig parser -- a stub would test nothing, so those tests skip
       # themselves unless the package is actually here.
       - name: Install dependencies
-        run: pip install pytest pytest-cov PyQt6 paramiko pytest-xdist pytest-timeout
+        run: pip install pytest pytest-cov PySide6-Essentials paramiko pytest-xdist pytest-timeout
 
       - name: Run the full suite with real Qt
         env:
@@ -176,16 +176,16 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libegl1 libgl1 libxkbcommon-x11-0 libdbus-1-3
 
-      # Importing the main app at all needs PyQt6 *and* rdkit:
-      # moleditpy/__init__.py reaches PyQt6.QtGui through utils/constants, and
+      # Importing the main app at all needs PySide6-Essentials *and* rdkit:
+      # moleditpy/__init__.py reaches PySide6.QtGui through utils/constants, and
       # the plugin_interface chain reaches rdkit. Without both, the real-context
       # tier can only ever skip itself.
       - name: Install dependencies
-        run: pip install pytest pytest-cov PyQt6 rdkit pytest-timeout
+        run: pip install pytest pytest-cov PySide6-Essentials rdkit pytest-timeout
 
       - name: Clone main MoleditPy application
         run: |
-          git clone --depth 1 \
+          git clone --depth 1 --branch "${{ vars.MOLEDITPY_REF || 'migrate/pyside6-without-openbabel' }}" \
             https://github.com/HiroYokoyama/python_molecular_editor.git \
             ../python_molecular_editor
 

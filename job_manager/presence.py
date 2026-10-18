@@ -15,7 +15,7 @@ import logging
 from dataclasses import dataclass
 from typing import Callable, List, Optional
 
-from PyQt6.QtCore import QObject
+from PySide6.QtCore import QObject
 
 from .models import STATE_FAILED, STATE_LOST, STATE_RUNNING
 
@@ -160,7 +160,7 @@ class Presence(QObject):
         At the job monitor when it is open, since that is where the answer is;
         otherwise at MoleditPy. Qt makes this a no-op for the active window.
         """
-        from PyQt6.QtWidgets import QApplication
+        from PySide6.QtWidgets import QApplication
 
         target = None
         for window in self._windows:

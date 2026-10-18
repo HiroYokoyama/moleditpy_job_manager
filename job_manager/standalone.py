@@ -19,8 +19,8 @@ from __future__ import annotations
 import logging
 from typing import List, Optional
 
-from PyQt6.QtCore import QObject
-from PyQt6.QtWidgets import QApplication
+from PySide6.QtCore import QObject
+from PySide6.QtWidgets import QApplication
 
 from . import instances, notify, presence
 from .beacon import InstanceBeacon

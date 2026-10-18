@@ -7,7 +7,7 @@ import pytest
 
 def load_server_class(surface):
     if surface == "api":
-        pytest.importorskip("PyQt6.QtCore")
+        pytest.importorskip("PySide6.QtCore")
         from job_manager.api_server import _Server
     else:
         from job_manager.web_monitor import _Server

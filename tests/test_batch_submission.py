@@ -14,11 +14,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 is not installed")
+pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 
-from PyQt6.QtCore import QMimeData, QUrl, Qt  # noqa: E402
-from PyQt6.QtGui import QDropEvent  # noqa: E402
-from PyQt6.QtCore import QPointF  # noqa: E402
+from PySide6.QtCore import QMimeData, QUrl, Qt  # noqa: E402
+from PySide6.QtGui import QDropEvent  # noqa: E402
+from PySide6.QtCore import QPointF  # noqa: E402
 
 from job_manager.jobs_dialog import JobsDialog  # noqa: E402
 from job_manager.submit_dialog import SubmitDialog  # noqa: E402

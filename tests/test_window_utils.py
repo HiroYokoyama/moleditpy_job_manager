@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 is not installed")
+pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 
 from job_manager.window_utils import bring_to_front, exec_once  # noqa: E402
 

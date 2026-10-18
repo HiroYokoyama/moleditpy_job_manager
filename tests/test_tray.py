@@ -13,11 +13,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 is not installed")
+pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 
-from PyQt6.QtCore import QEvent  # noqa: E402
-from PyQt6.QtGui import QIcon  # noqa: E402
-from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QWidget  # noqa: E402
+from PySide6.QtCore import QEvent  # noqa: E402
+from PySide6.QtGui import QIcon  # noqa: E402
+from PySide6.QtWidgets import QApplication, QSystemTrayIcon, QWidget  # noqa: E402
 
 from job_manager import notify  # noqa: E402
 from job_manager.icon import plugin_icon  # noqa: E402

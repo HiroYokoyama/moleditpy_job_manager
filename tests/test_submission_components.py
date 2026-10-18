@@ -4,10 +4,10 @@ from unittest.mock import Mock
 
 import pytest
 
-pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 is not installed")
+pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 
-from PyQt6 import sip  # noqa: E402
-from PyQt6.QtWidgets import QComboBox, QLineEdit, QWidget  # noqa: E402
+import shiboken6  # noqa: E402
+from PySide6.QtWidgets import QComboBox, QLineEdit, QWidget  # noqa: E402
 
 from job_manager.command_templates import CommandTemplate  # noqa: E402
 from job_manager.host_profile_form import HostProfileForm  # noqa: E402
@@ -39,7 +39,7 @@ def test_download_controls_persist_preferences_without_a_submit_dialog(tmp_path)
         assert panel.txt_download_root.isEnabled()
         assert JobStore(str(tmp_path)).get_pref("auto_download") is True
     finally:
-        sip.delete(panel)
+        shiboken6.delete(panel)
 
 
 def test_template_switching_preserves_user_edited_fetch_patterns(tmp_path):
@@ -61,7 +61,7 @@ def test_template_switching_preserves_user_edited_fetch_patterns(tmp_path):
         )
         assert globs.text() == "*.cube, *.xyz"
     finally:
-        sip.delete(parent)
+        shiboken6.delete(parent)
 
 
 def test_collecting_host_fields_does_not_need_a_store_or_network():
@@ -90,4 +90,4 @@ def test_collecting_host_fields_does_not_need_a_store_or_network():
         assert host.runner_cores == 0
         assert host.runner_memory_mb == 0
     finally:
-        sip.delete(form)
+        shiboken6.delete(form)

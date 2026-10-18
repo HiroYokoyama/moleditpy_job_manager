@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Callable, Dict, Optional
 
-from PyQt6.QtCore import QObject, QTimer
+from PySide6.QtCore import QObject, QTimer
 
 from . import instances
 

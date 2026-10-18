@@ -36,10 +36,10 @@ _app = None
 
 
 def render_png_base64(svg: str, size: int) -> str:
-    from PyQt6.QtCore import QBuffer, QByteArray, QIODevice, Qt
-    from PyQt6.QtGui import QPainter, QPixmap
-    from PyQt6.QtSvg import QSvgRenderer
-    from PyQt6.QtWidgets import QApplication
+    from PySide6.QtCore import QBuffer, QByteArray, QIODevice, Qt
+    from PySide6.QtGui import QPainter, QPixmap
+    from PySide6.QtSvg import QSvgRenderer
+    from PySide6.QtWidgets import QApplication
 
     global _app
     _app = QApplication.instance() or QApplication([])

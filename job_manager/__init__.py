@@ -34,7 +34,7 @@ PLUGIN_DEPENDENCIES = []
 #: key and agent authentication with nothing installed, and the Plugin
 #: Installer lists an optional dependency without ever blocking an install.
 PLUGIN_OPTIONAL_DEPENDENCIES = ["paramiko", "cryptography"]
-PLUGIN_SUPPORTED_MOLEDITPY_VERSION = ">=4.0.0, <5.0.0"
+PLUGIN_SUPPORTED_MOLEDITPY_VERSION = ">=5.0.0a1, <6.0.0"
 PLUGIN_SUPPORTED_OS = ["Windows", "macOS", "Linux", "WSL"]
 
 WINDOW_KEY = "job_monitor"

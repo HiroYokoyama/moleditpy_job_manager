@@ -7,11 +7,11 @@ import threading
 
 import pytest
 
-pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 is not installed")
+pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 
-from PyQt6 import sip  # noqa: E402
-from PyQt6.QtCore import QCoreApplication, QEvent  # noqa: E402
-from PyQt6.QtWidgets import QApplication, QLabel, QWidget  # noqa: E402
+import shiboken6  # noqa: E402
+from PySide6.QtCore import QCoreApplication, QEvent  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLabel, QWidget  # noqa: E402
 
 from job_manager.tasks import gone, run_async  # noqa: E402
 
@@ -48,7 +48,7 @@ class TestAnOwnerThatHasGone(unittest.TestCase):
             on_success=lambda text: seen.append(window.label.setText(text)),
             owner=window,
         )
-        sip.delete(window)
+        shiboken6.delete(window)
 
         pool.run()
 
@@ -63,7 +63,7 @@ class TestAnOwnerThatHasGone(unittest.TestCase):
             raise RuntimeError("no route to host")
 
         run_async(pool, fail, on_error=seen.append, quiet=True, owner=window)
-        sip.delete(window)
+        shiboken6.delete(window)
 
         pool.run()
 
@@ -112,7 +112,7 @@ class TestAnOwnerThatHasGone(unittest.TestCase):
         QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
         self.assertEqual(window.findChildren(type(window.label)), [window.label])
         self.assertEqual(len(window.children()), 1)
-        sip.delete(window)
+        shiboken6.delete(window)
 
     def test_destroying_owner_drops_already_queued_worker_answers(self):
         pool = HeldPool()
@@ -123,7 +123,7 @@ class TestAnOwnerThatHasGone(unittest.TestCase):
         worker.start()
         worker.join(timeout=5)
         self.assertFalse(worker.is_alive())
-        sip.delete(window)
+        shiboken6.delete(window)
         _app.processEvents()
         self.assertEqual(seen, [])
 
@@ -134,13 +134,13 @@ class TestAnOwnerThatHasGone(unittest.TestCase):
         run_async(
             pool,
             lambda: "done",
-            on_success=lambda value: sip.delete(window),
+            on_success=lambda value: shiboken6.delete(window),
             on_finished=lambda: seen.append("finished"),
             owner=window,
         )
         pool.run()
         _app.processEvents()
-        self.assertTrue(sip.isdeleted(window))
+        self.assertTrue(not shiboken6.isValid(window))
         self.assertEqual(seen, [])
 
 

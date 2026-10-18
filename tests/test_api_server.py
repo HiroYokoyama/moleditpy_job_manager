@@ -16,7 +16,7 @@ import urllib.request
 
 import pytest
 
-pytest.importorskip("PyQt6.QtCore", reason="PyQt6 is not installed")
+pytest.importorskip("PySide6.QtCore", reason="PySide6 is not installed")
 
 from job_manager import api_core  # noqa: E402
 from job_manager.api_server import JobApiServer, port_is_free  # noqa: E402

@@ -13,8 +13,8 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from PyQt6.QtCore import QByteArray, Qt
-from PyQt6.QtGui import QIcon, QPixmap
+from PySide6.QtCore import QByteArray, Qt
+from PySide6.QtGui import QIcon, QPixmap
 
 from .web_monitor import FAVICON_SVG
 
@@ -42,8 +42,8 @@ def plugin_icon() -> QIcon:
     icon = QIcon()
     data = QByteArray(FAVICON_SVG.encode("utf-8"))
     try:
-        from PyQt6.QtGui import QPainter
-        from PyQt6.QtSvg import QSvgRenderer
+        from PySide6.QtGui import QPainter
+        from PySide6.QtSvg import QSvgRenderer
     except ImportError:  # pragma: no cover - depends on the Qt build
         logging.debug("Job Manager: QtSvg is absent; the plugin icon is skipped")
         _cached = icon

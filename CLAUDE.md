@@ -22,7 +22,7 @@ ruff format job_manager tests && ruff check job_manager tests
 ```
 
 `QT_QPA_PLATFORM=offscreen` is set by `tests/conftest.py`; the Qt modules skip
-themselves where PyQt6 is absent (one CI job installs only pytest, on purpose).
+themselves where PySide6 is absent (one CI job installs only pytest, on purpose).
 
 Run the full suite and `ruff` before committing. CI runs six jobs — Python
 3.11/3.12/3.13, a real-Qt GUI job, a Windows job, and an integration job that

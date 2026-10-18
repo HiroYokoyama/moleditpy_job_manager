@@ -17,7 +17,7 @@ from job_manager.models import Job
 
 
 class FakeSignal:
-    """Just enough of a pyqtSignal for the handler paths that use one."""
+    """Just enough of a Signal for the handler paths that use one."""
 
     def __init__(self) -> None:
         self.slots: List[Callable] = []
@@ -158,7 +158,7 @@ def when_ready(is_ready: Callable[[], Any], fn: Callable[[], Any], timeout: floa
     Bounded on purpose: an unbounded chain of singleShots would outlive a
     test that never satisfies the condition and fire into the next one.
     """
-    from PyQt6.QtCore import QTimer
+    from PySide6.QtCore import QTimer
 
     deadline = time.monotonic() + timeout
 
@@ -178,7 +178,7 @@ def in_thread(fn: Callable[[], Any], timeout: float = 15.0) -> Any:
     a test that simply called the client here would deadlock: the thread the
     handler needs would be the one blocked on the reply.
     """
-    from PyQt6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
 
     box: dict = {}
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QDialogButtonBox,

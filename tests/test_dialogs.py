@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 is not installed")
+pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 
 from job_manager.hosts_dialog import HostsDialog  # noqa: E402
 from job_manager.jobs_dialog import (  # noqa: E402
@@ -28,7 +28,7 @@ from job_manager.models import (  # noqa: E402
 )
 from job_manager.service import JobService  # noqa: E402
 from job_manager.store import JobStore  # noqa: E402
-from PyQt6.QtWidgets import QMessageBox  # noqa: E402
+from PySide6.QtWidgets import QMessageBox  # noqa: E402
 from job_manager.submit_dialog import SubmitDialog  # noqa: E402
 
 from .fakes import FakeTransport, make_host, make_preset  # noqa: E402
@@ -195,7 +195,7 @@ class TestJobTableModel(DialogTestCase):
         self.model = JobTableModel(self.service)
 
     def cell(self, row, column):
-        from PyQt6.QtCore import Qt
+        from PySide6.QtCore import Qt
 
         return self.model.data(self.model.index(row, column), Qt.ItemDataRole.DisplayRole)
 
@@ -204,7 +204,7 @@ class TestJobTableModel(DialogTestCase):
         self.assertEqual(self.model.columnCount(), len(COLUMNS))
 
     def test_headers(self):
-        from PyQt6.QtCore import Qt
+        from PySide6.QtCore import Qt
 
         self.assertEqual(
             self.model.headerData(0, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole),
@@ -228,7 +228,7 @@ class TestJobTableModel(DialogTestCase):
         self.assertIn("137", self.cell(0, 3))
 
     def test_tooltip_mentions_the_remote_directory(self):
-        from PyQt6.QtCore import Qt
+        from PySide6.QtCore import Qt
 
         self.store.jobs["j1"].remote_dir = "/scratch/j1"
         tip = self.model.data(self.model.index(0, 0), Qt.ItemDataRole.ToolTipRole)
@@ -318,7 +318,7 @@ class TestJobsDialog(DialogTestCase):
         hosts.assert_called_once()
 
     def test_remove_asks_first(self):
-        from PyQt6.QtWidgets import QMessageBox
+        from PySide6.QtWidgets import QMessageBox
 
         self.service.submit(self.host, make_preset(), "mol", [self.make_input()])
         self.dialog.model.reload()
@@ -328,7 +328,7 @@ class TestJobsDialog(DialogTestCase):
         self.assertEqual(len(self.store.jobs), 1)
 
     def test_remove_deletes_when_confirmed(self):
-        from PyQt6.QtWidgets import QMessageBox
+        from PySide6.QtWidgets import QMessageBox
 
         self.service.submit(self.host, make_preset(), "mol", [self.make_input()])
         self.dialog.model.reload()
@@ -378,14 +378,14 @@ class TestHostsDialog(DialogTestCase):
         self.assertEqual(len(self.store.hosts), 2)
 
     def test_removing_a_host_asks_first(self):
-        from PyQt6.QtWidgets import QMessageBox
+        from PySide6.QtWidgets import QMessageBox
 
         with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.No):
             self.dialog._remove_host()
         self.assertEqual(len(self.store.hosts), 1)
 
     def test_removing_a_host_when_confirmed(self):
-        from PyQt6.QtWidgets import QMessageBox
+        from PySide6.QtWidgets import QMessageBox
 
         with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
             self.dialog._remove_host()
@@ -472,7 +472,7 @@ class TestHostsDialog(DialogTestCase):
         self.assertTrue(self.dialog.chk_ask_password.isEnabled())
 
     def test_the_editing_column_scrolls(self):
-        from PyQt6.QtWidgets import QDialogButtonBox, QScrollArea
+        from PySide6.QtWidgets import QDialogButtonBox, QScrollArea
 
         scroll = self.dialog.findChild(QScrollArea)
         self.assertIsNotNone(scroll)
@@ -486,7 +486,7 @@ class TestHostsDialog(DialogTestCase):
         self.assertIn("Saved", self.dialog.lbl_test.text())
 
     def test_the_form_is_dead_with_nothing_selected(self):
-        from PyQt6.QtWidgets import QMessageBox
+        from PySide6.QtWidgets import QMessageBox
 
         with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
             self.dialog._remove_host()
@@ -500,7 +500,7 @@ class TestHostsDialog(DialogTestCase):
         self.assertIn("Add", self.dialog.lbl_test.text())
 
     def test_the_form_comes_back_with_a_new_host(self):
-        from PyQt6.QtWidgets import QMessageBox
+        from PySide6.QtWidgets import QMessageBox
 
         with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
             self.dialog._remove_host()
@@ -609,7 +609,7 @@ class TestSubmitDialog(DialogTestCase):
         self.assertIn("99:00:00", self.dialog.txt_preview.toPlainText())
 
     def test_the_body_scrolls(self):
-        from PyQt6.QtWidgets import QDialogButtonBox, QScrollArea
+        from PySide6.QtWidgets import QDialogButtonBox, QScrollArea
 
         scroll = self.dialog.findChild(QScrollArea)
         self.assertIsNotNone(scroll)
@@ -622,7 +622,7 @@ class TestSubmitDialog(DialogTestCase):
         self.assertNotIn(box, scroll.widget().findChildren(QDialogButtonBox))
 
     def test_the_command_is_visible_without_opening_a_tab(self):
-        from PyQt6.QtWidgets import QTabWidget
+        from PySide6.QtWidgets import QTabWidget
 
         # A job is a command; behind a tab of queue settings the wizard read as
         # though a job were an input file and nothing else.
@@ -634,7 +634,7 @@ class TestSubmitDialog(DialogTestCase):
         # On a line inside the box rather than in its title: a group box is at
         # least as wide as its title, and this sentence there held the whole
         # wizard wider than its own window.
-        from PyQt6.QtWidgets import QGroupBox, QLabel
+        from PySide6.QtWidgets import QGroupBox, QLabel
 
         box = next(b for b in self.dialog.findChildren(QGroupBox) if b.title().startswith("Input"))
         said = " ".join(label.text() for label in box.findChildren(QLabel))
@@ -645,13 +645,13 @@ class TestSubmitDialog(DialogTestCase):
         # Everything below the widest row used to sit behind a horizontal
         # scrollbar, because one group box title and a column of full-width
         # checkboxes set a floor wider than the window.
-        from PyQt6.QtWidgets import QScrollArea
+        from PySide6.QtWidgets import QScrollArea
 
         body = self.dialog.findChild(QScrollArea).widget()
         self.assertLessEqual(body.minimumSizeHint().width(), self.dialog.width())
 
     def test_save_as_preset_has_a_line_of_its_own(self):
-        from PyQt6.QtWidgets import QDialogButtonBox, QPushButton, QScrollArea
+        from PySide6.QtWidgets import QDialogButtonBox, QPushButton, QScrollArea
 
         scroll = self.dialog.findChild(QScrollArea)
         box = self.dialog.findChild(QDialogButtonBox)
@@ -975,11 +975,11 @@ class TestTheMonitorReleasesTheServiceOnClose(DialogTestCase):
     """
 
     def test_closing_drops_every_connection(self):
-        before = self.service.receivers(self.service.jobs_changed)
+        before = self.service.receivers("2jobs_changed()")
         dialog = JobsDialog(self.service)
-        self.assertGreater(self.service.receivers(self.service.jobs_changed), before)
+        self.assertGreater(self.service.receivers("2jobs_changed()"), before)
         dialog.close()
-        self.assertEqual(self.service.receivers(self.service.jobs_changed), before)
+        self.assertEqual(self.service.receivers("2jobs_changed()"), before)
 
     def test_results_are_opened_once_not_once_per_window_ever_opened(self):
         opened = []
@@ -1262,9 +1262,9 @@ class TestDropOpensAJobList(DialogTestCase):
         self.addCleanup(self.dialog.close)
 
     def drop_event(self, *paths):
-        from PyQt6.QtCore import QMimeData, QPointF, QUrl
-        from PyQt6.QtCore import Qt as QtCore_Qt
-        from PyQt6.QtGui import QDropEvent
+        from PySide6.QtCore import QMimeData, QPointF, QUrl
+        from PySide6.QtCore import Qt as QtCore_Qt
+        from PySide6.QtGui import QDropEvent
 
         # The event does not take ownership of the mime data, so it has to
         # outlive the event or Qt reads freed memory.
@@ -1375,7 +1375,7 @@ class TestChainingAndScheduledStartInTheWizard(DialogTestCase):
         # A widget on a tab the user has switched away from is not "visible",
         # so reading isVisible() dropped the chaining for anyone who checked
         # the script before pressing Submit.
-        from PyQt6.QtWidgets import QTabWidget
+        from PySide6.QtWidgets import QTabWidget
 
         self.dialog.chk_chain.setChecked(True)
         self.dialog.show()
@@ -1392,7 +1392,7 @@ class TestChainingAndScheduledStartInTheWizard(DialogTestCase):
         self.assertFalse(self.dialog.chain_requested())
 
     def test_a_scheduled_start_reaches_the_preview(self):
-        from PyQt6.QtCore import QDateTime
+        from PySide6.QtCore import QDateTime
 
         self.dialog.chk_start_at.setChecked(True)
         self.dialog.dt_start_at.setDateTime(QDateTime.currentDateTime().addSecs(7200))
@@ -1410,7 +1410,7 @@ class TestChainingAndScheduledStartInTheWizard(DialogTestCase):
         self.assertNotIn("--begin", self.preview())
 
     def test_both_are_passed_to_submit(self):
-        from PyQt6.QtCore import QDateTime
+        from PySide6.QtCore import QDateTime
 
         self.dialog.chk_chain.setChecked(True)
         self.dialog.chk_start_at.setChecked(True)
@@ -1680,7 +1680,7 @@ class TestSwitchingHostsWithEdits(DialogTestCase):
         self.addCleanup(self.dialog.hide)
 
     def select(self, host_id):
-        from PyQt6.QtCore import Qt
+        from PySide6.QtCore import Qt
 
         for row in range(self.dialog.list.count()):
             if self.dialog.list.item(row).data(Qt.ItemDataRole.UserRole) == host_id:
@@ -1691,7 +1691,7 @@ class TestSwitchingHostsWithEdits(DialogTestCase):
     def test_saving_asks_once(self):
         from unittest.mock import patch
 
-        from PyQt6.QtWidgets import QMessageBox
+        from PySide6.QtWidgets import QMessageBox
 
         self.dialog.txt_hostname.setText("edited.example.org")
 
@@ -1706,7 +1706,7 @@ class TestSwitchingHostsWithEdits(DialogTestCase):
     def test_and_the_host_you_clicked_is_the_one_you_get(self):
         from unittest.mock import patch
 
-        from PyQt6.QtWidgets import QMessageBox
+        from PySide6.QtWidgets import QMessageBox
 
         self.dialog.txt_hostname.setText("edited.example.org")
 
@@ -1718,7 +1718,7 @@ class TestSwitchingHostsWithEdits(DialogTestCase):
     def test_discarding_asks_once_too(self):
         from unittest.mock import patch
 
-        from PyQt6.QtWidgets import QMessageBox
+        from PySide6.QtWidgets import QMessageBox
 
         self.dialog.txt_hostname.setText("thrown.away")
 
@@ -1733,7 +1733,7 @@ class TestSwitchingHostsWithEdits(DialogTestCase):
     def test_saving_twice_over_asks_nothing_the_second_time(self):
         from unittest.mock import patch
 
-        from PyQt6.QtWidgets import QMessageBox
+        from PySide6.QtWidgets import QMessageBox
 
         self.dialog.txt_hostname.setText("edited.example.org")
         self.dialog._save_current()
@@ -1757,7 +1757,7 @@ class TestTheSaveButtonIsQuiet(DialogTestCase):
     def test_pressing_it_asks_nothing(self):
         from unittest.mock import patch
 
-        from PyQt6.QtWidgets import QMessageBox
+        from PySide6.QtWidgets import QMessageBox
 
         self.dialog.txt_hostname.setText("edited.example.org")
 
@@ -1779,7 +1779,7 @@ class TestTheSaveButtonIsQuiet(DialogTestCase):
     def test_closing_straight_after_a_save_asks_nothing(self):
         from unittest.mock import patch
 
-        from PyQt6.QtWidgets import QMessageBox
+        from PySide6.QtWidgets import QMessageBox
 
         self.dialog.txt_hostname.setText("edited.example.org")
         self.dialog.btn_save.click()
@@ -1794,7 +1794,7 @@ class TestTheHostsDialogOpensBigEnough(DialogTestCase):
     def test_it_asks_for_room_but_never_more_than_the_screen(self):
         # 900 where there is space for it; less on a small screen, where the
         # editing column scrolls anyway.
-        from PyQt6.QtWidgets import QApplication
+        from PySide6.QtWidgets import QApplication
 
         dialog = HostsDialog(self.service)
         self.addCleanup(dialog.deleteLater)
@@ -1806,7 +1806,7 @@ class TestTheHostsDialogOpensBigEnough(DialogTestCase):
         self.assertLessEqual(dialog.width(), room)
 
     def test_it_never_opens_taller_than_the_screen(self):
-        from PyQt6.QtWidgets import QApplication
+        from PySide6.QtWidgets import QApplication
 
         dialog = HostsDialog(self.service)
         self.addCleanup(dialog.deleteLater)

@@ -308,7 +308,7 @@ def _small_icon_size() -> int:
 
 
 def _hicon_for(icon, size: int = 0) -> int:
-    from PyQt6.QtCore import QBuffer, QIODevice
+    from PySide6.QtCore import QBuffer, QIODevice
 
     size = size or _small_icon_size()
 

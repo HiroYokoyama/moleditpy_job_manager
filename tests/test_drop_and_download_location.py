@@ -19,13 +19,13 @@ import pytest
 
 from job_manager.store import JobStore
 
-pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 is not installed")
+pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 
 from job_manager.jobs_dialog import JobsDialog  # noqa: E402
 from job_manager.service import JobService  # noqa: E402
 from job_manager.submit_dialog import SubmitDialog  # noqa: E402
-from PyQt6.QtCore import QMimeData, QPoint, QPointF, QUrl, Qt  # noqa: E402
-from PyQt6.QtGui import QDragEnterEvent, QDropEvent  # noqa: E402
+from PySide6.QtCore import QMimeData, QPoint, QPointF, QUrl, Qt  # noqa: E402
+from PySide6.QtGui import QDragEnterEvent, QDropEvent  # noqa: E402
 
 
 def drop_event(paths):

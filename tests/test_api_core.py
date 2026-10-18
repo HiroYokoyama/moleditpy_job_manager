@@ -3,7 +3,7 @@
 Everything a client can get wrong is answered with a status and a sentence, and
 both are asserted here: a 500 with a traceback is not an API, and neither is a
 200 that quietly ran the wrong command. The CI job that installs only pytest
-runs this file, so nothing in it may import PyQt6.
+runs this file, so nothing in it may import PySide6.
 """
 
 import json

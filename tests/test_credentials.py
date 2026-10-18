@@ -14,7 +14,7 @@ from unittest.mock import patch
 
 import pytest
 
-pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 is not installed")
+pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 
 from job_manager import credentials  # noqa: E402
 from job_manager.models import (  # noqa: E402
@@ -74,7 +74,7 @@ class TestThePrompt(CredentialsTestCase):
         prompt.assert_not_called()
 
     def test_the_field_is_masked(self):
-        from PyQt6.QtWidgets import QLineEdit
+        from PySide6.QtWidgets import QLineEdit
 
         with patch.object(credentials.QInputDialog, "getText", return_value=("x", True)) as prompt:
             credentials.ensure_password(self.service, self.host)
@@ -111,7 +111,7 @@ class TestForgettingAPassword(CredentialsTestCase):
         self.assertFalse(self.service.has_password(self.host.id))
 
     def test_removing_a_host_forgets_its_password(self):
-        from PyQt6.QtWidgets import QMessageBox
+        from PySide6.QtWidgets import QMessageBox
 
         from job_manager.hosts_dialog import HostsDialog
 

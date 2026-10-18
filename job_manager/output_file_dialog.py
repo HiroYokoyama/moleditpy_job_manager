@@ -12,9 +12,9 @@ from html import escape
 import os
 from typing import Callable, List, Optional, Sequence
 
-from PyQt6.QtCore import QUrl, Qt
-from PyQt6.QtGui import QColor, QDesktopServices
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QUrl, Qt
+from PySide6.QtGui import QColor, QDesktopServices
+from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QHeaderView,

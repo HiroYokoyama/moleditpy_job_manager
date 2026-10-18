@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-pytest.importorskip("PyQt6")
+pytest.importorskip("PySide6")
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication, QTreeWidget, QTreeWidgetItem
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QApplication, QTreeWidget, QTreeWidgetItem
 
 from job_manager.tree_utils import (
     PATH_ROLE,

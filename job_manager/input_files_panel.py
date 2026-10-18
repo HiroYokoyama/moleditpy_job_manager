@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import os
 
-from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -20,9 +20,9 @@ from .file_table import FilePathTable
 
 
 class InputFilesPanel(QGroupBox):
-    browse_requested = pyqtSignal()
-    paths_added = pyqtSignal(object)
-    files_changed = pyqtSignal()
+    browse_requested = Signal()
+    paths_added = Signal(object)
+    files_changed = Signal()
 
     def __init__(self, parent=None):
         super().__init__("Input files to upload", parent)
@@ -90,7 +90,7 @@ class InputFilesPanel(QGroupBox):
         self.btn_file_down.setEnabled(bool(rows) and rows[-1] < len(paths) - 1)
 
     def _add_pasted_paths(self) -> None:
-        from PyQt6.QtCore import QUrl
+        from PySide6.QtCore import QUrl
 
         paths = []
         for line in self.txt_add_paths.toPlainText().splitlines():

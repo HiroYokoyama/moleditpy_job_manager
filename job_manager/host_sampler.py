@@ -16,7 +16,7 @@ from __future__ import annotations
 import time
 from typing import Dict, List, Optional
 
-from PyQt6.QtCore import QObject, QTimer, pyqtSignal
+from PySide6.QtCore import QObject, QTimer, Signal
 
 from . import host_stats
 from .credentials import needs_password
@@ -39,12 +39,12 @@ class HostSampler(QObject):
     """Asks each sampled host for its load, on a timer, while held."""
 
     #: A host answered: ``(host_id, HostStats)``.
-    sampled = pyqtSignal(str, object)
+    sampled = Signal(str, object)
     #: A host did not: ``(host_id, message, seconds until it is asked again)``.
     #: Zero seconds when no connection could even be built.
-    sample_failed = pyqtSignal(str, str, int)
+    sample_failed = Signal(str, str, int)
     #: Every tick, before any host is asked: the window re-reads the host list.
-    ticking = pyqtSignal()
+    ticking = Signal()
 
     def __init__(self, service) -> None:
         super().__init__()

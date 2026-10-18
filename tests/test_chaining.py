@@ -434,7 +434,7 @@ class TestTheChainSurvivesASlowSubmission(unittest.TestCase):
     both ran at once -- the one thing chaining exists to prevent."""
 
     def setUp(self):
-        pytest.importorskip("PyQt6.QtCore", reason="PyQt6 is not installed")
+        pytest.importorskip("PySide6.QtCore", reason="PySide6 is not installed")
         from job_manager.service import JobService
 
         self.tmp = tempfile.mkdtemp(prefix="chain_race_")

@@ -5,16 +5,15 @@ from __future__ import annotations
 import time
 from typing import List, Optional
 
-from PyQt6.QtCore import (
+from PySide6.QtCore import (
     QAbstractTableModel,
     QModelIndex,
     QObject,
     QSortFilterProxyModel,
     Qt,
-    QVariant,
 )
-from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import (
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import (
     QStyledItemDelegate,
     QWidget,
 )
@@ -166,17 +165,17 @@ class JobTableModel(QAbstractTableModel):
 
     def headerData(self, section: int, orientation, role=Qt.ItemDataRole.DisplayRole):
         if role != Qt.ItemDataRole.DisplayRole:
-            return QVariant()
+            return None
         if orientation == Qt.Orientation.Horizontal and 0 <= section < len(COLUMNS):
             return COLUMNS[section]
-        return QVariant()
+        return None
 
     def data(self, index: QModelIndex, role=Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
-            return QVariant()
+            return None
         job = self.job_at(index.row())
         if job is None:
-            return QVariant()
+            return None
 
         if role == Qt.ItemDataRole.DisplayRole:
             column = index.column()
@@ -241,7 +240,7 @@ class JobTableModel(QAbstractTableModel):
             if job.last_error:
                 lines.append(f"Error: {job.last_error}")
             return "\n".join(lines)
-        return QVariant()
+        return None
 
 
 class JobFilterProxyModel(QSortFilterProxyModel):
@@ -272,7 +271,7 @@ class JobFilterProxyModel(QSortFilterProxyModel):
         try:
             return left_value < right_value
         except TypeError:
-            # A mismatched pair (QVariant() vs a real value) can happen
+            # A mismatched pair of values can happen
             # mid-reload; an approximate text order is no real loss.
             return str(left_value) < str(right_value)
 

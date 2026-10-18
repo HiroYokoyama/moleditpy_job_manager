@@ -7,9 +7,9 @@ from collections import deque
 from html import escape
 from typing import Deque, Optional
 
-from PyQt6.QtCore import QRectF, QSize, Qt, QTimer
-from PyQt6.QtGui import QColor, QFont, QPainter, QPainterPath, QPalette, QPen
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import QRectF, QSize, Qt, QTimer
+from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPalette, QPen
+from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,

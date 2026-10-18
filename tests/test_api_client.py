@@ -14,7 +14,7 @@ from contextlib import redirect_stdout
 
 import pytest
 
-pytest.importorskip("PyQt6.QtCore", reason="PyQt6 is not installed")
+pytest.importorskip("PySide6.QtCore", reason="PySide6 is not installed")
 
 from job_manager import api_core  # noqa: E402
 from job_manager.api_client import JobApiError, JobManagerClient, build_parser, main  # noqa: E402
@@ -45,7 +45,7 @@ class ClientTestCase(unittest.TestCase):
         return job
 
     def later(self, delay, fn):
-        from PyQt6.QtCore import QTimer
+        from PySide6.QtCore import QTimer
 
         QTimer.singleShot(delay, fn)
 

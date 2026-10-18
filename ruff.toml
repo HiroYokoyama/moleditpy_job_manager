@@ -2,7 +2,7 @@
 # reject syntax that would not parse there -- a backslash inside an
 # f-string expression is legal from 3.12 only, and shipped a module that
 # could not be imported at all on 3.11.
-target-version = "py39"
+target-version = "py310"
 
 line-length = 100
 

@@ -13,9 +13,9 @@ import unittest.mock
 
 import pytest
 
-pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 is not installed")
+pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 
-from PyQt6.QtCore import Qt  # noqa: E402
+from PySide6.QtCore import Qt  # noqa: E402
 from job_manager.jobs_dialog import JobsDialog  # noqa: E402
 from job_manager.models import SCHEDULER_WINDOWS, Job  # noqa: E402
 
@@ -484,8 +484,8 @@ class TestTheRowMenu(DialogTestCase):
     def menu_entries(self):
         from unittest.mock import patch
 
-        from PyQt6.QtCore import QPoint
-        from PyQt6.QtWidgets import QMenu
+        from PySide6.QtCore import QPoint
+        from PySide6.QtWidgets import QMenu
 
         captured = {}
         original = QMenu.exec
@@ -702,7 +702,7 @@ class TestOpeningAJobList(DialogTestCase):
         import os
         from unittest.mock import patch
 
-        from PyQt6.QtWidgets import QFileDialog
+        from PySide6.QtWidgets import QFileDialog
 
         path = os.path.join(self.tmp, "saved.pmejbs")
         self.dialog._export_to(path, ".pmejbs") if hasattr(self.dialog, "_export_to") else None
@@ -717,7 +717,7 @@ class TestOpeningAJobList(DialogTestCase):
     def test_cancelling_the_picker_opens_nothing(self):
         from unittest.mock import patch
 
-        from PyQt6.QtWidgets import QFileDialog
+        from PySide6.QtWidgets import QFileDialog
 
         with (
             patch.object(QFileDialog, "getOpenFileName", return_value=("", "")),
@@ -788,7 +788,7 @@ class TestTheCardResponds(HostMonitorTestCase):
         self.assertTrue(self.monitor().action_dark.isChecked())
 
     def test_dark_mode_changes_this_window_only(self):
-        from PyQt6.QtGui import QPalette
+        from PySide6.QtGui import QPalette
 
         dialog = self.monitor()
         before = dialog.palette().color(QPalette.ColorRole.Window).name()
@@ -815,7 +815,7 @@ class TestTheDarkToggleGoesBothWays(HostMonitorTestCase):
     """Turning it off must give back the palette the window started with."""
 
     def palette_name(self, dialog):
-        from PyQt6.QtGui import QPalette
+        from PySide6.QtGui import QPalette
 
         return dialog.palette().color(QPalette.ColorRole.Window).name()
 
@@ -831,7 +831,7 @@ class TestTheDarkToggleGoesBothWays(HostMonitorTestCase):
     def test_every_role_comes_back_not_only_the_ones_dark_mode_set(self):
         # Building the dark palette from scratch left Light, Midlight, Dark
         # and Shadow at defaults, and the mixture came back muddy.
-        from PyQt6.QtGui import QPalette
+        from PySide6.QtGui import QPalette
 
         dialog = self.monitor()
         roles = (
@@ -1221,7 +1221,7 @@ class TestTheWebDialog(HostMonitorTestCase):
     def test_the_tailnet_link_is_copyable_not_a_label(self):
         # It is the one string that has to get to a phone; a QLabel in a
         # dialog cannot be selected, let alone copied.
-        from PyQt6.QtWidgets import QLineEdit
+        from PySide6.QtWidgets import QLineEdit
 
         self.web().start()
         window = self.dialog_for()
@@ -1229,7 +1229,7 @@ class TestTheWebDialog(HostMonitorTestCase):
         self.assertIn(self.web().server.token, window.row_tailnet.field.text())
 
     def test_copy_puts_the_link_on_the_clipboard(self):
-        from PyQt6.QtWidgets import QApplication
+        from PySide6.QtWidgets import QApplication
 
         self.web().start()
         window = self.dialog_for()
@@ -1393,7 +1393,7 @@ class TestTheLinkSurvivesARestart(HostMonitorTestCase):
 
     def test_the_dialog_asks_before_cutting_old_links_off(self):
         from job_manager.web_monitor_dialog import WebMonitorDialog
-        from PyQt6.QtWidgets import QMessageBox
+        from PySide6.QtWidgets import QMessageBox
 
         self.web().start()
         window = WebMonitorDialog(self.web(), parent=None)

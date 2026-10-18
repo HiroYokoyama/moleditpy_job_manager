@@ -2,7 +2,7 @@
 launch is wired to when a job ends.
 
 The store-level rules live in ``test_multi_instance_reload.py``, which stays
-importable without PyQt6 for the CI job that installs only pytest.
+importable without PySide6 for the CI job that installs only pytest.
 """
 
 from __future__ import annotations
@@ -16,9 +16,9 @@ from unittest.mock import patch
 
 import pytest
 
-pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 is not installed")
+pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 
-from PyQt6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication  # noqa: E402
 
 import job_manager  # noqa: E402
 from job_manager.jobs_dialog import JobsDialog  # noqa: E402

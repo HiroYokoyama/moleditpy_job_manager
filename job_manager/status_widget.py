@@ -15,8 +15,8 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from PyQt6.QtCore import QEvent, Qt
-from PyQt6.QtWidgets import QLabel
+from PySide6.QtCore import QEvent, Qt
+from PySide6.QtWidgets import QLabel
 
 from . import taskbar
 from .presence import count_jobs, summary_text
@@ -95,7 +95,7 @@ class JobStatusWidget(QLabel):
         """Push the stored accent colour into the palette so it survives theme changes."""
         if not self._color:
             return
-        from PyQt6.QtGui import QColor, QPalette
+        from PySide6.QtGui import QColor, QPalette
 
         palette = self.palette()
         c = QColor(self._color)
