@@ -17,6 +17,7 @@ exercised for real.
 from __future__ import annotations
 
 import os
+import ntpath
 import subprocess
 import sys
 
@@ -48,9 +49,17 @@ def main(argv: list) -> int:
     bash = os.environ["WSL_STUB_BASH"]
     # The one call that is WSL's own. cygpath answers the same question for the
     # bash that ships with Git for Windows.
-    command = command.replace("wslpath -a -u ", "cygpath -a -u ")
+    translating_path = command.startswith("wslpath -a -u ")
+    command = command.replace("wslpath -a -u ", "cygpath -a -m ")
     proc = subprocess.run([bash, flag, command], capture_output=True, text=True)
-    sys.stdout.write(proc.stdout)
+    output = proc.stdout
+    if translating_path and proc.returncode == 0:
+        # Git Bash can remount /tmp between login shells. A drive path keeps
+        # the translated temporary upload attached to its actual directory.
+        drive, tail = ntpath.splitdrive(output.strip())
+        if len(drive) == 2 and drive[1] == ":":
+            output = f"/{drive[0].lower()}{tail}\n"
+    sys.stdout.write(output)
     sys.stderr.write(proc.stderr)
     return proc.returncode
 
