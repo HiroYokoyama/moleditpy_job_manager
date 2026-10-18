@@ -66,7 +66,7 @@ class TestMetadata(unittest.TestCase):
         self.assertIn("paramiko", job_manager.PLUGIN_DESCRIPTION)
 
     def test_supported_app_version_range(self):
-        self.assertIn(">=5.0.0a1", job_manager.PLUGIN_SUPPORTED_MOLEDITPY_VERSION)
+        self.assertIn(">=5.0.0", job_manager.PLUGIN_SUPPORTED_MOLEDITPY_VERSION)
 
     def test_entry_points_exist(self):
         self.assertTrue(callable(job_manager.initialize))
