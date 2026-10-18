@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main, dev]
   workflow_dispatch:
+    inputs:
+      moleditpy_ref:
+        description: 'MoleditPy branch, tag, or full commit SHA (blank uses repository default)'
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -14,6 +20,9 @@ permissions:
 # hold its job until it was cancelled, and a cancelled job keeps no log. Five
 # minutes is far past any test's own bounded waits; past it, every thread's
 # stack is dumped and the test fails, so the log names what was stuck.
+env:
+  MOLEDITPY_REF: ${{ inputs.moleditpy_ref || vars.MOLEDITPY_REF || 'migrate/pyside6-without-openbabel' }}
+
 jobs:
   # -------------------------------------------------------------------------
   # Standard unit tests — no external dependencies required
@@ -184,10 +193,13 @@ jobs:
         run: pip install pytest pytest-cov PySide6-Essentials rdkit pytest-timeout
 
       - name: Clone main MoleditPy application
+        shell: bash
         run: |
-          git clone --depth 1 --branch "${{ vars.MOLEDITPY_REF || 'migrate/pyside6-without-openbabel' }}" \
-            https://github.com/HiroYokoyama/python_molecular_editor.git \
-            ../python_molecular_editor
+          git init "../python_molecular_editor"
+          git -C "../python_molecular_editor" remote add origin https://github.com/HiroYokoyama/python_molecular_editor.git
+          git -C "../python_molecular_editor" fetch --depth 1 origin "$MOLEDITPY_REF"
+          git -C "../python_molecular_editor" checkout --detach FETCH_HEAD
+          git -C "../python_molecular_editor" log -1 --format="%H %s"
 
       - name: Install main app package (no heavy deps)
         run: |
