@@ -124,11 +124,11 @@ cover both direct background mode and the built-in helper queue.
 | paramiko | Linux hosts without a cluster scheduler | Verified in real use |
 | This machine — bash | Linux and Git Bash on Windows | Real shell execution in the test suite and CI |
 | This machine — Windows scheduler | Native Windows PowerShell | Real direct and queued job execution in Windows CI |
-| WSL | Windows with Ubuntu, using real `wsl.exe` and bash | Verified locally with version **3.0.0a1** on **2026-10-14** |
+| WSL | Windows with Ubuntu, using real `wsl.exe` and bash | Verified locally with version **3.0.0** on **2026-10-14** |
 
 The Ubuntu checks include Windows input files, `\\wsl.localhost` paths, existing
 job directories, failed-command exit codes and jobs that continue after
-submission returns. Version **3.0.0a1** fixes a WSL launch race that could leave a
+submission returns. Version **3.0.0** fixes a WSL launch race that could leave a
 job pending without a log. Real WSL tests run when a distribution with bash is
 available; Windows CI also tests the transport through a shell-backed stand-in.
 
