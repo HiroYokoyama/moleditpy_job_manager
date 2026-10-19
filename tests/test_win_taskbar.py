@@ -132,6 +132,28 @@ class TestWindowWrapper(unittest.TestCase):
             self.assertTrue(bar.handle(1))
         callback.assert_called_once_with()
 
+    def test_a_borrowed_pyside_pointer_dispatches_its_message(self):
+        try:
+            from shiboken6 import VoidPtr
+        except ImportError:
+            self.skipTest("Shiboken6 is not installed")
+
+        callback = MagicMock()
+        bar = win_taskbar.WindowTaskbar(MagicMock(), [(3, None, "Hosts", callback)])
+        msg = win_taskbar.wintypes.MSG()
+        msg.message = win_taskbar.WM_COMMAND
+        msg.wParam = (win_taskbar.THBN_CLICKED << 16) | 3
+        pointer = VoidPtr(ctypes.addressof(msg), 0, False)
+        self.assertFalse(bool(pointer))
+        self.assertNotEqual(int(pointer), 0)
+
+        with (
+            patch.object(win_taskbar, "AVAILABLE", True),
+            patch.object(win_taskbar, "button_created_message", return_value=0xC123),
+        ):
+            self.assertTrue(bar.handle(pointer))
+        callback.assert_called_once_with()
+
     def test_the_button_appearing_reapplies_progress_and_buttons(self):
         # The window is told its progress before it has a button; without the
         # replay the first state it ever shows would be lost.

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-pytest.importorskip("PyQt6")
+pytest.importorskip("PySide6")
 
-from PyQt6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication
 
 from job_manager.models import HostProfile
 from job_manager.service import JobService

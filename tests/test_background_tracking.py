@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 is not installed")
+pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 
 import job_manager  # noqa: E402
 from job_manager.models import (  # noqa: E402
@@ -28,9 +28,9 @@ from job_manager.models import (  # noqa: E402
 from job_manager.service import JobService  # noqa: E402
 from job_manager.status_widget import JobStatusWidget, install  # noqa: E402
 from job_manager.store import JobStore  # noqa: E402
-from PyQt6.QtCore import QPointF, Qt  # noqa: E402
-from PyQt6.QtGui import QMouseEvent  # noqa: E402
-from PyQt6.QtWidgets import QMainWindow  # noqa: E402
+from PySide6.QtCore import QPointF, Qt  # noqa: E402
+from PySide6.QtGui import QMouseEvent  # noqa: E402
+from PySide6.QtWidgets import QMainWindow  # noqa: E402
 
 
 def _click_event(button) -> QMouseEvent:

@@ -7,9 +7,9 @@ import unittest.mock
 
 import pytest
 
-pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 is not installed")
+pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 
-from PyQt6.QtWidgets import QApplication, QDialog  # noqa: E402
+from PySide6.QtWidgets import QApplication, QDialog  # noqa: E402
 
 from job_manager import icon as plugin_icon_module  # noqa: E402
 from job_manager.web_monitor import FAVICON_SVG  # noqa: E402
@@ -59,7 +59,7 @@ class TestTheIcon(IconTestCase):
     def test_a_qt_that_cannot_parse_it_is_not_fatal(self):
         # An icon is decoration; a build that cannot draw it must still open
         # its windows rather than failing on the way up.
-        from PyQt6.QtSvg import QSvgRenderer
+        from PySide6.QtSvg import QSvgRenderer
 
         with unittest.mock.patch.object(QSvgRenderer, "isValid", return_value=False):
             plugin_icon_module._cached = None
@@ -76,7 +76,7 @@ class TestTheIcon(IconTestCase):
         real_import = builtins.__import__
 
         def refuse(name, *args, **kwargs):
-            if name == "PyQt6.QtSvg":
+            if name == "PySide6.QtSvg":
                 raise ImportError("no QtSvg in this build")
             return real_import(name, *args, **kwargs)
 
@@ -116,16 +116,16 @@ class TestThePngFallbacksMatchTheSvg(IconTestCase):
     def decode(self, b64: str):
         import base64
 
-        from PyQt6.QtGui import QImage
+        from PySide6.QtGui import QImage
 
         image = QImage()
         self.assertTrue(image.loadFromData(base64.b64decode(b64), "PNG"), "not a PNG")
         return image
 
     def render(self, size: int):
-        from PyQt6.QtCore import QByteArray, Qt
-        from PyQt6.QtGui import QPainter, QPixmap
-        from PyQt6.QtSvg import QSvgRenderer
+        from PySide6.QtCore import QByteArray, Qt
+        from PySide6.QtGui import QPainter, QPixmap
+        from PySide6.QtSvg import QSvgRenderer
 
         pixmap = QPixmap(size, size)
         pixmap.fill(Qt.GlobalColor.transparent)
@@ -192,7 +192,7 @@ class TestTheRepositoryIcon(IconTestCase):
     def test_it_is_still_the_same_drawing(self):
         # Regenerate with `python -m tests.regenerate_icons` after editing the
         # SVG; this is what catches forgetting to.
-        from PyQt6.QtGui import QImage
+        from PySide6.QtGui import QImage
 
         stored = QImage()
         self.assertTrue(stored.loadFromData(self.path().read_bytes(), "PNG"))

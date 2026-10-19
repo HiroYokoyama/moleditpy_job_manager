@@ -13,7 +13,7 @@ import unittest
 
 import pytest
 
-pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 is not installed")
+pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 
 from job_manager.models import STATE_PENDING, Job  # noqa: E402
 

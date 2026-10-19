@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-pytest.importorskip("PyQt6.QtWidgets")
+pytest.importorskip("PySide6.QtWidgets")
 from job_manager.hosts_dialog import HostsDialog  # noqa: E402
 from job_manager.models import HostProfile, SubmitPreset  # noqa: E402
 from job_manager.service import JobService  # noqa: E402

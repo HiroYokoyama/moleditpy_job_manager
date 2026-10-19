@@ -5,8 +5,8 @@ from __future__ import annotations
 import sys
 from typing import Optional
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QDialog,
@@ -229,7 +229,7 @@ class HostsDialog(QDialog):
                 # A plain grey foreground, not setEnabled(False): the item
                 # must stay selectable so a disabled host can still be
                 # re-enabled from here.
-                from PyQt6.QtGui import QColor
+                from PySide6.QtGui import QColor
 
                 item.setForeground(QColor("#8b949e"))
             self.list.addItem(item)

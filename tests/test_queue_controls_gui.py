@@ -12,7 +12,7 @@ import unittest
 
 import pytest
 
-pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 is not installed")
+pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 
 from job_manager.hosts_dialog import HostsDialog  # noqa: E402
 from job_manager.models import (  # noqa: E402
@@ -48,7 +48,7 @@ class QueueControlTestCase(DialogTestCase):
         return dialog
 
     def select(self, dialog: HostsDialog, host_id: str) -> None:
-        from PyQt6.QtCore import Qt
+        from PySide6.QtCore import Qt
 
         for row in range(dialog.list.count()):
             if dialog.list.item(row).data(Qt.ItemDataRole.UserRole) == host_id:
@@ -524,21 +524,21 @@ class TestSubmittingTheSameInputTwice(DialogTestCase):
     def submit(self, answer):
         from unittest.mock import patch
 
-        from PyQt6.QtWidgets import QMessageBox
+        from PySide6.QtWidgets import QMessageBox
 
         with patch.object(QMessageBox, "question", return_value=answer) as asked:
             self.dialog._submit()
         return asked
 
     def test_a_first_submission_asks_nothing(self):
-        from PyQt6.QtWidgets import QMessageBox
+        from PySide6.QtWidgets import QMessageBox
 
         asked = self.submit(QMessageBox.StandardButton.Yes)
         asked.assert_not_called()
         self.assertEqual(len(self.store.jobs), 1)
 
     def test_the_second_one_warns(self):
-        from PyQt6.QtWidgets import QMessageBox
+        from PySide6.QtWidgets import QMessageBox
 
         self.submit(QMessageBox.StandardButton.Yes)
         again = SubmitDialogFactory(self)
@@ -560,7 +560,7 @@ class TestSubmittingTheSameInputTwice(DialogTestCase):
     def test_saying_yes_submits_anyway(self):
         from unittest.mock import patch
 
-        from PyQt6.QtWidgets import QMessageBox
+        from PySide6.QtWidgets import QMessageBox
 
         self.submit(QMessageBox.StandardButton.Yes)
         again = SubmitDialogFactory(self)
@@ -575,7 +575,7 @@ class TestSubmittingTheSameInputTwice(DialogTestCase):
     def test_a_different_input_is_not_a_duplicate(self):
         from unittest.mock import patch
 
-        from PyQt6.QtWidgets import QMessageBox
+        from PySide6.QtWidgets import QMessageBox
 
         self.submit(QMessageBox.StandardButton.Yes)
         other = self.make_input("other.inp")

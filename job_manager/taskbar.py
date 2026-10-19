@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 
-from PyQt6.QtGui import QGuiApplication
+from PySide6.QtGui import QGuiApplication
 
 #: False on Qt < 6.5, where the badge does not exist.
 SUPPORTED = hasattr(QGuiApplication, "setBadgeNumber")

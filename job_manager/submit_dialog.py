@@ -5,8 +5,8 @@ from __future__ import annotations
 import os
 from typing import ClassVar, List, Optional, Sequence
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import (
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,

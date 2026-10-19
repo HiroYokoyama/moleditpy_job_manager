@@ -21,7 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Dict, Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PySide6.QtCore import QObject, Signal
 
 from .http_limits import BoundedServerMixin
 
@@ -62,7 +62,7 @@ class _GuiBridge(QObject):
     ``call`` is invoked from a socket thread and blocks until the answer is in.
     """
 
-    _requested = pyqtSignal(object)
+    _requested = Signal(object)
 
     def __init__(self, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
@@ -262,8 +262,8 @@ class _Server(BoundedServerMixin, ThreadingHTTPServer):
 class JobApiServer(QObject):
     """Owns the listening socket, the token and the endpoint file."""
 
-    started = pyqtSignal(int)  # port
-    stopped = pyqtSignal()
+    started = Signal(int)  # port
+    stopped = Signal()
 
     def __init__(self, service: Any, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)

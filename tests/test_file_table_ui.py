@@ -5,8 +5,8 @@ from unittest.mock import patch
 
 import pytest
 
-pytest.importorskip("PyQt6.QtWidgets")
-from PyQt6.QtCore import QItemSelectionModel, QUrl  # noqa: E402
+pytest.importorskip("PySide6.QtWidgets")
+from PySide6.QtCore import QItemSelectionModel, QUrl  # noqa: E402
 from .test_dialogs import DialogTestCase  # noqa: E402
 from job_manager.submit_dialog import SubmitDialog  # noqa: E402
 

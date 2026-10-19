@@ -11,9 +11,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 is not installed")
+pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 
-from PyQt6.QtWidgets import QApplication, QWidget  # noqa: E402
+from PySide6.QtWidgets import QApplication, QWidget  # noqa: E402
 
 import job_manager  # noqa: E402
 from job_manager import presence  # noqa: E402
@@ -280,7 +280,7 @@ class TestAlert(PresenceTestCase):
         self.addCleanup(main.deleteLater)
         main.show()
         shown = self.presence(service, main_window=main)
-        with patch("PyQt6.QtWidgets.QApplication.alert") as alert:
+        with patch("PySide6.QtWidgets.QApplication.alert") as alert:
             service.job_finished.emit("x", STATE_DONE)
         alert.assert_called_once_with(main, 0)
         del shown
@@ -296,7 +296,7 @@ class TestAlert(PresenceTestCase):
         window = MagicMock()
         window.widget = monitor
         shown.add_window(window)
-        with patch("PyQt6.QtWidgets.QApplication.alert") as alert:
+        with patch("PySide6.QtWidgets.QApplication.alert") as alert:
             service.job_finished.emit("x", STATE_DONE)
         alert.assert_called_once_with(monitor, 0)
 
@@ -306,7 +306,7 @@ class TestAlert(PresenceTestCase):
         self.addCleanup(main.deleteLater)
         main.show()
         self.presence(service, main_window=main)
-        with patch("PyQt6.QtWidgets.QApplication.alert") as alert:
+        with patch("PySide6.QtWidgets.QApplication.alert") as alert:
             service.job_finished.emit("x", STATE_DONE)
         alert.assert_not_called()
 
@@ -315,7 +315,7 @@ class TestAlert(PresenceTestCase):
         main = QWidget()
         self.addCleanup(main.deleteLater)
         self.presence(service, main_window=main)
-        with patch("PyQt6.QtWidgets.QApplication.alert") as alert:
+        with patch("PySide6.QtWidgets.QApplication.alert") as alert:
             service.job_finished.emit("x", STATE_DONE)
         alert.assert_not_called()
 
@@ -394,7 +394,7 @@ class TestTheMonitorWindow(PresenceTestCase):
         refresh.assert_called_once()
 
     def test_activating_it_acknowledges_failures(self):
-        from PyQt6.QtCore import QEvent
+        from PySide6.QtCore import QEvent
 
         service = self.service()
         shown = self.installed(service)
@@ -424,7 +424,7 @@ class TestTheMonitorWindow(PresenceTestCase):
     def test_a_native_event_never_hands_back_the_base_result(self):
         # Returning super().nativeEvent()'s tuple crashed the real Windows
         # platform before the window had finished opening.
-        from PyQt6.QtWidgets import QDialog
+        from PySide6.QtWidgets import QDialog
 
         service = self.service()
         dialog = self.dialog(service)

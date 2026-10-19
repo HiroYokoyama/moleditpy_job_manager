@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import os
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QInputDialog, QMessageBox
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QInputDialog, QMessageBox
 
 from .command_templates import CommandTemplate, extension_of, suggest, templates_for
 from .submission_config import _DELETE_TEMPLATE, _MANAGE_TEMPLATES, _SAVE_TEMPLATE, _SET_DEFAULT

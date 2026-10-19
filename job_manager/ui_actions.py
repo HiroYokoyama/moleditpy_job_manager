@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Callable, Iterable, Optional
 
-from PyQt6.QtCore import QObject, Qt
-from PyQt6.QtGui import QAction
-from PyQt6.QtWidgets import QMenu, QToolBar, QToolButton, QWidget
+from PySide6.QtCore import QObject, Qt
+from PySide6.QtGui import QAction
+from PySide6.QtWidgets import QMenu, QToolBar, QToolButton, QWidget
 
 
 def make_action(

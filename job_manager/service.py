@@ -13,7 +13,7 @@ import os
 import time
 from typing import Callable, Dict, List, Optional, Sequence
 
-from PyQt6.QtCore import QObject, QThreadPool, pyqtSignal
+from PySide6.QtCore import QObject, QThreadPool, Signal
 
 from . import remote_runner
 from .models import (
@@ -64,15 +64,15 @@ def not_waiting(job: Job) -> str:
 class JobService(QObject):
     """Owns all job state and every network operation."""
 
-    jobs_changed = pyqtSignal()
-    job_updated = pyqtSignal(str)  # job_id
-    message = pyqtSignal(str)  # human-readable status line
-    error = pyqtSignal(str)
+    jobs_changed = Signal()
+    job_updated = Signal(str)  # job_id
+    message = Signal(str)  # human-readable status line
+    error = Signal(str)
     #: A finished job's files are on disk and ready to open.
-    results_ready = pyqtSignal(str, list)  # job_id, local paths
+    results_ready = Signal(str, list)  # job_id, local paths
     #: A tracked job reached a terminal state while the user was elsewhere.
-    job_finished = pyqtSignal(str, str)  # job_id, state
-    log_ready = pyqtSignal(str)  # tail of a remote log
+    job_finished = Signal(str, str)  # job_id, state
+    log_ready = Signal(str)  # tail of a remote log
 
     def __init__(self, store: Optional[JobStore] = None, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)

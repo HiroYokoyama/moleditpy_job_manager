@@ -24,7 +24,7 @@ from job_manager.models import HostProfile
 from job_manager.server_backend import backend_for
 assert job_manager.PLUGIN_DEPENDENCIES == []
 assert 'cryptography' in job_manager.PLUGIN_OPTIONAL_DEPENDENCIES
-assert not any(name.split('.')[0] in {'cryptography','fastapi','uvicorn','psutil','job_server','PyQt6'} for name in sys.modules)
+assert not any(name.split('.')[0] in {'cryptography','fastapi','uvicorn','psutil','job_server','PySide6'} for name in sys.modules)
 try:
     backend_for(HostProfile(backend='job_server', server_url='http://127.0.0.1:8766'))
 except ValueError as error:

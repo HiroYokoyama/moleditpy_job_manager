@@ -6,7 +6,7 @@ import logging
 import os
 from typing import List, Optional
 
-from PyQt6.QtWidgets import QWidget
+from PySide6.QtWidgets import QWidget
 
 from . import PLUGIN_VERSION
 

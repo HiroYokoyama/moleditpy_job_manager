@@ -32,7 +32,8 @@ class TestMetadata(unittest.TestCase):
             self.assertTrue(hasattr(job_manager, name), f"missing {name}")
 
     def test_version_is_semver(self):
-        self.assertRegex(job_manager.PLUGIN_VERSION, r"^\d+\.\d+\.\d+$")
+        from packaging.version import Version
+        assert Version(job_manager.PLUGIN_VERSION).public == job_manager.PLUGIN_VERSION
 
     def test_name_and_author(self):
         self.assertEqual(job_manager.PLUGIN_NAME, "Job Manager")
@@ -65,7 +66,7 @@ class TestMetadata(unittest.TestCase):
         self.assertIn("paramiko", job_manager.PLUGIN_DESCRIPTION)
 
     def test_supported_app_version_range(self):
-        self.assertIn(">=4.0.0", job_manager.PLUGIN_SUPPORTED_MOLEDITPY_VERSION)
+        self.assertIn(">=5.0.0", job_manager.PLUGIN_SUPPORTED_MOLEDITPY_VERSION)
 
     def test_entry_points_exist(self):
         self.assertTrue(callable(job_manager.initialize))
@@ -75,7 +76,7 @@ class TestMetadata(unittest.TestCase):
 class TestImportHygiene(unittest.TestCase):
     def test_the_package_root_does_not_import_qt(self):
         source = open(os.path.join(PACKAGE_DIR, "__init__.py"), encoding="utf-8").read()
-        self.assertNotIn("from PyQt6", source.split("def ")[0])
+        self.assertNotIn("from PySide6", source.split("def ")[0])
 
     def test_pure_python_modules_stay_qt_free(self):
         # These are the modules the headless suite relies on.
@@ -84,7 +85,7 @@ class TestImportHygiene(unittest.TestCase):
         # core is what the pytest-only CI job exercises the whole API through.
         for name in ("models", "store", "runner", "remote_paths", "api_core", "api_client"):
             source = open(os.path.join(PACKAGE_DIR, f"{name}.py"), encoding="utf-8").read()
-            self.assertNotIn("PyQt6", source, f"{name}.py must not import Qt")
+            self.assertNotIn("PySide6", source, f"{name}.py must not import Qt")
 
     def test_transport_and_schedulers_stay_qt_free(self):
         for folder in ("transport", "schedulers"):
@@ -93,7 +94,7 @@ class TestImportHygiene(unittest.TestCase):
                 if not filename.endswith(".py"):
                     continue
                 source = open(os.path.join(directory, filename), encoding="utf-8").read()
-                self.assertNotIn("PyQt6", source, f"{folder}/{filename}")
+                self.assertNotIn("PySide6", source, f"{folder}/{filename}")
 
     def test_no_module_imports_paramiko_unguarded(self):
         pattern = re.compile(r"^import paramiko", re.MULTILINE)
@@ -118,10 +119,10 @@ class TestImportHygiene(unittest.TestCase):
         code = (
             "import sys; sys.path.insert(0, %r);"
             "import job_manager;"
-            "sys.exit(1 if 'PyQt6' in sys.modules else 0)" % repo_root
+            "sys.exit(1 if 'PySide6' in sys.modules else 0)" % repo_root
         )
         result = subprocess.run([sys.executable, "-c", code], capture_output=True)
-        self.assertEqual(result.returncode, 0, "importing job_manager pulled in PyQt6")
+        self.assertEqual(result.returncode, 0, "importing job_manager pulled in PySide6")
 
 
 class TestDataLocation(unittest.TestCase):

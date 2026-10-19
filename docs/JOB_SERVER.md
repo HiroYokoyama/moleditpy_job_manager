@@ -47,7 +47,7 @@ Cancellation preserves the server's dependency rules; use **after-any** when a
 dependent should continue after failure/cancellation.
 
 The bundled client comes from the audited server commit recorded in
-`job_manager/job_server_client/PROVENANCE.json`, under GPL-3.0-only. Maintainers can
+`job_manager/job_server_client/PROVENANCE.json`, under LGPL-3.0-or-later. Maintainers can
 refresh it with `python scripts/sync_job_server_client.py /path/to/server-checkout`.
 The script reads that exact Git commit and extracts only client modules/protocol
 signing; it does not import a daemon or copy server authentication/database code.

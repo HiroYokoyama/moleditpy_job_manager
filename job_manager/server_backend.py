@@ -54,8 +54,8 @@ def backend_for(host):
 
 
 def show_enrollment(parent, url, key_field, ca_file, on_done=None):
-    from PyQt6.QtCore import QThreadPool
-    from PyQt6.QtWidgets import QInputDialog, QLineEdit, QMessageBox
+    from PySide6.QtCore import QThreadPool
+    from PySide6.QtWidgets import QInputDialog, QLineEdit, QMessageBox
     from .tasks import run_async
     from .store import default_data_dir
 

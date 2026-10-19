@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PyQt6.QtWidgets import QInputDialog, QLineEdit, QWidget
+from PySide6.QtWidgets import QInputDialog, QLineEdit, QWidget
 
 from .models import BACKEND_PARAMIKO, HostProfile
 

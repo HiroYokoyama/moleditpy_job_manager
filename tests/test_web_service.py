@@ -10,7 +10,7 @@ import urllib.request
 
 import pytest
 
-pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 is not installed")
+pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 
 from job_manager import web_service  # noqa: E402
 from job_manager.models import STATE_DONE, STATE_RUNNING, Job  # noqa: E402

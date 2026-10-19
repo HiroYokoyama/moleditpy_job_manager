@@ -1,6 +1,6 @@
 """Job monitor action definitions and shortcuts with explicit window callbacks."""
 
-from PyQt6.QtGui import QAction
+from PySide6.QtGui import QAction
 
 from .store import JOB_EXTENSION
 from .ui_actions import make_action

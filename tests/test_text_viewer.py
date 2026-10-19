@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 import pytest
 
-pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 is not installed")
+pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 
 from job_manager import jobs_dialog  # noqa: E402
 from job_manager.jobs_dialog import (  # noqa: E402
@@ -192,8 +192,8 @@ class TestFind(unittest.TestCase):
         self.assertEqual(self.viewer.lbl_find.text(), "Not found")
 
     def test_escape_in_the_field_closes_the_bar_not_the_window(self):
-        from PyQt6.QtCore import Qt
-        from PyQt6.QtTest import QTest
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
 
         self.viewer.show()
         self.viewer.show_find()
@@ -202,8 +202,8 @@ class TestFind(unittest.TestCase):
         self.assertTrue(self.viewer.isVisible())
 
     def test_enter_in_the_field_finds_rather_than_pressing_a_button(self):
-        from PyQt6.QtCore import Qt
-        from PyQt6.QtTest import QTest
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
 
         self.viewer.show()
         self.viewer.show_find()
@@ -227,8 +227,8 @@ class TestFind(unittest.TestCase):
         self.assertTrue(self.viewer.isVisible())
 
     def test_escape_in_the_text_closes_the_bar_before_the_window(self):
-        from PyQt6.QtCore import Qt
-        from PyQt6.QtTest import QTest
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
 
         self.viewer.show()
         self.viewer.show_find()
@@ -258,7 +258,7 @@ class TestMenus(unittest.TestCase):
         self.assertFalse(viewer.act_reload.isEnabled())
 
     def test_wrap_can_be_turned_off(self):
-        from PyQt6.QtWidgets import QPlainTextEdit
+        from PySide6.QtWidgets import QPlainTextEdit
 
         viewer = TextDialog("t", "x")
         self.addCleanup(viewer.deleteLater)

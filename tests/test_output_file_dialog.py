@@ -9,10 +9,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-pytest.importorskip("PyQt6")
+pytest.importorskip("PySide6")
 
-from PyQt6.QtCore import QObject, pyqtSignal
-from PyQt6.QtWidgets import QApplication
+from PySide6.QtCore import QObject, Signal
+from PySide6.QtWidgets import QApplication
 
 from job_manager.models import Job, new_id
 from job_manager.output_file_dialog import (
@@ -151,7 +151,7 @@ class TestOutputFileSelectorDialog(unittest.TestCase):
         self.addCleanup(dialog.deleteLater)
 
         item = dialog.tree.topLevelItem(0)
-        from PyQt6.QtGui import QColor
+        from PySide6.QtGui import QColor
 
         self.assertEqual(item.foreground(0).color(), QColor("#8b949e"))
         self.assertTrue(item.font(0).italic())
@@ -296,9 +296,9 @@ class _FakeService(QObject):
     attached is a closure holding a deleted widget.
     """
 
-    results_ready = pyqtSignal(str, list)
-    error = pyqtSignal(str)
-    message = pyqtSignal(str)
+    results_ready = Signal(str, list)
+    error = Signal(str)
+    message = Signal(str)
 
     def __init__(self, started: bool = True) -> None:
         super().__init__()

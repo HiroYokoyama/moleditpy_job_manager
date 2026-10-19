@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from PyQt6.QtWidgets import QApplication, QStyle, QSystemTrayIcon
+from PySide6.QtWidgets import QApplication, QStyle, QSystemTrayIcon
 
 _tray: Optional[QSystemTrayIcon] = None
 

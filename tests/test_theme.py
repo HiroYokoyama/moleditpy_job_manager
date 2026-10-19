@@ -10,10 +10,10 @@ import unittest
 
 import pytest
 
-pytest.importorskip("PyQt6.QtWidgets", reason="PyQt6 is not installed")
+pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 
-from PyQt6.QtCore import QEvent  # noqa: E402
-from PyQt6.QtGui import QPalette, QColor  # noqa: E402
+from PySide6.QtCore import QEvent  # noqa: E402
+from PySide6.QtGui import QPalette, QColor  # noqa: E402
 
 from job_manager import theme  # noqa: E402
 from job_manager.host_monitor import BLANK, HOURGLASS, _ActiveJobsBar  # noqa: E402
@@ -221,8 +221,8 @@ class TestStateColumnStaysReadableWhenSelected(DialogTestCase):
         self.assertIsInstance(dialog.table.itemDelegateForColumn(3), _StateColorDelegate)
 
     def test_selected_state_text_keeps_its_colour(self):
-        from PyQt6.QtWidgets import QStyle, QStyleOptionViewItem
-        from PyQt6.QtGui import QPalette
+        from PySide6.QtWidgets import QStyle, QStyleOptionViewItem
+        from PySide6.QtGui import QPalette
 
         from job_manager.jobs_dialog import _StateColorDelegate
         from job_manager.models import STATE_FAILED
@@ -241,7 +241,7 @@ class TestStateColumnStaysReadableWhenSelected(DialogTestCase):
         self.assertEqual(option.palette.color(QPalette.ColorRole.HighlightedText), expected)
 
     def test_an_unstyled_column_is_left_alone(self):
-        from PyQt6.QtWidgets import QStyleOptionViewItem
+        from PySide6.QtWidgets import QStyleOptionViewItem
 
         from job_manager.jobs_dialog import _StateColorDelegate
         from job_manager.models import STATE_FAILED
@@ -596,9 +596,9 @@ class TestSpinBoxArrowControls(DialogTestCase):
     """QSpinBox up and down buttons click and adjust values correctly."""
 
     def test_spinbox_up_and_down_clicks_with_theme(self):
-        from PyQt6.QtWidgets import QSpinBox
-        from PyQt6.QtTest import QTest
-        from PyQt6.QtCore import Qt, QPoint
+        from PySide6.QtWidgets import QSpinBox
+        from PySide6.QtTest import QTest
+        from PySide6.QtCore import Qt, QPoint
 
         spin = QSpinBox()
         self.addCleanup(spin.deleteLater)

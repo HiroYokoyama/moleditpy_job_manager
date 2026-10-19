@@ -12,12 +12,12 @@ import time
 from html import escape
 from typing import Any, List, Optional
 
-from PyQt6.QtCore import (
+from PySide6.QtCore import (
     QEvent,
     Qt,
     QTimer,
 )
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
     QFileDialog,
@@ -1452,7 +1452,7 @@ class JobsDialog(QDialog):
                     return True, 0
             except Exception:
                 logging.debug("Job Manager: task bar message not handled", exc_info=True)
-        # Not super().nativeEvent(): under PyQt6 6.11 on Windows, handing its
+        # Not super().nativeEvent(): under PySide6 6.11 on Windows, handing its
         # result back crashes Qt with an access violation on the window's very
         # first message. QWidget's own implementation only returns false.
         return False, 0

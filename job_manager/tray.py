@@ -24,9 +24,9 @@ import os
 import sys
 from typing import Callable, Dict, Optional
 
-from PyQt6.QtCore import QEvent, QObject, QTimer
-from PyQt6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap
-from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
+from PySide6.QtCore import QEvent, QObject, QTimer
+from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from . import handoff, notify
 from .presence import summary_text, tray_state

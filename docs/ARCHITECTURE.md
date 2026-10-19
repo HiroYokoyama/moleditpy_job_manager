@@ -432,7 +432,7 @@ See [API.md](API.md) for the routes and the security model.
 |---|---|---|
 | unit | pytest only | models, store, schedulers, runner, transports (fakes) |
 | script execution | a real `bash`, a real PowerShell | the generated scripts' actual semantics, including the runners as live processes |
-| GUI | real PyQt6, offscreen | dialogs, poller timing, window lifetime |
+| GUI | real PySide6, offscreen | dialogs, poller timing, window lifetime |
 | integration | the main app checked out as a sibling | the real `PluginContext` contract |
 
 CI runs all four; the integration job fails deliberately if the real-context

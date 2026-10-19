@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QTreeWidget, QTreeWidgetItem
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem
 
 PATH_ROLE = Qt.ItemDataRole.UserRole
 IS_REMOTE_ROLE = Qt.ItemDataRole.UserRole + 1

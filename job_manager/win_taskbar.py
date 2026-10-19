@@ -278,10 +278,15 @@ class WindowTaskbar:
 
     def handle(self, message_ptr) -> bool:
         """Feed a native ``MSG``; True when it was a thumbnail click handled here."""
-        if not AVAILABLE or not message_ptr:
+        if not AVAILABLE:
             return False
         try:
-            msg = wintypes.MSG.from_address(int(message_ptr))
+            # PySide's borrowed VoidPtr has size zero, so bool(ptr) is false
+            # even while its native MSG address is valid.
+            address = int(message_ptr)
+            if not address:
+                return False
+            msg = wintypes.MSG.from_address(address)
         except Exception:
             return False
         created = button_created_message()
@@ -308,7 +313,7 @@ def _small_icon_size() -> int:
 
 
 def _hicon_for(icon, size: int = 0) -> int:
-    from PyQt6.QtCore import QBuffer, QIODevice
+    from PySide6.QtCore import QBuffer, QIODevice
 
     size = size or _small_icon_size()
 

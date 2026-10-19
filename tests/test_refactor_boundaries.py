@@ -23,14 +23,14 @@ import sys
 
 class NoQt:
     def find_spec(self, fullname, path=None, target=None):
-        if fullname == 'PyQt6' or fullname.startswith('PyQt6.'):
+        if fullname == 'PySide6' or fullname.startswith('PySide6.'):
             raise ImportError('Qt must remain optional for these components')
 
 sys.meta_path.insert(0, NoQt())
 for name in ('api_core', 'api_inputs', 'api_security', 'api_types', 'input_names',
              'job_dependencies', 'store', 'store_io', 'runner', 'result_files'):
     importlib.import_module('job_manager.' + name)
-assert not any(name.startswith('PyQt6') for name in sys.modules)
+assert not any(name.startswith('PySide6') for name in sys.modules)
 """
     result = subprocess.run(
         [sys.executable, "-c", script], capture_output=True, text=True, timeout=30

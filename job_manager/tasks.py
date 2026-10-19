@@ -10,14 +10,14 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Optional
 
-from PyQt6 import sip
-from PyQt6.QtCore import QObject, QRunnable, QThreadPool, pyqtSignal, pyqtSlot
+from shiboken6 import isValid
+from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
 
 
 class _TaskSignals(QObject):
-    succeeded = pyqtSignal(object)
-    failed = pyqtSignal(str)
-    finished = pyqtSignal()
+    succeeded = Signal(object)
+    failed = Signal(str)
+    finished = Signal()
 
 
 class BackgroundTask(QRunnable):
@@ -58,9 +58,9 @@ def gone(owner: Optional[QObject]) -> bool:
     if owner is None:
         return False
     try:
-        return sip.isdeleted(owner)
+        return not isValid(owner)
     except TypeError:
-        # Not a sip wrapper at all (a test double): nothing to outlive.
+        # Not a Qt wrapper at all (a test double): nothing to outlive.
         return False
 
 
@@ -85,17 +85,17 @@ class _CallbackReceiver(QObject):
         self.on_error = on_error
         self.on_finished = on_finished
 
-    @pyqtSlot(object)
+    @Slot(object)
     def succeeded(self, value):
         if self.on_success is not None:
             self.on_success(value)
 
-    @pyqtSlot(str)
+    @Slot(str)
     def failed(self, error):
         if self.on_error is not None:
             self.on_error(error)
 
-    @pyqtSlot()
+    @Slot()
     def finished(self):
         try:
             if self.on_finished is not None:

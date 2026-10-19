@@ -12,7 +12,7 @@ if __package__ is None or __package__ == "":
     pkg_name = os.path.basename(os.path.dirname(os.path.abspath(__file__)))
     __package__ = pkg_name
 
-from PyQt6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication
 
 from . import PLUGIN_VERSION, get_service, instances
 from . import shutdown as release_service
