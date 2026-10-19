@@ -7,7 +7,7 @@ This branch targets **MoleditPy 5.0.0a1–5.x** and uses **PySide6**. Plugin lic
 ![Coverage](https://img.shields.io/badge/coverage-%3E80%25-brightgreen)
 [![GitHub tag](https://img.shields.io/github/v/tag/HiroYokoyama/moleditpy_job_manager?label=version)](https://github.com/HiroYokoyama/moleditpy_job_manager/tags)
 [![GitHub Downloads](https://img.shields.io/github/downloads/HiroYokoyama/moleditpy_job_manager/total)](https://github.com/HiroYokoyama/moleditpy_job_manager/releases)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![License: GPL v3](https://img.shields.io/badge/License-LGPLv3-blue.svg)](LICENSE)
 [![MoleditPy](https://img.shields.io/badge/MoleditPy->=5.0.0-3577F7)](https://github.com/HiroYokoyama/python_molecular_editor)
 
 A [MoleditPy](https://github.com/HiroYokoyama/python_molecular_editor) plugin for
@@ -288,4 +288,8 @@ development and release workflow.
 
 ## License
 
-GNU General Public License v3.0. See [LICENSE](LICENSE).
+GNU Lesser General Public License v3.0. See [LICENSE](LICENSE).
+
+## Licensing scope
+
+First-party code in this migration is LGPL-3.0-or-later. See [LICENSE](LICENSE), [COPYING](COPYING) and [dependency/provenance terms](LICENSING.md). Third-party components and historical releases retain their own terms.

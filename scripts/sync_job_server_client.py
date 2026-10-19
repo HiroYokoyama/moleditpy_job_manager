@@ -47,13 +47,16 @@ def sync(source):
     manifest = {
         "repository": "https://github.com/HiroYokoyama/moleditpy_job_server",
         "commit": SOURCE_COMMIT,
-        "license": "GPL-3.0-only",
+        "upstream_license": "GPL-3.0-only",
+        "license": "LGPL-3.0-or-later",
+        "additional_permission": "Copyright holder grant in LICENSING.md for the pinned first-party client copies.",
         "files": {
             name: hashlib.sha256(content.encode()).hexdigest() for name, content in files.items()
         },
     }
     (target / "PROVENANCE.json").write_text(json.dumps(manifest, indent=2) + "\n", "utf-8")
-    (target / "LICENSE").write_bytes(source_file("LICENSE"))
+    for name in ("LICENSE", "COPYING", "LICENSING.md"):
+        (target / name).write_bytes((ROOT / name).read_bytes())
 
 
 if __name__ == "__main__":
