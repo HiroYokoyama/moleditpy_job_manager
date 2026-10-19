@@ -21,11 +21,11 @@ permissions:
 # minutes is far past any test's own bounded waits; past it, every thread's
 # stack is dumped and the test fails, so the log names what was stuck.
 env:
-  MOLEDITPY_REF: ${{ inputs.moleditpy_ref || vars.MOLEDITPY_REF || 'migrate/pyside6-without-openbabel' }}
+  MOLEDITPY_REF: ${{ inputs.moleditpy_ref || vars.MOLEDITPY_REF || 'main' }}
 
 jobs:
   # -------------------------------------------------------------------------
-  # Standard unit tests — no external dependencies required
+  # Standard unit tests  Eno external dependencies required
   # -------------------------------------------------------------------------
   test:
     runs-on: ubuntu-latest
@@ -53,7 +53,7 @@ jobs:
         run: python -m pytest tests/ -v --tb=short -n auto --timeout=300 --timeout-method=thread --cov=job_manager --cov-report=term-missing
 
   # -------------------------------------------------------------------------
-  # Windows — the only runner that can execute the PowerShell backend.
+  # Windows  Ethe only runner that can execute the PowerShell backend.
   #
   # The wrapper in schedulers/windows.py and the queue in remote_runner_ps.py
   # are a second implementation of exit-code detection in a second language,
@@ -125,7 +125,7 @@ jobs:
           }
 
   # -------------------------------------------------------------------------
-  # GUI tests — real PySide6, headless. Roughly half of this plugin is dialogs
+  # GUI tests  Ereal PySide6, headless. Roughly half of this plugin is dialogs
   # and a QTimer-driven poller; the pytest-only job above skips all of it.
   # -------------------------------------------------------------------------
   test-gui:
@@ -164,7 +164,7 @@ jobs:
         run: python -m pytest tests/ -v --tb=short -n auto --timeout=300 --timeout-method=thread --cov=job_manager --cov-report=term-missing
 
   # -------------------------------------------------------------------------
-  # Integration tests — clones the main MoleditPy app to enable real
+  # Integration tests  Eclones the main MoleditPy app to enable real
   # PluginContext tests (TestWithRealPluginContext)
   # -------------------------------------------------------------------------
   test-integration:
