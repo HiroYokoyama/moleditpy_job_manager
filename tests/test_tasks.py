@@ -10,7 +10,7 @@ import pytest
 pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 
 import shiboken6  # noqa: E402
-from PySide6.QtCore import QCoreApplication, QEvent  # noqa: E402
+from PySide6.QtCore import QCoreApplication, QElapsedTimer, QEvent, QThreadPool  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel, QWidget  # noqa: E402
 
 from job_manager.tasks import gone, run_async  # noqa: E402
@@ -142,6 +142,38 @@ class TestAnOwnerThatHasGone(unittest.TestCase):
         _app.processEvents()
         self.assertTrue(not shiboken6.isValid(window))
         self.assertEqual(seen, [])
+
+
+class TestARealPoolWithNoOwner(unittest.TestCase):
+    """The pool deletes each finished task on its own thread, signals and all."""
+
+    def test_every_answer_arrives(self):
+        pool = QThreadPool()
+        pool.setMaxThreadCount(2)
+        count = 300
+        values, finished = [], []
+        for i in range(count):
+            run_async(
+                pool,
+                lambda i=i: i,
+                on_success=values.append,
+                on_finished=lambda: finished.append(1),
+            )
+        pool.waitForDone()
+        clock = QElapsedTimer()
+        clock.start()
+        while len(finished) < count and clock.elapsed() < 10000:
+            _app.processEvents()
+        self.assertEqual(sorted(values), list(range(count)))
+        self.assertEqual(len(finished), count)
+
+    def test_receivers_are_cleaned_up(self):
+        pool = QThreadPool()
+        run_async(pool, lambda: 1)
+        pool.waitForDone()
+        _app.processEvents()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        self.assertEqual(pool.children(), [])
 
 
 if __name__ == "__main__":

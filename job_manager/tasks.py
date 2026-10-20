@@ -11,7 +11,7 @@ import logging
 from typing import Any, Callable, Optional
 
 from shiboken6 import isValid
-from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal, Slot
+from PySide6.QtCore import QCoreApplication, QObject, QRunnable, QThreadPool, Signal, Slot
 
 
 class _TaskSignals(QObject):
@@ -77,7 +77,16 @@ def _guarded(owner: QObject, callback: Optional[Callable]) -> Optional[Callable]
 
 
 class _CallbackReceiver(QObject):
-    """Deliver a task's answer in the owner's thread, for the owner's lifetime."""
+    """Deliver a task's answer in the owner's thread, for the owner's lifetime.
+
+    Every callback goes through one of these, owner or not. The pool deletes a
+    finished :class:`BackgroundTask` on its own thread, and its parentless
+    ``signals`` object goes with it -- taking along the hidden receiver PySide
+    makes for a signal connected straight to a closure, while the queued call
+    is still waiting on the GUI thread. That lost answers, and under a burst of
+    API requests crashed the process inside the event loop. A queued call to a
+    slot of a QObject that is still alive does not depend on the sender.
+    """
 
     def __init__(self, owner, on_success, on_error, on_finished):
         super().__init__(owner)
@@ -127,29 +136,42 @@ def run_async(
     while its work was in flight had the answer delivered into widgets that no
     longer existed, which raised, or crashed the process outright. With an
     owner, a QObject child receives the signals in the owner's thread, and Qt
-    disconnects it automatically when the owner is destroyed.
+    disconnects it automatically when the owner is destroyed. Without one the
+    receiver is a child of the pool (or the application), never a bare
+    closure; see :class:`_CallbackReceiver`.
     """
     task = BackgroundTask(fn, quiet=quiet)
     if isinstance(owner, QObject):
-        if not gone(owner):
-            receiver = _CallbackReceiver(owner, on_success, on_error, on_finished)
-            task.signals.succeeded.connect(receiver.succeeded)
-            task.signals.failed.connect(receiver.failed)
-            task.signals.finished.connect(receiver.finished)
-        pool.start(task)
-        return task
-    if owner is not None:
-        on_success = _guarded(owner, on_success)
-        on_error = _guarded(owner, on_error)
-        on_finished = _guarded(owner, on_finished)
-    if on_success is not None:
-        task.signals.succeeded.connect(on_success)
-    if on_error is not None:
-        task.signals.failed.connect(on_error)
-    if on_finished is not None:
-        task.signals.finished.connect(on_finished)
+        if gone(owner):
+            pool.start(task)
+            return task
+        parent = owner
+    else:
+        if owner is not None:
+            on_success = _guarded(owner, on_success)
+            on_error = _guarded(owner, on_error)
+            on_finished = _guarded(owner, on_finished)
+        parent = pool if isinstance(pool, QObject) else QCoreApplication.instance()
+    receiver = _CallbackReceiver(parent, on_success, on_error, on_finished)
+    if parent is None:
+        _keep_unparented(receiver)
+    task.signals.succeeded.connect(receiver.succeeded)
+    task.signals.failed.connect(receiver.failed)
+    task.signals.finished.connect(receiver.finished)
     pool.start(task)
     return task
+
+
+#: Receivers with no QObject to own them (no application object yet). Pruned
+#: here once ``deleteLater`` has destroyed them, never from inside their own
+#: slot: freeing a wrapper while its slot is still running crashes in shiboken.
+_unparented: set = set()
+
+
+def _keep_unparented(receiver: _CallbackReceiver) -> None:
+    for old in [r for r in _unparented if gone(r)]:
+        _unparented.discard(old)
+    _unparented.add(receiver)
 
 
 __all__ = ["BackgroundTask", "run_async"]
