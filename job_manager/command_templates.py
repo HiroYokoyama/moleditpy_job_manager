@@ -123,6 +123,12 @@ TEMPLATES: Tuple[CommandTemplate, ...] = (
         fetch_globs=("*.out", "xtbopt.xyz", "xtbopt.log", "g98.out"),
     ),
     CommandTemplate(
+        "Bash script",
+        "bash {input}",
+        (".sh",),
+        "Run the script with bash; it does not need executable permission.",
+    ),
+    CommandTemplate(
         "Custom (type your own)",
         "",
         (),

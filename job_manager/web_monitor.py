@@ -616,7 +616,9 @@ PAGE = """<!doctype html>
   :root { color-scheme: light;
           --bg:#f6f8fa; --card:#ffffff; --line:#d0d7de;
           --text:#1f2328; --dim:#59636e; --track:#eaeef2;
-          --ok:#1a7f37; --warn:#9a6700; --bad:#cf222e; }
+          --ok:#1a7f37; --warn:#9a6700; --bad:#cf222e;
+          --state-running:#00e676; --state-done:#087f70;
+          --state-transfer:#0969da; --state-lost:#8250df; }
   /* One class, set by the script from the chosen mode, the way the Plugin
      Explorer page does it. A media query as well would fight the class on a
      device whose OS disagrees with what the user just picked. */
@@ -624,7 +626,8 @@ PAGE = """<!doctype html>
     color-scheme: dark;
     --bg:#14171c; --card:#1d2128; --line:#2c313a;
     --text:#e6e9ef; --dim:#9aa3b2; --track:#0f1216;
-    --ok:#4ac47a; --warn:#e0b341; --bad:#e05b4b; }
+    --ok:#4ac47a; --warn:#e0b341; --bad:#e05b4b;
+    --state-done:#14b8a6; --state-transfer:#79b8ff; --state-lost:#c77dff; }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--text);
          font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
@@ -654,6 +657,12 @@ PAGE = """<!doctype html>
   table { width:100%; border-collapse:collapse; margin-top:10px; font-size:12px; }
   td { padding:3px 0; vertical-align:top; }
   td.state { color:var(--dim); text-align:right; white-space:nowrap; padding-left:8px; }
+  td.state[data-state="running"], td.state[data-state="completing"] { color:var(--state-running); }
+  td.state[data-state="pending"], td.state[data-state="submitted"] { color:var(--warn); }
+  td.state[data-state="uploading"], td.state[data-state="downloading"] { color:var(--state-transfer); }
+  td.state[data-state="done"], td.state[data-state="finished"] { color:var(--state-done); }
+  td.state[data-state="failed"], td.state[data-state="blocked"] { color:var(--bad); }
+  td.state[data-state="lost"] { color:var(--state-lost); }
   .none { color:var(--dim); font-size:12px; }
   footer { padding:0 16px 20px; color:var(--dim); font-size:12px; }
   h1 { flex:0 0 auto; }
@@ -714,7 +723,8 @@ function meter(label, fraction, detail) {
 
 function card(h) {
   const jobs = (h.jobs || []).map(j =>
-    `<tr><td>${esc(j.name)}</td><td class="state">${esc(j.state)}</td></tr>`).join("");
+    `<tr><td>${esc(j.name)}</td><td class="state"
+      data-state="${esc(String(j.state || "").toLowerCase())}">${esc(j.state)}</td></tr>`).join("");
   return `<div class="card">
     <div class="name">${esc(h.name)}</div>
     <div class="sub">${esc(h.summary || "")}</div>
