@@ -73,6 +73,8 @@ class TestMatchingAnInputFile(unittest.TestCase):
             ("mol.mop", "MOPAC"),
             ("mol.py", "PySCF (Python script)"),
             ("mol.xyz", "xTB (optimisation)"),
+            ("run.sh", "Bash script"),
+            ("RUN.SH", "Bash script"),
         ):
             self.assertEqual(templates_for(filename)[0].label, expected, filename)
 

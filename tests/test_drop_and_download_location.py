@@ -201,6 +201,32 @@ class TestDroppingOnTheWizard(DropTestCase):
 
         self.assertEqual(dialog.txt_command.text(), "")
 
+    def test_a_dropped_shell_script_defaults_to_bash(self):
+        from job_manager.models import HostProfile
+
+        self.store.add_host(HostProfile(id="myhost", name="My host"))
+        dialog = self._wizard()
+        dialog.txt_command.clear()
+        event, _mime = drop_event([self.make_file("run.sh")])
+        dialog.dropEvent(event)
+        self.assertEqual(dialog.txt_command.text(), "bash {input}")
+        self.assertIn("bash run.sh", dialog.txt_preview.toPlainText())
+
+    def test_a_shell_script_keeps_a_custom_command(self):
+        dialog = self._wizard()
+        dialog.txt_command.setText("my-launcher {input}")
+        event, _mime = drop_event([self.make_file("run.sh")])
+        dialog.dropEvent(event)
+        self.assertEqual(dialog.txt_command.text(), "my-launcher {input}")
+
+    def test_a_shell_script_uses_the_saved_extension_default_first(self):
+        self.store.set_default_command(".sh", "bash -l {input}")
+        dialog = self._wizard()
+        dialog.txt_command.clear()
+        event, _mime = drop_event([self.make_file("run.sh")])
+        dialog.dropEvent(event)
+        self.assertEqual(dialog.txt_command.text(), "bash -l {input}")
+
 
 class TestWhereResultsLand(DropTestCase):
     def test_beside_the_input_by_default(self):

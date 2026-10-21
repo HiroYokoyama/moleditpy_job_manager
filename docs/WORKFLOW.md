@@ -94,10 +94,14 @@ extensions are deliberately not claimed application-wide, since that would take
    | Quantum ESPRESSO | `mpirun -np {ntasks} pw.x -in {input} > {stem}.out` |
    | VASP | `mpirun -np {ntasks} vasp_std > vasp.out` |
    | xTB | `xtb {input} --opt > {stem}.out` |
+   | Bash script | `bash {input}` |
 
    The list puts the likely program first for the input you selected, and fills
    an empty command automatically when the extension is unambiguous. `.inp` is
    left alone — ORCA, CP2K and GAMESS all use it.
+
+   Dropping a `.sh` script fills an empty command with `bash {input}`. A
+   command you typed or saved as the extension's default takes priority.
 
    `srun` works in place of `mpirun -np {ntasks}` on most SLURM sites.
 
