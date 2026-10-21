@@ -33,6 +33,7 @@ class TestMetadata(unittest.TestCase):
 
     def test_version_is_semver(self):
         from packaging.version import Version
+
         assert Version(job_manager.PLUGIN_VERSION).public == job_manager.PLUGIN_VERSION
 
     def test_name_and_author(self):

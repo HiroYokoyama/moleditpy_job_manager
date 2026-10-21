@@ -155,6 +155,8 @@ class SubmissionWorkflow:
         # Monotonic: a clock set back by NTP or a DST bug would stretch the wait.
         deadline = time.monotonic() + timeout
         while not after_job.remote_job_id and time.monotonic() < deadline:
+            if getattr(self.service, "_shutting_down", False):
+                raise RuntimeError("Job Manager is shutting down")
             if after_job.is_terminal:
                 logging.warning(
                     "Job Manager: %s never started, so the job chained behind it will not wait",
