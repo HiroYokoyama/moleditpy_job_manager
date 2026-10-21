@@ -104,6 +104,7 @@ class _StandaloneWindows(QObject):
             except RuntimeError:
                 pass
         presence.uninstall()
+        self.service.shutdown()
 
 
 class StandaloneMonitor(_StandaloneWindows):

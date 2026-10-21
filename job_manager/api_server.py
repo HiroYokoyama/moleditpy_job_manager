@@ -21,7 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Dict, Optional, Tuple
 from urllib.parse import parse_qs, urlsplit
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QCoreApplication, QObject, Qt, Signal, Slot
 
 from .http_limits import BoundedServerMixin
 
@@ -66,21 +66,48 @@ class _GuiBridge(QObject):
 
     def __init__(self, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
-        self._requested.connect(self._run)
+        self._lock = threading.Lock()
+        self._pending: Dict[int, Dict[str, Any]] = {}
+        self._accepting = True
+        self._requested.connect(self._run, Qt.ConnectionType.QueuedConnection)
 
-    @staticmethod
-    def _run(box: Dict[str, Any]) -> None:
+    @Slot(object)
+    def _run(self, box: Dict[str, Any]) -> None:
+        with self._lock:
+            if self._pending.pop(id(box), None) is None:
+                return
+            fn = box.pop("fn")
         try:
-            box["result"] = box["fn"]()
+            box["result"] = fn()
         except BaseException as exc:  # noqa: BLE001 - carried to the caller verbatim
             box["error"] = exc
         finally:
             box["done"].set()
 
+    def resume(self) -> None:
+        with self._lock:
+            self._accepting = True
+
+    def close(self) -> None:
+        with self._lock:
+            self._accepting = False
+            pending, self._pending = self._pending, {}
+            for box in pending.values():
+                box.pop("fn", None)
+                box["error"] = ApiError(503, "Job Manager API is stopping")
+                box["done"].set()
+
     def call(self, fn: Callable[[], Any], timeout: float = GUI_TIMEOUT) -> Any:
         box: Dict[str, Any] = {"fn": fn, "done": threading.Event()}
-        self._requested.emit(box)
+        with self._lock:
+            if not self._accepting:
+                raise ApiError(503, "Job Manager API is stopping")
+            self._pending[id(box)] = box
+            self._requested.emit(box)
         if not box["done"].wait(timeout):
+            with self._lock:
+                self._pending.pop(id(box), None)
+                box.pop("fn", None)
             raise ApiError(503, "MoleditPy is busy and did not handle the request in time")
         if "error" in box:
             raise box["error"]
@@ -266,7 +293,9 @@ class JobApiServer(QObject):
     stopped = Signal()
 
     def __init__(self, service: Any, parent: Optional[QObject] = None) -> None:
-        super().__init__(parent)
+        # A stopped daemon HTTP handler can own the last Python reference.
+        # Qt ownership must keep this object and its bridge on the GUI thread.
+        super().__init__(parent if parent is not None else QCoreApplication.instance())
         self.service = service
         self.api = JobApi(service)
         self._bridge = _GuiBridge(self)
@@ -310,6 +339,7 @@ class JobApiServer(QObject):
         self._token = ensure_token(self.service.store.directory)
         server = self._bind(int(port or 0))
         server.api_hook = self
+        self._bridge.resume()
         self._server = server
         self._port = server.server_address[1]
         self._thread = threading.Thread(
@@ -343,6 +373,7 @@ class JobApiServer(QObject):
                 raise OSError(f"Could not listen on {BIND_HOST}: {fallback}") from fallback
 
     def stop(self) -> None:
+        self._bridge.close()
         server, thread = self._server, self._thread
         self._server = self._thread = None
         self._port = 0

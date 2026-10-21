@@ -106,6 +106,7 @@ class JobPoller(QObject):
         self.store = store
         self.transport_factory = transport_factory
         self.pool = QThreadPool(self)
+        self._shutting_down = False
         # Polling is I/O bound and login nodes dislike bursts; two at a time.
         self.pool.setMaxThreadCount(2)
         self._in_flight: Dict[str, bool] = {}
@@ -137,6 +138,8 @@ class JobPoller(QObject):
 
     def start(self) -> None:
         """Begin (or resume) polling if any job is active."""
+        if self._shutting_down:
+            return
         if not self.store.active_jobs():
             self.stop()
             return
@@ -150,6 +153,8 @@ class JobPoller(QObject):
 
     def reschedule(self) -> None:
         """Apply a changed interval preference without losing the timer."""
+        if self._shutting_down:
+            return
         was_active = self.timer.isActive()
         self.timer.setInterval(self.interval_ms())
         if was_active:
@@ -164,6 +169,8 @@ class JobPoller(QObject):
         interval. Every submission re-primes, even during a pending kickoff --
         otherwise a job handed over mid-kickoff could miss the query entirely.
         """
+        if self._shutting_down:
+            return
         if host_id:
             self._next_poll.pop(host_id, None)
             self._backoff.pop(host_id, None)
@@ -189,12 +196,14 @@ class JobPoller(QObject):
             self._primed.clear()
 
     def shutdown(self) -> None:
+        self._shutting_down = True
         self._kickoff_until = 0.0
         self._primed.clear()
         self._kickoff.stop()
         self.stop()
         self.pool.clear()
-        self.pool.waitForDone(3000)
+        self.pool.waitForDone()
+        self._in_flight.clear()
 
     # --- polling ------------------------------------------------------------
 
@@ -205,6 +214,8 @@ class JobPoller(QObject):
 
     def tick(self, force: bool = False) -> int:
         """Dispatch one poll per eligible host. Returns how many were started."""
+        if self._shutting_down:
+            return 0
         now = time.time()
         grouped = self.store.active_jobs_by_host()
         if not grouped:
@@ -234,6 +245,8 @@ class JobPoller(QObject):
 
     def refresh_now(self) -> bool:
         """Manual refresh, rate limited. Returns False if it was too soon."""
+        if self._shutting_down:
+            return False
         now = time.time()
         if now - self._last_manual < MANUAL_REFRESH_COOLDOWN:
             return False
@@ -258,6 +271,8 @@ class JobPoller(QObject):
         exit_codes: Optional[dict] = None,
         errors: Optional[dict] = None,
     ) -> None:
+        if self._shutting_down:
+            return
         self._in_flight[host_id] = False
         self._backoff.pop(host_id, None)
         self._schedule_next(host_id, float(self.store.poll_interval_for(host_id)))
@@ -301,6 +316,8 @@ class JobPoller(QObject):
         self.poll_finished.emit(host_id)
 
     def _on_poll_failed(self, host_id: str, message: str) -> None:
+        if self._shutting_down:
+            return
         self._in_flight[host_id] = False
         interval = float(self.store.poll_interval_for(host_id))
         previous = self._backoff.get(host_id, interval)

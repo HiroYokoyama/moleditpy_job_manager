@@ -8,10 +8,11 @@ thread pool and reports back on the GUI thread.
 from __future__ import annotations
 
 import logging
+import weakref
 from typing import Any, Callable, Optional
 
 from shiboken6 import isValid
-from PySide6.QtCore import QCoreApplication, QObject, QRunnable, QThreadPool, Signal, Slot
+from PySide6.QtCore import QCoreApplication, QEvent, QObject, QRunnable, QThreadPool, Signal, Slot
 
 
 class _TaskSignals(QObject):
@@ -29,6 +30,7 @@ class _SignalRunnable(QRunnable):
         # A Qt parent keeps the sender alive after that last Python reference;
         # deleteLater then destroys it on its own thread, also for cleared tasks.
         self.signals = signal_type(QCoreApplication.instance())
+        self._started = False
 
     def __del__(self):
         signals = getattr(self, "signals", None)
@@ -53,6 +55,7 @@ class BackgroundTask(_SignalRunnable):
 
     def run_sync(self) -> Any:
         """Execute inline. Returns the result, or None if it raised."""
+        self._started = True
         try:
             result = self.fn()
         except Exception as exc:
@@ -106,26 +109,71 @@ class _CallbackReceiver(QObject):
         self.on_success = on_success
         self.on_error = on_error
         self.on_finished = on_finished
+        self.cancelled = False
 
     @Slot(object)
     def succeeded(self, value):
-        if self.on_success is not None:
+        if not self.cancelled and self.on_success is not None:
             self.on_success(value)
 
     @Slot(str)
     def failed(self, error):
-        if self.on_error is not None:
+        if not self.cancelled and self.on_error is not None:
             self.on_error(error)
 
     @Slot()
     def finished(self):
         try:
-            if self.on_finished is not None:
+            if not self.cancelled and self.on_finished is not None:
                 self.on_finished()
         finally:
             # A callback may itself close and destroy the owning window.
             if not gone(self):
                 self.deleteLater()
+
+    def discard(self):
+        self.cancelled = True
+        self.deleteLater()
+        self.on_success = self.on_error = self.on_finished = None
+
+
+_receivers: weakref.WeakSet = weakref.WeakSet()
+
+
+def shutdown_pool(pool, after_clear=None) -> None:
+    """Drain workers while GUI references remain pinned, then retire callbacks."""
+
+    def pending():
+        return [
+            (receiver, receiver.parent(), receiver.task())
+            for receiver in list(_receivers)
+            if not gone(receiver) and receiver.pool_id == id(pool)
+        ]
+
+    # Keep queued tasks and their UI owners alive on this thread even when
+    # clear() deletes their C++ runnable, or a worker drops its last reference.
+    held = pending()
+    pool.clear()
+    if after_clear is not None:
+        after_clear()
+    known = {id(receiver) for receiver, _, _ in held}
+    held.extend(record for record in pending() if id(record[0]) not in known)
+    pool._job_manager_stopping = True
+    for receiver, _, _ in held:
+        receiver.cancelled = not receiver.deliver_on_shutdown
+    pool.waitForDone()
+    for receiver, _, task in held:
+        if gone(receiver):
+            continue
+        if receiver.deliver_on_shutdown:
+            # Persist completed submissions/downloads before retiring the
+            # service. UI callbacks are dropped instead of reviving dialogs.
+            if task is not None and not task._started:
+                receiver.failed("Operation cancelled because Job Manager is shutting down")
+            else:
+                QCoreApplication.sendPostedEvents(receiver, QEvent.Type.MetaCall)
+        if not gone(receiver):
+            receiver.discard()
 
 
 def run_async(
@@ -153,6 +201,8 @@ def run_async(
     receiver is a child of the pool (or the application), never a bare
     closure; see :class:`_CallbackReceiver`.
     """
+    if getattr(pool, "_job_manager_stopping", False):
+        raise RuntimeError("Job Manager is shutting down")
     task = BackgroundTask(fn, quiet=quiet)
     if isinstance(owner, QObject):
         if gone(owner):
@@ -166,6 +216,10 @@ def run_async(
             on_finished = _guarded(owner, on_finished)
         parent = pool if isinstance(pool, QObject) else QCoreApplication.instance()
     receiver = _CallbackReceiver(parent, on_success, on_error, on_finished)
+    receiver.pool_id = id(pool)
+    receiver.task = weakref.ref(task)
+    receiver.deliver_on_shutdown = owner is None
+    _receivers.add(receiver)
     if parent is None:
         _keep_unparented(receiver)
     task.signals.succeeded.connect(receiver.succeeded)
@@ -187,4 +241,4 @@ def _keep_unparented(receiver: _CallbackReceiver) -> None:
     _unparented.add(receiver)
 
 
-__all__ = ["BackgroundTask", "run_async"]
+__all__ = ["BackgroundTask", "run_async", "shutdown_pool"]

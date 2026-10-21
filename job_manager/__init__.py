@@ -17,7 +17,7 @@ import logging
 from typing import Any, Optional
 
 PLUGIN_NAME = "Job Manager"
-PLUGIN_VERSION = "3.0.3"
+PLUGIN_VERSION = "3.0.4"
 PLUGIN_AUTHOR = "HiroYokoyama"
 
 PLUGIN_DESCRIPTION = "Submit calculations to remote HPC clusters over SSH, track queue status, and fetch results back into MoleditPy. Ready-made command lines for ORCA, Gaussian, CP2K, GAMESS, MOPAC, NWChem, Psi4, PySCF, Quantum ESPRESSO, VASP and xTB; job lists export to CSV or .pmejbs and reopen by drag and drop. Runs on this machine too, with no SSH; chains jobs with each scheduler's own dependency flag; and can hold a job until a chosen time. Installing paramiko adds a backend that keeps one SSH session open and can log in with a password. Optional cryptography adds authenticated Job Server destinations on localhost, private LANs or Tailscale."
@@ -749,6 +749,10 @@ def shutdown() -> None:
     # request arriving while the service is being torn down would find half a
     # plugin. Unconditional, since a listening server outlives a reload.
     stop_api()
+    if _api_server is not None:
+        retire = getattr(_api_server, "deleteLater", None)
+        if callable(retire):
+            retire()
     _api_server = None
     if _beacon is not None:
         try:

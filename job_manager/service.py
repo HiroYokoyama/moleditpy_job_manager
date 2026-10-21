@@ -13,7 +13,7 @@ import os
 import time
 from typing import Callable, Dict, List, Optional, Sequence
 
-from PySide6.QtCore import QObject, QThreadPool, Signal
+from PySide6.QtCore import QCoreApplication, QObject, QThreadPool, Signal
 
 from . import remote_runner
 from .models import (
@@ -52,7 +52,7 @@ from .runner import (
 )
 from .store import JobsReload, JobStore
 from .submission_workflow import SubmissionWorkflow
-from .tasks import run_async
+from .tasks import run_async, shutdown_pool
 from .transport import create_transport
 
 
@@ -75,7 +75,8 @@ class JobService(QObject):
     log_ready = Signal(str)  # tail of a remote log
 
     def __init__(self, store: Optional[JobStore] = None, parent: Optional[QObject] = None) -> None:
-        super().__init__(parent)
+        super().__init__(parent if parent is not None else QCoreApplication.instance())
+        self._shutting_down = False
         self.submissions = SubmissionWorkflow(self)
         self.store = store or JobStore()
         self.store.prune()
@@ -750,10 +751,10 @@ class JobService(QObject):
     def shutdown(self) -> None:
         from . import host_sampler
 
+        if self._shutting_down:
+            return
+        self._shutting_down = True
         self.poller.shutdown()
-        self.pool.clear()
-        # Sampling uses this pool too. Queue connection cleanup after clearing
-        # pending operations, so that clear() cannot discard the cleanup tasks.
-        host_sampler.shutdown_for(self)
-        self.pool.waitForDone(3000)
+        shutdown_pool(self.pool, after_clear=lambda: host_sampler.shutdown_for(self))
+        self.deleteLater()
         logging.debug("Job Manager: service shut down")

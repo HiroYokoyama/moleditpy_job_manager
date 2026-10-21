@@ -103,7 +103,7 @@ class TestWhatItShows(HostMonitorTestCase):
             def clear(self):
                 self.tasks.clear()
 
-            def waitForDone(self, timeout):
+            def waitForDone(self, timeout=-1):
                 for task in self.tasks:
                     task.run_sync()
                 self.tasks.clear()
@@ -311,7 +311,7 @@ class TestWhatItCosts(HostMonitorTestCase):
             def clear(self):
                 pass
 
-            def waitForDone(self, msecs):
+            def waitForDone(self, msecs=-1):
                 pass
 
         dialog = self.monitor()
@@ -485,6 +485,7 @@ class TestTheRowMenu(DialogTestCase):
         from unittest.mock import patch
 
         from PySide6.QtCore import QPoint
+
         menu = self.dialog.menu_job
         with patch.object(menu, "exec", return_value=None) as execute:
             self.dialog._show_row_menu(QPoint(1, 1))
