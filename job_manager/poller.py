@@ -15,11 +15,12 @@ import random
 import time
 from typing import Callable, Dict, List, Optional
 
-from PySide6.QtCore import QObject, QRunnable, QThreadPool, QTimer, Signal
+from PySide6.QtCore import QObject, QThreadPool, QTimer, Signal
 
 from .models import ACTIVE_STATES, HostProfile, Job
 from .runner import poll_host, poll_runner
 from .store import JobStore
+from .tasks import _SignalRunnable
 from .transport.base import TransportError
 
 #: Ceiling for the error backoff, in seconds.
@@ -37,15 +38,14 @@ class _WorkerSignals(QObject):
     failed = Signal(str, str)  # host_id, message
 
 
-class _PollTask(QRunnable):
+class _PollTask(_SignalRunnable):
     """Polls one host on a pool thread."""
 
     def __init__(self, host: HostProfile, jobs: List[Job], transport_factory: Callable) -> None:
-        super().__init__()
+        super().__init__(_WorkerSignals)
         self.host = host
         self.jobs = jobs
         self.transport_factory = transport_factory
-        self.signals = _WorkerSignals()
 
     def run(self) -> None:  # pragma: no cover - exercised via run_sync in tests
         self.run_sync()

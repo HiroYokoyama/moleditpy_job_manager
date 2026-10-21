@@ -20,18 +20,33 @@ class _TaskSignals(QObject):
     finished = Signal()
 
 
-class BackgroundTask(QRunnable):
+class _SignalRunnable(QRunnable):
+    """Keep a worker's GUI-affine sender alive until deferred GUI cleanup."""
+
+    def __init__(self, signal_type) -> None:
+        super().__init__()
+        # QRunnable auto-deletion releases Python attributes on the pool thread.
+        # A Qt parent keeps the sender alive after that last Python reference;
+        # deleteLater then destroys it on its own thread, also for cleared tasks.
+        self.signals = signal_type(QCoreApplication.instance())
+
+    def __del__(self):
+        signals = getattr(self, "signals", None)
+        if signals is not None and isValid(signals):
+            signals.deleteLater()
+
+
+class BackgroundTask(_SignalRunnable):
     """Runs ``fn()`` off the GUI thread. Bind arguments with a lambda."""
 
     def __init__(self, fn: Callable[[], Any], quiet: bool = False) -> None:
-        super().__init__()
+        super().__init__(_TaskSignals)
         self.fn = fn
         #: Log a failure at debug rather than warning. For work whose failure
         #: is an ordinary outcome the caller already shows -- a host that did
         #: not answer this tick -- where a warning with a traceback would fill
         #: the application log with something nobody has to act on.
         self.quiet = bool(quiet)
-        self.signals = _TaskSignals()
 
     def run(self) -> None:  # pragma: no cover - thread entry; body tested via run_sync
         self.run_sync()
@@ -79,13 +94,11 @@ def _guarded(owner: QObject, callback: Optional[Callable]) -> Optional[Callable]
 class _CallbackReceiver(QObject):
     """Deliver a task's answer in the owner's thread, for the owner's lifetime.
 
-    Every callback goes through one of these, owner or not. The pool deletes a
-    finished :class:`BackgroundTask` on its own thread, and its parentless
-    ``signals`` object goes with it -- taking along the hidden receiver PySide
-    makes for a signal connected straight to a closure, while the queued call
-    is still waiting on the GUI thread. That lost answers, and under a burst of
-    API requests crashed the process inside the event loop. A queued call to a
-    slot of a QObject that is still alive does not depend on the sender.
+    Every callback goes through one of these, owner or not. Previously the
+    pool deleted a task and its parentless sender on its own thread, taking
+    along PySide's hidden closure receiver while GUI calls were still queued.
+    A QObject slot keeps delivery independent of that temporary receiver;
+    _SignalRunnable separately keeps sender destruction on the GUI thread.
     """
 
     def __init__(self, owner, on_success, on_error, on_finished):

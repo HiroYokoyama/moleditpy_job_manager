@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
 
 import pytest
 
@@ -17,6 +18,32 @@ from job_manager.store import JobStore
 from job_manager.text_dialog import TextDialog
 
 from .test_poller import SyncPool
+from .test_tasks import HeldPool
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_tail_answer_does_not_outlive_its_text_window(service, temp_store, qapp, fails):
+    import shiboken6
+    from job_manager.jobs_dialog import JobsDialog
+
+    host = HostProfile(id="h1", name="Host1", hostname="myhost", username="user")
+    temp_store.add_host(host)
+    job = Job(id="j1", name="job1", host_id="h1", remote_dir="/jobs/example")
+    service.pool = HeldPool()
+    dialog = TextDialog("Tail", auto_refresh=False)
+    seen = []
+    dialog.set_text = seen.append
+    monitor = SimpleNamespace(service=service)
+    transport = MagicMock()
+    transport.run.return_value.stdout = "finished"
+    if fails:
+        transport.run.side_effect = OSError("host unavailable")
+    with patch.object(service, "transport_for", return_value=transport):
+        JobsDialog._refresh_tail_file(monitor, job, "output.log", dialog)
+        shiboken6.delete(dialog)
+        service.pool.run()
+    assert seen == []
+    service.pool = SyncPool()
 
 
 @pytest.fixture(scope="session")
