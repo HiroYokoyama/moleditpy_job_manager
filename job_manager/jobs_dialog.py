@@ -897,7 +897,7 @@ class JobsDialog(QDialog):
             except RuntimeError:
                 pass
 
-        self.service.tail_file(job, filename, on_done=on_done, on_error=on_err, owner=self)
+        self.service.tail_file(job, filename, on_done=on_done, on_error=on_err, owner=dialog)
 
     def _show_details(self) -> None:
         """Everything recorded about this job, including the script that ran."""

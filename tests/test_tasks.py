@@ -4,18 +4,75 @@ from __future__ import annotations
 
 import unittest
 import threading
+import weakref
 
 import pytest
 
 pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 
 import shiboken6  # noqa: E402
-from PySide6.QtCore import QCoreApplication, QElapsedTimer, QEvent, QThreadPool  # noqa: E402
+from PySide6.QtCore import QCoreApplication, QElapsedTimer, QEvent, QThreadPool, Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication, QLabel, QWidget  # noqa: E402
 
-from job_manager.tasks import gone, run_async  # noqa: E402
+from job_manager.tasks import BackgroundTask, gone, run_async  # noqa: E402
+from job_manager.poller import _PollTask  # noqa: E402
+from job_manager.transport.base import TransportError  # noqa: E402
+from .fakes import FakeTransport, make_host  # noqa: E402
 
 _app = QApplication.instance() or QApplication([])
+
+
+@pytest.mark.parametrize("kind", ["background", "poll"])
+@pytest.mark.parametrize("fails", [False, True])
+def test_pool_senders_are_destroyed_on_gui_thread(kind, fails):
+    """Finishing a runnable must not delete its QObject on the pool thread."""
+    host = make_host()
+
+    def work(*args):
+        if fails:
+            raise TransportError("host unavailable")
+        return FakeTransport(host) if args else "done"
+
+    task = BackgroundTask(work, quiet=True) if kind == "background" else _PollTask(host, [], work)
+    destroyed = []
+    task.signals.destroyed.connect(
+        lambda: destroyed.append(threading.get_ident()), Qt.ConnectionType.DirectConnection
+    )
+    sender = weakref.ref(task.signals)
+    pool = QThreadPool()
+    pool.start(task)
+    del task
+    assert pool.waitForDone(5000)
+    assert destroyed == []
+    assert sender() is not None and shiboken6.isValid(sender())
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert destroyed == [threading.get_ident()]
+
+
+def test_clearing_queued_task_also_defers_sender_cleanup():
+    pool = QThreadPool()
+    pool.setMaxThreadCount(1)
+    gate = threading.Event()
+    entered = threading.Event()
+
+    def block():
+        entered.set()
+        gate.wait(5)
+
+    pool.start(BackgroundTask(block))
+    try:
+        assert entered.wait(5)
+        task = BackgroundTask(lambda: pytest.fail("cleared work must not run"))
+        sender = weakref.ref(task.signals)
+        pool.start(task)
+        del task
+        pool.clear()
+        assert sender() is not None and shiboken6.isValid(sender())
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        assert sender() is None or not shiboken6.isValid(sender())
+    finally:
+        gate.set()
+        assert pool.waitForDone(5000)
 
 
 class HeldPool:
