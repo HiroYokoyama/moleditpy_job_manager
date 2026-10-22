@@ -60,7 +60,7 @@ class TestJobActions(DialogTestCase):
         visible = [
             b for b in self.dialog.findChildren(QAbstractButton) if b.isVisibleTo(self.dialog)
         ]
-        self.assertIn(self.dialog.btn_ssh_terminal, visible)
+        self.assertIn(self.dialog.job_actions["ssh_terminal"], self.dialog.toolbar.actions())
         self.assertLessEqual(len(visible), 9)
         for button in visible:
             self.assertTrue(
