@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QHeaderView,
-    QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
@@ -119,7 +118,7 @@ class OutputFileSelectorDialog(QDialog):
 
         self.setWindowTitle(f"Job Manager {PLUGIN_VERSION} - File Browser: {job.name}")
         apply_theme(self)
-        self.resize(650, 480)
+        self.resize(960, 480)
 
         self._build_ui()
         self._load_files()
@@ -175,17 +174,25 @@ class OutputFileSelectorDialog(QDialog):
         self.btn_open_folder = QPushButton("Open Containing Folder")
         self.btn_open_folder.setToolTip("Show the downloaded files in the file manager.")
         self.btn_open_folder.clicked.connect(self._open_containing_folder)
+        box.addButton(self.btn_open_folder, QDialogButtonBox.ButtonRole.ActionRole)
 
         self.btn_browse_remote = QPushButton("Browse Host Files...")
         self.btn_browse_remote.setToolTip("List everything in the job's directory on the host.")
         self.btn_browse_remote.clicked.connect(self._fetch_remote_listing)
-        browse_row = QHBoxLayout()
-        browse_row.addWidget(self.btn_open_folder)
-        browse_row.addWidget(self.btn_browse_remote)
-        browse_row.addStretch()
-        layout.addLayout(browse_row)
+        box.addButton(self.btn_browse_remote, QDialogButtonBox.ButtonRole.ActionRole)
 
         layout.addWidget(box)
+        buttons = (
+            self.btn_open,
+            self.btn_text,
+            self.btn_close,
+            self.btn_open_folder,
+            self.btn_browse_remote,
+        )
+        for button in buttons:
+            button.setMinimumWidth(button.sizeHint().width())
+        spacing = max(6, box.layout().spacing())
+        self.setMinimumWidth(sum(button.minimumWidth() for button in buttons) + spacing * 4 + 24)
 
     def _load_files(self) -> None:
         """Scan local files first; if none exist, fetch remote listing."""

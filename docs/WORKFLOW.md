@@ -821,7 +821,9 @@ for the reasons above.
 
 **SSH Terminal**, beside **Host Monitor**, opens a native system terminal in an
 SSH host's home directory; choose a host when more than one is configured. It
-does not depend on the selected job. A job's right-click menu offers **SSH
+remembers the last confirmed host locally and preselects it next time. Cancelling
+the chooser preserves the previous choice. The toolbar places **SSH Terminal**
+before **Host Monitor**. It does not depend on the selected job. A job's right-click menu offers **SSH
 Terminal Here** for that job's remote directory instead. Sessions use the
 configured SSH port, key, jump host, and SSH options, and authenticate in the
 terminal. A real PTY supports full-screen programs, resizing, and Ctrl+C without
@@ -840,8 +842,8 @@ transfer finishes, so a download cut off half way never leaves a truncated
 A `.txt` result opens in the plugin's own text window rather than in
 MoleditPy. In **File Browser**, double-click a non-binary file to view its text,
 or use **Open in Text Viewer**. **Open in MoleditPy** explicitly uses the host's
-file opener. Browsing and file-opening controls occupy separate rows so their
-labels fit. **Ctrl+F** searches the text — Enter or F3 for the next match, Shift for
+file opener. The wider browser keeps its buttons on one row with enough room
+for their labels. **Ctrl+F** searches the text — Enter or F3 for the next match, Shift for
 the one before. The same window shows **Tail Log** and **Details**.
 
 The most interesting file — `.out`, then `.log`, `.fchk`, `.hess`, `.xyz` — is

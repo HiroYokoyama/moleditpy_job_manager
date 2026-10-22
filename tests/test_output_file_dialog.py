@@ -65,6 +65,17 @@ class TestOutputFileSelectorDialog(unittest.TestCase):
                 self.assertTrue(
                     dialog.rect().contains(button.mapTo(dialog, button.rect().bottomRight()))
                 )
+        buttons = (
+            dialog.btn_open,
+            dialog.btn_text,
+            dialog.btn_close,
+            dialog.btn_open_folder,
+            dialog.btn_browse_remote,
+        )
+        self.assertEqual(
+            len({button.mapTo(dialog, button.rect().center()).y() for button in buttons}), 1
+        )
+        self.assertGreaterEqual(dialog.width(), 960)
 
     def test_double_click_views_text_but_open_button_uses_host(self):
         path = os.path.join(self.temp_dir, "result.out")

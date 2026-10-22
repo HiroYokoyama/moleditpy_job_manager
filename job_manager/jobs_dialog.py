@@ -239,7 +239,7 @@ class JobsDialog(QDialog):
     def _build_toolbar(self, layout: QVBoxLayout) -> None:
         self.toolbar = action_toolbar(
             self,
-            (self.job_actions[key] for key in ("new", "refresh", "host_monitor", "ssh_terminal")),
+            (self.job_actions[key] for key in ("new", "refresh", "ssh_terminal", "host_monitor")),
         )
         self.btn_new = self.toolbar.widgetForAction(self.job_actions["new"])
         self.btn_refresh = self.toolbar.widgetForAction(self.job_actions["refresh"])
@@ -523,11 +523,16 @@ class JobsDialog(QDialog):
             return
         host = hosts[0]
         if len(hosts) > 1:
+            last_host = self.service.store.get_pref("last_ssh_terminal_host_id", "")
+            current = next((i for i, item in enumerate(hosts) if item.id == last_host), 0)
             labels = [f"{item.name} ({item.target}:{item.port})" for item in hosts]
-            label, accepted = QInputDialog.getItem(self, "SSH Terminal", "Host:", labels, 0, False)
+            label, accepted = QInputDialog.getItem(
+                self, "SSH Terminal", "Host:", labels, current, False
+            )
             if not accepted:
                 return
             host = hosts[labels.index(label)]
+        self.service.store.set_pref("last_ssh_terminal_host_id", host.id)
         self._launch_ssh(host)
 
     def _open_job_ssh_terminal(self) -> None:
