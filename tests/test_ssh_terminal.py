@@ -40,6 +40,10 @@ def test_connection_options_preserve_key_jump_port_and_custom_options():
     assert "ServerAliveInterval=30" in argv
 
 
+def test_default_port_preserves_ssh_config_alias_port():
+    assert "-p" not in terminal.ssh_arguments(host())
+
+
 @pytest.mark.parametrize(
     "directory",
     [

@@ -31,7 +31,7 @@ def ssh_arguments(host, directory: str = "") -> list[str]:
         "-o",
         f"ConnectTimeout={int(host.connect_timeout or 10)}",
     ]
-    if host.port:
+    if host.port and int(host.port) != 22:
         argv += ["-p", str(int(host.port))]
     if host.key_path:
         argv += ["-i", os.path.expanduser(host.key_path), "-o", "IdentitiesOnly=yes"]
