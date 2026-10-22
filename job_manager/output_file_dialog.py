@@ -484,7 +484,7 @@ class OutputFileSelectorDialog(QDialog):
         if not is_remote:
             local_path = data
             if os.path.isfile(local_path):
-                if self._dispatch_open(local_path, as_text=as_text):
+                if self._dispatch_open(local_path, as_text=as_text) and not as_text:
                     self.accept()
             else:
                 QMessageBox.warning(self, "Open File", f"File not found on disk:\n{local_path}")
@@ -556,7 +556,7 @@ class OutputFileSelectorDialog(QDialog):
             if match is None:
                 self.lbl_status.setText(f"Download finished, but {remote_name} was not in it.")
                 return
-            if self._dispatch_open(match, as_text=as_text):
+            if self._dispatch_open(match, as_text=as_text) and not as_text:
                 self.accept()
 
         def on_error(msg: str) -> None:
@@ -607,7 +607,7 @@ class OutputFileSelectorDialog(QDialog):
                 return True
             from .jobs_dialog import show_text_window
 
-            # Parented above this chooser, which closes once a file is opened.
+            # Keep the viewer independent of the browser's lifetime.
             show_text_window(path, self.parentWidget())
             return True
         if self.on_open_callback is not None:
@@ -644,9 +644,7 @@ class OutputFileSelectorDialog(QDialog):
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt's spelling
         self._disconnect_download()
-        # Accepted rather than delegated: QDialog's own closeEvent calls
-        # reject(), which tears down as well, and doing both would recurse.
-        event.accept()
+        super().closeEvent(event)
 
     def reject(self) -> None:
         # Esc and the Close button both come through here with no closeEvent.

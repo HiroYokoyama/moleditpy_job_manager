@@ -87,13 +87,20 @@ class TestOutputFileSelectorDialog(unittest.TestCase):
             self.service, self.job, on_open_callback=opened.append, on_text_callback=viewed.append
         )
         self.addCleanup(dialog.deleteLater)
+        dialog.show()
+        self.addCleanup(dialog.hide)
         item = dialog.tree.currentItem()
         dialog.tree.itemDoubleClicked.emit(item, 0)
         self.assertEqual(viewed, [path])
         self.assertEqual(opened, [])
+        self.assertTrue(dialog.isVisible())
+        dialog.btn_text.click()
+        self.assertEqual(viewed, [path, path])
+        self.assertTrue(dialog.isVisible())
         self.assertEqual(dialog.btn_open.text(), "Open in MoleditPy")
         dialog.btn_open.click()
         self.assertEqual(opened, [path])
+        self.assertFalse(dialog.isVisible())
 
     def test_binary_double_click_keeps_browser_open(self):
         path = os.path.join(self.temp_dir, "binary.txt")
@@ -407,6 +414,26 @@ class TestAPendingDownloadIsNotLeftConnected(unittest.TestCase):
         dlg = OutputFileSelectorDialog(service, self.job)
         self.addCleanup(dlg.deleteLater)
         return dlg
+
+    def test_downloaded_text_keeps_browser_open_but_host_open_closes_it(self):
+        path = os.path.join(self.temp_dir, "result.out")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("Calculation complete\n")
+        for as_text in (True, False):
+            with self.subTest(as_text=as_text):
+                service = _FakeService()
+                dlg = self.dialog(service)
+                viewed, opened = [], []
+                dlg.on_text_callback = viewed.append
+                dlg.on_open_callback = opened.append
+                dlg.show()
+                self.addCleanup(dlg.hide)
+                dlg._download_and_open(None, "result.out", as_text=as_text)
+                service.results_ready.emit(self.job.id, [path])
+                self.assertEqual(viewed, [path] if as_text else [])
+                self.assertEqual(opened, [] if as_text else [path])
+                self.assertEqual(dlg.isVisible(), as_text)
+                self.assertFalse(dlg._pending)
 
     def test_closing_mid_download_disconnects(self):
         service = _FakeService()

@@ -1333,7 +1333,13 @@ class JobsDialog(QDialog):
             on_open_callback=lambda path: self.open_result_files([path]),
             on_text_callback=self.show_text_file,
         )
-        dialog.exec()
+        self._detail_dialogs.append(dialog)
+        dialog.finished.connect(
+            lambda *_: (
+                self._detail_dialogs.remove(dialog) if dialog in self._detail_dialogs else None
+            )
+        )
+        dialog.show()
 
     def _on_results_ready(self, job_id: str, paths: list) -> None:
         if not self.service.store.get_pref("open_result_after_download", True):

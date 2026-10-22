@@ -101,6 +101,30 @@ class TestOpeningAResult(DialogTestCase):
         self.addCleanup(self.dialog.deleteLater)
         self.tmp = tempfile.mkdtemp(prefix="textresult_")
 
+    def test_browser_and_text_viewer_are_modeless_and_close_independently(self):
+        path = os.path.join(self.tmp, "result.out")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("Calculation complete\n")
+        job = make_job(local_dir=self.tmp, downloaded_files=[path], remote_dir="/opt/job")
+        with patch.object(self.dialog, "selected_job", return_value=job):
+            self.dialog._open_selected_result()
+        browser = self.dialog._detail_dialogs[-1]
+        self.addCleanup(browser.close)
+        self.assertIsInstance(browser, OutputFileSelectorDialog)
+        self.assertTrue(browser.isVisible())
+        self.assertFalse(browser.isModal())
+        browser.tree.itemDoubleClicked.emit(browser.tree.currentItem(), 0)
+        viewer = self.dialog._detail_dialogs[-1]
+        self.addCleanup(viewer.close)
+        self.assertIsInstance(viewer, TextDialog)
+        self.assertTrue(viewer.isVisible())
+        self.assertFalse(viewer.isModal())
+        self.assertTrue(browser.isVisible())
+        self.assertIn("Calculation complete", viewer.view.toPlainText())
+        browser.close()
+        self.assertNotIn(browser, self.dialog._detail_dialogs)
+        self.assertTrue(viewer.isVisible())
+
     def test_a_txt_result_never_reaches_moleditpy(self):
         path = os.path.join(self.tmp, "summary.txt")
         with open(path, "w", encoding="utf-8") as handle:
