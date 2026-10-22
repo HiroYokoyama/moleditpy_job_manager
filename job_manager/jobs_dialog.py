@@ -294,7 +294,7 @@ class JobsDialog(QDialog):
         self.table.setModel(self.proxy)
         self.table.setSortingEnabled(True)
         self.table.horizontalHeader().setSortIndicator(
-            COLUMNS.index("Submitted"), Qt.SortOrder.DescendingOrder
+            COLUMNS.index("No."), Qt.SortOrder.DescendingOrder
         )
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
@@ -310,9 +310,9 @@ class JobsDialog(QDialog):
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         # Stretching Name consumed only the space left by the other columns,
         # so it collapsed to an ellipsis in a narrow monitor.
-        for column, width in enumerate((180, 100, 75, 90, 90, 85, 115, 115)):
+        for column, width in enumerate((50, 180, 100, 75, 90, 90, 85, 115, 115)):
             header.resizeSection(column, width)
-        self.table.setItemDelegateForColumn(3, _StateColorDelegate(self.table))
+        self.table.setItemDelegateForColumn(COLUMNS.index("State"), _StateColorDelegate(self.table))
         self.table.selectionModel().selectionChanged.connect(lambda *_: self._update_actions())
         self.table.doubleClicked.connect(lambda *_: self._open_double_clicked())
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)

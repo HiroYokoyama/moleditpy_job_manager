@@ -27,6 +27,7 @@ from .models import (
     STATE_QUEUED,
     STATE_RUNNING,
     Job,
+    assign_job_numbers,
 )
 from .service import JobService
 from .theme import (
@@ -38,7 +39,7 @@ from .theme import (
     CY_TEAL,
 )
 
-COLUMNS = ("Name", "Host", "Queue ID", "State", "After", "Elapsed", "Submitted", "Updated")
+COLUMNS = ("No.", "Name", "Host", "Queue ID", "State", "After", "Elapsed", "Submitted", "Updated")
 
 
 _STATE_COLORS = {
@@ -108,6 +109,8 @@ class JobTableModel(QAbstractTableModel):
             self._rows = list(self._archived)
         else:
             self._rows = self.service.store.job_list()
+        assign_job_numbers(self._rows)
+        self._submitted_at = {job.id: job.submitted_at for job in self._rows}
         self.endResetModel()
 
     def _is_waiting(self, job: Job) -> bool:
@@ -150,7 +153,7 @@ class JobTableModel(QAbstractTableModel):
 
     def refresh_job(self, job_id: str) -> None:
         row = self.row_of(job_id)
-        if row < 0:
+        if row < 0 or self._submitted_at.get(job_id) != self._rows[row].submitted_at:
             self.reload()
             return
         self.dataChanged.emit(self.index(row, 0), self.index(row, len(COLUMNS) - 1))
@@ -178,48 +181,53 @@ class JobTableModel(QAbstractTableModel):
             return None
 
         if role == Qt.ItemDataRole.DisplayRole:
-            column = index.column()
-            if column == 0:
+            column = COLUMNS[index.column()]
+            if column == "No.":
+                return job.number
+            if column == "Name":
                 return job.name
-            if column == 1:
+            if column == "Host":
                 return job.host_name
-            if column == 2:
+            if column == "Queue ID":
                 return job.remote_job_id or "-"
-            if column == 3:
+            if column == "State":
                 state = self.display_state(job)
                 suffix = ""
                 if state == STATE_FAILED and job.rc is not None:
                     suffix = f" (rc={job.rc})"
                 return f"{state}{suffix}"
-            if column == 4:
+            if column == "After":
                 predecessor = self.predecessor_of(job)
                 if predecessor is None:
                     return "-"
                 return predecessor.name + ("" if job.chain_any else " (on success)")
-            if column == 5:
+            if column == "Elapsed":
                 if job.is_terminal or job.state == STATE_RUNNING or job.started_at:
                     return format_duration(job.elapsed())
                 return f"wait {format_duration(job.waiting())}"
-            if column == 6:
+            if column == "Submitted":
                 return format_stamp(job.submitted_at)
-            if column == 7:
+            if column == "Updated":
                 return format_stamp(job.updated_at)
         elif role == Qt.ItemDataRole.UserRole:
             # The raw value behind the formatted text, so sorting is numeric
             # ("10m" vs "2m") rather than string order.
-            column = index.column()
-            if column == 5:
+            column = COLUMNS[index.column()]
+            if column == "Queue ID":
+                queue_id = str(job.remote_job_id or "-")
+                return (0, int(queue_id)) if queue_id.isdecimal() else (1, queue_id.casefold())
+            if column == "Elapsed":
                 return (
                     job.elapsed()
                     if (job.is_terminal or job.state == STATE_RUNNING or job.started_at)
                     else job.waiting()
                 )
-            if column == 6:
+            if column == "Submitted":
                 return job.submitted_at
-            if column == 7:
+            if column == "Updated":
                 return job.updated_at
             return self.data(index, Qt.ItemDataRole.DisplayRole)
-        elif role == Qt.ItemDataRole.ForegroundRole and index.column() == 3:
+        elif role == Qt.ItemDataRole.ForegroundRole and index.column() == COLUMNS.index("State"):
             color = _STATE_COLORS.get(self.display_state(job))
             if color:
                 return QColor(color)
@@ -268,6 +276,13 @@ class JobFilterProxyModel(QSortFilterProxyModel):
         right_value = self.sourceModel().data(right, Qt.ItemDataRole.UserRole)
         if left_value is None or right_value is None:
             return super().lessThan(left, right)
+        if isinstance(left_value, str) and isinstance(right_value, str):
+            if self.sortCaseSensitivity() == Qt.CaseSensitivity.CaseInsensitive:
+                left_value, right_value = left_value.casefold(), right_value.casefold()
+        if left_value == right_value and left.column() == COLUMNS.index("Submitted"):
+            number_column = COLUMNS.index("No.")
+            left_value = left.siblingAtColumn(number_column).data(Qt.ItemDataRole.UserRole)
+            right_value = right.siblingAtColumn(number_column).data(Qt.ItemDataRole.UserRole)
         try:
             return left_value < right_value
         except TypeError:

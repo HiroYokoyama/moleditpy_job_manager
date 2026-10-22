@@ -32,7 +32,8 @@ class TestFilteringTheTable(DialogTestCase):
 
     def visible_names(self):
         return {
-            self.dialog.proxy.index(row, 0).data() for row in range(self.dialog.proxy.rowCount())
+            self.dialog.proxy.index(row, COLUMNS.index("Name")).data()
+            for row in range(self.dialog.proxy.rowCount())
         }
 
     def test_everything_is_visible_with_no_filter(self):
@@ -78,15 +79,16 @@ class TestSortingTheTable(DialogTestCase):
 
     def names_in_order(self):
         return [
-            self.dialog.proxy.index(row, 0).data() for row in range(self.dialog.proxy.rowCount())
+            self.dialog.proxy.index(row, COLUMNS.index("Name")).data()
+            for row in range(self.dialog.proxy.rowCount())
         ]
 
     def test_ascending_by_name(self):
-        self.dialog.proxy.sort(0, Qt.SortOrder.AscendingOrder)
+        self.dialog.proxy.sort(COLUMNS.index("Name"), Qt.SortOrder.AscendingOrder)
         self.assertEqual(self.names_in_order(), ["aaa", "bbb", "ccc"])
 
     def test_descending_by_name(self):
-        self.dialog.proxy.sort(0, Qt.SortOrder.DescendingOrder)
+        self.dialog.proxy.sort(COLUMNS.index("Name"), Qt.SortOrder.DescendingOrder)
         self.assertEqual(self.names_in_order(), ["ccc", "bbb", "aaa"])
 
     def test_sorting_by_updated_uses_the_real_timestamp_not_its_text(self):
@@ -137,6 +139,64 @@ class TestSortingTheTable(DialogTestCase):
     def test_default_sort_is_most_recently_submitted_first(self):
         # c=3, b=2, a=1 by submission; by update it would be b, c, a.
         self.assertEqual(self.names_in_order(), ["bbb", "ccc", "aaa"])
+        self.assertEqual(self.dialog.proxy.sortColumn(), COLUMNS.index("No."))
+
+    def numbers_in_order(self):
+        return [
+            self.dialog.proxy.index(row, COLUMNS.index("No.")).data()
+            for row in range(self.dialog.proxy.rowCount())
+        ]
+
+    def test_numbers_follow_submission_order_and_survive_filtering(self):
+        self.assertEqual(self.numbers_in_order(), [3, 2, 1])
+        self.dialog.proxy.sort(COLUMNS.index("Name"), Qt.SortOrder.AscendingOrder)
+        self.assertEqual(self.numbers_in_order(), [1, 3, 2])
+        self.dialog.txt_filter.setText("bbb")
+        self.assertEqual(self.numbers_in_order(), [3])
+
+    def test_number_sort_is_numeric_beyond_nine_and_matches_submitted(self):
+        for number in range(4, 13):
+            self.store.add_job(Job(id=f"j{number}", submitted_at=float(number)))
+        self.dialog.model.reload()
+        for order in (Qt.SortOrder.AscendingOrder, Qt.SortOrder.DescendingOrder):
+            self.dialog.proxy.sort(COLUMNS.index("No."), order)
+            numbers = self.numbers_in_order()
+            self.assertEqual(
+                numbers, sorted(numbers, reverse=order == Qt.SortOrder.DescendingOrder)
+            )
+            self.dialog.proxy.sort(COLUMNS.index("Submitted"), order)
+            self.assertEqual(self.numbers_in_order(), numbers)
+
+    def test_numbers_refresh_when_submission_time_changes(self):
+        self.a.submitted_at = 4.0
+        self.dialog.model.refresh_job(self.a.id)
+        self.assertEqual(self.names_in_order(), ["aaa", "bbb", "ccc"])
+        self.assertEqual(self.numbers_in_order(), [3, 2, 1])
+
+    def test_archive_numbers_use_its_submission_times_with_deterministic_ties(self):
+        archived = [
+            Job(id="z", submitted_at=9),
+            Job(id="a", submitted_at=2),
+            Job(id="b", submitted_at=2),
+        ]
+        self.dialog.model.show_archive(archived)
+        self.assertEqual(self.numbers_in_order(), [3, 2, 1])
+        self.dialog.proxy.sort(COLUMNS.index("Submitted"), Qt.SortOrder.DescendingOrder)
+        self.assertEqual(self.numbers_in_order(), [3, 2, 1])
+        self.dialog.model.show_archive(None)
+        self.assertEqual(self.numbers_in_order(), [3, 2, 1])
+
+    def test_text_sort_is_case_insensitive(self):
+        self.a.name, self.b.name, self.c.name = "apple", "Zoo", "Banana"
+        self.dialog.model.reload()
+        self.dialog.proxy.sort(COLUMNS.index("Name"), Qt.SortOrder.AscendingOrder)
+        self.assertEqual(self.names_in_order(), ["apple", "Banana", "Zoo"])
+
+    def test_queue_ids_sort_numerically_and_allow_scheduler_suffixes(self):
+        self.a.remote_job_id, self.b.remote_job_id, self.c.remote_job_id = "100", "20", "10.server"
+        self.dialog.model.reload()
+        self.dialog.proxy.sort(COLUMNS.index("Queue ID"), Qt.SortOrder.AscendingOrder)
+        self.assertEqual(self.names_in_order(), ["ccc", "aaa", "bbb"])
 
 
 if __name__ == "__main__":

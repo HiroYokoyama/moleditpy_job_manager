@@ -568,6 +568,8 @@ class Job:
     owner_user_id: str = ""
     execution_os: str = ""
     last_server_state: str = ""
+    #: Position by submission time in the saved job list; 0 before numbering.
+    number: int = 0
 
     @property
     def is_active(self) -> bool:
@@ -625,3 +627,9 @@ class Job:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Job":
         return _from_dict(cls, data)
+
+
+def assign_job_numbers(jobs: List[Job]) -> None:
+    """Number a list chronologically in memory, without writing its file."""
+    for number, job in enumerate(sorted(jobs, key=lambda job: (job.submitted_at, job.id)), start=1):
+        job.number = number
