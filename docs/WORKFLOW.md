@@ -841,9 +841,11 @@ transfer finishes, so a download cut off half way never leaves a truncated
 
 A `.txt` result opens in the plugin's own text window rather than in
 MoleditPy. In **File Browser**, double-click a non-binary file to view its text,
-or use **Open in Text Viewer**. **Open in MoleditPy** explicitly uses the host's
-file opener. The wider browser keeps its buttons on one row with enough room
-for their labels. **Ctrl+F** searches the text — Enter or F3 for the next match, Shift for
+or use **Open in Text Viewer**. The browser and text viewer are modeless, so
+you can keep browsing while reading a file. **Open in MoleditPy** explicitly
+uses the host's file opener and closes the browser. The wider browser keeps its
+buttons on one row with enough room for their labels. **Ctrl+F** searches the
+text — Enter or F3 for the next match, Shift for
 the one before. The same window shows **Tail Log** and **Details**.
 
 The most interesting file — `.out`, then `.log`, `.fchk`, `.hess`, `.xyz` — is
