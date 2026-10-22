@@ -33,6 +33,7 @@ from .models import (
     HostProfile,
     Job,
     SubmitPreset,
+    assign_job_numbers,
     sanitize_name,
 )
 from .store_io import (
@@ -54,6 +55,7 @@ SETTINGS_FILENAME = "settings.json"
 #: (pme + jbs). Ordinary JSON inside; the extension is what dialogs filter on.
 JOB_EXTENSION = ".pmejbs"
 JOBS_FILENAME = "jobs" + JOB_EXTENSION
+JOB_LIST_VERSION = 2
 #: Written by versions before the extension existed; read once, then migrated.
 LEGACY_JOBS_FILENAME = "jobs.json"
 
@@ -316,6 +318,7 @@ class JobStore:
                 continue
             job = Job.from_dict(raw)
             self.jobs[job.id] = job
+        assign_job_numbers(list(self.jobs.values()))
         self.invalidate_chains()
         self._resolve_interrupted()
 
@@ -388,6 +391,7 @@ class JobStore:
             removed += 1
         if added or updated or removed:
             self.invalidate_chains()
+        assign_job_numbers(list(self.jobs.values()))
         return JobsReload(added, updated, removed)
 
     def _resolve_interrupted(self) -> int:
@@ -439,6 +443,13 @@ class JobStore:
         self.invalidate_chains()
         document = self._document(archived=False)
         document["jobs"] = self._merged_jobs(document["jobs"])
+        # Number the merged list too: another instance can have added jobs
+        # that are not yet in this window's in-memory store.
+        merged = [Job.from_dict(raw) for raw in document["jobs"]]
+        assign_job_numbers(merged)
+        document["jobs"] = [
+            dict(raw, number=job.number) for raw, job in zip(document["jobs"], merged)
+        ]
         self._write_if_changed(self.jobs_path, document, "jobs:" + self.jobs_path)
 
     def _merged_jobs(self, mine: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -469,7 +480,7 @@ class JobStore:
         from location, so both stay true after the file is moved or reopened.
         """
         document: Dict[str, Any] = {
-            "version": 1,
+            "version": JOB_LIST_VERSION,
             "archived": bool(archived),
             "reconstructed": bool(self.reconstructed),
             "jobs": [j.to_dict() for j in self.job_list()],
@@ -588,6 +599,7 @@ class JobStore:
         self.save_jobs()
 
     def job_list(self) -> List[Job]:
+        assign_job_numbers(list(self.jobs.values()))
         return sorted(
             self.jobs.values(), key=lambda j: j.submitted_at or j.updated_at, reverse=True
         )
@@ -724,14 +736,16 @@ class JobStore:
         if not isinstance(payload, dict):
             return [], False
         jobs = [Job.from_dict(raw) for raw in payload.get("jobs") or [] if isinstance(raw, dict)]
+        assign_job_numbers(jobs)
         return jobs, bool(payload.get("archived", False))
 
     def write_job_list(self, path: str, jobs: List[Job], reconstructed: bool = False) -> str:
         """Write ``jobs`` to ``path`` as a job list that can be opened again."""
+        assign_job_numbers(jobs)
         atomic_write_json(
             path,
             {
-                "version": 1,
+                "version": JOB_LIST_VERSION,
                 "archived": False,
                 "reconstructed": bool(reconstructed),
                 "jobs": [job.to_dict() for job in jobs],

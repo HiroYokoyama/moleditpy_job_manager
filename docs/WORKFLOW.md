@@ -629,7 +629,17 @@ first.
 
 ### Sorting and filtering the table
 
-Click a column header to sort by it; click again to reverse. Elapsed and
+The **No.** column numbers the current list by submission time, starting at 1
+for the oldest job. The default sort is **No.**, descending (newest first),
+matching **Submitted** order. Filtering or sorting another column keeps each
+job's number; adding or removing jobs recalculates the list's numbers.
+Job-list schema v2 saves this value as `number` on each job in `.pmejbs`.
+Older files remain readable: opening them calculates numbers in memory without
+saving or converting the file. The next save writes schema v2. Saving a copy
+or archive writes v2 to that destination and leaves the original file alone.
+
+Click a column header to sort by it; click again to reverse. Text sorting is
+case-insensitive, and numeric Queue IDs sort numerically. Elapsed and
 Updated sort by their real value — seconds, a timestamp — not by the
 formatted text, so "10m" does not come before "2m" and the newest job is not
 decided by the digits its date happens to print. Type into the filter box

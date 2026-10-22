@@ -11,7 +11,7 @@ from PySide6.QtGui import QKeySequence  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QAbstractButton, QApplication  # noqa: E402
 
-from job_manager.jobs_dialog import JobsDialog  # noqa: E402
+from job_manager.jobs_dialog import COLUMNS, JobsDialog  # noqa: E402
 from job_manager.models import Job, STATE_DONE  # noqa: E402
 
 from .test_dialogs import DialogTestCase  # noqa: E402
@@ -56,7 +56,9 @@ class TestJobActions(DialogTestCase):
         self.dialog.show()
         QApplication.processEvents()
         self.assertEqual(self.dialog.width(), 640)
-        self.assertGreaterEqual(self.dialog.table.horizontalHeader().sectionSize(0), 180)
+        self.assertGreaterEqual(
+            self.dialog.table.horizontalHeader().sectionSize(COLUMNS.index("Name")), 180
+        )
         visible = [
             b for b in self.dialog.findChildren(QAbstractButton) if b.isVisibleTo(self.dialog)
         ]

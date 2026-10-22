@@ -208,24 +208,25 @@ class TestJobTableModel(DialogTestCase):
 
         self.assertEqual(
             self.model.headerData(0, Qt.Orientation.Horizontal, Qt.ItemDataRole.DisplayRole),
-            "Name",
+            "No.",
         )
 
     def test_cells(self):
-        self.assertEqual(self.cell(0, 0), "alpha")
-        self.assertEqual(self.cell(0, 1), "hpc")
-        self.assertEqual(self.cell(0, 2), "7")
-        self.assertEqual(self.cell(0, 3), STATE_RUNNING)
+        self.assertEqual(self.cell(0, 0), 1)
+        self.assertEqual(self.cell(0, COLUMNS.index("Name")), "alpha")
+        self.assertEqual(self.cell(0, COLUMNS.index("Host")), "hpc")
+        self.assertEqual(self.cell(0, COLUMNS.index("Queue ID")), "7")
+        self.assertEqual(self.cell(0, COLUMNS.index("State")), STATE_RUNNING)
 
     def test_missing_queue_id_shows_a_dash(self):
         self.store.add_job(Job(id="j2", submitted_at=2000.0))
         self.model.reload()
-        self.assertEqual(self.cell(0, 2), "-")
+        self.assertEqual(self.cell(0, COLUMNS.index("Queue ID")), "-")
 
     def test_failed_state_shows_the_exit_code(self):
         self.store.jobs["j1"].state = STATE_FAILED
         self.store.jobs["j1"].rc = 137
-        self.assertIn("137", self.cell(0, 3))
+        self.assertIn("137", self.cell(0, COLUMNS.index("State")))
 
     def test_tooltip_mentions_the_remote_directory(self):
         from PySide6.QtCore import Qt

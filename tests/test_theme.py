@@ -211,14 +211,19 @@ class TestStateColumnStaysReadableWhenSelected(DialogTestCase):
         self.service.store.jobs[job.id] = job
         dialog.model.reload()
         row = dialog.model.row_of(job.id)
-        return dialog.model.index(row, 3)
+        from job_manager.job_table import COLUMNS
+
+        return dialog.model.index(row, COLUMNS.index("State"))
 
     def test_the_table_uses_the_delegate_on_the_state_column(self):
         from job_manager.jobs_dialog import _StateColorDelegate
+        from job_manager.job_table import COLUMNS
 
         dialog = JobsDialog(self.service)
         self.addCleanup(dialog.deleteLater)
-        self.assertIsInstance(dialog.table.itemDelegateForColumn(3), _StateColorDelegate)
+        self.assertIsInstance(
+            dialog.table.itemDelegateForColumn(COLUMNS.index("State")), _StateColorDelegate
+        )
 
     def test_selected_state_text_keeps_its_colour(self):
         from PySide6.QtWidgets import QStyle, QStyleOptionViewItem
