@@ -60,7 +60,8 @@ class TestJobActions(DialogTestCase):
         visible = [
             b for b in self.dialog.findChildren(QAbstractButton) if b.isVisibleTo(self.dialog)
         ]
-        self.assertLessEqual(len(visible), 8)
+        self.assertIn(self.dialog.btn_ssh_terminal, visible)
+        self.assertLessEqual(len(visible), 9)
         for button in visible:
             self.assertTrue(
                 self.dialog.rect().contains(button.mapTo(self.dialog, button.rect().topLeft()))
