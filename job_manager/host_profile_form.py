@@ -34,7 +34,7 @@ EQUAL_PATH_TIP = (
     "Set this when the host's filesystem is also reachable from this "
     "machine directly -- a Samba/CIFS share, a mapped drive, an sshfs "
     "or NFS mount -- rooted at the same place as 'Remote root' above.\n\n"
-    "With it set, Open Result reads a job's files straight from here "
+    "With it set, File Browser reads a job's files straight from here "
     "instead of downloading them first: the remote path and this local "
     "one are treated as the same files, just reached two different "
     "ways. Leave it empty if there is no such mirror."

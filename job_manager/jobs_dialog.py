@@ -16,6 +16,7 @@ from PySide6.QtCore import (
     QEvent,
     Qt,
     QTimer,
+    Slot,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -103,7 +104,7 @@ from .service import JobService
 from .store import (
     JOB_EXTENSION,
 )
-from .tasks import run_async
+from .tasks import gone, run_async
 from .theme import (
     apply_theme,
 )
@@ -188,6 +189,8 @@ class JobsDialog(QDialog):
             "_load_archive": self._load_archive,
             "_open_job_list_file": self._open_job_list_file,
             "_open_selected_result": self._open_selected_result,
+            "_open_ssh_terminal": self._open_ssh_terminal,
+            "_open_job_ssh_terminal": self._open_job_ssh_terminal,
             "_rebuild_from_folder": self._rebuild_from_folder,
             "_recheck_selected": self._recheck_selected,
             "_refresh_now": self._refresh_now,
@@ -225,7 +228,7 @@ class JobsDialog(QDialog):
                 ),
             ),
             ("&View", ("refresh", "reload", "host_monitor")),
-            ("&Tools", ("hosts", "settings")),
+            ("&Tools", ("hosts", "ssh_terminal", "settings")),
         ):
             menu = self.menu_bar.addMenu(label)
             populate_menu(menu, (self.job_actions[key] if key else None for key in keys))
@@ -235,11 +238,13 @@ class JobsDialog(QDialog):
 
     def _build_toolbar(self, layout: QVBoxLayout) -> None:
         self.toolbar = action_toolbar(
-            self, (self.job_actions[key] for key in ("new", "refresh", "host_monitor"))
+            self,
+            (self.job_actions[key] for key in ("new", "refresh", "host_monitor", "ssh_terminal")),
         )
         self.btn_new = self.toolbar.widgetForAction(self.job_actions["new"])
         self.btn_refresh = self.toolbar.widgetForAction(self.job_actions["refresh"])
         self.btn_host_monitor = self.toolbar.widgetForAction(self.job_actions["host_monitor"])
+        self.btn_ssh_terminal = self.toolbar.widgetForAction(self.job_actions["ssh_terminal"])
         layout.addWidget(self.toolbar)
 
     def _build_banners(self, layout: QVBoxLayout) -> None:
@@ -341,6 +346,7 @@ class JobsDialog(QDialog):
         layout.addWidget(self.job_toolbar)
 
     def _connect_service(self) -> None:
+        self._log_delivery_closed = False
         # Kept as a list so closeEvent can undo every one: the service outlives
         # this window, and a leaked connection keeps reloading a dead dialog.
         self._connections = [
@@ -397,11 +403,28 @@ class JobsDialog(QDialog):
     def _append_error(self, text: str) -> None:
         self._append_message(text)
 
+    @Slot(str)
     def _show_log(self, text: str) -> None:
-        if self._tail_dialog is not None:
+        if gone(self) or self._log_delivery_closed:
+            return
+        if self._tail_dialog is not None and not gone(self._tail_dialog):
             self._tail_dialog.set_text(text)
             return
-        self.txt_log.setPlainText(text)
+        from .text_dialog import TextDialog
+
+        self._tail_dialog = TextDialog(
+            f"Job Manager {PLUGIN_VERSION} - Job Log",
+            text,
+            self,
+            auto_refresh=False,
+        )
+        self._tail_dialog.finished.connect(self._clear_tail_dialog)
+        self._tail_dialog.present()
+
+    @Slot()
+    def _clear_tail_dialog(self) -> None:
+        if self.sender() is self._tail_dialog:
+            self._tail_dialog = None
 
     def _show_row_menu(self, position) -> None:
         index = self.table.indexAt(position)
@@ -437,13 +460,18 @@ class JobsDialog(QDialog):
         return bool(mirror and os.path.isdir(mirror))
 
     def _update_actions(self) -> None:
+        from .ssh_terminal import supports_ssh
+
         job = self.selected_job()
+        job_host = self.service.store.hosts.get(job.host_id) if job else None
         archived = self.viewing_archive()
         reconstructed = self.viewing_reconstructed() and not archived
         live = not archived and not reconstructed
         remote = bool(live and job and job.remote_dir)
         states = {
             "new": not reconstructed,
+            "ssh_terminal": any(supports_ssh(host) for host in self.service.store.hosts.values()),
+            "ssh_job_terminal": supports_ssh(job_host),
             "reload": live,
             "cancel": bool(live and job and job.is_active),
             "download": remote,
@@ -477,6 +505,38 @@ class JobsDialog(QDialog):
         self._update_actions()
 
     # --- actions ------------------------------------------------------------
+
+    def _launch_ssh(self, host, directory: str = "") -> None:
+        from .ssh_terminal import launch_ssh_terminal
+
+        try:
+            launch_ssh_terminal(host, directory)
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, "SSH Terminal", str(exc))
+
+    def _open_ssh_terminal(self) -> None:
+        from .ssh_terminal import supports_ssh
+
+        hosts = [host for host in self.service.store.hosts.values() if supports_ssh(host)]
+        if not hosts:
+            QMessageBox.information(self, "SSH Terminal", "Add an SSH host under Hosts first.")
+            return
+        host = hosts[0]
+        if len(hosts) > 1:
+            labels = [f"{item.name} ({item.target}:{item.port})" for item in hosts]
+            label, accepted = QInputDialog.getItem(self, "SSH Terminal", "Host:", labels, 0, False)
+            if not accepted:
+                return
+            host = hosts[labels.index(label)]
+        self._launch_ssh(host)
+
+    def _open_job_ssh_terminal(self) -> None:
+        from .ssh_terminal import supports_ssh
+
+        job = self.selected_job()
+        host = self.service.store.hosts.get(job.host_id) if job else None
+        if supports_ssh(host):
+            self._launch_ssh(host, job.remote_dir)
 
     def open_submit_dialog(
         self,
@@ -788,7 +848,7 @@ class JobsDialog(QDialog):
         host = self.service.store.hosts.get(job.host_id)
         auto_interval = 10 if (host and host.backend == BACKEND_OPENSSH) else 5
 
-        if self._tail_dialog is None:
+        if self._tail_dialog is None or gone(self._tail_dialog):
             self._tail_dialog = TextDialog(
                 f"Job Manager {PLUGIN_VERSION} - {job.name}: {job.log_file}",
                 "Reading...",
@@ -800,7 +860,7 @@ class JobsDialog(QDialog):
 
             # Cleared on close so the next tail builds a live window rather
             # than writing into a destroyed one.
-            self._tail_dialog.finished.connect(lambda *_: setattr(self, "_tail_dialog", None))
+            self._tail_dialog.finished.connect(self._clear_tail_dialog)
             self._tail_dialog.present()
         else:
             # Both title and refresh callback, so auto-refresh follows the
@@ -1471,6 +1531,7 @@ class JobsDialog(QDialog):
     def _teardown(self) -> None:
         """Let go of the service and deregister. Safe to call twice; polling
         continues in the service, which outlives this dialog."""
+        self._log_delivery_closed = True
         if hasattr(self, "_ticker"):
             self._ticker.stop()
         self._detach_presence()

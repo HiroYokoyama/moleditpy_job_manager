@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QHeaderView,
+    QHBoxLayout,
     QLabel,
     QMessageBox,
     QPushButton,
@@ -116,7 +117,7 @@ class OutputFileSelectorDialog(QDialog):
         #: service, which outlives this window. See :meth:`_disconnect_download`.
         self._pending: List[tuple] = []
 
-        self.setWindowTitle(f"Job Manager {PLUGIN_VERSION} - Open Result: {job.name}")
+        self.setWindowTitle(f"Job Manager {PLUGIN_VERSION} - File Browser: {job.name}")
         apply_theme(self)
         self.resize(650, 480)
 
@@ -131,7 +132,7 @@ class OutputFileSelectorDialog(QDialog):
         # Headline, filter, tree, buttons -- the same order and the same
         # pieces as the download and tail-file lists.
         self.lbl_headline = QLabel(
-            f"Select a file from <b>{escape(str(self.job.name))}</b> to open:"
+            f"Files from <b>{escape(str(self.job.name))}</b>. Double-click a file to view its text."
         )
         self.lbl_headline.setWordWrap(True)
         layout.addWidget(self.lbl_headline)
@@ -144,7 +145,7 @@ class OutputFileSelectorDialog(QDialog):
         self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.tree.header().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.tree.header().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        self.tree.itemDoubleClicked.connect(lambda item, _: self._open_item(item))
+        self.tree.itemDoubleClicked.connect(lambda item, _: self._open_item(item, as_text=True))
         self.tree.itemSelectionChanged.connect(self._on_selection_changed)
         layout.addWidget(self.tree, 1)
 
@@ -157,6 +158,7 @@ class OutputFileSelectorDialog(QDialog):
             QDialogButtonBox.StandardButton.Open | QDialogButtonBox.StandardButton.Close
         )
         self.btn_open = box.button(QDialogButtonBox.StandardButton.Open)
+        self.btn_open.setText("Open in MoleditPy")
         self.btn_open.setDefault(True)
         self.btn_open.clicked.connect(self._open_selected)
         self.btn_close = box.button(QDialogButtonBox.StandardButton.Close)
@@ -165,9 +167,7 @@ class OutputFileSelectorDialog(QDialog):
         box.rejected.connect(self.reject)
 
         self.btn_text = QPushButton("Open in Text Viewer")
-        self.btn_text.setToolTip(
-            "Read the selected file as plain text here, whatever kind of file it is."
-        )
+        self.btn_text.setToolTip("Read the selected non-binary file in the built-in text viewer.")
         self.btn_text.setEnabled(False)
         self.btn_text.clicked.connect(self._open_selected_as_text)
         box.addButton(self.btn_text, QDialogButtonBox.ButtonRole.ActionRole)
@@ -175,12 +175,15 @@ class OutputFileSelectorDialog(QDialog):
         self.btn_open_folder = QPushButton("Open Containing Folder")
         self.btn_open_folder.setToolTip("Show the downloaded files in the file manager.")
         self.btn_open_folder.clicked.connect(self._open_containing_folder)
-        box.addButton(self.btn_open_folder, QDialogButtonBox.ButtonRole.ActionRole)
 
         self.btn_browse_remote = QPushButton("Browse Host Files...")
         self.btn_browse_remote.setToolTip("List everything in the job's directory on the host.")
         self.btn_browse_remote.clicked.connect(self._fetch_remote_listing)
-        box.addButton(self.btn_browse_remote, QDialogButtonBox.ButtonRole.ActionRole)
+        browse_row = QHBoxLayout()
+        browse_row.addWidget(self.btn_open_folder)
+        browse_row.addWidget(self.btn_browse_remote)
+        browse_row.addStretch()
+        layout.addLayout(browse_row)
 
         layout.addWidget(box)
 
@@ -474,8 +477,8 @@ class OutputFileSelectorDialog(QDialog):
         if not is_remote:
             local_path = data
             if os.path.isfile(local_path):
-                self._dispatch_open(local_path, as_text=as_text)
-                self.accept()
+                if self._dispatch_open(local_path, as_text=as_text):
+                    self.accept()
             else:
                 QMessageBox.warning(self, "Open File", f"File not found on disk:\n{local_path}")
             return
@@ -546,8 +549,8 @@ class OutputFileSelectorDialog(QDialog):
             if match is None:
                 self.lbl_status.setText(f"Download finished, but {remote_name} was not in it.")
                 return
-            self._dispatch_open(match, as_text=as_text)
-            self.accept()
+            if self._dispatch_open(match, as_text=as_text):
+                self.accept()
 
         def on_error(msg: str) -> None:
             # download() reports failure job-wide, with no job id on the
@@ -577,24 +580,37 @@ class OutputFileSelectorDialog(QDialog):
         self.btn_open.setEnabled(is_file)
         self.btn_text.setEnabled(is_file)
 
-    def _dispatch_open(self, path: str, as_text: bool = False) -> None:
+    def _dispatch_open(self, path: str, as_text: bool = False) -> bool:
         """Hand the file path to the host opener callback or default open_in_host."""
         if as_text:
+            from .result_view import is_binary_file
+
+            try:
+                binary = is_binary_file(path)
+            except OSError as exc:
+                self.lbl_status.setText(f"Could not read file: {exc}")
+                return False
+            if binary:
+                self.lbl_status.setText(
+                    "This file appears to be binary. Use Open in MoleditPy to open it."
+                )
+                return False
             if self.on_text_callback is not None:
                 self.on_text_callback(path)
-                return
+                return True
             from .jobs_dialog import show_text_window
 
             # Parented above this chooser, which closes once a file is opened.
             show_text_window(path, self.parentWidget())
-            return
+            return True
         if self.on_open_callback is not None:
             self.on_open_callback(path)
-            return
+            return True
 
         from .jobs_dialog import open_in_host
 
         open_in_host(path)
+        return True
 
     def _open_containing_folder(self) -> None:
         """Open the folder in system file manager."""

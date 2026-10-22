@@ -276,9 +276,13 @@ class TestJobsDialog(DialogTestCase):
         self.service.message.emit("hello from the cluster")
         self.assertIn("hello from the cluster", self.dialog.txt_log.toPlainText())
 
-    def test_tail_output_replaces_the_log_pane(self):
+    def test_tail_output_preserves_the_console(self):
+        self.dialog._append_message("console history")
+        before = self.dialog.txt_log.toPlainText()
         self.service.log_ready.emit("SCF converged")
-        self.assertEqual(self.dialog.txt_log.toPlainText(), "SCF converged")
+        self.assertEqual(self.dialog.txt_log.toPlainText(), before)
+        self.assertEqual(self.dialog._tail_dialog.view.toPlainText(), "SCF converged")
+        self.addCleanup(self.dialog._tail_dialog.deleteLater)
 
     def test_rate_limited_refresh_is_explained(self):
         self.service.submit(self.host, make_preset(), "mol", [self.make_input()])
@@ -1665,7 +1669,95 @@ class TestTailWindow(DialogTestCase):
     def test_a_tail_with_no_window_open_still_goes_somewhere(self):
         # The window can be closed while the read is in flight.
         self.dialog._show_log("orphaned output")
-        self.assertIn("orphaned output", self.dialog.txt_log.toPlainText())
+        self.assertIn("orphaned output", self.dialog._tail_dialog.view.toPlainText())
+        self.assertNotIn("orphaned output", self.dialog.txt_log.toPlainText())
+        self.addCleanup(self.dialog._tail_dialog.deleteLater)
+
+    def test_worker_log_is_delivered_on_gui_thread(self):
+        import threading
+        from PySide6.QtWidgets import QApplication
+
+        self.dialog._tail_selected()
+        viewer = self.dialog._tail_dialog
+        received_on = []
+        original = viewer.set_text
+
+        def record(text):
+            received_on.append(threading.get_ident())
+            original(text)
+
+        with patch.object(viewer, "set_text", side_effect=record):
+            worker = threading.Thread(target=lambda: self.service.log_ready.emit("worker log"))
+            worker.start()
+            worker.join(2)
+            self.assertFalse(worker.is_alive())
+            self.assertEqual(received_on, [])
+            QApplication.instance().processEvents()
+        self.assertEqual(received_on, [threading.get_ident()])
+        self.assertEqual(viewer.view.toPlainText(), "worker log")
+
+    def test_deleted_log_viewer_is_replaced_safely(self):
+        from PySide6.QtCore import QCoreApplication, QEvent
+        from shiboken6 import isValid
+
+        self.dialog._tail_selected()
+        old = self.dialog._tail_dialog
+        old.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        self.assertFalse(isValid(old))
+        self.dialog._show_log("late log")
+        self.assertIsNot(self.dialog._tail_dialog, old)
+        self.assertEqual(self.dialog._tail_dialog.view.toPlainText(), "late log")
+
+    def test_queued_log_does_not_reopen_closed_monitor(self):
+        import threading
+        from PySide6.QtWidgets import QApplication
+
+        before = self.dialog.txt_log.toPlainText()
+        worker = threading.Thread(target=lambda: self.service.log_ready.emit("late log"))
+        worker.start()
+        worker.join(2)
+        self.assertFalse(worker.is_alive())
+        self.dialog.reject()
+        QApplication.instance().processEvents()
+        self.assertIsNone(self.dialog._tail_dialog)
+        self.assertEqual(self.dialog.txt_log.toPlainText(), before)
+
+
+class TestSshTerminalActions(DialogTestCase):
+    def setUp(self):
+        super().setUp()
+        self.dialog = JobsDialog(self.service)
+        self.addCleanup(self.dialog.deleteLater)
+
+    def test_toolbar_terminal_is_next_to_host_monitor_and_opens_home_without_job(self):
+        actions = self.dialog.toolbar.actions()
+        index = actions.index(self.dialog.job_actions["host_monitor"])
+        self.assertIs(actions[index + 1], self.dialog.job_actions["ssh_terminal"])
+        self.assertTrue(self.dialog.job_actions["ssh_terminal"].isEnabled())
+        with patch.object(self.dialog, "_launch_ssh") as launch:
+            self.dialog.btn_ssh_terminal.click()
+        launch.assert_called_once_with(self.host)
+
+    def test_job_menu_terminal_opens_selected_remote_directory(self):
+        job = Job(id="jssh", name="job", host_id=self.host.id, remote_dir="/tmp/my job")
+        self.store.add_job(job)
+        self.dialog.model.reload()
+        self.dialog.table.selectRow(0)
+        action = self.dialog.job_actions["ssh_job_terminal"]
+        self.assertIn(action, self.dialog.menu_job.actions())
+        self.assertTrue(action.isEnabled())
+        with patch.object(self.dialog, "_launch_ssh") as launch:
+            action.trigger()
+        launch.assert_called_once_with(self.host, "/tmp/my job")
+
+    def test_local_host_does_not_enable_ssh(self):
+        from job_manager.models import BACKEND_LOCAL
+
+        self.host.backend = BACKEND_LOCAL
+        self.dialog._update_actions()
+        self.assertFalse(self.dialog.job_actions["ssh_terminal"].isEnabled())
+        self.assertFalse(self.dialog.job_actions["ssh_job_terminal"].isEnabled())
 
 
 class TestSwitchingHostsWithEdits(DialogTestCase):
