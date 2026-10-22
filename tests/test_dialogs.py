@@ -1733,11 +1733,47 @@ class TestSshTerminalActions(DialogTestCase):
     def test_toolbar_terminal_is_next_to_host_monitor_and_opens_home_without_job(self):
         actions = self.dialog.toolbar.actions()
         index = actions.index(self.dialog.job_actions["host_monitor"])
-        self.assertIs(actions[index + 1], self.dialog.job_actions["ssh_terminal"])
+        self.assertIs(actions[index - 1], self.dialog.job_actions["ssh_terminal"])
         self.assertTrue(self.dialog.job_actions["ssh_terminal"].isEnabled())
         with patch.object(self.dialog, "_launch_ssh") as launch:
             self.dialog.btn_ssh_terminal.click()
         launch.assert_called_once_with(self.host)
+
+    def test_host_selection_persists_and_is_preselected_after_reload(self):
+        second = make_host(id="h2", name="other-host")
+        self.store.add_host(second)
+        with (
+            patch(
+                "job_manager.jobs_dialog.QInputDialog.getItem",
+                side_effect=lambda _p, _t, _l, labels, _i, _e: (labels[1], True),
+            ),
+            patch.object(self.dialog, "_launch_ssh") as launch,
+        ):
+            self.dialog._open_ssh_terminal()
+        launch.assert_called_once_with(second)
+        reloaded = JobStore(self.tmp)
+        self.assertEqual(reloaded.get_pref("last_ssh_terminal_host_id"), second.id)
+        self.dialog.service.store = reloaded
+        with (
+            patch(
+                "job_manager.jobs_dialog.QInputDialog.getItem", return_value=("", False)
+            ) as picker,
+            patch.object(self.dialog, "_launch_ssh") as launch,
+        ):
+            self.dialog._open_ssh_terminal()
+        self.assertEqual(picker.call_args.args[4], 1)
+        launch.assert_not_called()
+        self.assertEqual(reloaded.get_pref("last_ssh_terminal_host_id"), second.id)
+
+    def test_missing_remembered_host_falls_back_to_first(self):
+        self.store.add_host(make_host(id="h2", name="other-host"))
+        self.store.set_pref("last_ssh_terminal_host_id", "removed-host")
+        with patch(
+            "job_manager.jobs_dialog.QInputDialog.getItem", return_value=("", False)
+        ) as picker:
+            self.dialog._open_ssh_terminal()
+        self.assertEqual(picker.call_args.args[4], 0)
+        self.assertEqual(self.store.get_pref("last_ssh_terminal_host_id"), "removed-host")
 
     def test_job_menu_terminal_opens_selected_remote_directory(self):
         job = Job(id="jssh", name="job", host_id=self.host.id, remote_dir="/tmp/my job")
