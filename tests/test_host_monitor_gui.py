@@ -503,7 +503,7 @@ class TestTheRowMenu(DialogTestCase):
     def test_an_action_that_cannot_run_is_disabled(self):
         # Open Result needs downloaded files, which this job has none of.
         entries = {action.text(): action for action in self.menu_entries()}
-        self.assertFalse(entries["Open Result"].isEnabled())
+        self.assertFalse(entries["File Browser"].isEnabled())
         self.assertTrue(entries["Tail Log"].isEnabled())
 
     def test_it_matches_the_buttons_exactly(self):

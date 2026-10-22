@@ -32,6 +32,18 @@ def create_job_actions(parent, callbacks):
             "Live load and memory per host, sampled only while that window is open.",
         ),
         (
+            "ssh_terminal",
+            "SSH Terminal",
+            callbacks["_open_ssh_terminal"],
+            "Open an interactive SSH terminal in a host's home directory.",
+        ),
+        (
+            "ssh_job_terminal",
+            "SSH Terminal Here",
+            callbacks["_open_job_ssh_terminal"],
+            "Open an interactive SSH terminal in this job's remote directory.",
+        ),
+        (
             "settings",
             "Settings...",
             callbacks["open_settings"],
@@ -46,9 +58,9 @@ def create_job_actions(parent, callbacks):
         ("download", "Download", callbacks["_download_selected"], "Choose results to download."),
         (
             "open",
-            "Open Result",
+            "File Browser",
             callbacks["_open_selected_result"],
-            "Open one of this job's output files in MoleditPy.",
+            "Browse this job's files in the built-in file explorer.",
         ),
         (
             "tail",
@@ -153,6 +165,7 @@ def create_job_actions(parent, callbacks):
             "download",
             "tail",
             "tail_file",
+            "ssh_job_terminal",
             "details",
             None,
             "resubmit",

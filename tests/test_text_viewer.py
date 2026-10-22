@@ -25,6 +25,7 @@ from job_manager.jobs_dialog import (  # noqa: E402
 )
 from job_manager.output_file_dialog import OutputFileSelectorDialog  # noqa: E402
 from job_manager.text_dialog import TextDialog  # noqa: E402
+from job_manager.result_view import is_binary_file  # noqa: E402
 from job_manager.tree_utils import IS_REMOTE_ROLE  # noqa: E402
 
 from .fakes import make_job  # noqa: E402
@@ -43,6 +44,27 @@ class TextFileCase(unittest.TestCase):
 
 
 class TestWhatCountsAsText(TextFileCase):
+    def test_utf16_and_utf32_logs_are_text_and_decode_correctly(self):
+        import codecs
+
+        for encoding, marker in (
+            ("utf-16-le", codecs.BOM_UTF16_LE),
+            ("utf-16-be", codecs.BOM_UTF16_BE),
+            ("utf-32-le", codecs.BOM_UTF32_LE),
+            ("utf-32-be", codecs.BOM_UTF32_BE),
+        ):
+            with self.subTest(encoding=encoding):
+                path = os.path.join(self.tmp, "job.log")
+                with open(path, "wb") as handle:
+                    handle.write(marker + "Calculation complete\r\n".encode(encoding))
+                self.assertFalse(is_binary_file(path))
+                self.assertEqual(read_text_for_view(path), "Calculation complete\n")
+
+    def test_text_detection_uses_content_and_accepts_empty_files(self):
+        for body in ("", "Calculation complete\n", "日本語の出力\n"):
+            path = self.write("output", body)
+            self.assertFalse(is_binary_file(path))
+
     def test_txt_in_any_case_is_text(self):
         self.assertTrue(is_text_file("/x/result.txt"))
         self.assertTrue(is_text_file("C:\\x\\RESULT.TXT"))

@@ -43,6 +43,63 @@ class TestOutputFileHelpers(unittest.TestCase):
 
 
 class TestOutputFileSelectorDialog(unittest.TestCase):
+    def test_browser_button_labels_fit_at_default_size(self):
+        path = os.path.join(self.temp_dir, "result.out")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("complete\n")
+        self.job.downloaded_files = [path]
+        dialog = OutputFileSelectorDialog(self.service, self.job)
+        self.addCleanup(dialog.deleteLater)
+        dialog.show()
+        self.addCleanup(dialog.hide)
+        QApplication.instance().processEvents()
+        for button in (
+            dialog.btn_open,
+            dialog.btn_text,
+            dialog.btn_close,
+            dialog.btn_open_folder,
+            dialog.btn_browse_remote,
+        ):
+            with self.subTest(label=button.text()):
+                self.assertGreaterEqual(button.width(), button.sizeHint().width())
+                self.assertTrue(
+                    dialog.rect().contains(button.mapTo(dialog, button.rect().bottomRight()))
+                )
+
+    def test_double_click_views_text_but_open_button_uses_host(self):
+        path = os.path.join(self.temp_dir, "result.out")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("Calculation complete\n")
+        self.job.downloaded_files = [path]
+        viewed, opened = [], []
+        dialog = OutputFileSelectorDialog(
+            self.service, self.job, on_open_callback=opened.append, on_text_callback=viewed.append
+        )
+        self.addCleanup(dialog.deleteLater)
+        item = dialog.tree.currentItem()
+        dialog.tree.itemDoubleClicked.emit(item, 0)
+        self.assertEqual(viewed, [path])
+        self.assertEqual(opened, [])
+        self.assertEqual(dialog.btn_open.text(), "Open in MoleditPy")
+        dialog.btn_open.click()
+        self.assertEqual(opened, [path])
+
+    def test_binary_double_click_keeps_browser_open(self):
+        path = os.path.join(self.temp_dir, "binary.txt")
+        with open(path, "wb") as handle:
+            handle.write(b"header\x00\x01\x02")
+        self.job.downloaded_files = [path]
+        viewed, opened = [], []
+        dialog = OutputFileSelectorDialog(
+            self.service, self.job, on_open_callback=opened.append, on_text_callback=viewed.append
+        )
+        self.addCleanup(dialog.deleteLater)
+        dialog.tree.itemDoubleClicked.emit(dialog.tree.currentItem(), 0)
+        self.assertEqual(viewed, [])
+        self.assertEqual(opened, [])
+        self.assertIn("binary", dialog.lbl_status.text())
+        self.assertEqual(dialog.result(), 0)
+
     def setUp(self):
         self.temp_dir = tempfile.mkdtemp()
         self.service = MagicMock()

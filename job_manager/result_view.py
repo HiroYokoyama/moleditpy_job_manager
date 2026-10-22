@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import codecs
 from typing import List, Optional
 
 from PySide6.QtWidgets import QWidget
@@ -25,6 +26,29 @@ TEXT_VIEW_LIMIT = 5 * 1024 * 1024
 
 def is_text_file(path: str) -> bool:
     return os.path.splitext(path or "")[1].lower() in TEXT_EXTENSIONS
+
+
+def _text_encoding(sample: bytes) -> str:
+    for marker, encoding in (
+        (codecs.BOM_UTF32_LE, "utf-32-le"),
+        (codecs.BOM_UTF32_BE, "utf-32-be"),
+        (codecs.BOM_UTF16_LE, "utf-16-le"),
+        (codecs.BOM_UTF16_BE, "utf-16-be"),
+    ):
+        if sample.startswith(marker):
+            return encoding
+    return "utf-8"
+
+
+def is_binary_file(path: str) -> bool:
+    """Inspect a bounded sample instead of guessing from a file extension."""
+    with open(path, "rb") as handle:
+        sample = handle.read(8192)
+    if not sample:
+        return False
+    text = sample.decode(_text_encoding(sample), errors="replace")
+    controls = sum(ord(char) < 32 and char not in "\t\n\r\f\b" for char in text)
+    return "\0" in text or controls / len(text) > 0.1
 
 
 def show_text_window(path: str, parent: Optional[QWidget] = None):
@@ -55,10 +79,15 @@ def read_text_for_view(path: str, limit: int = TEXT_VIEW_LIMIT) -> str:
     """The file as text, or its last ``limit`` bytes with a line saying so."""
     size = os.path.getsize(path)
     with open(path, "rb") as handle:
+        encoding = _text_encoding(handle.read(4))
+        offset = 0
         if size > limit:
-            handle.seek(size - limit)
+            offset = size - limit
+            unit = 4 if encoding.startswith("utf-32") else 2 if encoding.startswith("utf-16") else 1
+            offset += -offset % unit
+        handle.seek(offset)
         data = handle.read()
-    text = data.decode("utf-8", errors="replace").replace("\r\n", "\n")
+    text = data.decode(encoding, errors="replace").removeprefix("\ufeff").replace("\r\n", "\n")
     if size > limit:
         # Cut at a line boundary, so the first line shown is a whole one.
         text = text.split("\n", 1)[-1]

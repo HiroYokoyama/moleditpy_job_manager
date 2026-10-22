@@ -819,6 +819,14 @@ for the reasons above.
 
 ## 5. Results
 
+**SSH Terminal**, beside **Host Monitor**, opens a native system terminal in an
+SSH host's home directory; choose a host when more than one is configured. It
+does not depend on the selected job. A job's right-click menu offers **SSH
+Terminal Here** for that job's remote directory instead. Sessions use the
+configured SSH port, key, jump host, and SSH options, and authenticate in the
+terminal. A real PTY supports full-screen programs, resizing, and Ctrl+C without
+additional Python packages. Closing Job Manager leaves the terminal independent.
+
 When a job reaches DONE or FAILED, matching files come back automatically (the
 fetch patterns, plus the log always) — **next to the input file** by default,
 which is where you are already working. Untick *...next to the input file* on
@@ -830,8 +838,10 @@ transfer finishes, so a download cut off half way never leaves a truncated
 `.out` sitting in your working directory under its real name.
 
 A `.txt` result opens in the plugin's own text window rather than in
-MoleditPy, and **Open in Text Viewer** in the result chooser shows any file
-that way. **Ctrl+F** searches it — Enter or F3 for the next match, Shift for
+MoleditPy. In **File Browser**, double-click a non-binary file to view its text,
+or use **Open in Text Viewer**. **Open in MoleditPy** explicitly uses the host's
+file opener. Browsing and file-opening controls occupy separate rows so their
+labels fit. **Ctrl+F** searches the text — Enter or F3 for the next match, Shift for
 the one before. The same window shows **Tail Log** and **Details**.
 
 The most interesting file — `.out`, then `.log`, `.fchk`, `.hess`, `.xyz` — is
@@ -870,7 +880,7 @@ not in the helper, so the next submission starts a fresh helper and takes the
 
 The **File** menu deals with the list as a whole. The toolbar keeps **New Job**,
 **Refresh Now** and **Host Monitor** visible. Selected-job operations are in the
-**Job** menu, **Job Actions** dropdown and the row's context menu; **Open Result**,
+**Job** menu, **Job Actions** dropdown and the row's context menu; **File Browser**,
 **Download**, **Tail Log** and **Details** also have buttons below the table.
 Host profiles and preferences are under **Tools ▸ Hosts...** and **Tools ▸ Settings...**.
 On a narrow window, toolbar operations that do not fit are available from the
