@@ -187,6 +187,48 @@ class TestSubmit(ServiceTestCase):
 
 
 class TestRoundTrip(ServiceTestCase):
+    def test_individual_downloads_preserve_previous_files_and_emit_only_new_paths(self):
+        job = self.submit()
+        first = os.path.join(self.tmp, "first.out")
+        second = os.path.join(self.tmp, "second.out")
+        for path in (first, second):
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("complete\n")
+        job.downloaded_files = [first, os.path.join(self.tmp, "deleted.out")]
+        ready = []
+        self.service.results_ready.connect(lambda _, paths: ready.append(paths))
+        with patch("job_manager.service.fetch_results", return_value=[second]):
+            self.service.download(job, names=["second.out"])
+        self.assertEqual(job.downloaded_files, [first, second])
+        self.assertEqual(ready, [[second]])
+        with patch("job_manager.service.fetch_results", return_value=[]):
+            self.service.download(job, names=["missing.out"])
+        self.assertTrue(job.downloaded)
+        self.assertEqual(job.downloaded_files, [first, second])
+
+    def test_download_resumes_polling_a_running_job(self):
+        job = self.submit()
+        job.touch(STATE_RUNNING)
+
+        def transfer(*args, **kwargs):
+            self.service.poller.tick()
+            self.assertFalse(self.service.poller.timer.isActive())
+            return []
+
+        with patch("job_manager.service.fetch_results", side_effect=transfer):
+            self.service.download(job)
+        self.assertEqual(job.state, STATE_RUNNING)
+        self.assertTrue(self.service.poller.timer.isActive())
+
+    def test_download_error_identifies_the_job_without_requiring_its_name_in_message(self):
+        job = self.submit()
+        failed = []
+        self.service.download_failed.connect(lambda *args: failed.append(args))
+        with patch("job_manager.service.fetch_results", side_effect=OSError("connection reset")):
+            self.service.download(job)
+        self.assertEqual(failed, [(job.id, "connection reset")])
+        self.assertFalse(self.service.download_in_flight(job.id))
+
     def test_completion_triggers_a_download_and_a_signal(self):
         job = self.submit()
         ready = []

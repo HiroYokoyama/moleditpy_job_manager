@@ -43,6 +43,33 @@ class TestOutputFileHelpers(unittest.TestCase):
 
 
 class TestOutputFileSelectorDialog(unittest.TestCase):
+    def test_cached_subdirectory_does_not_replace_a_same_named_root_file(self):
+        cache = os.path.join(self.temp_dir, "cache")
+        path = os.path.join(cache, "nested", "result.out")
+        os.makedirs(os.path.dirname(path))
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("nested result\n")
+        self.job.local_dir = ""
+        from unittest.mock import patch
+
+        with patch.object(OutputFileSelectorDialog, "_cache_dir", return_value=cache):
+            dialog = OutputFileSelectorDialog(self.service, self.job)
+            self.addCleanup(dialog.deleteLater)
+            dialog._populate_tree_remote(["result.out", "nested/result.out"])
+        rows = {item.data(0, PATH_ROLE): item for item in dialog._all_items}
+        self.assertTrue(rows["result.out"].data(0, IS_REMOTE_ROLE))
+        self.assertFalse(rows[path].data(0, IS_REMOTE_ROLE))
+        self.assertEqual(dialog.tree.currentItem().data(0, PATH_ROLE), "result.out")
+
+    def test_remote_refresh_preserves_active_filter(self):
+        dialog = OutputFileSelectorDialog(self.service, self.job)
+        self.addCleanup(dialog.deleteLater)
+        dialog.txt_filter.setText("xyz")
+        dialog._populate_tree_remote(["result.out", "geometry.xyz"])
+        rows = {item.text(0): item for item in dialog._all_items}
+        self.assertTrue(rows["result.out"].isHidden())
+        self.assertFalse(rows["geometry.xyz"].isHidden())
+
     def test_browser_button_labels_fit_at_default_size(self):
         path = os.path.join(self.temp_dir, "result.out")
         with open(path, "w", encoding="utf-8") as handle:
@@ -154,6 +181,17 @@ class TestOutputFileSelectorDialog(unittest.TestCase):
         self.assertEqual(names, {"benzene.out", "benzene.xyz"})
         # benzene.out is prioritized
         self.assertEqual(dialog.tree.currentItem().text(0), "benzene.out")
+
+    def test_local_wrapper_log_is_not_preselected_over_a_molecular_result(self):
+        paths = [os.path.join(self.temp_dir, name) for name in ("job.log", "result.xyz")]
+        for path in paths:
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("output\n")
+        self.job.log_file = "job.log"
+        self.job.downloaded_files = paths
+        dialog = OutputFileSelectorDialog(self.service, self.job)
+        self.addCleanup(dialog.deleteLater)
+        self.assertEqual(dialog.tree.currentItem().text(0), "result.xyz")
 
     def test_filter_hides_non_matching_files(self):
         file1 = os.path.join(self.temp_dir, "benzene.out")
@@ -372,6 +410,7 @@ class _FakeService(QObject):
     """
 
     results_ready = Signal(str, list)
+    download_failed = Signal(str, str)
     error = Signal(str)
     message = Signal(str)
 
@@ -447,6 +486,36 @@ class TestAPendingDownloadIsNotLeftConnected(unittest.TestCase):
         # Nothing left listening: emitting must not reach the closed window.
         service.results_ready.emit(self.job.id, [])
         service.error.emit(f"{self.job.name} exploded")
+        service.download_failed.emit(self.job.id, "connection reset")
+
+    def test_transfer_failure_unblocks_browser_and_ignores_another_job(self):
+        service = _FakeService()
+        dlg = self.dialog(service)
+        dlg._download_and_open(None, "result.out", as_text=True)
+        service.download_failed.emit("another-job", "connection reset")
+        self.assertTrue(dlg._pending)
+        service.download_failed.emit(self.job.id, "connection reset")
+        self.assertFalse(dlg._pending)
+        self.assertTrue(dlg.btn_open.isEnabled())
+        self.assertIn("connection reset", dlg.lbl_status.text())
+
+    def test_downloaded_text_can_be_reopened_without_another_transfer(self):
+        path = os.path.join(self.temp_dir, "result.out")
+        service = _FakeService()
+        dlg = self.dialog(service)
+        dlg._populate_tree_remote(["result.out"])
+        item = dlg.tree.currentItem()
+        viewed = []
+        dlg.on_text_callback = viewed.append
+        dlg._download_and_open(item, "result.out", as_text=True)
+        # Rebuilding the tree deletes the original clicked item while the transfer runs.
+        dlg._populate_tree_remote(["result.out"])
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("complete\n")
+        service.results_ready.emit(self.job.id, [path])
+        dlg.tree.itemDoubleClicked.emit(dlg.tree.currentItem(), 0)
+        self.assertEqual(viewed, [path, path])
+        self.assertEqual(service.calls, [["result.out"]])
 
     def test_a_refused_download_does_not_strand_the_window(self):
         # download() returns False when one is already running for this job,

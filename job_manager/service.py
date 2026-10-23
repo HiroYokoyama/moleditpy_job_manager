@@ -70,9 +70,11 @@ class JobService(QObject):
     error = Signal(str)
     #: A finished job's files are on disk and ready to open.
     results_ready = Signal(str, list)  # job_id, local paths
+    download_failed = Signal(str, str)  # job_id, message
     #: A tracked job reached a terminal state while the user was elsewhere.
     job_finished = Signal(str, str)  # job_id, state
     log_ready = Signal(str)  # tail of a remote log
+    shutting_down = Signal()
 
     def __init__(self, store: Optional[JobStore] = None, parent: Optional[QObject] = None) -> None:
         super().__init__(parent if parent is not None else QCoreApplication.instance())
@@ -324,13 +326,19 @@ class JobService(QObject):
 
         def done(paths: List[str]) -> None:
             self._downloads_in_flight.discard(job.id)
-            job.downloaded = bool(paths)
-            job.downloaded_files = list(paths or [])
+            # An individual file fetch must not forget earlier downloads.
+            job.downloaded_files = list(
+                dict.fromkeys(
+                    [p for p in job.downloaded_files or [] if os.path.isfile(p)] + list(paths or [])
+                )
+            )
+            job.downloaded = bool(job.downloaded_files)
             job.touch(previous_state)
             self.store.save_jobs()
             self.job_updated.emit(job.id)
-            self.message.emit(f"Downloaded {len(job.downloaded_files)} file(s) for {job.name}")
-            self.results_ready.emit(job.id, job.downloaded_files)
+            self.poller.start()
+            self.message.emit(f"Downloaded {len(paths or [])} file(s) for {job.name}")
+            self.results_ready.emit(job.id, list(paths or []))
 
         def failed(message: str) -> None:
             self._downloads_in_flight.discard(job.id)
@@ -338,6 +346,8 @@ class JobService(QObject):
             job.touch(previous_state)
             self.store.save_jobs()
             self.job_updated.emit(job.id)
+            self.poller.start()
+            self.download_failed.emit(job.id, message)
             self.error.emit(f"Download failed: {message}")
 
         run_async(self.pool, work, on_success=done, on_error=failed)
@@ -754,6 +764,7 @@ class JobService(QObject):
         if self._shutting_down:
             return
         self._shutting_down = True
+        self.shutting_down.emit()
         self.poller.shutdown()
         shutdown_pool(self.pool, after_clear=lambda: host_sampler.shutdown_for(self))
         self.deleteLater()

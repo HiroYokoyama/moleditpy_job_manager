@@ -13,7 +13,7 @@ import os
 from typing import Callable, List, Optional, Sequence
 
 from PySide6.QtCore import QUrl, Qt
-from PySide6.QtGui import QColor, QDesktopServices
+from PySide6.QtGui import QBrush, QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -325,6 +325,7 @@ class OutputFileSelectorDialog(QDialog):
 
         self.lbl_status.setText(f"{len(paths)} file(s) available locally.")
         self.btn_open_folder.setEnabled(True)
+        self._apply_filter(self.txt_filter.text())
 
     def _fetch_remote_listing(self) -> None:
         """Query host for file list in the remote directory."""
@@ -373,18 +374,16 @@ class OutputFileSelectorDialog(QDialog):
 
         local_files = self._get_existing_local_files()
         local_map = {}
+        mirror_dir = self._mirrored_job_dir()
+        cache_dir = self._cache_dir()
         for path in local_files:
-            if self.job.local_dir and _is_within(path, self.job.local_dir):
-                relative = _relative_name(path, self.job.local_dir)
-            else:
-                relative = os.path.basename(path)
+            relative = self._relative_local_path(path, mirror_dir, cache_dir)
             if relative:
                 local_map[relative] = path
-        mirror_dir = self._mirrored_job_dir()
 
         from .runner import primary_output
 
-        primary_name = os.path.basename(primary_output(list(names), self.job.log_file))
+        primary_name = primary_output(list(names), self.job.log_file).replace("\\", "/")
         selected_item: Optional[QTreeWidgetItem] = None
         folders: dict = {}
         gray = QColor("#8b949e")
@@ -449,7 +448,7 @@ class OutputFileSelectorDialog(QDialog):
                 parent.addChild(item)
             self._all_items.append(item)
 
-            if filename == primary_name:
+            if local_key == primary_name:
                 selected_item = item
 
         if selected_item is not None:
@@ -458,6 +457,7 @@ class OutputFileSelectorDialog(QDialog):
             self.tree.setCurrentItem(self._all_items[0])
 
         self.lbl_status.setText(f"{len(names)} remote file(s) found on host.")
+        self._apply_filter(self.txt_filter.text())
 
     def _apply_filter(self, text: str) -> None:
         """Filter tree rows based on search input while preserving folder hierarchy."""
@@ -556,21 +556,41 @@ class OutputFileSelectorDialog(QDialog):
             if match is None:
                 self.lbl_status.setText(f"Download finished, but {remote_name} was not in it.")
                 return
+            # A refresh may have deleted the originally clicked tree item.
+            # Update only rows belonging to the current tree.
+            for row in self._all_items:
+                if row.data(0, IS_REMOTE_ROLE) and row.data(0, PATH_ROLE) == remote_name:
+                    row.setData(0, PATH_ROLE, match)
+                    row.setData(0, IS_REMOTE_ROLE, False)
+                    row.setText(3, "Local")
+                    row.setToolTip(0, match)
+                    try:
+                        row.setText(1, format_file_size(os.path.getsize(match)))
+                    except OSError:
+                        row.setText(1, "-")
+                    for column in range(4):
+                        row.setForeground(column, QBrush())
+                    font = row.font(0)
+                    font.setItalic(False)
+                    row.setFont(0, font)
+            self.lbl_status.setText(f"Downloaded {remote_name}.")
+            self._apply_filter(self.txt_filter.text())
             if self._dispatch_open(match, as_text=as_text) and not as_text:
                 self.accept()
 
-        def on_error(msg: str) -> None:
-            # download() reports failure job-wide, with no job id on the
-            # signal -- the job's own name in the message is what ties it back.
-            if self.job.name not in (msg or ""):
+        def on_error(finished_id: str, msg: str) -> None:
+            if finished_id != job_id:
                 return
             self._disconnect_download()
             self.btn_open.setEnabled(True)
             self.lbl_status.setText(f"Could not download {remote_name}: {msg}")
 
         self.service.results_ready.connect(on_ready)
-        self.service.error.connect(on_error)
-        self._pending = [(self.service.results_ready, on_ready), (self.service.error, on_error)]
+        self.service.download_failed.connect(on_error)
+        self._pending = [
+            (self.service.results_ready, on_ready),
+            (self.service.download_failed, on_error),
+        ]
         if not self.service.download(self.job, names=[remote_name]):
             # Refused, so neither handler will ever fire: an auto-download for
             # this job was already running. Put the window back rather than

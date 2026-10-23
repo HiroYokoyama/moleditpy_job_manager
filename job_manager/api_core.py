@@ -419,13 +419,13 @@ class JobApi:
         write has finished; polling the job record cannot tell it that, since
         the state returns to what it was before the download started.
         """
-        deferred = Deferred()
+        deferred = Deferred(timeout=DOWNLOAD_TIMEOUT)
         job_id = job.id
 
         def disconnect() -> None:
             for signal, slot in (
                 (self.service.results_ready, on_ready),
-                (self.service.error, on_error),
+                (self.service.download_failed, on_error),
             ):
                 try:
                     signal.disconnect(slot)
@@ -439,18 +439,14 @@ class JobApi:
             current = self._job_or_none(job_id) or job
             deferred.set_result({"job": job_payload(current, self.store), "files": list(paths)})
 
-        def on_error(message: str) -> None:
-            # ``error`` is the service's one error channel, and carries no job
-            # id: another job's failed poll or submission would otherwise answer
-            # this request with its own message. Only this download ending does.
-            in_flight = getattr(self.service, "download_in_flight", None)
-            if in_flight is not None and in_flight(job_id):
+        def on_error(finished_id: str, message: str) -> None:
+            if finished_id != job_id:
                 return
             disconnect()
             deferred.set_error(message)
 
         self.service.results_ready.connect(on_ready)
-        self.service.error.connect(on_error)
+        self.service.download_failed.connect(on_error)
         if not self.service.download(job, into=into, names=list(names) if names else None):
             disconnect()
             raise ApiError(409, f"A download is already running for {job.name}")

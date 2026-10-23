@@ -2,11 +2,12 @@
 
 import hashlib
 import json
+import tempfile
 import subprocess
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from job_manager.models import HostProfile, Job
 from job_manager.server_backend import JobServerBackend, validate_server_url
@@ -15,6 +16,32 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class TestOptionalServerClient(unittest.TestCase):
+    def test_server_fetch_preserves_inputs_and_empty_patterns_download_results(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            original = root / "input.xyz"
+            original.write_text("original input", encoding="utf-8")
+            job = Job(input_files=[str(original)], log_file="job.log")
+            backend = object.__new__(JobServerBackend)
+            backend.files = lambda _: [{"path": name} for name in ("input.xyz", "result.out")]
+
+            def fetch(_, relative, target):
+                Path(target).write_text("downloaded", encoding="utf-8")
+
+            backend.fetch_file = Mock(side_effect=fetch)
+            self.assertEqual(backend.fetch(job, directory, []), [str(root / "result.out")])
+            self.assertEqual(original.read_text(encoding="utf-8"), "original input")
+            self.assertEqual(backend.fetch(job, directory, ["input.xyz"]), [])
+
+    def test_server_fetch_patterns_respect_subdirectories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            backend = object.__new__(JobServerBackend)
+            backend.files = lambda _: [{"path": "result.out"}, {"path": "nested/result.out"}]
+            backend.fetch_file = Mock()
+            self.assertEqual(
+                backend.fetch(Job(), directory, ["*.out"]), [str(Path(directory) / "result.out")]
+            )
+
     def test_base_loads_and_reports_missing_optional_package_without_site_packages(self):
         code = """
 import sys

@@ -866,6 +866,7 @@ class JobsDialog(QDialog):
             # Cleared on close so the next tail builds a live window rather
             # than writing into a destroyed one.
             self._tail_dialog.finished.connect(self._clear_tail_dialog)
+            self.service.shutting_down.connect(self._tail_dialog.close)
             self._tail_dialog.present()
         else:
             # Both title and refresh callback, so auto-refresh follows the
@@ -941,6 +942,7 @@ class JobsDialog(QDialog):
             store=self.service.store,
         )
         self._detail_dialogs.append(dialog)
+        self.service.shutting_down.connect(dialog.close)
         dialog.finished.connect(
             lambda *_: (
                 self._detail_dialogs.remove(dialog) if dialog in self._detail_dialogs else None

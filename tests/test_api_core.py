@@ -385,6 +385,7 @@ class TestJobActions(ApiTestCase):
         job = self.add_job(name="j", state=STATE_DONE)
         _, deferred = self.post(f"/jobs/{job.id}/download", wait=True)
         self.assertIsInstance(deferred, Deferred)
+        self.assertEqual(deferred.timeout, api_core.DOWNLOAD_TIMEOUT)
         self.service.results_ready.emit(job.id, ["/tmp/out.log"])
         self.assertEqual(deferred.wait(1)["files"], ["/tmp/out.log"])
 
@@ -400,7 +401,7 @@ class TestJobActions(ApiTestCase):
     def test_a_failed_download_becomes_an_error_not_a_hang(self):
         job = self.add_job(name="j", state=STATE_DONE)
         _, deferred = self.post(f"/jobs/{job.id}/download", wait=True)
-        self.service.error.emit("the host refused")
+        self.service.download_failed.emit(job.id, "the host refused")
         with self.assertRaises(ApiError) as caught:
             deferred.wait(1)
         self.assertIn("refused", caught.exception.message)
@@ -412,6 +413,7 @@ class TestJobActions(ApiTestCase):
         _, deferred = self.post(f"/jobs/{job.id}/download", wait=True)
         self.service.in_flight.add(job.id)
         self.service.error.emit("Submission failed: some other job")
+        self.service.download_failed.emit("another-job", "the host refused")
         self.service.in_flight.discard(job.id)
         self.service.results_ready.emit(job.id, ["/tmp/out.log"])
         self.assertEqual(deferred.wait(1)["files"], ["/tmp/out.log"])
@@ -423,6 +425,7 @@ class TestJobActions(ApiTestCase):
         _, deferred = self.post(f"/jobs/{job.id}/download", wait=True)
         self.service.results_ready.emit(job.id, [])
         self.assertEqual(self.service.results_ready.slots, [])
+        self.assertEqual(self.service.download_failed.slots, [])
         self.assertEqual(self.service.error.slots, [])
 
     def test_the_log_tail_is_deferred_until_the_host_answers(self):
