@@ -1,0 +1,19 @@
+{
+  "source": "job_manager/__init__.py",
+  "title": "Job Manager",
+  "package": "job_manager",
+  "archive": "job_manager_{version}.zip",
+  "assets": [
+    "job_manager_{version}.zip"
+  ],
+  "include": [
+    "README.md",
+    "LICENSE",
+    "COPYING",
+    "LICENSING.md"
+  ],
+  "exclude": [
+    "*/__pycache__/*",
+    "*/.git/*"
+  ]
+}

@@ -121,3 +121,7 @@ into source, tests, documentation or commit messages. Examples use `myhost`,
 `mycommand`, `/opt/...`. The job list at `~/.moleditpy/job_manager/` is the
 user's working data: read it only when diagnosing, say so first, and keep what
 you find out of the repository.
+
+## Copied maintenance scripts
+
+See [scripts/COMMON_TOOLS.md](scripts/COMMON_TOOLS.md) for canonical ownership, pinned versions and update instructions. Common script unit tests stay in the canonical repository; retain this repository's own integration checks.
