@@ -1,6 +1,6 @@
 """High-level backend contract for Job Manager; no remote shell transport."""
 
-import fnmatch
+import os
 import uuid
 from pathlib import Path
 import importlib.util
@@ -238,14 +238,20 @@ class JobServerBackend:
         return self.client.download(job.remote_job_id, relative, target)
 
     def fetch(self, job, directory, patterns):
+        from .result_files import matches_pattern
+
         directory = Path(directory)
+        patterns = [pattern.strip() for pattern in patterns or [] if pattern.strip()]
+        protected = {os.path.normcase(os.path.realpath(path)) for path in job.input_files if path}
         fetched = []
         for entry in self.files(job):
             relative = validate_path(entry["path"])
-            if any(fnmatch.fnmatchcase(relative, pattern) for pattern in patterns):
+            if not patterns or any(matches_pattern(relative, pattern) for pattern in patterns):
                 target = directory / relative
                 if not target.resolve().is_relative_to(directory.resolve()):
                     raise ValueError("Result escapes download directory")
+                if os.path.normcase(os.path.realpath(target)) in protected:
+                    continue
                 self.fetch_file(job, relative, target)
                 fetched.append(str(target))
         return fetched

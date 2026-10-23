@@ -28,7 +28,8 @@ def is_plugin_file(name: str, log_file: str = "") -> bool:
     from .models import STARTED_NAME
 
     leaf = (name or "").replace("\\", "/").rsplit("/", 1)[-1]
-    if log_file and (name == log_file or leaf == f"{log_file}.err"):
+    log_leaf = (log_file or "").replace("\\", "/").rsplit("/", 1)[-1]
+    if log_leaf and leaf in (log_leaf, f"{log_leaf}.err"):
         return True
     return (
         leaf.startswith(SENTINEL_NAME)

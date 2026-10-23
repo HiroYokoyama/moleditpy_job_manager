@@ -41,6 +41,7 @@ class FakeService:
     def __init__(self, job_store: Any) -> None:
         self.store = job_store
         self.results_ready = FakeSignal()
+        self.download_failed = FakeSignal()
         self.error = FakeSignal()
         self.submitted: List[tuple] = []
         self.cancelled: List[tuple] = []

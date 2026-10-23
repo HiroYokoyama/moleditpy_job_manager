@@ -5,6 +5,7 @@ or a source that simply is not there must cost the fields that *were* answered.
 """
 
 import subprocess
+import shutil
 import unittest
 
 from job_manager import host_stats
@@ -183,6 +184,7 @@ class TestInstantaneousCPUStatParsing(unittest.TestCase):
         self.assertIn("/proc/stat", host_stats.POSIX_COMMAND)
         self.assertIn("sleep", host_stats.POSIX_COMMAND)
 
+    @unittest.skipUnless(shutil.which("awk"), "awk is not installed")
     def test_cpu_sums_stay_integers_past_2_pow_31(self):
         # mawk prints a bare 2159720000 as 2.15972e+09, which bash's $(( ))
         # cannot read; the awk program must print every sum as a plain integer.

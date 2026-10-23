@@ -1625,6 +1625,18 @@ class TestJobDetails(DialogTestCase):
 
 
 class TestTailWindow(DialogTestCase):
+    def test_service_shutdown_stops_tail_windows_before_retiring_workers(self):
+        self.dialog._tail_selected()
+        main_tail = self.dialog._tail_dialog
+        self.dialog._open_tail_for_file(self.store.jobs["j1"], "result.out")
+        file_tail = self.dialog._detail_dialogs[-1]
+        self.addCleanup(main_tail.deleteLater)
+        self.addCleanup(file_tail.deleteLater)
+        self.service.shutdown()
+        for viewer in (main_tail, file_tail):
+            self.assertFalse(viewer.isVisible())
+            self.assertFalse(viewer._timer.isActive())
+
     def setUp(self):
         super().setUp()
         self.store.add_job(
