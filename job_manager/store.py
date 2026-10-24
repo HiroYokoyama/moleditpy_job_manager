@@ -17,6 +17,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import math
 import os
 import time
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
@@ -254,6 +255,11 @@ def ensure_work_dir(kind: str, name: str = "", directory: str = "") -> str:
     return path
 
 
+def _records(document: dict, key: str) -> list:
+    value = document.get(key)
+    return value if isinstance(value, list) else []
+
+
 class JobStore:
     """In-memory model of hosts/presets/jobs, backed by two JSON files."""
 
@@ -291,15 +297,28 @@ class JobStore:
         if not isinstance(settings, dict):
             settings = {}
         self.prefs = dict(DEFAULT_PREFS)
-        self.prefs.update(settings.get("prefs") or {})
+        incoming = settings.get("prefs")
+        if isinstance(incoming, dict):
+            self.prefs.update(incoming)
+            for key, default in DEFAULT_PREFS.items():
+                value = self.prefs.get(key)
+                valid = isinstance(value, type(default))
+                if isinstance(default, (int, float)) and not isinstance(default, bool):
+                    try:
+                        number = float(value)
+                        valid = not isinstance(value, bool) and math.isfinite(number)
+                    except (TypeError, ValueError, OverflowError):
+                        valid = False
+                if not valid:
+                    self.prefs[key] = default
         self.hosts = {}
-        for raw in settings.get("hosts") or []:
+        for raw in _records(settings, "hosts"):
             if not isinstance(raw, dict):
                 continue
             host = HostProfile.from_dict(raw)
             self.hosts[host.id] = host
         self.presets = {}
-        for raw in settings.get("presets") or []:
+        for raw in _records(settings, "presets"):
             if not isinstance(raw, dict):
                 continue
             preset = SubmitPreset.from_dict(raw)
@@ -313,7 +332,7 @@ class JobStore:
         if not isinstance(jobs_doc, dict):
             jobs_doc = {}
         self.jobs = {}
-        for raw in jobs_doc.get("jobs") or []:
+        for raw in _records(jobs_doc, "jobs"):
             if not isinstance(raw, dict):
                 continue
             job = Job.from_dict(raw)
@@ -465,9 +484,10 @@ class JobStore:
         known = {raw.get("id") for raw in mine if isinstance(raw, dict)}
         extra = [
             raw
-            for raw in (disk.get("jobs") or [])
+            for raw in _records(disk, "jobs")
             if isinstance(raw, dict)
-            and raw.get("id")
+            and isinstance(raw.get("id"), str)
+            and raw["id"]
             and raw["id"] not in known
             and raw["id"] not in self._forgotten
         ]
@@ -735,7 +755,7 @@ class JobStore:
         payload = read_json(path, {}) or {}
         if not isinstance(payload, dict):
             return [], False
-        jobs = [Job.from_dict(raw) for raw in payload.get("jobs") or [] if isinstance(raw, dict)]
+        jobs = [Job.from_dict(raw) for raw in _records(payload, "jobs") if isinstance(raw, dict)]
         assign_job_numbers(jobs)
         return jobs, bool(payload.get("archived", False))
 
@@ -945,7 +965,7 @@ class JobStore:
         """Effective poll interval, clamped to the permitted range."""
         try:
             value = int(self.get_pref("poll_interval", DEFAULT_POLL_INTERVAL))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             value = DEFAULT_POLL_INTERVAL
         return max(MIN_POLL_INTERVAL, min(MAX_POLL_INTERVAL, value))
 

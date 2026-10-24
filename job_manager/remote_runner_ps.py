@@ -107,11 +107,13 @@ def build_job_script(
     status_path = _join(directory, "status", entry)
     lines = []
     if job_name:
-        lines.append(f"# MoleditPy job: {job_name}")
+        lines.append("# MoleditPy job: " + " ".join(str(job_name).splitlines()))
     lines.append(f"{CORES_TAG} {max(1, int(cores or 1))}")
     if int(memory_mb or 0) > 0:
         lines.append(f"{MEMORY_TAG} {int(memory_mb)}")
     if after_job_id:
+        if not str(after_job_id).isalnum() or not str(after_job_id).isascii():
+            raise ValueError("Invalid predecessor job identifier")
         lines.append(f"{AFTER_TAG} {after_job_id}")
         lines.append(f"{REQUIRE_SUCCESS_TAG} {1 if require_success else 0}")
     lines += [

@@ -293,7 +293,22 @@ class WebMonitorDialog(QDialog):
         """Asked once per dialog: it shells out, and the answer does not move
         while a window is open."""
         if self._dns is None:
-            self._dns = tailscale_dns_name() if tailscale_available() else ""
+            # Set the cache before dispatch: refresh can run again while pending.
+            self._dns = ""
+            if tailscale_available():
+
+                def done(name):
+                    self._dns = name or ""
+                    self._refresh()
+
+                run_async(
+                    self.web.service.pool,
+                    tailscale_dns_name,
+                    on_success=done,
+                    on_error=lambda _message: None,
+                    quiet=True,
+                    owner=self,
+                )
         return self._dns
 
 

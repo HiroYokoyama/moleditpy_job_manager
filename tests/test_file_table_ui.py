@@ -106,6 +106,7 @@ class TestInputFileTable(DialogTestCase):
 
         path = self.make_input()
         job = Job(name="Example", input_files=[path], remote_dir="/opt/runs/example")
+        self.service.store.add_job(job)
         details = JobDetailsDialog(self.service, job, "record", "Details")
         self.addCleanup(details.close)
         details.file_table.selectRow(0)

@@ -285,13 +285,15 @@ def build_job_script(
     """
     lines = ["#!/bin/bash"]
     if job_name:
-        lines.append(f"# MoleditPy job: {job_name}")
+        lines.append("# MoleditPy job: " + " ".join(str(job_name).splitlines()))
     lines.append(f"{CORES_TAG} {max(1, int(cores or 1))}")
     # Only when there is one: a job with no memory request waits for no memory,
     # which is what a blank field in the wizard has always meant.
     if int(memory_mb or 0) > 0:
         lines.append(f"{MEMORY_TAG} {int(memory_mb)}")
     if after_job_id:
+        if not str(after_job_id).isalnum() or not str(after_job_id).isascii():
+            raise ValueError("Invalid predecessor job identifier")
         lines.append(f"{AFTER_TAG} {after_job_id}")
         lines.append(f"{REQUIRE_SUCCESS_TAG} {1 if require_success else 0}")
     status_path = f"{directory.rstrip('/')}/status/{entry}"

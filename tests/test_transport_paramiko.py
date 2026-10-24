@@ -28,8 +28,31 @@ class FakeBadHostKeyException(FakeSSHException):
 
 
 class FakeChannel:
-    def __init__(self, rc=0):
+    def __init__(self, rc=0, payload=b"", stderr=b""):
         self._rc = rc
+        self.out = payload
+        self.err = stderr
+        self.closed = False
+
+    def recv_ready(self):
+        return bool(self.out)
+
+    def recv_stderr_ready(self):
+        return bool(self.err)
+
+    def recv(self, size):
+        data, self.out = self.out[:size], self.out[size:]
+        return data
+
+    def recv_stderr(self, size):
+        data, self.err = self.err[:size], self.err[size:]
+        return data
+
+    def exit_status_ready(self):
+        return True
+
+    def close(self):
+        self.closed = True
 
     def recv_exit_status(self):
         return self._rc
@@ -38,7 +61,7 @@ class FakeChannel:
 class FakeStream:
     def __init__(self, payload=b"", rc=0):
         self._payload = payload
-        self.channel = FakeChannel(rc)
+        self.channel = FakeChannel(rc, payload)
 
     def read(self):
         return self._payload
@@ -650,3 +673,31 @@ class TestParamikoIsNotChatty(unittest.TestCase):
         if not paramiko_backend.PARAMIKO_AVAILABLE:
             self.skipTest("paramiko is not installed")
         self.assertLessEqual(logging.getLogger("paramiko").level, logging.WARNING)
+
+
+class TestFullReadTransportRegressions(ParamikoTestCase):
+    def test_both_channel_streams_are_drained_before_waiting_for_exit(self):
+        from types import SimpleNamespace
+
+        transport = self.cls(self.host)
+        transport.run("initialize")
+        channel = FakeChannel(7, payload=b"output", stderr=b"error" * 30000)
+        channel.exit_status_ready = lambda: not channel.err
+        stdout = SimpleNamespace(channel=channel)
+        with patch.object(self.client, "exec_command", return_value=(None, stdout, object())):
+            result = transport.run("noisy", timeout=2)
+        self.assertEqual(result.stdout, "output")
+        self.assertEqual(result.stderr, "error" * 30000)
+        self.assertEqual(result.rc, 7)
+        self.assertTrue(channel.closed)
+
+    def test_windows_home_comes_from_sftp(self):
+        from unittest.mock import Mock
+
+        self.host.scheduler = "windows"
+        transport = self.cls(self.host)
+        transport.run("initialize")
+        self.client.sftp.normalize = Mock(return_value="C:/Users/example")
+        self.assertEqual(transport._expand_remote("~/jobs/a.inp"), "C:/Users/example/jobs/a.inp")
+        self.client.sftp.normalize.assert_called_once_with(".")
+        self.assertFalse(any("printf" in command for command in self.client.commands))

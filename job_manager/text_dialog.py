@@ -357,7 +357,13 @@ class TextDialog(QDialog):
         if not self.chk_case.isChecked():
             text, needle = text.lower(), needle.lower()
         total = text.count(needle)
-        before = text.count(needle, 0, self.view.textCursor().selectionStart())
+        cursor = self.view.textCursor()
+        cursor.setPosition(cursor.selectionStart())
+        cursor.setPosition(0, QTextCursor.MoveMode.KeepAnchor)
+        prefix = cursor.selectedText().replace("\u2029", "\n")
+        if not self.chk_case.isChecked():
+            prefix = prefix.lower()
+        before = prefix.count(needle)
         return f"{before + 1} of {total}"
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
@@ -460,7 +466,7 @@ class TextDialog(QDialog):
         try:
             self.view.setPlainText(text)
             # Kept so a selected match, and the next Find from it, survive.
-            end = len(self.view.toPlainText())
+            end = self.view.document().characterCount() - 1
             cursor = self.view.textCursor()
             cursor.setPosition(min(anchor, end))
             cursor.setPosition(min(position, end), QTextCursor.MoveMode.KeepAnchor)

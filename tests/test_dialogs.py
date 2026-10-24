@@ -170,13 +170,13 @@ class TestOpenInHost(unittest.TestCase):
             self.assertTrue(open_in_host(self.path))
         main_window.init_manager.load_command_line_file.assert_called_once_with(self.path)
 
-    def test_a_failing_clear_does_not_stop_the_result(self):
+    def test_a_failing_clear_does_not_replace_the_document(self):
         context = MagicMock()
         main_window = context.get_main_window.return_value
         main_window.edit_actions_manager.clear_all.side_effect = RuntimeError("no scene")
         with patch("job_manager.get_context", return_value=context):
-            self.assertTrue(open_in_host(self.path))
-        main_window.init_manager.load_command_line_file.assert_called_once_with(self.path)
+            self.assertFalse(open_in_host(self.path))
+        main_window.init_manager.load_command_line_file.assert_not_called()
 
 
 class TestJobTableModel(DialogTestCase):

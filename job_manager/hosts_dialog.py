@@ -191,7 +191,6 @@ class HostsDialog(QDialog):
         # list would silently stop refreshing after a save.
         self.btn_save.clicked.connect(lambda: self._save_current())
         box.rejected.connect(self.reject)
-        box.button(QDialogButtonBox.StandardButton.Close).clicked.connect(self.accept)
 
         column = QVBoxLayout()
         scroll = QScrollArea()
@@ -802,6 +801,8 @@ class HostsDialog(QDialog):
 
         def ok(paused: bool) -> None:
             self.chk_pause.setEnabled(True)
+            if self._current is None or self._current.id != host.id:
+                return
             self.lbl_queue.setText(
                 "The queue is held. Jobs already running continue."
                 if paused
@@ -810,6 +811,8 @@ class HostsDialog(QDialog):
 
         def failed(message: str) -> None:
             self.chk_pause.setEnabled(True)
+            if self._current is None or self._current.id != host.id:
+                return
             # Back to what the host still says, rather than leaving the box
             # claiming a state the host never took.
             self._set_pause_checkbox(not checked)
@@ -838,6 +841,8 @@ class HostsDialog(QDialog):
 
         def ok(found: tuple) -> None:
             self.btn_detect.setEnabled(True)
+            if self._current is None or self._current.id != host.id:
+                return
             cores, memory_mb, threads = found
             if not cores and not memory_mb:
                 self.lbl_queue.setText("The host did not say what it has.")
@@ -872,6 +877,8 @@ class HostsDialog(QDialog):
 
         def failed(message: str) -> None:
             self.btn_detect.setEnabled(True)
+            if self._current is None or self._current.id != host.id:
+                return
             self.lbl_queue.setText(
                 message.splitlines()[0] if message else "Could not ask the host."
             )
@@ -896,6 +903,8 @@ class HostsDialog(QDialog):
 
         def ok(_result) -> None:
             self.btn_apply_limits.setEnabled(True)
+            if self._current is None or self._current.id != host.id:
+                return
             cores = host.runner_cores or 0
             # 0 is no job limit (see remote_runner.slots_for), not one job.
             jobs = (
@@ -910,6 +919,8 @@ class HostsDialog(QDialog):
 
         def failed(message: str) -> None:
             self.btn_apply_limits.setEnabled(True)
+            if self._current is None or self._current.id != host.id:
+                return
             self.lbl_queue.setText(
                 message.splitlines()[0] if message else "Could not send the limits."
             )

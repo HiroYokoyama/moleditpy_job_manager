@@ -589,6 +589,7 @@ class WebMonitorServer:
         self._port = 0
         if server is None:
             return
+        self._on_request = None
         server.shutdown()
         server.server_close()
         if thread is not None:

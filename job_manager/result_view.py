@@ -123,7 +123,7 @@ def clear_document(main_window) -> bool:
         return clear() is not False
     except Exception:
         logging.debug("Job Manager: the document was not cleared", exc_info=True)
-        return True
+        return False
 
 
 def open_in_host(path: str) -> bool:

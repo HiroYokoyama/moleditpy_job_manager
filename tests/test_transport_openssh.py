@@ -243,3 +243,40 @@ class TestFactory(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestProtocolSpecificPaths(unittest.TestCase):
+    def test_modern_sftp_keeps_spaces_and_shell_characters_literal(self):
+        transport = OpenSSHTransport(make_host())
+        transport._scp_sftp = True
+        path = "/remote/dir with space/a';$file.inp"
+        self.assertEqual(transport._remote_spec(path), f"{transport.host.target}:{path}")
+        self.assertEqual(
+            transport._remote_spec("~/jobs/a.inp"), f"{transport.host.target}:~/jobs/a.inp"
+        )
+
+    def test_sftp_download_escapes_glob_characters(self):
+        transport = OpenSSHTransport(make_host())
+        transport._scp_sftp = True
+        self.assertTrue(
+            transport._remote_spec("/remote/a[1]*?.out", download=True).endswith(
+                r"/remote/a\[1\]\*\?.out"
+            )
+        )
+
+    def test_version_detection_is_cached_and_understands_windows(self):
+        from unittest.mock import Mock
+
+        for version, modern in [
+            ("OpenSSH_8.9p1", False),
+            ("OpenSSH_9.0p1", True),
+            ("OpenSSH_for_Windows_9.5p1", True),
+        ]:
+            transport = OpenSSHTransport(make_host())
+            with patch(
+                "job_manager.transport.openssh.subprocess.run",
+                return_value=Mock(stdout="", stderr=version),
+            ) as run:
+                self.assertEqual(transport._scp_uses_sftp(), modern)
+                self.assertEqual(transport._scp_uses_sftp(), modern)
+                self.assertEqual(run.call_count, 1)

@@ -39,7 +39,7 @@ PLACEHOLDER_TIP = (
     "Placeholders substituted at submit time:\n"
     "  {input}     the uploaded file's name, e.g. water.inp\n"
     "  {stem}      the same, without its extension, e.g. water\n"
-    "  {basename}  same as {stem} (kept for older templates)\n"
+    "  {basename}  input file name including its extension\n"
     "  {name}      the job's display name\n"
     "  {jobdir}    the job's directory on the host\n"
     "  {nodes} {ntasks} {cpus} {memory} {queue} {walltime}\n"
@@ -113,7 +113,6 @@ class TemplateEditorDialog(QDialog):
         box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         box.rejected.connect(self.reject)
         box.accepted.connect(self.accept)
-        box.button(QDialogButtonBox.StandardButton.Close).clicked.connect(self.accept)
         layout.addWidget(box)
 
     # --- loading --------------------------------------------------------

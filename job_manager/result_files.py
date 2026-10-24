@@ -272,7 +272,9 @@ def _inside_directory(root: str, path: str) -> bool:
         return False
 
 
-def _download_atomic(transport: Transport, remote: str, target: str, root: str) -> None:
+def _download_atomic(
+    transport: Transport, remote: str, target: str, root: str, *, overwrite: bool = True
+) -> None:
     """Stage in a private directory; never open a predictable existing link."""
     parent = os.path.realpath(os.path.dirname(target))
     base = os.path.realpath(root)
@@ -282,7 +284,11 @@ def _download_atomic(transport: Transport, remote: str, target: str, root: str) 
     with tempfile.TemporaryDirectory(prefix=".moleditpy-download-", dir=parent) as staging_dir:
         staging = os.path.join(staging_dir, "result")
         transport.download(remote, staging)
-        os.replace(staging, destination)
+        if overwrite:
+            os.replace(staging, destination)
+        else:
+            # Publish exclusively: a file created during transfer must survive.
+            os.link(staging, destination)
 
 
 def _discard(path: str) -> None:

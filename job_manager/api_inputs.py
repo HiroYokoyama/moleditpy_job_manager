@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import datetime
+import math
 import time
 from typing import Any, List, Mapping, Optional
 
@@ -162,8 +164,10 @@ class ApiInputs:
     def _int(value: Any, key: str, minimum: Optional[int] = None) -> int:
         try:
             number = int(value)
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, OverflowError) as exc:
             raise ApiError(400, f"'{key}' must be a whole number") from exc
+        if isinstance(value, bool) or (isinstance(value, float) and value != number):
+            raise ApiError(400, f"'{key}' must be a whole number")
         if minimum is not None and number < minimum:
             raise ApiError(400, f"'{key}' must be at least {minimum}")
         return number
@@ -179,8 +183,16 @@ class ApiInputs:
         if not value:
             return 0.0
         if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return float(value)
-        text = str(value).strip().replace("Z", "")
+            epoch = float(value)
+            if not math.isfinite(epoch):
+                raise ApiError(400, "'start_after' must be finite")
+            return epoch
+        text = str(value).strip()
+        try:
+            parsed = datetime.datetime.fromisoformat(text.replace("Z", "+00:00"))
+            return parsed.timestamp()
+        except (ValueError, OverflowError, OSError):
+            pass
         for shape in (
             "%Y-%m-%dT%H:%M:%S",
             "%Y-%m-%dT%H:%M",

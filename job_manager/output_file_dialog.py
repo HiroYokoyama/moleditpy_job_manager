@@ -631,13 +631,11 @@ class OutputFileSelectorDialog(QDialog):
             show_text_window(path, self.parentWidget())
             return True
         if self.on_open_callback is not None:
-            self.on_open_callback(path)
-            return True
+            return self.on_open_callback(path) is not False
 
         from .jobs_dialog import open_in_host
 
-        open_in_host(path)
-        return True
+        return bool(open_in_host(path))
 
     def _open_containing_folder(self) -> None:
         """Open the folder in system file manager."""

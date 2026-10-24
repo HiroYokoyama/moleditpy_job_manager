@@ -41,7 +41,7 @@ class WebService(QObject):
     changed = Signal()
 
     def __init__(self, service) -> None:
-        super().__init__()
+        super().__init__(service if isinstance(service, QObject) else None)
         self.service = service
         self.sampler = host_sampler.for_service(service)
         self.server = None
@@ -59,6 +59,7 @@ class WebService(QObject):
         self.sampler.sampled.connect(self.publish)
         self.sampler.sample_failed.connect(self.publish)
         service.jobs_changed.connect(self.publish)
+        service.job_updated.connect(self.publish)
 
     # --- state ------------------------------------------------------------------
 

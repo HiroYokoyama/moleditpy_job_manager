@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 import os
 import time
@@ -75,7 +76,12 @@ class SubmissionWorkflow:
         # Basename is the same either way, so {input} means the same thing for both.
         to_upload = list(upload_files) if upload_files else list(local_files)
 
+        worker_job = copy.deepcopy(job)
+        worker_host = copy.deepcopy(host)
+        worker_preset = copy.deepcopy(preset)
+
         def work() -> Job:
+            job, host, preset = worker_job, worker_host, worker_preset
             if host.is_job_server:
                 from .server_backend import backend_for
 
@@ -128,8 +134,14 @@ class SubmissionWorkflow:
         run_async(
             self.service.pool,
             work,
-            on_success=self._on_submitted,
-            on_error=lambda msg, job_id=job.id: self._on_submit_failed(job_id, msg),
+            on_success=lambda result: (
+                self._on_submitted(result) if self.service.store.jobs.get(job.id) is job else None
+            ),
+            on_error=lambda msg: (
+                self._on_submit_failed(job.id, msg)
+                if self.service.store.jobs.get(job.id) is job
+                else None
+            ),
         )
         return job
 
