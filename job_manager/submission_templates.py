@@ -108,7 +108,7 @@ class SubmissionTemplates:
         globs = [g.strip() for g in self.txt_globs.text().split(",") if g.strip()]
         self.store.set_default_command(extension, command, globs)
         QMessageBox.information(
-            self,
+            self.parent,
             "Default command",
             f"Every {extension} added from now on starts with this command"
             + (" and these fetch patterns." if globs else "."),

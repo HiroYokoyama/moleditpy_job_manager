@@ -174,7 +174,11 @@ def _coerce(value: Any, default: Any) -> Any:
     if isinstance(default, str):
         return value if isinstance(value, str) else _NOT_GIVEN
     if isinstance(default, list):
-        return list(value) if isinstance(value, list) else _NOT_GIVEN
+        return (
+            list(value)
+            if isinstance(value, list) and all(isinstance(v, str) for v in value)
+            else _NOT_GIVEN
+        )
     if isinstance(default, dict):
         return dict(value) if isinstance(value, dict) else _NOT_GIVEN
     return value
@@ -196,6 +200,17 @@ def _from_dict(cls: type, data: Dict[str, Any]) -> Any:
         value = _coerce(data[spec.name], _default_of(spec))
         if value is not _NOT_GIVEN:
             kwargs[spec.name] = value
+    if cls.__name__ == "Job" and kwargs.get("preset"):
+        snapshot = kwargs["preset"]
+        normalized = SubmitPreset.from_dict(snapshot).to_dict()
+        kwargs["preset"] = {key: normalized.get(key, value) for key, value in snapshot.items()}
+    if (
+        cls.__name__ == "Job"
+        and "fetch_globs" in data
+        and _coerce(data["fetch_globs"], []) is _NOT_GIVEN
+    ):
+        kwargs["auto_download"] = False
+        kwargs["last_error"] = "Invalid saved fetch patterns; review before downloading"
     return cls(**kwargs)
 
 

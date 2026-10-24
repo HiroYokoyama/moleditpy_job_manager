@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+
 import os
 from typing import ClassVar, List, Optional, Sequence
 
@@ -1076,6 +1078,17 @@ class SubmitDialog(QDialog):
         if not self.chk_scan_resources.isChecked():
             return
         found = input_scan.scan(path)
+        if (
+            not found.memory_mb
+            and self._scanned_memory
+            and self.txt_memory.text().strip() == self._scanned_memory
+        ):
+            self.txt_memory.clear()
+            self._scanned_memory = ""
+        if not found.cores and self._scanned_cpus and self.spin_cpus.value() == self._scanned_cpus:
+            self.spin_cpus.setValue(1)
+            self._scanned_cpus = 0
+        self.lbl_scanned.setVisible(False)
         if not found.found:
             return
         filled = []
@@ -1390,7 +1403,11 @@ class SubmitDialog(QDialog):
             )
             return
         if batch:
-            self._submit_batch(host, preset, files)
+            try:
+                self._submit_batch(host, preset, files)
+            except ValueError as exc:
+                QMessageBox.warning(self, "Submit", str(exc))
+                return
             self.accept()
             return
         relay_source_dir = ""
@@ -1476,12 +1493,25 @@ class SubmitDialog(QDialog):
         the next one -- letting "batch" and "run one after another" compose
         with nothing special-cased here.
         """
+        prepared = []
         for path in files:
+            individual = copy.deepcopy(preset)
+            if self.chk_scan_resources.isChecked():
+                found = input_scan.scan(path)
+                if not preset.memory or preset.memory == self._scanned_memory:
+                    individual.memory = input_scan.format_memory(found.memory_mb)
+                if preset.cpus_per_task <= 1 or preset.cpus_per_task == self._scanned_cpus:
+                    individual.cpus_per_task = max(1, found.cores)
+            overrun = self._resource_overrun(host, individual)
+            if overrun:
+                raise ValueError(f"{os.path.basename(path)}: {overrun}")
+            prepared.append((path, individual))
+        for path, individual in prepared:
             name = os.path.splitext(os.path.basename(path))[0]
             after = self.chain_predecessor() if self.chain_requested() else None
             self.service.submit(
                 host,
-                preset,
+                individual,
                 name,
                 [path],
                 after_job=after,

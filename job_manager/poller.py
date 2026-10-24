@@ -110,6 +110,7 @@ class JobPoller(QObject):
         # Polling is I/O bound and login nodes dislike bursts; two at a time.
         self.pool.setMaxThreadCount(2)
         self._in_flight: Dict[str, bool] = {}
+        self._poll_sources: dict = {}
         self._backoff: Dict[str, float] = {}
         self._next_poll: Dict[str, float] = {}
         self._last_manual = 0.0
@@ -232,6 +233,7 @@ class JobPoller(QObject):
             if self._in_flight.get(host_id):
                 continue
             self._in_flight[host_id] = True
+            self._poll_sources[host_id] = (self.store.jobs_path, {job.id: job for job in jobs})
             self.poll_started.emit(host_id)
             # Copies: the task runs on a pool thread, but the store is GUI-thread-only.
             task = _PollTask(
@@ -283,7 +285,16 @@ class JobPoller(QObject):
         # dispatched; a job the user cancelled while it was in flight is
         # CANCELLED now, and the copy's RUNNING -- or the LOST it became once
         # the queue no longer listed it -- would have overwritten that.
-        live = {job_id for job_id, job in self.store.jobs.items() if job.is_active}
+        source = self._poll_sources.pop(host_id, None)
+        live = {
+            job_id
+            for job_id, job in self.store.jobs.items()
+            if job.is_active
+            and (
+                source is None
+                or (source[0] == self.store.jobs_path and source[1].get(job_id) is job)
+            )
+        }
         exit_codes = {k: v for k, v in (exit_codes or {}).items() if k in live}
         errors = {k: v for k, v in (errors or {}).items() if k in live}
         updates = {k: v for k, v in (updates or {}).items() if k in live}
@@ -316,6 +327,7 @@ class JobPoller(QObject):
         self.poll_finished.emit(host_id)
 
     def _on_poll_failed(self, host_id: str, message: str) -> None:
+        self._poll_sources.pop(host_id, None)
         if self._shutting_down:
             return
         self._in_flight[host_id] = False

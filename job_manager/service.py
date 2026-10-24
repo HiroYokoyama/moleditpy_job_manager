@@ -302,6 +302,7 @@ class JobService(QObject):
             self.message.emit(f"Download already in progress for {job.name}")
             return False
         self._downloads_in_flight.add(job.id)
+        source_path = self.store.jobs_path
         previous_state = job.state
         local_dir = into or job.local_dir or self._local_dir_for(job.name, job.input_files)
         job.local_dir = local_dir
@@ -326,6 +327,9 @@ class JobService(QObject):
 
         def done(paths: List[str]) -> None:
             self._downloads_in_flight.discard(job.id)
+            if self.store.jobs_path != source_path or self.store.jobs.get(job.id) is not job:
+                self.download_failed.emit(job.id, "The job list changed during download")
+                return
             # An individual file fetch must not forget earlier downloads.
             job.downloaded_files = list(
                 dict.fromkeys(
@@ -342,6 +346,9 @@ class JobService(QObject):
 
         def failed(message: str) -> None:
             self._downloads_in_flight.discard(job.id)
+            if self.store.jobs_path != source_path or self.store.jobs.get(job.id) is not job:
+                self.download_failed.emit(job.id, "The job list changed during download")
+                return
             job.last_error = message
             job.touch(previous_state)
             self.store.save_jobs()
@@ -441,6 +448,8 @@ class JobService(QObject):
                 transport.close()
 
         def done(_result) -> None:
+            if self.store.jobs.get(job.id) is not job:
+                return
             if host.is_job_server:
                 job.touch(_result["state"])
                 self.store.save_jobs()
@@ -559,6 +568,9 @@ class JobService(QObject):
                 transport.close()
 
         def done(started: bool) -> None:
+            if self.store.jobs.get(job.id) is not job:
+                fail("The job list changed while starting the job")
+                return
             if started:
                 job.force_run = True
                 job.touch()

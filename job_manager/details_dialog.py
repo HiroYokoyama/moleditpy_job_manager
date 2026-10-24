@@ -50,10 +50,13 @@ class JobDetailsDialog(QDialog):
         record: str,
         title: str,
         parent: Optional[QWidget] = None,
+        *,
+        read_only: bool = False,
     ) -> None:
         super().__init__(parent)
         self.service = service
         self.job = job
+        self.read_only = read_only
         self.setWindowTitle(title)
         make_independent(self)
         apply_theme(self)
@@ -145,6 +148,10 @@ class JobDetailsDialog(QDialog):
         # Only through rejected: a Close button already emits it, and wiring
         # its clicked as well called reject() twice, so finished fired twice.
         buttons.rejected.connect(self.reject)
+        if read_only:
+            buttons.button(QDialogButtonBox.StandardButton.Save).setEnabled(False)
+            for widget in (self.txt_name, self.txt_globs, self.txt_local, self.chk_auto):
+                widget.setEnabled(False)
         layout.addWidget(buttons)
 
     def _show_file_path(self) -> None:
@@ -160,6 +167,11 @@ class JobDetailsDialog(QDialog):
 
     def _save(self) -> None:
         """Apply the four fields and persist, then let the table catch up."""
+        if self.read_only:
+            return
+        if self.service.store.jobs.get(self.job.id) is not self.job:
+            self.lbl_saved.setText("This job list has changed. Reopen the details to edit it.")
+            return
         self.job.name = self.txt_name.text().strip() or self.job.name
         self.job.fetch_globs = [
             pattern.strip() for pattern in self.txt_globs.text().split(",") if pattern.strip()

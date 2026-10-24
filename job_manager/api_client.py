@@ -235,6 +235,8 @@ class JobManagerClient:
             body["into"] = os.path.abspath(os.path.expanduser(into))
         if names:
             body["names"] = list(names)
+        if wait and timeout is None:
+            timeout = DOWNLOAD_TIMEOUT
         return self.request("POST", f"jobs/{job_id}/download", body=body, timeout=timeout)
 
     def log(self, job_id: str, lines: int = 200, file: str = "") -> str:

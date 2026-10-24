@@ -980,6 +980,7 @@ class JobsDialog(QDialog):
             self._describe(job),
             f"Job Manager {PLUGIN_VERSION} - {job.name}",
             self,
+            read_only=self.viewing_archive() or self.viewing_reconstructed(),
         )
         dialog.show()
         # Held so Python does not collect the window the moment this returns.
@@ -1356,18 +1357,18 @@ class JobsDialog(QDialog):
                 return job.log_file
         return ""
 
-    def open_result_files(self, paths: List[str]) -> None:
+    def open_result_files(self, paths: List[str]) -> bool:
         """Hand the most interesting downloaded file to the host application."""
         target = pick_primary_result(paths, self._log_name_for(paths))
         if not target:
-            return
+            return False
         if is_text_file(target):
-            self.show_text_file(target)
-            return
+            return self.show_text_file(target)
         from . import get_context
 
         if open_in_host(target):
             self._append_message(f"Opened {os.path.basename(target)}")
+            return True
         elif get_context() is None:
             # Run on its own there is no MoleditPy to hand it to; saying only
             # "Downloaded" read as the Open button having done nothing.
@@ -1375,13 +1376,15 @@ class JobsDialog(QDialog):
         else:
             self._append_message(f"Downloaded {target}")
 
-    def show_text_file(self, path: str) -> None:
+        return False
+
+    def show_text_file(self, path: str) -> bool:
         """A file as plain text, in a window of this plugin's own."""
         try:
             dialog = show_text_window(path, self)
         except OSError as exc:
             self._append_error(f"Could not read {path}: {exc}")
-            return
+            return False
         self._detail_dialogs.append(dialog)
         dialog.finished.connect(
             lambda *_: (
@@ -1389,6 +1392,7 @@ class JobsDialog(QDialog):
             )
         )
         self._append_message(f"Opened {os.path.basename(path)}")
+        return True
 
     # --- drag and drop ------------------------------------------------------
 

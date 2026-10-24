@@ -402,6 +402,9 @@ def submit_to_runner(
     if not (preset.command_template or "").strip():
         raise ValueError("No command to run")
 
+    remote_runner.require_entry(remote_runner.entry_name(1, job.id, flavour.ENTRY_SUFFIX))
+    if after_job is not None:
+        remote_runner.require_entry(remote_runner.entry_name(1, after_job.id, flavour.ENTRY_SUFFIX))
     name_job_files(job, scheduler)
     # Before anything is uploaded; see submit_job.
     input_name = input_name_for(job, local_files)
@@ -495,6 +498,7 @@ def _prepare_runner(transport: Transport, host: HostProfile) -> str:
             host.runner_memory_mb,
         )
     )
+    setup.check("prepare helper queue")
     # Named after the plugin's own version, not a content hash: the script is
     # fixed for the life of a release, so this is an equally reliable way to
     # tell whether the host already has the current one, and it is a name a
@@ -519,6 +523,7 @@ def _start_runner(transport: Transport, host: HostProfile, script_name: str, wha
     # The versioned name, not the default: the script is named per version, so
     # starting "the runner" by a fixed name starts a file that is not there.
     started = transport.run(flavour.ensure_runner_command(directory, script_name))
+    started.check("start helper queue")
     if "missing" in (started.stdout or ""):
         # The queue would sit there for ever otherwise, with the job showing
         # PENDING and nothing on the host to move it.
@@ -698,7 +703,7 @@ def download_host_paths(
             continue
         taken.add(name)
         try:
-            _download_atomic(transport, path, target, local_dir)
+            _download_atomic(transport, path, target, local_dir, overwrite=overwrite)
         except (TransportError, OSError) as exc:
             skipped.append((path, str(exc) or "the transfer failed"))
             continue
@@ -720,6 +725,7 @@ def poll_runner(transport: Transport, host: HostProfile, jobs: Sequence[Job]) ->
 
     directory = remote_runner.runner_dir(effective_root(host))
     result = transport.run(remote_runner.flavour_for(host).list_command(directory))
+    result.check("query helper queue")
     where = remote_runner.parse_listing(result.stdout)
 
     updates: Dict[str, str] = {}

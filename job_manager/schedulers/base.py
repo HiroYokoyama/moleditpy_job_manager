@@ -140,7 +140,7 @@ def requested_cores(preset) -> int:
     cores are free, so it is the request that decides what runs alongside what
     on a machine with no queue of its own.
     """
-    return max(1, int(preset.cpus_per_task or 1))
+    return max(1, int(preset.ntasks or 1)) * max(1, int(preset.cpus_per_task or 1))
 
 
 #: Queue reported something we do not recognise; the poller falls back to the

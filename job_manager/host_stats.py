@@ -13,6 +13,7 @@ seconds when someone is watching and worth nothing at all when nobody is.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Optional
 
 from .remote_runner import CORE_COUNT_SH
@@ -194,8 +195,9 @@ def _numbers(text: str) -> tuple:
 
 def _first_number(text: str) -> Optional[float]:
     try:
-        return float(text)
-    except (TypeError, ValueError):
+        value = float(text)
+        return value if math.isfinite(value) and value >= 0 else None
+    except (TypeError, ValueError, OverflowError):
         return None
 
 

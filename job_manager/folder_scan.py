@@ -165,8 +165,7 @@ def scan_folder(root: str, max_depth: int = MAX_DEPTH, max_files: int = MAX_FILE
         seen += len(names)
         if seen > max_files:
             truncated = True
-            subdirectories[:] = []
-            continue
+            break
         try:
             job = _job_for(directory, names, root)
         except OSError:

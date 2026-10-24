@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -37,6 +38,7 @@ class OpenSSHTransport(Transport):
         self.ssh_exe = ssh_exe
         self.scp_exe = scp_exe
         self._control_dir: Optional[str] = None
+        self._scp_sftp: Optional[bool] = None
 
     # --- option assembly ----------------------------------------------------
 
@@ -135,10 +137,39 @@ class OpenSSHTransport(Transport):
         limit = int(timeout or self.host.command_timeout or 60)
         return self._spawn(self._ssh_argv(wrapped), limit, "remote command")
 
-    def _remote_spec(self, remote_path: str) -> str:
-        # scp needs host:path; the path half is quoted by the remote shell, so
-        # protect it here rather than relying on the local shell (there is none).
-        return f"{self.host.target}:{remote_paths.quote(remote_path)}"
+    def _scp_uses_sftp(self) -> bool:
+        """OpenSSH 9 switched the default protocol and its path-quoting rules."""
+        if self._scp_sftp is None:
+            self._scp_sftp = False
+            try:
+                version = subprocess.run(
+                    [self.ssh_exe, "-V"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    creationflags=_NO_WINDOW,
+                )
+                match = re.search(
+                    r"OpenSSH(?:_for_Windows)?_(\d+)\.(\d+)",
+                    (version.stdout or "") + (version.stderr or ""),
+                )
+                if match:
+                    self._scp_sftp = int(match.group(1)) >= 9
+            except (OSError, subprocess.TimeoutExpired):
+                # Keep legacy quoting on an unknown client: a literal quote on
+                # SFTP fails a transfer; omitting it on SCP could execute text.
+                pass
+        return self._scp_sftp
+
+    def _remote_spec(self, remote_path: str, *, download: bool = False) -> str:
+        if not self._scp_uses_sftp():
+            return f"{self.host.target}:{remote_paths.quote(remote_path)}"
+        path = str(remote_path)
+        if download:
+            # The SFTP download side performs glob expansion even though the
+            # caller supplied one literal file, e.g. calculation[1].out.
+            path = "".join("\\" + char if char in "\\*?[]" else char for char in path)
+        return f"{self.host.target}:{path}"
 
     def upload(self, local_path: str, remote_path: str) -> None:
         argv = self._scp_argv(local_path, self._remote_spec(remote_path))
@@ -151,7 +182,7 @@ class OpenSSHTransport(Transport):
 
     def download(self, remote_path: str, local_path: str) -> None:
         os.makedirs(os.path.dirname(os.path.abspath(local_path)), exist_ok=True)
-        argv = self._scp_argv(self._remote_spec(remote_path), local_path)
+        argv = self._scp_argv(self._remote_spec(remote_path, download=True), local_path)
         result = self._spawn(argv, int(self.host.command_timeout or 60) * 10, "download")
         if not result.ok:
             raise TransportError(

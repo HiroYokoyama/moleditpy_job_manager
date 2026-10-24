@@ -18,6 +18,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import logging
+import time
 import os
 import threading
 from typing import Optional
@@ -142,6 +143,7 @@ class ParamikoTransport(Transport):
         try:
             client.connect(**kwargs)
         except paramiko.SSHException as exc:
+            client.close()
             message = str(exc)
             if "not found in known_hosts" in message or isinstance(
                 exc, paramiko.BadHostKeyException
@@ -149,6 +151,7 @@ class ParamikoTransport(Transport):
                 raise HostKeyRejected(host.hostname, message) from exc
             raise TransportError(f"SSH connection failed: {message}") from exc
         except OSError as exc:
+            client.close()
             raise TransportError(f"SSH connection failed: {exc}") from exc
         return client
 
@@ -156,7 +159,7 @@ class ParamikoTransport(Transport):
         with self._lock:
             transport = self._client.get_transport() if self._client else None
             if transport is None or not transport.is_active():
-                self._sftp = None
+                self.close()
                 # A reconnection may land on a different machine behind the same
                 # name, so a home directory learnt from the old one is dropped.
                 self._home = ""
@@ -184,9 +187,31 @@ class ParamikoTransport(Transport):
             client = self._ensure_client()
             try:
                 _stdin, stdout, stderr = client.exec_command(wrapped, timeout=limit)
-                out = stdout.read().decode("utf-8", errors="replace")
-                err = stderr.read().decode("utf-8", errors="replace")
-                rc = stdout.channel.recv_exit_status()
+                channel = stdout.channel
+                out_chunks, err_chunks = [], []
+                deadline = time.monotonic() + limit
+                try:
+                    while True:
+                        # Both streams share an SSH window. Reading stdout to EOF
+                        # first deadlocks if stderr fills that window.
+                        if channel.recv_ready():
+                            out_chunks.append(channel.recv(65536))
+                        if channel.recv_stderr_ready():
+                            err_chunks.append(channel.recv_stderr(65536))
+                        if (
+                            channel.exit_status_ready()
+                            and not channel.recv_ready()
+                            and not channel.recv_stderr_ready()
+                        ):
+                            break
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError("SSH command timed out")
+                        time.sleep(0.005)
+                    rc = channel.recv_exit_status()
+                finally:
+                    channel.close()
+                out = b"".join(out_chunks).decode("utf-8", errors="replace")
+                err = b"".join(err_chunks).decode("utf-8", errors="replace")
             except Exception as exc:  # paramiko raises a wide family here
                 raise TransportError(f"Remote command failed: {exc}") from exc
         return CommandResult(rc, out, err)
@@ -199,12 +224,16 @@ class ParamikoTransport(Transport):
         one extra command per uploaded file, and a download ran one per fetched
         result -- to ask an unchanging question.
         """
-        if not path.startswith("~"):
+        if path != "~" and not path.startswith(("~/", "~\\")):
             return path
         with self._lock:
             if not self._home:
-                result = self.run('printf %s "$HOME"', timeout=20)
-                self._home = (result.stdout or "").strip()
+                if self.host.scheduler == "windows":
+                    self._home = self._ensure_sftp().normalize(".")
+                else:
+                    result = self.run('printf %s "$HOME"', timeout=20)
+                    result.check("resolve remote home")
+                    self._home = (result.stdout or "").strip()
             if not self._home:
                 raise TransportError("Could not resolve the remote home directory")
             return self._home + path[1:]

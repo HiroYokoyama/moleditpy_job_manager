@@ -48,7 +48,7 @@ class Resources(NamedTuple):
 def _int(text: str) -> int:
     try:
         return int(float(text))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return 0
 
 
@@ -87,7 +87,7 @@ def _unit_to_mb(value: float, unit: str) -> int:
 # --- ORCA -------------------------------------------------------------------
 
 _ORCA_MAXCORE = re.compile(r"^\s*%\s*maxcore\s+(\d+)", re.IGNORECASE | re.MULTILINE)
-_ORCA_NPROCS = re.compile(r"%\s*pal\b.*?nprocs\s+(\d+)", re.IGNORECASE | re.DOTALL)
+_ORCA_NPROCS = re.compile(r"%\s*pal\b(?:(?!\bend\b).)*?\bnprocs\s+(\d+)", re.IGNORECASE | re.DOTALL)
 _ORCA_PAL_BANG = re.compile(r"^\s*!.*?\bpal(\d+)\b", re.IGNORECASE | re.MULTILINE)
 
 
@@ -179,7 +179,7 @@ def scan_text(text: str) -> Resources:
     for reader in _READERS:
         try:
             found = reader(text)
-        except (ValueError, TypeError):  # a malformed number is not a crash
+        except (ValueError, TypeError, OverflowError):  # a malformed number is not a crash
             logging.debug("Job Manager: input scan failed", exc_info=True)
             continue
         if found.found:
