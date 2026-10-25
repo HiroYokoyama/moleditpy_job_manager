@@ -13,10 +13,6 @@ on:
         description: Optional correlation ID used by the dispatch helper
         type: string
         default: ''
-  pull_request:
-    paths:
-      - .github/workflows/real-schedulers.yml
-      - tests/real_schedulers/**
 
 permissions:
   contents: read
@@ -28,7 +24,7 @@ concurrency:
 jobs:
   scheduler:
     name: Real ${{ matrix.scheduler }}
-    runs-on: ubuntu-22.04
+    runs-on: ${{ matrix.scheduler == 'sge' && 'ubuntu-24.04' || 'ubuntu-22.04' }}
     timeout-minutes: 25
     strategy:
       fail-fast: false

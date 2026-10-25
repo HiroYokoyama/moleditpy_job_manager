@@ -16,8 +16,8 @@ The helper requires Python and an authenticated `gh` CLI. It stores no token and
 uses a unique dispatch ID when waiting, so it cannot accidentally report another
 run's result. `--dry-run` prints the dispatch arguments without contacting GitHub.
 
-The ordinary test matrix is unchanged. This separate workflow runs on demand and
-when its own provisioning/exercise files change in a PR. SLURM/Grid Engine use
+The ordinary test matrix is unchanged. This separate workflow runs only by
+explicit manual dispatch, never automatically on push, PR or release. SLURM/Grid Engine use
 Ubuntu packages; OpenPBS v23.06.06 is built from its pinned upstream commit.
 Grid Engine's parallel test explicitly configures an `smp` PE; production sites
 must supply their own PE name in extra directives.
