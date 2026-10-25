@@ -86,7 +86,8 @@ def read_text_for_view(path: str, limit: int = TEXT_VIEW_LIMIT) -> str:
             unit = 4 if encoding.startswith("utf-32") else 2 if encoding.startswith("utf-16") else 1
             offset += -offset % unit
         handle.seek(offset)
-        data = handle.read()
+        # The file may grow between stat and read (a running calculation).
+        data = handle.read(limit)
     text = data.decode(encoding, errors="replace").removeprefix("\ufeff").replace("\r\n", "\n")
     if size > limit:
         # Cut at a line boundary, so the first line shown is a whole one.
