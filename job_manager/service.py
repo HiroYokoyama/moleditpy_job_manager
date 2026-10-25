@@ -193,13 +193,15 @@ class JobService(QObject):
         """A name for a job the user did not name, from whatever it is about."""
         return SubmissionWorkflow._default_name(local_files, remote_input, remote_dir)
 
-    def _chain_pid(self, after_job: Optional[Job], timeout: float = 120.0) -> str:
+    def _chain_pid(
+        self, after_job: Optional[Job], timeout: float = 120.0, *, require_success: bool = True
+    ) -> str:
         """The predecessor's remote pid, waiting for its submission if needed.
 
-        Called from a worker thread, so blocking is fine. If the predecessor's
-        own submission failed and it never gets a pid, this job simply runs.
+        Called from a worker thread. Missing predecessor ids fail safely
+        instead of silently dropping an after-success dependency.
         """
-        return self.submissions._chain_pid(after_job, timeout)
+        return self.submissions._chain_pid(after_job, timeout, require_success=require_success)
 
     def _local_dir_for(self, name: str, local_files: Optional[List[str]] = None) -> str:
         """Where this job's results will land.
