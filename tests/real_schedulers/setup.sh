@@ -124,6 +124,7 @@ control_slaves FALSE
 job_is_first_task TRUE
 urgency_slots min
 accounting_summary FALSE
+qsort_args NONE
 EOF
     sudo qconf -Ap "$LAB/smp-pe"
     sudo qconf -mattr queue pe_list smp all.q
