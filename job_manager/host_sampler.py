@@ -194,6 +194,7 @@ class HostSampler(QObject):
 
         def work() -> str:
             result = transport.run(command, timeout=max(15, int(host.connect_timeout or 10)))
+            result.check("sample host usage")
             return result.stdout
 
         def ok(text: str) -> None:
