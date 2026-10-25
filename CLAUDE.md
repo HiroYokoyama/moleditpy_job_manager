@@ -28,6 +28,12 @@ Run the full suite and `ruff` before committing. CI runs six jobs — Python
 3.11/3.12/3.13, a real-Qt GUI job, a Windows job, and an integration job that
 clones the main app — so a change that passes only on this machine is not done.
 
+Real-daemon scheduler checks in `tests/real_schedulers/` are separate and manual
+only. Keep `real-schedulers.yml` on `workflow_dispatch`; do not add push, PR,
+release or scheduled triggers. Run selected backends when their behavior changes
+or when explicitly requested, not for every routine update. Retain the dispatch
+helper at `scripts/dispatch_scheduler_validation.py`.
+
 ## Layout
 
 | Module | Role |

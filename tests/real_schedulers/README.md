@@ -5,7 +5,7 @@ daemon in a disposable GitHub-hosted VM and exercises the plugin through
 an actual, loopback-only OpenSSH connection. It uses only synthetic inputs and a
 new `schedulerlab` account. It never opens a developer's JobStore or host settings.
 
-Run it manually after this workflow exists on the default branch:
+Run it manually, selecting a pushed branch or tag with `--ref`:
 
 ```bash
 python scripts/dispatch_scheduler_validation.py --ref main --scheduler all --wait
