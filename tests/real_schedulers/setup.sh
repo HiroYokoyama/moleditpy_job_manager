@@ -168,7 +168,9 @@ EOF
     sudo chmod 4755 /opt/pbs/sbin/pbs_iff /opt/pbs/sbin/pbs_rcp
     sudo /etc/init.d/pbs start
     for attempt in $(seq 1 45); do sudo /opt/pbs/bin/qmgr -c 'print server' && break; sleep 1; done
-    sudo /opt/pbs/bin/qmgr -c "create node $host"
+    if ! sudo /opt/pbs/bin/qmgr -c "print node $host" >/dev/null 2>&1; then
+      sudo /opt/pbs/bin/qmgr -c "create node $host"
+    fi
     sudo /opt/pbs/bin/qmgr -c 'set server scheduling = True'
     sudo /opt/pbs/bin/qmgr -c 'set server scheduler_iteration = 1'
     sudo /opt/pbs/bin/qmgr -c 'set server job_history_enable = True'
