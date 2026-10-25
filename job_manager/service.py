@@ -401,12 +401,13 @@ class JobService(QObject):
         run_async(self.pool, work, on_success=on_ok, on_error=on_error, owner=owner)
 
     def cancel(self, job: Job, release_dependents: bool = True) -> None:
-        """Cancel one job, and by default let the jobs behind it carry on.
+        """Cancel one job, releasing helper-queue dependents when requested.
 
         Cancelling the middle job used to take the rest of the chain with it,
         since a cancelled job leaves no exit code for the helper queue to
-        check. Dependents are released on the host, so it holds even with
-        MoleditPy closed, unless the caller says otherwise.
+        check. Helper dependents are released on the host, so it holds even
+        with MoleditPy closed, unless the caller says otherwise. Native queue
+        dependencies remain under that scheduler's control.
         """
         host = self.store.hosts.get(job.host_id)
         if host is None:
@@ -420,7 +421,7 @@ class JobService(QObject):
             return
         dependents = (
             self.store.dependents_of(job.id)
-            if release_dependents and not host.is_job_server
+            if release_dependents and host.uses_remote_runner
             else []
         )
 

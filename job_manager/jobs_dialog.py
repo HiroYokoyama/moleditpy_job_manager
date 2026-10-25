@@ -698,9 +698,15 @@ class JobsDialog(QDialog):
         # queued behind it -- so ask outright rather than decide.
         box = QMessageBox(self)
         box.setWindowTitle("Cancel job")
-        box.setText(
-            f"'{job.name}' has {len(dependents)} job(s) queued behind it.\n\n"
+        host = self.store.hosts.get(job.host_id)
+        explanation = (
             "Cancel this one and let the rest run, or cancel the whole chain?"
+            if host is not None and host.uses_remote_runner
+            else "Cancel only this job, or cancel the whole chain? Jobs requiring "
+            "its successful completion may remain blocked by the scheduler."
+        )
+        box.setText(
+            f"'{job.name}' has {len(dependents)} job(s) queued behind it.\n\n" + explanation
         )
         this_one = box.addButton("Cancel this job", QMessageBox.ButtonRole.AcceptRole)
         whole_chain = box.addButton("Cancel the chain", QMessageBox.ButtonRole.DestructiveRole)

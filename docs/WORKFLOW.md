@@ -369,6 +369,11 @@ predecessor ending regardless, so there is nothing to choose.
 A new job never queues behind a job that is itself blocked: joining a dead
 chain would strand it too.
 
+Cancelling one job releases its dependents in the built-in helper queue by
+default. For a native scheduler, existing dependency conditions are retained:
+an after-success job may remain blocked after its predecessor is cancelled.
+Use **Cancel the chain** when all of the dependent jobs should be cancelled.
+
 You can still write a dependency by hand in *Extra directives* — anything you
 put there lands in the directive block, ahead of the first command, which is
 where a scheduler stops reading.
