@@ -110,7 +110,7 @@ EOF
     fi
     sudo qconf -mattr queue hostlist "$host" all.q
     sudo qconf -mattr queue slots 2 all.q
-    sudo qconf -mattr queue load_thresholds NONE all.q
+    sudo qconf -rattr queue load_thresholds NONE all.q
     sudo qconf -mattr queue shell /bin/bash all.q
     cat > "$LAB/smp-pe" <<'EOF'
 pe_name smp
