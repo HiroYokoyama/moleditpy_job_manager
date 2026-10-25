@@ -425,13 +425,6 @@ class JobService(QObject):
             if release_dependents and not host.is_job_server
             else []
         )
-        if dependents:
-            # Recorded before the cancel: stops the monitor calling them
-            # blocked, and must survive a restart.
-            for dependent in dependents:
-                dependent.chain_any = True
-                dependent.touch()
-            self.store.save_jobs()
 
         def work() -> None:
             if host.is_job_server:
@@ -452,6 +445,10 @@ class JobService(QObject):
         def done(_result) -> None:
             if self.store.jobs.get(job.id) is not job:
                 return
+            for dependent in dependents:
+                if self.store.jobs.get(dependent.id) is dependent:
+                    dependent.chain_any = True
+                    dependent.touch()
             if host.is_job_server:
                 job.touch(_result["state"])
                 self.store.save_jobs()

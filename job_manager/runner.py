@@ -854,7 +854,9 @@ def cancel_in_runner(transport: Transport, host: HostProfile, job: Job) -> None:
         # for anyway when a submission is cancelled while it is still uploading.
         return
     directory = remote_runner.runner_dir(effective_root(host))
-    transport.run(remote_runner.flavour_for(host).cancel_command(directory, job.remote_job_id))
+    transport.run(
+        remote_runner.flavour_for(host).cancel_command(directory, job.remote_job_id)
+    ).check("cancel helper job")
 
 
 def release_in_runner(transport: Transport, host: HostProfile, job: Job) -> None:
@@ -867,7 +869,9 @@ def release_in_runner(transport: Transport, host: HostProfile, job: Job) -> None
     if not job.remote_job_id:
         return
     directory = remote_runner.runner_dir(effective_root(host))
-    transport.run(remote_runner.flavour_for(host).release_command(directory, job.remote_job_id))
+    transport.run(
+        remote_runner.flavour_for(host).release_command(directory, job.remote_job_id)
+    ).check("release helper job dependency")
 
 
 def poll_host(transport: Transport, host: HostProfile, jobs: Sequence[Job]) -> Dict[str, str]:
