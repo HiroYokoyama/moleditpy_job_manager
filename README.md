@@ -141,7 +141,14 @@ tests additionally use mocked connections. A separate, manually dispatched
 OpenPBS and Grid Engine daemons in disposable environments and exercises them
 through real SSH, using synthetic inputs. It covers submission, result transfer,
 CPU allocation, cancellation, dependencies and scheduled starts. It does not run
-on routine pushes, PRs or releases. Single-node lab results do not certify every
+on routine pushes, PRs or releases.
+
+**Verified with real scheduler daemons on 2026-10-25:** all cases passed on
+[SLURM 21.08.5](https://github.com/HiroYokoyama/moleditpy_job_manager/actions/runs/40172047252),
+[OpenPBS 23.06.06](https://github.com/HiroYokoyama/moleditpy_job_manager/actions/runs/40173181911),
+and [Debian Grid Engine 8.1.9](https://github.com/HiroYokoyama/moleditpy_job_manager/actions/runs/40172529771).
+These used synthetic jobs, real SSH and single-node disposable environments.
+Single-node lab results do not certify every
 Torque/commercial UGE version, multinode MPI/GPU setup or site-specific policy.
 
 ## Scheduling and monitoring
