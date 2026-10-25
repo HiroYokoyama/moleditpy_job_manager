@@ -21,6 +21,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: real-schedulers-${{ github.event.pull_request.number || github.ref }}-${{ inputs.scheduler || 'all' }}
+  cancel-in-progress: true
+
 jobs:
   scheduler:
     name: Real ${{ matrix.scheduler }}
@@ -32,10 +36,13 @@ jobs:
         scheduler: ${{ fromJSON(inputs.scheduler == 'slurm' && '["slurm"]' || inputs.scheduler == 'pbs' && '["pbs"]' || inputs.scheduler == 'sge' && '["sge"]' || '["slurm","pbs","sge"]') }}
     env:
       SCHEDULER: ${{ matrix.scheduler }}
-      LAB: ${{ runner.temp }}/scheduler-lab
-      MOLEDITPY_JOB_MANAGER_DIR: ${{ runner.temp }}/scheduler-lab/plugin-data
     steps:
       - uses: actions/checkout@v4
+      - name: Select isolated lab storage
+        shell: bash
+        run: |
+          echo "LAB=$RUNNER_TEMP/scheduler-lab" >> "$GITHUB_ENV"
+          echo "MOLEDITPY_JOB_MANAGER_DIR=$RUNNER_TEMP/scheduler-lab/plugin-data" >> "$GITHUB_ENV"
       - name: Provision a disposable scheduler and localhost SSH
         shell: bash
         run: |
