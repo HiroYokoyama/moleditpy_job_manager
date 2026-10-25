@@ -70,6 +70,7 @@ class PbsScheduler(Scheduler):
     name = "pbs"
     label = "PBS / Torque"
     order = 40
+    start_time_prefix = "#PBS -a"
 
     def directives(self, job_name: str, preset: SubmitPreset, log_file: str) -> List[str]:
         lines = [
@@ -144,14 +145,9 @@ class PbsScheduler(Scheduler):
             return []
         # PBS -a takes [[[[CC]YY]MM]DD]hhmm[.SS], not an ISO timestamp.
         #
-        # Known limitation: that stamp carries no timezone and the server reads
-        # it in *its* local time, so a start time chosen here lands wrong by the
-        # difference between the two clocks. SLURM avoids this with `now+N`;
-        # PBS has no relative form, and the only correct fix is to learn the
-        # host's UTC offset at submit time -- a round trip this deliberately
-        # does not spend without being asked. Writing the local stamp is what
-        # a user typing `qsub -a` by hand would get, so it is at least the
-        # behaviour the site's own documentation describes.
+        # This is the local preview. At submission the runner asks the qsub
+        # host to format the target epoch and overrides this text, including
+        # that date's DST offset, without changing the job's TZ environment.
         return [f"#PBS -a {time.strftime('%Y%m%d%H%M.%S', time.localtime(target))}"]
 
     def dependency_directives(self, after_id: str, any_outcome: bool = False) -> List[str]:

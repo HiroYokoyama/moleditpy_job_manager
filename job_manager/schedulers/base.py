@@ -250,6 +250,8 @@ class Scheduler(ABC):
     #: ask, so those fields do nothing on them and the wizard greys them out
     #: rather than letting a user type a walltime nothing will enforce.
     queue_directives: bool = True
+    #: Nonempty when an absolute -a date must be formatted on the qsub host.
+    start_time_prefix: str = ""
 
     # --- script -------------------------------------------------------------
 
@@ -283,6 +285,7 @@ class Scheduler(ABC):
         sentinel: str = SENTINEL_NAME,
         preamble: Sequence[str] = (),
         relay_lines: Sequence[str] = (),
+        start_time_text: str = "",
     ) -> str:
         """Assemble the complete run script, sentinel included.
 
@@ -318,7 +321,11 @@ class Scheduler(ABC):
         lines: List[str] = ["#!/bin/bash"]
         lines += self.directives(job_name, preset, log_file)
         dependency = self.dependency_directives(run_after, any_outcome=run_after_any)
-        start_time = self.start_time_directives(start_after)
+        start_time = (
+            [f"{self.start_time_prefix} {start_time_text}"]
+            if self.start_time_prefix and start_time_text
+            else self.start_time_directives(start_after)
+        )
         lines += dependency
         lines += start_time
         lines += [directive for directive in (preset.extra_directives or []) if directive.strip()]

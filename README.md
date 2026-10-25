@@ -136,9 +136,13 @@ job pending without a log. Real WSL tests run when a distribution with bash is
 available; Windows CI also tests the transport through a shell-backed stand-in.
 
 OpenSSH and paramiko are verified against real hosts; their automated transport
-tests additionally use mocked connections. SLURM, PBS/Torque and SGE/UGE have
-scheduler unit tests, but have not yet been verified on a real cluster. Reports
-with the scheduler version and error text are welcome.
+tests additionally use mocked connections. A separate, manually dispatched
+[real scheduler workflow](tests/real_schedulers/README.md) provisions SLURM,
+OpenPBS and Grid Engine daemons in disposable environments and exercises them
+through real SSH, using synthetic inputs. It covers submission, result transfer,
+CPU allocation, cancellation, dependencies and scheduled starts. It does not run
+on routine pushes, PRs or releases. Single-node lab results do not certify every
+Torque/commercial UGE version, multinode MPI/GPU setup or site-specific policy.
 
 ## Scheduling and monitoring
 

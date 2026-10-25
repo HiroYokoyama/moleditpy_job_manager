@@ -351,11 +351,12 @@ The two mechanisms differ here, and the difference matters:
 | SGE | they run anyway — `-hold_jid` releases on the job ending, not on it succeeding |
 | None (background) | they run anyway — `kill -0` stops matching the moment the process is gone |
 
-On SLURM and PBS the queue goes on reporting such a job as PENDING, which reads
-as "starting soon" and is the opposite of the truth. Job Manager shows it as
-**BLOCKED** instead, names the job that actually died, and writes a line to the
-log the moment the predecessor fails. Nothing is cancelled for you — the usual
-fix is to correct the input and resubmit — but you are told.
+If the scheduler retains such a job as PENDING, Job Manager shows it as
+**BLOCKED**, names the failed predecessor, and writes a line to the log.
+OpenPBS 23.06 instead automatically deletes an unsatisfied `afterok` dependent.
+Its wrapper never runs or writes an exit-code sentinel, so Job Manager reports
+**LOST** rather than claiming the calculation succeeded. Job Manager does not
+cancel these jobs itself. Correct the input and resubmit the required jobs.
 
 The whole chain is marked, not only the job immediately behind the failure: if
 three jobs are queued in a line and the first fails, all the rest are stranded,
@@ -600,11 +601,11 @@ day. Chaining and a start time can be combined: "after that job, and not before
 
 **Timezones.** The no-queue wait compares epoch seconds, and SLURM is told a
 delay rather than a clock time, so both start at the instant you meant however
-the cluster's clock is set. PBS and SGE have no relative form: their `-a` stamp
-carries no timezone and the server reads it in *its* local time, so if the
-cluster does not keep the same time as this machine, a start time on those two
-is out by the difference. Give the time in the cluster's timezone there, or use
-a chain instead.
+the cluster's clock is set. PBS and SGE have no relative form, so the plugin
+formats the chosen instant on the submission host before uploading the script.
+This uses one additional SSH command only for scheduled PBS/SGE jobs and respects
+the timezone and daylight-saving rules at the target date. If that host cannot
+format the date, submission stops with an error instead of queuing a wrong time.
 
 ## 4. Watch
 

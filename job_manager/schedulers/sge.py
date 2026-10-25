@@ -61,6 +61,7 @@ class SgeScheduler(Scheduler):
     name = "sge"
     label = "SGE / UGE"
     order = 50
+    start_time_prefix = "#$ -a"
     # -hold_jid releases on the predecessor finishing, however it finished.
     chain_releases_on_failure = True
 
@@ -114,11 +115,8 @@ class SgeScheduler(Scheduler):
             return []
         # SGE -a takes [[CC]YY]MMDDhhmm[.SS].
         #
-        # Known limitation, the same one pbs.py records: the stamp carries no
-        # timezone and the qmaster reads it in its own local time, so a start
-        # time is out by the difference between the two clocks. SGE has no
-        # relative form either; fixing it properly means asking the host for
-        # its UTC offset at submit time.
+        # Local preview only. The runner formats the epoch on the qsub host
+        # before uploading the real script; see pbs.py for the same mechanism.
         return [f"#$ -a {time.strftime('%Y%m%d%H%M.%S', time.localtime(target))}"]
 
     def dependency_directives(self, after_id: str, any_outcome: bool = False) -> List[str]:

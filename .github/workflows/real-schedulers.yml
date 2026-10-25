@@ -1,0 +1,85 @@
+name: Real Scheduler Validation
+run-name: Real schedulers ${{ inputs.scheduler || 'all' }} ${{ inputs.dispatch_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      scheduler:
+        description: Scheduler to exercise
+        type: choice
+        options: [all, slurm, pbs, sge]
+        default: all
+      dispatch_id:
+        description: Optional correlation ID used by the dispatch helper
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: real-schedulers-${{ github.event.pull_request.number || github.ref }}-${{ inputs.scheduler || 'all' }}
+  cancel-in-progress: true
+
+jobs:
+  scheduler:
+    name: Real ${{ matrix.scheduler }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        scheduler: ${{ fromJSON(inputs.scheduler == 'slurm' && '["slurm"]' || inputs.scheduler == 'pbs' && '["pbs"]' || inputs.scheduler == 'sge' && '["sge"]' || '["slurm","pbs","sge"]') }}
+    env:
+      SCHEDULER: ${{ matrix.scheduler }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select isolated lab storage
+        shell: bash
+        run: |
+          echo "LAB=$RUNNER_TEMP/scheduler-lab" >> "$GITHUB_ENV"
+          echo "MOLEDITPY_JOB_MANAGER_DIR=$RUNNER_TEMP/scheduler-lab/plugin-data" >> "$GITHUB_ENV"
+      - name: Provision a disposable scheduler and localhost SSH
+        if: matrix.scheduler != 'sge'
+        shell: bash
+        run: |
+          mkdir -p "$LAB"
+          bash tests/real_schedulers/setup.sh "$SCHEDULER" 2>&1 | tee "$LAB/setup.log"
+      - name: Exercise the plugin against the real scheduler over SSH
+        if: matrix.scheduler != 'sge'
+        shell: bash
+        run: python3 tests/real_schedulers/exercise.py "$SCHEDULER" 2>&1 | tee "$LAB/exercise.log"
+      - name: Exercise Grid Engine in Debian
+        if: matrix.scheduler == 'sge'
+        shell: bash
+        run: |
+          # Ubuntu's Grid Engine package crashes in spooldefaults during
+          # installation (Launchpad #1633251 / #2110075). Use Debian's build.
+          mkdir -p "$LAB"
+          docker run --rm --hostname scheduler-lab \
+            -v "$GITHUB_WORKSPACE:/workspace:ro" -v "$LAB:$LAB" \
+            -e LAB -e MOLEDITPY_JOB_MANAGER_DIR -w /workspace debian:bookworm \
+            bash -c '
+              set -euo pipefail
+              trap '\''bash tests/real_schedulers/diagnostics.sh sge > "$LAB/daemon.log" 2>&1'\'' EXIT
+              apt-get update -qq
+              apt-get install -y --no-install-recommends sudo
+              bash tests/real_schedulers/setup.sh sge 2>&1 | tee "$LAB/setup.log"
+              python3 tests/real_schedulers/exercise.py sge 2>&1 | tee "$LAB/exercise.log"
+            '
+      - name: Collect scheduler diagnostics
+        if: always() && matrix.scheduler != 'sge'
+        shell: bash
+        run: bash tests/real_schedulers/diagnostics.sh "$SCHEDULER" > "$LAB/daemon.log" 2>&1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scheduler-${{ matrix.scheduler }}-${{ github.run_id }}
+          # Never upload the lab directory wholesale: it contains disposable
+          # SSH private keys and the scheduler's authentication/database files.
+          path: |
+            ${{ env.LAB }}/setup.log
+            ${{ env.LAB }}/exercise.log
+            ${{ env.LAB }}/daemon.log
+            ${{ env.LAB }}/report.json
+          if-no-files-found: warn

@@ -246,6 +246,27 @@ if __name__ == "__main__":
 
 
 class TestProtocolSpecificPaths(unittest.TestCase):
+    def test_legacy_download_quotes_parents_without_quoting_the_basename(self):
+        import shlex
+
+        transport = OpenSSHTransport(make_host())
+        transport._scp_sftp = False
+        for path in [
+            "/remote/dir with space/result.out",
+            "/remote/dir's data/a';$(touch injected)[1]*?.out",
+            "~/job results/result.out",
+            "/result.out",
+            "result.out",
+        ]:
+            with self.subTest(path=path):
+                spec = transport._remote_spec(path, download=True).split(":", 1)[1]
+                # The shell sees exactly one literal argument, while the
+                # basename has no enclosing quotes left for scp's fnmatch.
+                expected = "./" + path if "/" not in path else path
+                self.assertEqual(shlex.split(spec), [expected])
+                self.assertFalse(spec.endswith("'"))
+                self.assertNotIn("-T", transport._scp_argv("src", "dst"))
+
     def test_modern_sftp_keeps_spaces_and_shell_characters_literal(self):
         transport = OpenSSHTransport(make_host())
         transport._scp_sftp = True

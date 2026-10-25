@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import tempfile
 import time
 from typing import Dict, List, Optional, Sequence
@@ -312,6 +313,24 @@ def submit_job(
         submit_arguments(*options)
     except ValueError as exc:
         raise ValueError(f"Submit options could not be read: {exc}") from None
+    schedule_options = {}
+    scheduled_start = start_after or job.start_after
+    if scheduler.start_time_prefix and scheduled_start > 0:
+        # qsub parses its -a date in the submission host's timezone. Format
+        # the requested epoch there (not on the GUI machine), including DST
+        # at the target date. No timezone override leaks into -V job exports.
+        target = int(scheduled_start)
+        result = transport.run(
+            f"date -d @{target} +%Y%m%d%H%M.%S 2>/dev/null || date -r {target} +%Y%m%d%H%M.%S"
+        )
+        output = result.stdout.strip().splitlines()
+        stamp = output[-1].strip() if output else ""
+        if not result.ok or not re.fullmatch(r"[0-9]{12}\.[0-9]{2}", stamp):
+            raise TransportError(
+                "Could not format the scheduled start time on the submission host: "
+                + (result.stderr or result.stdout).strip()[:300]
+            )
+        schedule_options["start_time_text"] = stamp
     prepare_remote_dir(transport, host, job)
     # After the directory is decided, so {jobdir} has something to say.
     extra_args = submit_arguments(
@@ -341,6 +360,7 @@ def submit_job(
         sentinel=sentinel_for(job),
         preamble=host.environment_commands(),
         relay_lines=relay_lines,
+        **schedule_options,
     )
     job.command = script
     script_name = script_name_for(job, scheduler)
