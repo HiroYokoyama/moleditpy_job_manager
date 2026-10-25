@@ -45,7 +45,7 @@ EOF
     printf 'gridengine-common shared/gridenginemaster string %s\n' "$host" | sudo debconf-set-selections
     printf 'gridengine-common shared/gridenginecell string default\n' | sudo debconf-set-selections
     sudo -E apt-get install -y --no-install-recommends gridengine-master gridengine-exec gridengine-client
-    sudo systemctl restart gridengine-master
+    sudo service gridengine-master restart
     for attempt in $(seq 1 30); do sudo qconf -ss && break; sleep 1; done
     sudo qconf -ss | grep -Fx "$host" || sudo qconf -as "$host"
     if ! sudo qconf -sel | grep -Fx "$host"; then
@@ -73,7 +73,7 @@ EOF
     sudo qconf -mattr queue pe_list smp all.q
     sudo qconf -ssconf | sed 's/^schedule_interval .*/schedule_interval 00:00:01/' > "$LAB/sched-conf"
     sudo qconf -Msconf "$LAB/sched-conf"
-    sudo systemctl restart gridengine-exec
+    sudo service gridengine-exec restart
     sudo qmod -e all.q
     qstat -f
     qsub -help 2>&1 | head -n 2 || true
@@ -91,7 +91,7 @@ EOF
     (
       cd "$LAB/openpbs-source"
       ./autogen.sh
-      ./configure --prefix=/opt/pbs --with-database-dir=/usr/lib/postgresql/14
+      ./configure --prefix=/opt/pbs
       make -j2
       sudo make install
     )
@@ -106,6 +106,7 @@ PBS_START_MOM=1
 PBS_HOME=/var/spool/pbs
 PBS_CORE_LIMIT=unlimited
 PBS_SCP=/usr/bin/scp
+PBS_DB_EXEC=/usr/lib/postgresql/14
 EOF
     sudo chmod 4755 /opt/pbs/sbin/pbs_iff /opt/pbs/sbin/pbs_rcp
     sudo /etc/init.d/pbs start

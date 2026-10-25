@@ -1,7 +1,7 @@
 # Real scheduler validation
 
 `Real Scheduler Validation` provisions an actual SLURM, OpenPBS or Grid Engine
-daemon in a disposable GitHub-hosted Ubuntu VM and exercises the plugin through
+daemon in a disposable GitHub-hosted VM and exercises the plugin through
 an actual, loopback-only OpenSSH connection. It uses only synthetic inputs and a
 new `schedulerlab` account. It never opens a developer's JobStore or host settings.
 
@@ -17,8 +17,10 @@ uses a unique dispatch ID when waiting, so it cannot accidentally report another
 run's result. `--dry-run` prints the dispatch arguments without contacting GitHub.
 
 The ordinary test matrix is unchanged. This separate workflow runs only by
-explicit manual dispatch, never automatically on push, PR or release. SLURM/Grid Engine use
-Ubuntu packages; OpenPBS v23.06.06 is built from its pinned upstream commit.
+explicit manual dispatch, never automatically on push, PR or release. SLURM uses
+Ubuntu packages; Grid Engine uses Debian's packages in a disposable container
+because Ubuntu's build crashes during installation (Launchpad #1633251/#2110075).
+OpenPBS v23.06.06 is built from its pinned upstream commit.
 Grid Engine's parallel test explicitly configures an `smp` PE; production sites
 must supply their own PE name in extra directives.
 

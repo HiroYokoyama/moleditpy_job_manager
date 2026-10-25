@@ -128,6 +128,23 @@ def main():
         assert normal.rc == 0
         assert fetch(normal, "result.out") == source.read_text(encoding="utf-8")
         passed("SSH upload, real submit, completion sentinel, result download, paths with spaces")
+        for index, filename in enumerate(
+            [
+                "space name.out",
+                "quote';$(printf x).out",
+                "a[1]*?.out",
+                "back\\slash.out",
+                "日本語.out",
+            ]
+        ):
+            remote_path = normal.remote_dir.rstrip("/") + "/" + filename
+            downloaded = lab / f"literal-download-{index}"
+            transport.upload(str(source), remote_path)
+            transport.download(remote_path, str(downloaded))
+            assert downloaded.read_bytes() == source.read_bytes(), filename
+        passed(
+            "literal filenames with spaces, quotes, shell syntax, globs, backslashes and Unicode"
+        )
 
         failed = submit("exit 7")
         wait(failed, {STATE_FAILED})
