@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from . import api_core
+from .window_utils import set_spin_value
 
 _EXPLANATION = (
     "Let another program on this machine submit jobs, read their state and "
@@ -63,7 +64,9 @@ class ApiDialog(QDialog):
         port_row.addWidget(QLabel("Port:"))
         self.spin_port = QSpinBox()
         self.spin_port.setRange(1024, 65535)
-        self.spin_port.setValue(int(self.service.store.get_pref("api_port", api_core.DEFAULT_PORT)))
+        set_spin_value(
+            self.spin_port, int(self.service.store.get_pref("api_port", api_core.DEFAULT_PORT))
+        )
         self.spin_port.setToolTip(
             "A port already in use is not an error: the API takes a free one "
             "instead, and clients that discover it are unaffected."

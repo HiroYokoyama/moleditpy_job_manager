@@ -170,6 +170,8 @@ def _coerce(value: Any, default: Any) -> Any:
             return _NOT_GIVEN
         if isinstance(default, int) and value != converted:
             return _NOT_GIVEN
+        if isinstance(default, int) and not -(2**31) <= converted < 2**31:
+            return _NOT_GIVEN
         return converted
     if isinstance(default, str):
         return value if isinstance(value, str) else _NOT_GIVEN

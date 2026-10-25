@@ -213,3 +213,8 @@ class TestAMalformedRecordKeepsItsDefaults(unittest.TestCase):
 
     def test_an_integer_too_large_for_a_timestamp_keeps_the_default(self):
         self.assertEqual(Job.from_dict({"submitted_at": 10**400}).submitted_at, 0.0)
+
+    def test_huge_settings_integers_do_not_reach_qt_but_exit_codes_survive(self):
+        self.assertEqual(HostProfile.from_dict({"port": 10**40}).port, 22)
+        self.assertEqual(SubmitPreset.from_dict({"cpus_per_task": 10**40}).cpus_per_task, 1)
+        self.assertEqual(Job.from_dict({"rc": 0xC0000005}).rc, 0xC0000005)

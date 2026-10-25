@@ -13,6 +13,18 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 
+QT_INT_MAX = 2**31 - 1
+
+
+def set_spin_value(spin, value: int, *, extend: bool = False) -> None:
+    """Check Python integers before crossing Qt's signed-int boundary."""
+    value = int(value)
+    if extend:
+        if not spin.minimum() <= value <= QT_INT_MAX:
+            raise ValueError(f"Resource value {value} is outside the supported range")
+        spin.setMaximum(max(spin.maximum(), value))
+    spin.setValue(max(spin.minimum(), min(spin.maximum(), value)))
+
 
 def make_independent(dialog) -> None:
     """Own task bar entry, own minimise and maximise, own life on screen."""
