@@ -234,6 +234,40 @@ class TestSubmit(unittest.TestCase):
         self.assertEqual(self.submit(job=job).remote_dir, "/scratch/preset")
 
 
+class TestScheduledQsubTimezone(unittest.TestCase):
+    def test_scheduled_qsub_uses_host_date_without_changing_its_environment(self):
+        for scheduler, prefix in [("pbs", "#PBS -a"), ("sge", "#$ -a")]:
+            with self.subTest(scheduler=scheduler):
+                host = make_host(scheduler=scheduler)
+                transport = FakeTransport(host)
+                transport.when("date -d @", stdout="login banner\n202610270300.00\n")
+                transport.when("qsub", stdout="81" if scheduler == "pbs" else "Your job 81")
+                job = Job(name="scheduled", start_after=1793066400)
+                runner.submit_job(transport, host, make_preset(), job, [])
+                self.assertIn(prefix + " 202610270300.00", job.command)
+                self.assertEqual(transport.count_matching("date -d @1793066400"), 1)
+                self.assertFalse(transport.ran("TZ="))
+
+    def test_unreadable_host_date_prevents_upload_and_submission(self):
+        for output, rc in [("", 0), ("202610270300.00; bad", 0), ("202610270300.00", 1)]:
+            with self.subTest(output=output, rc=rc):
+                host = make_host(scheduler="pbs")
+                transport = FakeTransport(host).when("date -d @", stdout=output, rc=rc)
+                with self.assertRaisesRegex(TransportError, "scheduled start"):
+                    runner.submit_job(
+                        transport, host, make_preset(), Job(name="j", start_after=1793066400), []
+                    )
+                self.assertEqual(transport.uploads, [])
+                self.assertFalse(transport.ran("qsub"))
+                self.assertFalse(transport.ran("mkdir"))
+
+    def test_unscheduled_qsub_does_not_query_the_host_clock(self):
+        host = make_host(scheduler="pbs")
+        transport = FakeTransport(host).when("qsub", stdout="81")
+        runner.submit_job(transport, host, make_preset(), Job(name="j"), [])
+        self.assertFalse(transport.ran("date -d @"))
+
+
 class TestPollHost(unittest.TestCase):
     def setUp(self):
         self.host = make_host()

@@ -600,11 +600,11 @@ day. Chaining and a start time can be combined: "after that job, and not before
 
 **Timezones.** The no-queue wait compares epoch seconds, and SLURM is told a
 delay rather than a clock time, so both start at the instant you meant however
-the cluster's clock is set. PBS and SGE have no relative form: their `-a` stamp
-carries no timezone and the server reads it in *its* local time, so if the
-cluster does not keep the same time as this machine, a start time on those two
-is out by the difference. Give the time in the cluster's timezone there, or use
-a chain instead.
+the cluster's clock is set. PBS and SGE have no relative form, so the plugin
+formats the chosen instant on the submission host before uploading the script.
+This uses one additional SSH command only for scheduled PBS/SGE jobs and respects
+the timezone and daylight-saving rules at the target date. If that host cannot
+format the date, submission stops with an error instead of queuing a wrong time.
 
 ## 4. Watch
 
