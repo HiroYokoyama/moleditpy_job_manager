@@ -163,6 +163,20 @@ class OpenSSHTransport(Transport):
 
     def _remote_spec(self, remote_path: str, *, download: bool = False) -> str:
         if not self._scp_uses_sftp():
+            if download:
+                # Legacy scp checks the received basename with fnmatch() on
+                # the original argument. Quoting the entire path leaves a
+                # trailing quote in that pattern when a parent has spaces.
+                # Quote parents separately and backslash-escape the basename
+                # for both the remote shell and scp's strict name check.
+                directory, separator, name = str(remote_path).rpartition("/")
+                if any(char in name for char in "\r\n\0"):
+                    raise TransportError(
+                        "Legacy SCP cannot transfer filenames containing line breaks or NUL"
+                    )
+                basename = re.sub(r"([^a-zA-Z0-9_@%+=:,.-])", r"\\\1", name)
+                parent = remote_paths.quote(directory or "/") if separator else "."
+                return f"{self.host.target}:{parent}/{basename}"
             return f"{self.host.target}:{remote_paths.quote(remote_path)}"
         path = str(remote_path)
         if download:
