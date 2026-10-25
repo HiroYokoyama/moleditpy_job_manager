@@ -327,6 +327,12 @@ Each scheduler is told in its own language:
 Submit again and the third job queues behind the *second*, not the first, so a
 chain of any length lines up in order.
 
+If the predecessor is still uploading, Job Manager waits for its queue ID
+before submitting the next job. A failed upload or a timeout fails the dependent
+submission with an explanation; it does not silently remove the dependency.
+An explicitly selected **...even if that job fails** permits a predecessor
+that has already failed before reaching the queue.
+
 It matters most where there is **no queue** — including this machine — because
 nothing else would stop two submissions starting at once and fighting over the
 same cores. A job still waiting there shows as **QUEUED** rather than RUNNING,
