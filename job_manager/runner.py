@@ -600,6 +600,7 @@ def recheck_job(transport: Transport, host: HostProfile, job: Job) -> dict:
         directory = remote_runner.runner_dir(effective_root(host))
         paths.append(remote_paths.join(directory, "status", job.remote_job_id))
     result = transport.run(speak.read_files(paths, _SENTINEL_MARK))
+    result.check("read helper completion status")
     chunks = [chunk.strip() for chunk in (result.stdout or "").split(_SENTINEL_MARK)[1:]]
     sentinel = chunks[0].splitlines()[0].strip() if chunks and chunks[0] else dialect.MISSING
     runner_status = ""
@@ -771,6 +772,7 @@ def _runner_statuses(transport: Transport, directory: str, jobs: Sequence[Job]) 
     speak = dialect.for_host(transport.host)
     paths = [remote_paths.join(directory, "status", job.remote_job_id) for job in jobs]
     result = transport.run(speak.read_files(paths, _SENTINEL_MARK))
+    result.check("read helper completion status")
     chunks = (result.stdout or "").split(_SENTINEL_MARK)[1:]
     statuses: Dict[str, str] = {}
     for index, job in enumerate(jobs):
@@ -924,6 +926,7 @@ def _read_sentinels(transport: Transport, jobs: Sequence[Job]) -> List[str]:
     speak = dialect.for_host(transport.host)
     paths = [remote_paths.join(job.remote_dir, sentinel_for(job)) for job in jobs]
     result = transport.run(speak.read_files(paths, _SENTINEL_MARK))
+    result.check("read job completion status")
 
     chunks = (result.stdout or "").split(_SENTINEL_MARK)[1:]
     outcomes: List[str] = []
