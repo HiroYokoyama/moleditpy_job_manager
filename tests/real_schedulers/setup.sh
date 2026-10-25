@@ -81,7 +81,7 @@ EOF
   pbs)
     sudo -E apt-get install -y --no-install-recommends gcc g++ make libtool libhwloc-dev \
       libx11-dev libxt-dev libedit-dev libical-dev libncurses-dev perl \
-      postgresql-server-dev-all postgresql-contrib python3-dev tcl-dev tk-dev swig \
+      postgresql-server-dev-14 postgresql-contrib-14 postgresql-14 python3-dev tcl-dev tk-dev swig \
       libexpat1-dev libssl-dev libxext-dev libxft-dev autoconf automake pkg-config
     # OpenPBS v23.06.06, pinned rather than following a mutable branch.
     git init "$LAB/openpbs-source"
@@ -91,7 +91,7 @@ EOF
     (
       cd "$LAB/openpbs-source"
       ./autogen.sh
-      ./configure --prefix=/opt/pbs
+      ./configure --prefix=/opt/pbs --with-database-dir=/usr/lib/postgresql/14
       make -j2
       sudo make install
     )

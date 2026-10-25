@@ -108,6 +108,12 @@ def main():
 
     def fetch(job, name):
         paths = fetch_results(transport, job, str(lab / "downloads" / job.id), globs=[name])
+        if not paths:
+            # fetch_results deliberately permits partial transfers. Surface
+            # the actual SSH exception when this one-file check gets none.
+            transport.download(
+                job.remote_dir.rstrip("/") + "/" + name, str(lab / "diagnostic-result")
+            )
         assert len(paths) == 1, (name, paths)
         return Path(paths[0]).read_text(encoding="utf-8")
 
