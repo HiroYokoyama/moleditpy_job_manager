@@ -209,10 +209,11 @@ class TestRoundTrip(ServiceTestCase):
     def test_download_resumes_polling_a_running_job(self):
         job = self.submit()
         job.touch(STATE_RUNNING)
+        self.transport.when("squeue", stdout="4242 RUNNING\n")
 
         def transfer(*args, **kwargs):
             self.service.poller.tick()
-            self.assertFalse(self.service.poller.timer.isActive())
+            self.assertTrue(self.service.poller.timer.isActive())
             return []
 
         with patch("job_manager.service.fetch_results", side_effect=transfer):

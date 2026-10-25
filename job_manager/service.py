@@ -308,7 +308,8 @@ class JobService(QObject):
         previous_state = job.state
         local_dir = into or job.local_dir or self._local_dir_for(job.name, job.input_files)
         job.local_dir = local_dir
-        job.touch(STATE_DOWNLOADING)
+        if not job.is_active:
+            job.touch(STATE_DOWNLOADING)
         self.job_updated.emit(job.id)
 
         def work() -> List[str]:
@@ -339,7 +340,7 @@ class JobService(QObject):
                 )
             )
             job.downloaded = bool(job.downloaded_files)
-            job.touch(previous_state)
+            job.touch(previous_state if job.state == STATE_DOWNLOADING else None)
             self.store.save_jobs()
             self.job_updated.emit(job.id)
             self.poller.start()
@@ -352,7 +353,7 @@ class JobService(QObject):
                 self.download_failed.emit(job.id, "The job list changed during download")
                 return
             job.last_error = message
-            job.touch(previous_state)
+            job.touch(previous_state if job.state == STATE_DOWNLOADING else None)
             self.store.save_jobs()
             self.job_updated.emit(job.id)
             self.poller.start()
@@ -391,9 +392,6 @@ class JobService(QObject):
                 paths = fetch_results(transport, job, cache_dir, globs=[glob.escape(safe_name)])
                 if paths and os.path.isfile(paths[0]):
                     return paths[0]
-                local_path = os.path.join(cache_dir, *safe_name.split("/"))
-                if os.path.isfile(local_path):
-                    return local_path
                 raise FileNotFoundError(
                     f"Remote file '{filename}' was not found or could not be downloaded"
                 )
