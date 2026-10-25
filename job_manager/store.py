@@ -158,7 +158,12 @@ DATA_DIR_ENV = "MOLEDITPY_JOB_MANAGER_DIR"
 
 def _stamp(value: float) -> str:
     """A local ISO timestamp, or empty for "never happened"."""
-    return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(value)) if value else ""
+    if not value:
+        return ""
+    try:
+        return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(value))
+    except (OverflowError, OSError, ValueError):
+        return ""
 
 
 #: States a worker thread owns while uploading/fetching. Nothing can still be

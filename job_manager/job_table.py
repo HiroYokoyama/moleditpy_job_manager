@@ -67,7 +67,10 @@ def format_duration(seconds: float) -> str:
 def format_stamp(stamp: float) -> str:
     if not stamp:
         return "-"
-    return time.strftime("%m-%d %H:%M", time.localtime(stamp))
+    try:
+        return time.strftime("%m-%d %H:%M", time.localtime(stamp))
+    except (OverflowError, OSError, ValueError):
+        return "-"
 
 
 class _StateColorDelegate(QStyledItemDelegate):
