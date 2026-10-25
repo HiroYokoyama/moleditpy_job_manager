@@ -327,6 +327,12 @@ Each scheduler is told in its own language:
 Submit again and the third job queues behind the *second*, not the first, so a
 chain of any length lines up in order.
 
+If the predecessor is still uploading, Job Manager waits for its queue ID
+before submitting the next job. A failed upload or a timeout fails the dependent
+submission with an explanation; it does not silently remove the dependency.
+An explicitly selected **...even if that job fails** permits a predecessor
+that has already failed before reaching the queue.
+
 It matters most where there is **no queue** — including this machine — because
 nothing else would stop two submissions starting at once and fighting over the
 same cores. A job still waiting there shows as **QUEUED** rather than RUNNING,
@@ -362,6 +368,11 @@ predecessor ending regardless, so there is nothing to choose.
 
 A new job never queues behind a job that is itself blocked: joining a dead
 chain would strand it too.
+
+Cancelling one job releases its dependents in the built-in helper queue by
+default. For a native scheduler, existing dependency conditions are retained:
+an after-success job may remain blocked after its predecessor is cancelled.
+Use **Cancel the chain** when all of the dependent jobs should be cancelled.
 
 You can still write a dependency by hand in *Extra directives* — anything you
 put there lands in the directive block, ahead of the first command, which is

@@ -18,6 +18,7 @@ pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 from PySide6.QtCore import Qt  # noqa: E402
 from job_manager.jobs_dialog import JobsDialog  # noqa: E402
 from job_manager.models import SCHEDULER_WINDOWS, Job  # noqa: E402
+from job_manager.transport.base import CommandResult  # noqa: E402
 
 from .fakes import make_host  # noqa: E402
 from .test_dialogs import DialogTestCase  # noqa: E402
@@ -41,12 +42,7 @@ class CountingTransport:
         if self.fail:
             raise RuntimeError(self.fail)
 
-        class Result:
-            stdout = self.output
-            stderr = ""
-            rc = 0
-
-        return Result()
+        return CommandResult(0, self.output, "")
 
     def close(self):
         self.closes += 1

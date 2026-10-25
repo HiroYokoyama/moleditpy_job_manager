@@ -66,6 +66,11 @@ several files creates one job per file; hold **Shift** to submit them together.
 For staged inputs, select **Work already on the host** and check the existing
 remote directory. Command-only jobs need no input file.
 
+Inputs must not use the same names as Job Manager's execution wrapper, log or
+completion files. Conflicts are reported before uploading. Fetching a file that
+is no longer available on the host reports an error instead of showing an old
+cached copy. Downloading a running job keeps its status monitoring active.
+
 ### Command templates and file paths
 
 Templates cover ORCA, Gaussian, CP2K, GAMESS, MOPAC, NWChem, Psi4, PySCF,

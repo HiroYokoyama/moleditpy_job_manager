@@ -3,12 +3,19 @@
 from __future__ import annotations
 
 import copy
-import logging
 import os
 import time
 from typing import List, Optional
 
-from .models import STATE_FAILED, STATE_UPLOADING, HostProfile, Job, SubmitPreset, sanitize_name
+from .models import (
+    STATE_DONE,
+    STATE_FAILED,
+    STATE_UPLOADING,
+    HostProfile,
+    Job,
+    SubmitPreset,
+    sanitize_name,
+)
 from .runner import submit_job, submit_to_runner
 from .tasks import run_async
 
@@ -100,18 +107,19 @@ class SubmissionWorkflow:
             # And before opening the transport, not after: this can wait up to
             # two minutes and needs no connection, so opening first held an
             # idle ssh/ControlMaster the whole time.
-            run_after = "" if host.uses_remote_runner else self.service._chain_pid(after_job)
+            run_after = self.service._chain_pid(after_job, require_success=not job.chain_any)
             transport = self.service.transport_for(host)
             try:
                 if host.uses_remote_runner:
-                    # Takes the dependency by job id and resolves it itself.
+                    # Wait before enqueueing: the helper treats a predecessor
+                    # absent from its directories as a permanently blocked job.
                     return submit_to_runner(
                         transport,
                         host,
                         preset,
                         job,
                         to_upload,
-                        after_job=after_job,
+                        after_job=after_job if run_after else None,
                         relay_source_dir=relay_source_dir,
                         relay_filenames=relay_filenames or (),
                         force=job.force_run,
@@ -156,11 +164,13 @@ class SubmissionWorkflow:
             return os.path.basename(remote_dir.rstrip("/\\")) or "job"
         return "job"
 
-    def _chain_pid(self, after_job: Optional[Job], timeout: float = 120.0) -> str:
+    def _chain_pid(
+        self, after_job: Optional[Job], timeout: float = 120.0, *, require_success: bool = True
+    ) -> str:
         """The predecessor's remote pid, waiting for its submission if needed.
 
-        Called from a worker thread, so blocking is fine. If the predecessor's
-        own submission failed and it never gets a pid, this job simply runs.
+        Called from a worker thread. A failed or timed-out submission must
+        not silently turn an after-success dependency into an independent job.
         """
         if after_job is None:
             return ""
@@ -170,12 +180,16 @@ class SubmissionWorkflow:
             if getattr(self.service, "_shutting_down", False):
                 raise RuntimeError("Job Manager is shutting down")
             if after_job.is_terminal:
-                logging.warning(
-                    "Job Manager: %s never started, so the job chained behind it will not wait",
-                    after_job.name,
+                if not require_success or after_job.state == STATE_DONE:
+                    return ""
+                raise ValueError(
+                    f"Predecessor {after_job.name} failed before submission; the dependent job was not submitted"
                 )
-                return ""
             time.sleep(0.2)
+        if not after_job.remote_job_id:
+            raise TimeoutError(
+                f"Predecessor {after_job.name} has not reached the queue; the dependent job was not submitted"
+            )
         return after_job.remote_job_id
 
     def _local_dir_for(self, name: str, local_files: Optional[List[str]] = None) -> str:

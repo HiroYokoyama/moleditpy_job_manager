@@ -110,13 +110,16 @@ class HostSampler(QObject):
     def interval_seconds(self) -> int:
         """The stored choice wins; the per-backend default is only a starting
         point, not a correction applied over the top of it."""
-        stored = int(self.service.store.get_pref("host_monitor_interval", 0) or 0)
-        return max(1, stored or self.default_interval())
+        try:
+            stored = int(self.service.store.get_pref("host_monitor_interval", 0) or 0)
+        except (TypeError, ValueError, OverflowError):
+            stored = 0
+        return min(3600, max(1, stored or self.default_interval()))
 
     def interval_for(self, host: HostProfile) -> int:
         """Seconds between samples of one host: its own, else the shared one."""
         own = int(host.monitor_interval or 0)
-        return own if own > 0 else self.interval_seconds()
+        return min(3600, own) if own > 0 else self.interval_seconds()
 
     def tick_seconds(self) -> int:
         """The timer runs as often as the most eager sampled host wants."""
@@ -191,6 +194,7 @@ class HostSampler(QObject):
 
         def work() -> str:
             result = transport.run(command, timeout=max(15, int(host.connect_timeout or 10)))
+            result.check("sample host usage")
             return result.stdout
 
         def ok(text: str) -> None:

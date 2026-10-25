@@ -49,7 +49,7 @@ from .transport import local_shell_available, paramiko_available, wsl_available
 from .transport.base import HostKeyRejected
 from .transport.local import INSTALL_HINT as LOCAL_INSTALL_HINT
 from .transport.local import POWERSHELL_HINT, SHELL_POSIX, SHELL_POWERSHELL
-from .window_utils import make_independent
+from .window_utils import make_independent, set_spin_value
 
 
 def _running_on_windows() -> bool:
@@ -326,7 +326,7 @@ class HostsDialog(QDialog):
         self.profile_form.txt_server_ca.setText(host.server_ca_file)
         self.profile_form.txt_server_id.setText(host.server_id)
         self.txt_username.setText(host.username)
-        self.spin_port.setValue(int(host.port or 22))
+        set_spin_value(self.spin_port, int(host.port or 22))
         # Blocked: setting this while restoring a saved host must not trigger
         # _suggest_local_scheduler, or a host someone deliberately set up with
         # backend=local + scheduler=shell would have its scheduler silently
@@ -342,25 +342,25 @@ class HostsDialog(QDialog):
         self.txt_jump.setText(host.jump_host)
         self.txt_remote_root.setText(host.remote_root)
         self.txt_equal_path.setText(host.equal_path or "")
-        self.spin_max_concurrent.setValue(max(0, int(host.max_concurrent or 0)))
+        set_spin_value(self.spin_max_concurrent, max(0, int(host.max_concurrent or 0)))
         index = self.cmb_concurrency.findData(host.concurrency_mode or MODE_LANES)
         self.cmb_concurrency.setCurrentIndex(max(0, index))
         self.chk_detect_resources.setChecked(bool(host.runner_detect))
         # A detecting host stores 0 for both, so the boxes show their minimum
         # rather than a budget it never had.
-        self.spin_runner_cores.setValue(max(1, int(host.runner_cores or 0)))
+        set_spin_value(self.spin_runner_cores, max(1, int(host.runner_cores or 0)))
         # Stored in MB, shown in GB: nobody sizes a machine in megabytes.
-        self.spin_runner_memory.setValue(max(1, int(host.runner_memory_mb or 0) // 1024))
+        set_spin_value(self.spin_runner_memory, max(1, int(host.runner_memory_mb or 0) // 1024))
         self.chk_load_profile.setChecked(bool(host.load_profile))
         self._update_concurrency_row()
         self.txt_login.setPlainText("\n".join(host.login_commands or []))
         self.txt_options.setPlainText("\n".join(host.ssh_options or []))
-        self.spin_connect_timeout.setValue(int(host.connect_timeout or 10))
-        self.spin_command_timeout.setValue(int(host.command_timeout or 60))
+        set_spin_value(self.spin_connect_timeout, int(host.connect_timeout or 10))
+        set_spin_value(self.spin_command_timeout, int(host.command_timeout or 60))
         self.txt_submit_options.setText(host.submit_options or "")
         self.chk_monitor_usage.setChecked(bool(host.monitor_usage))
-        self.spin_monitor_interval.setValue(max(0, int(host.monitor_interval or 0)))
-        self.spin_poll_interval.setValue(max(0, int(host.poll_interval or 0)))
+        set_spin_value(self.spin_monitor_interval, max(0, int(host.monitor_interval or 0)))
+        set_spin_value(self.spin_poll_interval, max(0, int(host.poll_interval or 0)))
         self.spin_monitor_interval.setEnabled(self.chk_monitor_usage.isChecked())
         self.chk_ask_password.setChecked(bool(host.ask_password))
         # Explicitly, not only from the combo's signal: selecting a host whose

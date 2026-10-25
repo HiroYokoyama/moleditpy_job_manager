@@ -31,6 +31,7 @@ from .models import (
     BACKEND_LOCAL,
     SCHEDULER_WINDOWS,
     SENTINEL_NAME,
+    STARTED_NAME,
     STATE_CANCELLED,
     STATE_DONE,
     STATE_FAILED,
@@ -204,6 +205,31 @@ def script_name_for(job: Job, scheduler) -> str:
     return safe_relative_name(job.script_name) or scheduler.script_name
 
 
+def check_job_file_conflicts(job: Job, scheduler, local_files, relay_filenames=()) -> None:
+    reserved = {
+        script_name_for(job, scheduler),
+        job.log_file,
+        job.log_file + ".err",
+        sentinel_for(job),
+        sentinel_for(job) + ".tmp",
+        STARTED_NAME,
+    }
+    inputs = {os.path.basename(path) for path in local_files}
+    inputs.update(relay_filenames)
+    if job.remote_input:
+        inputs.add(safe_relative_name(job.remote_input))
+    if job.scheduler == SCHEDULER_WINDOWS:
+        reserved = {name.casefold() for name in reserved}
+        inputs = {name.casefold() for name in inputs}
+    conflicts = sorted(inputs & reserved)
+    if conflicts:
+        raise ValueError(
+            "Input filenames conflict with reserved job wrapper files: "
+            + ", ".join(conflicts)
+            + ". Rename these inputs before submitting."
+        )
+
+
 def require_remote_path(
     transport: Transport, host: HostProfile, path: str, directory: bool = False
 ) -> None:
@@ -276,6 +302,7 @@ def submit_job(
     # go into the command line is not a job, and leaving its files on the host
     # would be litter nobody goes back for.
     input_name = input_name_for(job, local_files)
+    check_job_file_conflicts(job, scheduler, local_files, relay_filenames)
     # Before anything reaches the host, for the same reason: an unbalanced
     # quote in the options is a typo to report, not a directory to litter.
     # Only where there is a queue to hand them to -- the built-in modes ignore
@@ -408,6 +435,7 @@ def submit_to_runner(
     name_job_files(job, scheduler)
     # Before anything is uploaded; see submit_job.
     input_name = input_name_for(job, local_files)
+    check_job_file_conflicts(job, scheduler, local_files, relay_filenames)
     prepare_remote_dir(transport, host, job)
     for path in local_files:
         transport.upload(path, remote_paths.join(job.remote_dir, os.path.basename(path)))
@@ -600,6 +628,7 @@ def recheck_job(transport: Transport, host: HostProfile, job: Job) -> dict:
         directory = remote_runner.runner_dir(effective_root(host))
         paths.append(remote_paths.join(directory, "status", job.remote_job_id))
     result = transport.run(speak.read_files(paths, _SENTINEL_MARK))
+    result.check("read helper completion status")
     chunks = [chunk.strip() for chunk in (result.stdout or "").split(_SENTINEL_MARK)[1:]]
     sentinel = chunks[0].splitlines()[0].strip() if chunks and chunks[0] else dialect.MISSING
     runner_status = ""
@@ -771,6 +800,7 @@ def _runner_statuses(transport: Transport, directory: str, jobs: Sequence[Job]) 
     speak = dialect.for_host(transport.host)
     paths = [remote_paths.join(directory, "status", job.remote_job_id) for job in jobs]
     result = transport.run(speak.read_files(paths, _SENTINEL_MARK))
+    result.check("read helper completion status")
     chunks = (result.stdout or "").split(_SENTINEL_MARK)[1:]
     statuses: Dict[str, str] = {}
     for index, job in enumerate(jobs):
@@ -854,7 +884,9 @@ def cancel_in_runner(transport: Transport, host: HostProfile, job: Job) -> None:
         # for anyway when a submission is cancelled while it is still uploading.
         return
     directory = remote_runner.runner_dir(effective_root(host))
-    transport.run(remote_runner.flavour_for(host).cancel_command(directory, job.remote_job_id))
+    transport.run(
+        remote_runner.flavour_for(host).cancel_command(directory, job.remote_job_id)
+    ).check("cancel helper job")
 
 
 def release_in_runner(transport: Transport, host: HostProfile, job: Job) -> None:
@@ -867,7 +899,9 @@ def release_in_runner(transport: Transport, host: HostProfile, job: Job) -> None
     if not job.remote_job_id:
         return
     directory = remote_runner.runner_dir(effective_root(host))
-    transport.run(remote_runner.flavour_for(host).release_command(directory, job.remote_job_id))
+    transport.run(
+        remote_runner.flavour_for(host).release_command(directory, job.remote_job_id)
+    ).check("release helper job dependency")
 
 
 def poll_host(transport: Transport, host: HostProfile, jobs: Sequence[Job]) -> Dict[str, str]:
@@ -920,6 +954,7 @@ def _read_sentinels(transport: Transport, jobs: Sequence[Job]) -> List[str]:
     speak = dialect.for_host(transport.host)
     paths = [remote_paths.join(job.remote_dir, sentinel_for(job)) for job in jobs]
     result = transport.run(speak.read_files(paths, _SENTINEL_MARK))
+    result.check("read job completion status")
 
     chunks = (result.stdout or "").split(_SENTINEL_MARK)[1:]
     outcomes: List[str] = []

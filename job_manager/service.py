@@ -193,13 +193,15 @@ class JobService(QObject):
         """A name for a job the user did not name, from whatever it is about."""
         return SubmissionWorkflow._default_name(local_files, remote_input, remote_dir)
 
-    def _chain_pid(self, after_job: Optional[Job], timeout: float = 120.0) -> str:
+    def _chain_pid(
+        self, after_job: Optional[Job], timeout: float = 120.0, *, require_success: bool = True
+    ) -> str:
         """The predecessor's remote pid, waiting for its submission if needed.
 
-        Called from a worker thread, so blocking is fine. If the predecessor's
-        own submission failed and it never gets a pid, this job simply runs.
+        Called from a worker thread. Missing predecessor ids fail safely
+        instead of silently dropping an after-success dependency.
         """
-        return self.submissions._chain_pid(after_job, timeout)
+        return self.submissions._chain_pid(after_job, timeout, require_success=require_success)
 
     def _local_dir_for(self, name: str, local_files: Optional[List[str]] = None) -> str:
         """Where this job's results will land.
@@ -306,7 +308,8 @@ class JobService(QObject):
         previous_state = job.state
         local_dir = into or job.local_dir or self._local_dir_for(job.name, job.input_files)
         job.local_dir = local_dir
-        job.touch(STATE_DOWNLOADING)
+        if not job.is_active:
+            job.touch(STATE_DOWNLOADING)
         self.job_updated.emit(job.id)
 
         def work() -> List[str]:
@@ -337,7 +340,7 @@ class JobService(QObject):
                 )
             )
             job.downloaded = bool(job.downloaded_files)
-            job.touch(previous_state)
+            job.touch(previous_state if job.state == STATE_DOWNLOADING else None)
             self.store.save_jobs()
             self.job_updated.emit(job.id)
             self.poller.start()
@@ -350,7 +353,7 @@ class JobService(QObject):
                 self.download_failed.emit(job.id, "The job list changed during download")
                 return
             job.last_error = message
-            job.touch(previous_state)
+            job.touch(previous_state if job.state == STATE_DOWNLOADING else None)
             self.store.save_jobs()
             self.job_updated.emit(job.id)
             self.poller.start()
@@ -389,9 +392,6 @@ class JobService(QObject):
                 paths = fetch_results(transport, job, cache_dir, globs=[glob.escape(safe_name)])
                 if paths and os.path.isfile(paths[0]):
                     return paths[0]
-                local_path = os.path.join(cache_dir, *safe_name.split("/"))
-                if os.path.isfile(local_path):
-                    return local_path
                 raise FileNotFoundError(
                     f"Remote file '{filename}' was not found or could not be downloaded"
                 )
@@ -401,12 +401,13 @@ class JobService(QObject):
         run_async(self.pool, work, on_success=on_ok, on_error=on_error, owner=owner)
 
     def cancel(self, job: Job, release_dependents: bool = True) -> None:
-        """Cancel one job, and by default let the jobs behind it carry on.
+        """Cancel one job, releasing helper-queue dependents when requested.
 
         Cancelling the middle job used to take the rest of the chain with it,
         since a cancelled job leaves no exit code for the helper queue to
-        check. Dependents are released on the host, so it holds even with
-        MoleditPy closed, unless the caller says otherwise.
+        check. Helper dependents are released on the host, so it holds even
+        with MoleditPy closed, unless the caller says otherwise. Native queue
+        dependencies remain under that scheduler's control.
         """
         host = self.store.hosts.get(job.host_id)
         if host is None:
@@ -420,16 +421,9 @@ class JobService(QObject):
             return
         dependents = (
             self.store.dependents_of(job.id)
-            if release_dependents and not host.is_job_server
+            if release_dependents and host.uses_remote_runner
             else []
         )
-        if dependents:
-            # Recorded before the cancel: stops the monitor calling them
-            # blocked, and must survive a restart.
-            for dependent in dependents:
-                dependent.chain_any = True
-                dependent.touch()
-            self.store.save_jobs()
 
         def work() -> None:
             if host.is_job_server:
@@ -450,6 +444,10 @@ class JobService(QObject):
         def done(_result) -> None:
             if self.store.jobs.get(job.id) is not job:
                 return
+            for dependent in dependents:
+                if self.store.jobs.get(dependent.id) is dependent:
+                    dependent.chain_any = True
+                    dependent.touch()
             if host.is_job_server:
                 job.touch(_result["state"])
                 self.store.save_jobs()

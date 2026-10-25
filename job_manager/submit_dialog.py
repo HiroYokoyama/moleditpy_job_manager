@@ -106,7 +106,7 @@ from .submission_config import (
 from .submission_resources import SubmissionResources
 from .submission_templates import SubmissionTemplates
 from .theme import apply_theme
-from .window_utils import make_independent
+from .window_utils import make_independent, set_spin_value
 
 
 class SubmitDialog(QDialog):
@@ -878,9 +878,9 @@ class SubmitDialog(QDialog):
         self.txt_queue.setText(preset.queue)
         self.txt_account.setText(preset.account)
         self.txt_walltime.setText(preset.walltime)
-        self.spin_nodes.setValue(int(preset.nodes or 1))
-        self.spin_ntasks.setValue(int(preset.ntasks or 1))
-        self.spin_cpus.setValue(int(preset.cpus_per_task or 1))
+        set_spin_value(self.spin_nodes, int(preset.nodes or 1), extend=True)
+        set_spin_value(self.spin_ntasks, int(preset.ntasks or 1), extend=True)
+        set_spin_value(self.spin_cpus, int(preset.cpus_per_task or 1), extend=True)
         self.txt_memory.setText(preset.memory)
         self.txt_modules.setPlainText("\n".join(preset.modules or []))
         self.txt_pre.setPlainText("\n".join(preset.pre_commands or []))
@@ -1078,6 +1078,12 @@ class SubmitDialog(QDialog):
         if not self.chk_scan_resources.isChecked():
             return
         found = input_scan.scan(path)
+        self._resource_scan_error = ""
+        if found.cores > 2**31 - 1:
+            self._resource_scan_error = "Input CPU request is outside the supported range. Untick resource scanning and review the request."
+            self.lbl_scanned.setText(self._resource_scan_error)
+            self.lbl_scanned.setVisible(True)
+            return
         if (
             not found.memory_mb
             and self._scanned_memory
@@ -1100,7 +1106,7 @@ class SubmitDialog(QDialog):
         cpus = self.spin_cpus.value()
         if found.cores > 0 and (cpus <= 1 or cpus == self._scanned_cpus):
             self._scanned_cpus = found.cores
-            self.spin_cpus.setValue(found.cores)
+            set_spin_value(self.spin_cpus, found.cores, extend=True)
             filled.append(f"{found.cores} CPUs")
         if filled:
             self.lbl_scanned.setText(
@@ -1316,6 +1322,13 @@ class SubmitDialog(QDialog):
             self.cmb_preset.setCurrentIndex(index)
 
     def _submit(self) -> None:
+        if (
+            self.chk_scan_resources.isChecked()
+            and self.selected_files()
+            and getattr(self, "_resource_scan_error", "")
+        ):
+            QMessageBox.warning(self, "Submit", self._resource_scan_error)
+            return
         host = self.current_host()
         if host is None:
             QMessageBox.warning(self, "Submit", "Add a host profile first.")
@@ -1498,6 +1511,10 @@ class SubmitDialog(QDialog):
             individual = copy.deepcopy(preset)
             if self.chk_scan_resources.isChecked():
                 found = input_scan.scan(path)
+                if found.cores > 2**31 - 1:
+                    raise ValueError(
+                        f"{os.path.basename(path)}: CPU request is outside the supported range"
+                    )
                 if not preset.memory or preset.memory == self._scanned_memory:
                     individual.memory = input_scan.format_memory(found.memory_mb)
                 if preset.cpus_per_task <= 1 or preset.cpus_per_task == self._scanned_cpus:

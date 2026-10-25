@@ -472,6 +472,8 @@ class TestTheChainSurvivesASlowSubmission(unittest.TestCase):
         self.service.pool.queued[1].run_sync()
         self.assertLess(time.time() - start, 5)
         self.assertNotIn("kill -0", second.command or "")
+        self.assertEqual(second.state, "FAILED")
+        self.assertFalse(second.remote_job_id)
 
     def test_no_predecessor_means_no_waiting(self):
         self.assertEqual(self.service._chain_pid(None), "")
