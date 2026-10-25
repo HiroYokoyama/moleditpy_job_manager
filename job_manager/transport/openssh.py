@@ -175,7 +175,7 @@ class OpenSSHTransport(Transport):
                         "Legacy SCP cannot transfer filenames containing line breaks or NUL"
                     )
                 basename = re.sub(r"([^a-zA-Z0-9_@%+=:,.-])", r"\\\1", name)
-                parent = remote_paths.quote(directory or "/") if separator else "."
+                parent = remote_paths.quote(directory) if directory else ("" if separator else ".")
                 return f"{self.host.target}:{parent}/{basename}"
             return f"{self.host.target}:{remote_paths.quote(remote_path)}"
         path = str(remote_path)

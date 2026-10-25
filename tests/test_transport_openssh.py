@@ -255,6 +255,7 @@ class TestProtocolSpecificPaths(unittest.TestCase):
             "/remote/dir with space/result.out",
             "/remote/dir's data/a';$(touch injected)[1]*?.out",
             "~/job results/result.out",
+            "/result.out",
             "result.out",
         ]:
             with self.subTest(path=path):
