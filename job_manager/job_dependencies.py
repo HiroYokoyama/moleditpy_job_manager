@@ -95,8 +95,10 @@ class DependencyGraph:
     def chain_blocker(self, job: Job) -> Optional[Job]:
         """The dead job that will stop ``job`` ever starting, if any.
 
-        Under ``afterok`` a failed/cancelled predecessor leaves everything
-        behind it PENDING forever. The whole chain is walked, not just the
+        Under ``afterok`` a failed/cancelled predecessor can leave everything
+        behind it PENDING forever if the scheduler retains those jobs. OpenPBS
+        can delete them instead; terminal jobs need no blocker. The whole chain
+        is walked, not just the
         immediate predecessor: in A(failed) <- B <- C, C is exactly as dead as
         B (bug once had it counting as a live lane, holding a slot forever).
         ``chain_any`` is read at the link that meets the failure: a job behind

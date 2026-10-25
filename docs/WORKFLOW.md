@@ -351,11 +351,12 @@ The two mechanisms differ here, and the difference matters:
 | SGE | they run anyway — `-hold_jid` releases on the job ending, not on it succeeding |
 | None (background) | they run anyway — `kill -0` stops matching the moment the process is gone |
 
-On SLURM and PBS the queue goes on reporting such a job as PENDING, which reads
-as "starting soon" and is the opposite of the truth. Job Manager shows it as
-**BLOCKED** instead, names the job that actually died, and writes a line to the
-log the moment the predecessor fails. Nothing is cancelled for you — the usual
-fix is to correct the input and resubmit — but you are told.
+If the scheduler retains such a job as PENDING, Job Manager shows it as
+**BLOCKED**, names the failed predecessor, and writes a line to the log.
+OpenPBS 23.06 instead automatically deletes an unsatisfied `afterok` dependent.
+Its wrapper never runs or writes an exit-code sentinel, so Job Manager reports
+**LOST** rather than claiming the calculation succeeded. Job Manager does not
+cancel these jobs itself. Correct the input and resubmit the required jobs.
 
 The whole chain is marked, not only the job immediately behind the failure: if
 three jobs are queued in a line and the first fails, all the rest are stranded,
