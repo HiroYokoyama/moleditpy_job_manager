@@ -14,6 +14,7 @@ from job_manager.job_dependencies import DependencyGraph  # noqa: E402
 from job_manager.models import (  # noqa: E402
     STATE_DONE,
     STATE_FAILED,
+    STATE_LOST,
     STATE_PENDING,
     STATE_RUNNING,
     HostProfile,
@@ -21,6 +22,7 @@ from job_manager.models import (  # noqa: E402
     SubmitPreset,
 )
 from job_manager.runner import cancel_job, fetch_results, poll_host, submit_job  # noqa: E402
+from job_manager.remote_paths import quote  # noqa: E402
 from job_manager.schedulers import get_scheduler  # noqa: E402
 from job_manager.transport.openssh import OpenSSHTransport  # noqa: E402
 
@@ -186,8 +188,17 @@ def main():
             wait(dependent, {STATE_DONE})
         else:
             refresh(dependent)
-            assert DependencyGraph({j.id: j for j in jobs}).chain_blocker(dependent) is predecessor
-            cancel_job(transport, host, dependent)
+            if scheduler == "pbs" and dependent.is_terminal:
+                # OpenPBS deletes an afterok dependent when its predecessor
+                # fails (req_register.c: JOB_DEPEND_OP_DELETE). Its wrapper
+                # never starts, so there is no sentinel: LOST is expected.
+                assert dependent.state == STATE_LOST, dependent.state
+                assert transport.run("test ! -e " + quote(dependent.remote_dir + "/result.out")).ok
+            else:
+                assert (
+                    DependencyGraph({j.id: j for j in jobs}).chain_blocker(dependent) is predecessor
+                )
+                cancel_job(transport, host, dependent)
         passed("failure dependency respects scheduler afterok/hold_jid semantics")
 
         predecessor = submit("sleep 4; exit 7")
