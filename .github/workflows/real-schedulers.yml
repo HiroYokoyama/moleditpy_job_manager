@@ -1,0 +1,62 @@
+name: Real Scheduler Validation
+run-name: Real schedulers ${{ inputs.scheduler || 'all' }} ${{ inputs.dispatch_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      scheduler:
+        description: Scheduler to exercise
+        type: choice
+        options: [all, slurm, pbs, sge]
+        default: all
+      dispatch_id:
+        description: Optional correlation ID used by the dispatch helper
+        type: string
+        default: ''
+  pull_request:
+    paths:
+      - .github/workflows/real-schedulers.yml
+      - tests/real_schedulers/**
+
+permissions:
+  contents: read
+
+jobs:
+  scheduler:
+    name: Real ${{ matrix.scheduler }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        scheduler: ${{ fromJSON(inputs.scheduler == 'slurm' && '["slurm"]' || inputs.scheduler == 'pbs' && '["pbs"]' || inputs.scheduler == 'sge' && '["sge"]' || '["slurm","pbs","sge"]') }}
+    env:
+      SCHEDULER: ${{ matrix.scheduler }}
+      LAB: ${{ runner.temp }}/scheduler-lab
+      MOLEDITPY_JOB_MANAGER_DIR: ${{ runner.temp }}/scheduler-lab/plugin-data
+    steps:
+      - uses: actions/checkout@v4
+      - name: Provision a disposable scheduler and localhost SSH
+        shell: bash
+        run: |
+          mkdir -p "$LAB"
+          bash tests/real_schedulers/setup.sh "$SCHEDULER" 2>&1 | tee "$LAB/setup.log"
+      - name: Exercise the plugin against the real scheduler over SSH
+        shell: bash
+        run: python3 tests/real_schedulers/exercise.py "$SCHEDULER" 2>&1 | tee "$LAB/exercise.log"
+      - name: Collect scheduler diagnostics
+        if: always()
+        shell: bash
+        run: bash tests/real_schedulers/diagnostics.sh "$SCHEDULER" > "$LAB/daemon.log" 2>&1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scheduler-${{ matrix.scheduler }}-${{ github.run_id }}
+          # Never upload the lab directory wholesale: it contains disposable
+          # SSH private keys and the scheduler's authentication/database files.
+          path: |
+            ${{ env.LAB }}/setup.log
+            ${{ env.LAB }}/exercise.log
+            ${{ env.LAB }}/daemon.log
+            ${{ env.LAB }}/report.json
+          if-no-files-found: warn
