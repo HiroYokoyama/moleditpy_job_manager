@@ -426,9 +426,9 @@ def handle_dropped_file(path: str) -> bool:
     monitor and the wizard accept those themselves, where the meaning of a drop
     is unambiguous.
     """
-    from .store import JOB_EXTENSION
+    from .store import JOB_EXTENSIONS
 
-    if not path or not path.lower().endswith(JOB_EXTENSION):
+    if not path or not path.lower().endswith(JOB_EXTENSIONS):
         return False
     try:
         open_job_file(path)
@@ -510,10 +510,11 @@ def initialize(context) -> None:
     # Installer's listing is no longer in front of anyone.
     context.add_menu_action("Extensions/Job Manager/About...", lambda: show_about(context))
 
-    from .store import JOB_EXTENSION
+    from .store import JOB_EXTENSIONS
 
     try:
-        context.register_file_opener(JOB_EXTENSION, open_job_file)
+        for extension in JOB_EXTENSIONS:
+            context.register_file_opener(extension, open_job_file)
     except AttributeError:
         # Host older than the file-opener API; the menu entries still work.
         logging.debug("Job Manager: this host has no register_file_opener")

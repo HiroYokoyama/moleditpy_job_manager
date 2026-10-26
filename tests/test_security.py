@@ -318,8 +318,9 @@ class TestOpeningAJobListCannotLeakSecrets(unittest.TestCase):
         tmp = tempfile.mkdtemp(prefix="joblist_")
         store = JobStore(tmp)
         store.add_job(Job(id="j1", name="a", preset=SubmitPreset().to_dict()))
-        with open(store.jobs_path, encoding="utf-8") as handle:
-            written = handle.read()
+        from job_manager.job_database import read_document
+
+        written = json.dumps(read_document(store.jobs_path))
         for field in ("hostname", "username", "key_path", "password"):
             self.assertNotIn(f'"{field}"', written, field)
 

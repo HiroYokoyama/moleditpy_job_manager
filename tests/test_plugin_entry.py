@@ -24,6 +24,16 @@ class PluginEntryTestCase(unittest.TestCase):
 
 
 class TestInitialize(PluginEntryTestCase):
+    def test_both_sqlite_and_legacy_job_files_are_registered(self):
+        job_manager.initialize(self.context)
+        registered = {
+            call.args[0]: call.args[1] for call in self.context.register_file_opener.call_args_list
+        }
+        self.assertEqual(set(registered), {".pmejdb", ".pmejbs"})
+        self.assertTrue(
+            all(callback is job_manager.open_job_file for callback in registered.values())
+        )
+
     def test_registers_menu_entries(self):
         job_manager.initialize(self.context)
         paths = [call.args[0] for call in self.context.add_menu_action.call_args_list]
@@ -366,6 +376,11 @@ class TestTheDropHandler(PluginEntryTestCase):
         with patch.object(job_manager, "open_job_file") as opened:
             self.assertTrue(job_manager.handle_dropped_file("/tmp/jobs.pmejbs"))
         opened.assert_called_once_with("/tmp/jobs.pmejbs")
+
+    def test_a_sqlite_job_list_is_taken_case_insensitively(self):
+        with patch.object(job_manager, "open_job_file") as opened:
+            self.assertTrue(job_manager.handle_dropped_file("/tmp/jobs.PMEJDB"))
+        opened.assert_called_once_with("/tmp/jobs.PMEJDB")
 
     def test_the_extension_is_matched_whatever_its_case(self):
         with patch.object(job_manager, "open_job_file"):

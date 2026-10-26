@@ -94,6 +94,8 @@ class TestTwoInstancesShareTheJobList(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="store_")
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        with open(os.path.join(self.tmp, "jobs.pmejbs"), "w", encoding="utf-8") as handle:
+            json.dump({"jobs": []}, handle)
 
     def store(self) -> JobStore:
         return JobStore(directory=self.tmp)

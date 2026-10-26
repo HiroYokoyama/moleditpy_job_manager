@@ -108,7 +108,13 @@ def create_job_actions(parent, callbacks):
             "save_as",
             "Save As...",
             lambda: callbacks["_export"](JOB_EXTENSION),
-            f"Save the job list to a {JOB_EXTENSION} file, openable again from here.",
+            "Save a SQLite job database or a legacy JSON job list.",
+        ),
+        (
+            "convert",
+            "Convert to Job Database...",
+            callbacks["_convert_job_list"],
+            "Convert the current legacy JSON list to SQLite and archive the original file.",
         ),
         (
             "export_csv",
