@@ -17,10 +17,10 @@ import logging
 from typing import Any, Optional
 
 PLUGIN_NAME = "Job Manager"
-PLUGIN_VERSION = "3.2.0"
+PLUGIN_VERSION = "3.3.0"
 PLUGIN_AUTHOR = "HiroYokoyama"
 
-PLUGIN_DESCRIPTION = "Submit calculations to remote HPC clusters over SSH, track queue status, and fetch results back into MoleditPy. Ready-made command lines for ORCA, Gaussian, CP2K, GAMESS, MOPAC, NWChem, Psi4, PySCF, Quantum ESPRESSO, VASP and xTB; job lists export to CSV or .pmejbs and reopen by drag and drop. Runs on this machine too, with no SSH; chains jobs with each scheduler's own dependency flag; and can hold a job until a chosen time. Installing paramiko adds a backend that keeps one SSH session open and can log in with a password. Optional cryptography adds authenticated Job Server destinations on localhost, private LANs or Tailscale."
+PLUGIN_DESCRIPTION = "Submit calculations to remote HPC clusters over SSH, track queue status, and fetch results back into MoleditPy. Ready-made command lines for ORCA, Gaussian, CP2K, GAMESS, MOPAC, NWChem, Psi4, PySCF, Quantum ESPRESSO, VASP and xTB; job lists save as SQLite .pmejdb or legacy .pmejbs and export to CSV and reopen by drag and drop. Runs on this machine too, with no SSH; chains jobs with each scheduler's own dependency flag; and can hold a job until a chosen time. Installing paramiko adds a backend that keeps one SSH session open and can log in with a password. Optional cryptography adds authenticated Job Server destinations on localhost, private LANs or Tailscale."
 PLUGIN_CATEGORY = "Utility"
 PLUGIN_TAGS = ["Utility"]
 # The default OpenSSH backend needs nothing beyond the host app, so nothing
@@ -408,7 +408,7 @@ def forget_window() -> None:
 def open_job_file(path: str) -> None:
     """Open a saved job list in the monitor. Registered with the host.
 
-    Makes ``.pmejbs`` a file type the application knows: File > Import, the
+    Makes ``.pmejdb`` and ``.pmejbs`` file types the application knows: File > Import, the
     command line and a drop onto the main window all land here.
     """
     show_monitor(_context)
@@ -420,15 +420,15 @@ def open_job_file(path: str) -> None:
 def handle_dropped_file(path: str) -> bool:
     """Open a job list dropped onto the main window. True when it was ours.
 
-    Only ``.pmejbs``. Input extensions are deliberately *not* claimed
+    Only ``.pmejdb`` and ``.pmejbs``. Input extensions are deliberately *not* claimed
     application-wide: taking ``.inp`` and ``.xyz`` would stop a drop on the
     main window doing the obvious thing, which is opening the molecule. The
     monitor and the wizard accept those themselves, where the meaning of a drop
     is unambiguous.
     """
-    from .store import JOB_EXTENSION
+    from .store import JOB_EXTENSIONS
 
-    if not path or not path.lower().endswith(JOB_EXTENSION):
+    if not path or not path.lower().endswith(JOB_EXTENSIONS):
         return False
     try:
         open_job_file(path)
@@ -510,16 +510,17 @@ def initialize(context) -> None:
     # Installer's listing is no longer in front of anyone.
     context.add_menu_action("Extensions/Job Manager/About...", lambda: show_about(context))
 
-    from .store import JOB_EXTENSION
+    from .store import JOB_EXTENSIONS
 
     try:
-        context.register_file_opener(JOB_EXTENSION, open_job_file)
+        for extension in JOB_EXTENSIONS:
+            context.register_file_opener(extension, open_job_file)
     except AttributeError:
         # Host older than the file-opener API; the menu entries still work.
         logging.debug("Job Manager: this host has no register_file_opener")
 
     try:
-        # Priority 0: this handler answers for one extension and declines
+        # Priority 0: this handler answers for the two job-list extensions and declines
         # everything else, so it has no reason to get in front of a plugin
         # that wants a say in the file types it does claim.
         context.register_drop_handler(handle_dropped_file, 0)

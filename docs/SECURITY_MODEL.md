@@ -51,18 +51,21 @@ results and the paths do not.
 into the live session and then assert it appears in neither `settings.json`,
 the host profile, nor any job record.
 
-### `jobs.pmejbs`
+### `jobs.pmejdb`
 
 Job records: name, host id, remote directory, queue id, state, exit code,
 timestamps, the input paths you selected and the preset snapshot. No
 credentials. It is global on purpose — HPC jobs outlive the open project.
-Ordinary JSON inside; `.pmejbs` is MoleditPy's extension for a job list, the
-same idea as `.pmeprj` for a project.
+SQLite inside, with a format identifier and schema version checked before any
+write. New lists use transactions and rollback journaling, not WAL sidecars.
+Legacy `.pmejbs`/`jobs.json` files remain JSON until explicitly converted. Reading
+never converts them. Convert keeps an exact original copy in `archived/` before
+removing the legacy source and switching to the verified DB.
 
-### `archived/jobs_<date>.pmejbs`
+### `archived/jobs_<date>.pmejdb`
 
 Clearing the table writes the current list here first rather than deleting it.
-Same contents, same absence of credentials. Exports you make yourself (`.pmejbs`
+Same contents, same absence of credentials. Exports you make yourself (`.pmejdb`, `.pmejbs`
 or `.csv`) contain the same fields — including remote directory paths and
 usernames, which is worth remembering before mailing one to anybody. A CSV cell
 that begins `=`, `+`, `-` or `@` is written with a leading apostrophe: every
@@ -201,7 +204,7 @@ the feature. The safeguards are:
 
 ## Opening a job list from somewhere else
 
-A `.pmejbs` file can come from a colleague, a backup or an email, so every field
+A `.pmejdb` or `.pmejbs` file can come from a colleague, a backup or an email, so every field
 in it is untrusted input the moment the user opens one. Two consequences are
 handled explicitly:
 

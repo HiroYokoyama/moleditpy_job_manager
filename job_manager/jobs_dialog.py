@@ -103,7 +103,10 @@ from .result_view import (
 from .service import JobService
 from .store import (
     JOB_EXTENSION,
+    JOB_EXTENSIONS,
+    LEGACY_JOB_EXTENSION,
 )
+from . import job_database
 from .tasks import gone, run_async
 from .theme import (
     apply_theme,
@@ -113,8 +116,10 @@ from .window_utils import make_independent
 
 #: Job lists this window opens -- archived or not. .json covers files written
 #: before the extension existed.
-JOB_LIST_EXTENSIONS = (JOB_EXTENSION, ".json")
-JOB_LIST_FILTER = f"Job lists (*{JOB_EXTENSION} *.json);;All files (*)"
+JOB_LIST_EXTENSIONS = (*JOB_EXTENSIONS, ".json")
+DATABASE_FILTER = f"Job database (*{JOB_EXTENSION})"
+LEGACY_LIST_FILTER = f"Legacy job list (*{LEGACY_JOB_EXTENSION})"
+JOB_LIST_FILTER = f"Job lists (*{JOB_EXTENSION} *{LEGACY_JOB_EXTENSION} *.json);;All files (*)"
 
 #: Used for the two banners above the table. Palette roles, not fixed pastels:
 #: the old pair read as navy on near-white in a dark theme.
@@ -185,6 +190,7 @@ class JobsDialog(QDialog):
             "_clear_jobs": self._clear_jobs,
             "_download_selected": self._download_selected,
             "_export": self._export,
+            "_convert_job_list": self._convert_job_list,
             "_force_selected": self._force_selected,
             "_load_archive": self._load_archive,
             "_open_job_list_file": self._open_job_list_file,
@@ -222,6 +228,7 @@ class JobsDialog(QDialog):
                     "rebuild",
                     None,
                     "save_as",
+                    "convert",
                     "export_csv",
                     None,
                     "clear",
@@ -488,6 +495,7 @@ class JobsDialog(QDialog):
             "resubmit": bool(live and job and (job.input_files or job.preset)),
             "remove": not archived and job is not None,
             "save_as": not archived,
+            "convert": not archived and self.service.store.can_convert_jobs(),
             "export_csv": not archived,
             "clear": not archived,
             "force": bool(live and job and not self.service.force_refusal(job)),
@@ -1067,31 +1075,62 @@ class JobsDialog(QDialog):
             self.service.remove_job(job.id)
 
     def _export(self, extension: str) -> None:
-        """Write the whole list out as raw JSON or as CSV."""
+        """Save As SQLite/legacy JSON, or export a CSV report."""
         store = self.service.store
-        if not store.jobs:
+        if not store.jobs and extension == ".csv":
             self._append_message("Nothing to export: the job list is empty.")
             return
         label = "CSV" if extension == ".csv" else "job list"
         default = os.path.join(
-            store.download_root(), f"moleditpy_jobs_{time.strftime('%Y%m%d')}{extension}"
+            store.download_root(),
+            f"moleditpy_jobs_{time.strftime('%Y%m%d')}{extension if extension == '.csv' else ''}",
         )
-        path, _ = QFileDialog.getSaveFileName(
+        filters = (
+            f"CSV (*{extension});;All files (*)"
+            if extension == ".csv"
+            else f"{DATABASE_FILTER};;{LEGACY_LIST_FILTER}"
+        )
+        path, selected_filter = QFileDialog.getSaveFileName(
             self,
             f"Save the {label}",
             default,
-            f"{label.title()} (*{extension});;All files (*)",
+            filters,
         )
         if not path:
             return
         if not os.path.splitext(path)[1]:
-            path += extension
+            path += LEGACY_JOB_EXTENSION if selected_filter == LEGACY_LIST_FILTER else extension
         try:
             store.export_jobs(path)
         except OSError as exc:
             QMessageBox.warning(self, "Export", f"Could not write {path}:\n{exc}")
             return
         self._append_message(f"Exported {len(store.jobs)} job(s) to {path}")
+
+    def _convert_job_list(self) -> None:
+        store = self.service.store
+        if self.viewing_archive() or not store.can_convert_jobs():
+            return
+        confirm = QMessageBox.question(
+            self,
+            "Convert job list",
+            f"Convert {os.path.basename(store.jobs_path)} to {JOB_EXTENSION}?\n\n"
+            "The original file will be preserved in the archive folder. "
+            "Tracking will continue in the new database. Close other windows "
+            "using this legacy list before converting.",
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            target, archive = store.convert_jobs()
+        except OSError as exc:
+            QMessageBox.warning(self, "Convert job list", str(exc))
+            return
+        self.service.jobs_changed.emit()
+        self.service.poller.start()
+        self._update_active_file()
+        self._update_actions()
+        self._append_message(f"Converted to {target}. Original archived at {archive}")
 
     def _open_job_list_file(self) -> None:
         """Open a job list from anywhere, not only from the archive folder."""
@@ -1206,7 +1245,13 @@ class JobsDialog(QDialog):
         flag travels with the file, so a cleared list stays history)."""
         store = self.service.store
         jobs, archived = store.read_job_list(path)
-        if not jobs:
+        empty_database = False
+        if not jobs and job_database.is_database(path):
+            try:
+                empty_database = job_database.read_document(path).get("jobs") == []
+            except OSError:
+                pass
+        if not jobs and not empty_database:
             QMessageBox.warning(self, "Open job list", f"No jobs could be read from:\n{path}")
             return False
         if archived:

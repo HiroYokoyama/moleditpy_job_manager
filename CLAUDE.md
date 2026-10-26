@@ -39,7 +39,8 @@ helper at `scripts/dispatch_scheduler_validation.py`.
 | Module | Role |
 |---|---|
 | `models.py` | `HostProfile`, `SubmitPreset`, `Job`. Pure Python, no Qt, no network |
-| `store.py` | `settings.json` + `jobs.pmejbs`, both written atomically |
+| `store.py` | Settings JSON, SQLite job lists, explicit legacy conversion and archives |
+| `job_database.py` | `.pmejdb` transactions, delta writes and concurrent-edit merging |
 | `service.py` | The session object: submit, poll, download, cancel |
 | `runner.py` | What actually happens on the host, per operation |
 | `schedulers/` | One module per queue system; `base.py` builds the run script |
@@ -131,3 +132,13 @@ you find out of the repository.
 ## Copied maintenance scripts
 
 See [scripts/COMMON_TOOLS.md](scripts/COMMON_TOOLS.md) for canonical ownership, pinned versions and update instructions. Common script unit tests stay in the canonical repository; retain this repository's own integration checks.
+
+## Job-list formats
+
+New internal and portable lists use SQLite `.pmejdb`. Keep `.pmejbs` JSON and
+legacy `jobs.json` readable/writable. Register both `.pmejdb` and `.pmejbs` file
+openers and drop routes. Save As must offer both formats. Never convert or save
+on load/reload: Convert is explicit, enabled only for legacy live lists, verifies
+the DB and archives the original bytes before switching. Settings remain JSON.
+Do not introduce WAL sidecars into portable exports. Use isolated synthetic files
+for conversion/rollback/concurrent-writer tests, never the real user data directory.

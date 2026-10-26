@@ -6,6 +6,7 @@ import unittest
 
 from job_manager import store as store_module
 from job_manager.models import STATE_DONE, STATE_RUNNING, HostProfile, Job, SubmitPreset
+from job_manager.job_database import read_document as read_database
 from job_manager.store import (
     MAX_POLL_INTERVAL,
     MIN_POLL_INTERVAL,
@@ -172,8 +173,7 @@ class TestJobs(StoreTestCase):
 
     def test_jobs_are_stored_separately_from_settings(self):
         self.store.add_job(Job(id="j1"))
-        with open(self.store.jobs_path, encoding="utf-8") as handle:
-            document = json.load(handle)
+        document = read_database(self.store.jobs_path)
         self.assertEqual(len(document["jobs"]), 1)
         self.assertFalse(os.path.exists(self.store.settings_path))
 
@@ -373,9 +373,10 @@ class TestTheJobExtension(ExportAndArchiveTestCase):
         self.assertTrue(self.store.jobs_path.endswith(store_module.JOB_EXTENSION))
         self.assertTrue(os.path.exists(self.store.jobs_path))
 
-    def test_the_contents_are_still_ordinary_json(self):
-        with open(self.store.jobs_path, encoding="utf-8") as handle:
-            self.assertIn("jobs", json.load(handle))
+    def test_the_contents_are_sqlite(self):
+        with open(self.store.jobs_path, "rb") as handle:
+            self.assertEqual(handle.read(16), b"SQLite format 3\x00")
+        self.assertIn("jobs", read_database(self.store.jobs_path))
 
     def test_a_pre_extension_file_is_still_read(self):
         directory = tempfile.mkdtemp(prefix="legacy_")
@@ -390,12 +391,12 @@ class TestTheJobExtension(ExportAndArchiveTestCase):
             os.path.join(directory, store_module.LEGACY_JOBS_FILENAME),
             {"jobs": [{"id": "stale"}]},
         )
-        atomic_write_json(
+        store_module.JobStore._write_jobs(
             os.path.join(directory, store_module.JOBS_FILENAME), {"jobs": [{"id": "current"}]}
         )
         self.assertEqual(list(JobStore(directory).jobs), ["current"])
 
-    def test_saving_migrates_to_the_new_name(self):
+    def test_legacy_save_stays_legacy_until_explicit_conversion(self):
         directory = tempfile.mkdtemp(prefix="migrate_")
         atomic_write_json(
             os.path.join(directory, store_module.LEGACY_JOBS_FILENAME),
@@ -403,7 +404,8 @@ class TestTheJobExtension(ExportAndArchiveTestCase):
         )
         store = JobStore(directory)
         store.save_jobs()
-        self.assertTrue(os.path.exists(os.path.join(directory, store_module.JOBS_FILENAME)))
+        self.assertFalse(os.path.exists(os.path.join(directory, store_module.JOBS_FILENAME)))
+        self.assertEqual(store.jobs_path, store.legacy_jobs_path)
         self.assertEqual(JobStore(directory).jobs["old1"].name, "carried")
 
     def test_an_archive_written_before_the_extension_is_still_listed(self):
@@ -422,14 +424,12 @@ class TestTheArchivedFlagTravelsInTheFile(ExportAndArchiveTestCase):
 
     def test_a_cleared_list_is_flagged_archived(self):
         archived, _ = self.store.clear_jobs()
-        with open(archived, encoding="utf-8") as handle:
-            payload = json.load(handle)
+        payload = read_database(archived)
         self.assertIs(payload["archived"], True)
         self.assertIn("archived_at", payload)
 
     def test_the_live_list_is_not(self):
-        with open(self.store.jobs_path, encoding="utf-8") as handle:
-            payload = json.load(handle)
+        payload = read_database(self.store.jobs_path)
         self.assertIs(payload["archived"], False)
         self.assertNotIn("archived_at", payload)
 
@@ -446,7 +446,7 @@ class TestTheArchivedFlagTravelsInTheFile(ExportAndArchiveTestCase):
 
     def test_the_flag_survives_being_moved_out_of_the_folder(self):
         archived, _ = self.store.clear_jobs()
-        moved = self.target("somewhere_else.pmejbs")
+        moved = self.target("somewhere_else.pmejdb")
         os.replace(archived, moved)
         _jobs, is_archived = self.store.read_job_list(moved)
         self.assertTrue(is_archived, "the flag should travel with the file")
@@ -504,8 +504,7 @@ class TestUsingAnotherJobFile(ExportAndArchiveTestCase):
         path = self.other_file()
         self.store.use_jobs_file(path)
         self.store.add_job(Job(id="j9", name="new one"))
-        with open(self.store.default_jobs_path, encoding="utf-8") as handle:
-            self.assertEqual(json.load(handle)["jobs"], [])
+        self.assertEqual(read_database(self.store.default_jobs_path)["jobs"], [])
 
     def test_switching_back_restores_the_default(self):
         self.store.use_jobs_file(self.other_file())
@@ -540,8 +539,7 @@ class TestClearingArchivesFirst(ExportAndArchiveTestCase):
 
     def test_the_archive_holds_the_cleared_jobs(self):
         archived, _ = self.store.clear_jobs()
-        with open(archived, encoding="utf-8") as handle:
-            payload = json.load(handle)
+        payload = read_database(archived)
         self.assertEqual({j["id"] for j in payload["jobs"]}, {"j1", "j2"})
         self.assertIn("archived_at", payload)
 
