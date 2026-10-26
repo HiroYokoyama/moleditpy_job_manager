@@ -460,6 +460,14 @@ class JobStore:
 
     def _resolve_interrupted(self) -> int:
         """Settle any job left mid-transfer by a previous session."""
+        if job_database.is_database(self.jobs_path):
+            from .instances import live_instances
+
+            # A second window opening the shared DB is not evidence that the
+            # process uploading/downloading crashed. Defer recovery while any
+            # other local tracker is still alive.
+            if live_instances(self.directory):
+                return 0
         stranded = [job for job in self.jobs.values() if resolve_interrupted(job)]
         for job in stranded:
             logging.info(

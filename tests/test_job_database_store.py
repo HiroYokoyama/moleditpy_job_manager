@@ -1,6 +1,7 @@
 """Explicit conversion and portable saves never touch a real user's job list."""
 
 import json
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -175,3 +176,18 @@ def test_duplicate_legacy_ids_are_not_silently_lost_during_conversion(tmp_path):
         store.convert_jobs()
     assert source.read_bytes() == before
     assert not source.with_suffix(".pmejdb").exists()
+
+
+def test_another_live_tracker_prevents_false_interrupted_transfer_recovery(tmp_path):
+    store = JobStore(str(tmp_path))
+    store.add_job(Job(id="synthetic", state="UPLOADING"))
+    beats = tmp_path / "instances"
+    beats.mkdir()
+    heartbeat = beats / "999999.json"
+    atomic_write_json(
+        str(heartbeat),
+        {"pid": 999999, "role": "moleditpy", "beat": time.time(), "started": time.time()},
+    )
+    assert JobStore(str(tmp_path)).jobs["synthetic"].state == "UPLOADING"
+    heartbeat.unlink()
+    assert JobStore(str(tmp_path)).jobs["synthetic"].state == "FAILED"
