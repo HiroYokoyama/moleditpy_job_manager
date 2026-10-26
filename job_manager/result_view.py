@@ -171,30 +171,37 @@ def open_in_host(path: str) -> bool:
         logging.debug("Job Manager: no main window available", exc_info=True)
         return False
 
+    init_manager = getattr(main_window, "init_manager", None)
+    loader = getattr(init_manager, "load_command_line_file", None)
+    plugin_manager = getattr(main_window, "plugin_manager", None)
+    openers = getattr(plugin_manager, "file_openers", {}) or {}
+    extension = os.path.splitext(path)[1].lower()
+    registered = [
+        opener
+        for opener in openers.get(extension, [])
+        if isinstance(opener, dict) and callable(opener.get("callback"))
+    ]
+    builtin = extension in {".mol", ".sdf", ".xyz", ".pmeraw", ".pmeprj"}
+    # The host returns None even for unsupported types. Do not clear the
+    # document or close the caller merely because that method returned.
+    if not registered and not (callable(loader) and builtin):
+        return False
     if not clear_document(main_window):
         return False
 
-    init_manager = getattr(main_window, "init_manager", None)
-    loader = getattr(init_manager, "load_command_line_file", None)
     if callable(loader):
         try:
-            loader(path)
-            return True
+            return loader(path) is not False
         except Exception:
             logging.warning("Job Manager: host could not open %s", path, exc_info=True)
             return False
 
     # Older hosts: dispatch to the highest-priority plugin opener directly.
-    plugin_manager = getattr(main_window, "plugin_manager", None)
-    openers = getattr(plugin_manager, "file_openers", {}) or {}
-    extension = os.path.splitext(path)[1].lower()
-    for opener in openers.get(extension, []):
-        callback = opener.get("callback") if isinstance(opener, dict) else None
-        if not callable(callback):
-            continue
+    for opener in registered:
+        callback = opener["callback"]
         try:
-            callback(path)
-            return True
+            if callback(path) is not False:
+                return True
         except Exception:
             logging.warning("Job Manager: opener failed for %s", path, exc_info=True)
     return False

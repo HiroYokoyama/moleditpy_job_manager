@@ -107,6 +107,10 @@ class TextDialog(QDialog):
         self.view.setPlainText(text)
         layout.addWidget(self.view, 1)
         layout.addWidget(self._build_find_bar())
+        self.lbl_open_status = QLabel()
+        self.lbl_open_status.setWordWrap(True)
+        self.lbl_open_status.hide()
+        layout.addWidget(self.lbl_open_status)
 
         bottom_row = QHBoxLayout()
 
@@ -182,7 +186,14 @@ class TextDialog(QDialog):
         try:
             if self._on_open_in_moleditpy() is not False:
                 self.accept()
+            else:
+                self.lbl_open_status.setText(
+                    "File not opened: opening was cancelled or MoleditPy has no available file opener."
+                )
+                self.lbl_open_status.show()
         except Exception:
+            self.lbl_open_status.setText("Could not open this file in MoleditPy.")
+            self.lbl_open_status.show()
             logging.warning(
                 "Job Manager: text viewer could not open the source file", exc_info=True
             )

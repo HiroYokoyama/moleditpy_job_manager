@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -133,6 +133,20 @@ class TestOpeningAResult(DialogTestCase):
             viewer.btn_open_in_moleditpy.click()
         self.assertTrue(viewer.isVisible())
         self.assertTrue(browser.isVisible())
+
+    def test_unsupported_file_preserves_the_document_and_both_windows(self):
+        _, browser, viewer = self.open_browser_text()
+        context = MagicMock()
+        window = context.get_main_window.return_value
+        window.plugin_manager.file_openers = {}
+        window.init_manager.load_command_line_file.return_value = None
+        with patch("job_manager.get_context", return_value=context):
+            viewer.btn_open_in_moleditpy.click()
+        window.edit_actions_manager.clear_all.assert_not_called()
+        window.init_manager.load_command_line_file.assert_not_called()
+        self.assertTrue(viewer.isVisible())
+        self.assertTrue(browser.isVisible())
+        self.assertTrue(viewer.lbl_open_status.isVisible())
 
     def test_browser_without_a_custom_text_callback_also_closes_with_viewer(self):
         path = os.path.join(self.tmp, "result.out")
