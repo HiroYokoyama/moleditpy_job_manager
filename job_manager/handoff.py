@@ -10,7 +10,7 @@ for real.
 The two must never both track: two pollers query every host twice and every
 job ending is announced twice. The tray process registers itself in the
 instance registry (see :mod:`job_manager.instances`); a MoleditPy starting up
-asks it to stop there and waits for its heartbeat to go before reading the job
+asks it to stop there and waits for its registration to go before reading the job
 list, and a standalone launch asks it to bring its monitor up instead of
 starting beside it.
 
@@ -25,77 +25,7 @@ import ntpath
 import os
 import subprocess
 import sys
-import time
 from typing import Any, Dict, List, Optional
-
-#: The heartbeat and stop files of a 2.0 / 2.1 tray process. Newer ones are
-#: in the instance registry (see instances.py); these remain only so a
-#: MoleditPy updated while one of those runs can still stop it.
-TRAY_FILE = "tray.json"
-STOP_FILE = "tray.stop"
-
-#: A heartbeat older than this is a process that crashed or was killed.
-STALE_AFTER_SECONDS = 10.0
-
-
-def tray_path(directory: str) -> str:
-    return os.path.join(directory, TRAY_FILE)
-
-
-def stop_path(directory: str) -> str:
-    return os.path.join(directory, STOP_FILE)
-
-
-def live_tray(directory: str, now: Optional[float] = None) -> Optional[Dict[str, Any]]:
-    """The running tray process's heartbeat, or None if there is none."""
-    try:
-        with open(tray_path(directory), encoding="utf-8") as handle:
-            data = json.load(handle)
-        beat = float(data.get("beat", 0))
-    except (OSError, ValueError, TypeError, AttributeError):
-        return None
-    current = time.time() if now is None else now
-    if current - beat > STALE_AFTER_SECONDS:
-        return None
-    return data
-
-
-def request_stop(directory: str) -> None:
-    os.makedirs(directory, exist_ok=True)
-    with open(stop_path(directory), "w", encoding="utf-8") as handle:
-        handle.write(str(os.getpid()))
-
-
-def stop_requested(directory: str) -> bool:
-    return os.path.exists(stop_path(directory))
-
-
-def clear_stop(directory: str) -> None:
-    try:
-        os.remove(stop_path(directory))
-    except FileNotFoundError:
-        pass
-    except OSError:
-        logging.debug("Job Manager: the stop request was not cleared", exc_info=True)
-
-
-def stop_running_tray(directory: str, timeout: float = 6.0, poll: float = 0.1) -> bool:
-    """Ask a tray process to stop and wait for it. True if none is left.
-
-    Waited for rather than fired and forgotten: the tray process may be part
-    way through saving the job list, and the caller is about to read it.
-    """
-    if live_tray(directory) is None:
-        return True
-    request_stop(directory)
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if live_tray(directory) is None:
-            clear_stop(directory)
-            return True
-        time.sleep(poll)
-    logging.warning("Job Manager: the background tray process did not stop in time")
-    return False
 
 
 def can_hand_off() -> bool:
@@ -226,15 +156,9 @@ def spawn_detached(command: List[str], cwd: Optional[str] = None) -> bool:
 
 
 __all__ = [
-    "STALE_AFTER_SECONDS",
     "background_python",
     "can_hand_off",
-    "clear_stop",
-    "live_tray",
     "relaunch_command",
-    "request_stop",
     "spawn_detached",
     "standalone_command",
-    "stop_requested",
-    "stop_running_tray",
 ]

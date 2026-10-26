@@ -55,12 +55,6 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 0
-        # A tray process from 2.0 or 2.1 is not in the registry; it only knows
-        # its own stop file, and would otherwise track beside this window.
-        from . import handoff
-
-        handoff.stop_running_tray(data_dir)
-
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName(f"Job Manager {PLUGIN_VERSION}")
 

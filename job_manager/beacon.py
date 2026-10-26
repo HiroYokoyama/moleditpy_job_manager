@@ -16,7 +16,7 @@ from . import instances
 
 
 class InstanceBeacon(QObject):
-    """Keeps this process's heartbeat fresh and runs what other launches ask."""
+    """Registers this process once and runs what other launches ask."""
 
     def __init__(
         self, data_dir: str, role: str, handlers: Optional[Dict[str, Callable[[], None]]] = None
@@ -26,11 +26,7 @@ class InstanceBeacon(QObject):
         self.role = role
         self.handlers = dict(handlers or {})
         self._started = 0.0
-        self._beat_timer = QTimer(self)
-        self._beat_timer.setInterval(int(instances.HEARTBEAT_SECONDS * 1000))
-        self._beat_timer.timeout.connect(self.beat)
-        # Separately and faster: a launch waiting on us is a person waiting for
-        # a window, and a two-second heartbeat would be felt.
+        self._server: Optional[instances.LivenessServer] = None
         self._request_timer = QTimer(self)
         self._request_timer.setInterval(int(instances.REQUEST_POLL_SECONDS * 1000))
         self._request_timer.timeout.connect(self.check_requests)
@@ -38,16 +34,20 @@ class InstanceBeacon(QObject):
     def start(self) -> None:
         import time
 
+        if self._server is not None:
+            return
         self._started = time.time()
-        self.beat()
-        self._beat_timer.start()
-        self._request_timer.start()
-
-    def beat(self) -> None:
+        server = None
         try:
-            instances.write_heartbeat(self.data_dir, self.role, self._started or None)
+            server = instances.LivenessServer()
+            instances.register_instance(self.data_dir, self.role, self._started, server)
         except OSError:
-            logging.debug("Job Manager: heartbeat not written", exc_info=True)
+            if server is not None:
+                server.close()
+            logging.warning("Job Manager: instance registration failed", exc_info=True)
+            return
+        self._server = server
+        self._request_timer.start()
 
     def check_requests(self) -> None:
         action = instances.take_request(self.data_dir)
@@ -63,9 +63,11 @@ class InstanceBeacon(QObject):
             logging.exception("Job Manager: request %r failed", action)
 
     def stop(self) -> None:
-        self._beat_timer.stop()
         self._request_timer.stop()
-        instances.remove_heartbeat(self.data_dir)
+        instances.unregister_instance(self.data_dir)
+        if self._server is not None:
+            self._server.close()
+            self._server = None
 
 
 __all__ = ["InstanceBeacon"]

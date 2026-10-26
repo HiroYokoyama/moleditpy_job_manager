@@ -24,18 +24,17 @@ from job_manager import instances
 PACKAGE_DIR = os.path.dirname(os.path.abspath(instances.__file__))
 
 
-def fake_instance(directory, pid, role, beat=None, started=None):
-    folder = instances.instances_dir(directory)
-    os.makedirs(folder, exist_ok=True)
-    now = time.time() if beat is None else beat
-    with open(os.path.join(folder, f"{pid}.json"), "w", encoding="utf-8") as handle:
-        json.dump({"pid": pid, "role": role, "beat": now, "started": started or now}, handle)
+def fake_instance(directory, server, pid, role, started=None):
+    with patch("job_manager.instances.os.getpid", return_value=pid):
+        instances.register_instance(directory, role, started or time.time(), server)
 
 
 class RegistryTestCase(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.mkdtemp(prefix="instances_")
         self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+        self.server = instances.LivenessServer()
+        self.addCleanup(self.server.close)
 
 
 class TestTheRegistry(RegistryTestCase):
@@ -43,18 +42,18 @@ class TestTheRegistry(RegistryTestCase):
         self.assertEqual(instances.live_instances(self.dir), [])
 
     def test_this_process_never_counts_itself(self):
-        instances.write_heartbeat(self.dir, instances.ROLE_STANDALONE)
+        instances.register_instance(self.dir, instances.ROLE_STANDALONE, time.time(), self.server)
         self.assertEqual(instances.live_instances(self.dir), [])
 
     def test_others_are_listed_newest_first(self):
-        fake_instance(self.dir, 101, instances.ROLE_MOLEDITPY, started=100.0)
-        fake_instance(self.dir, 102, instances.ROLE_MOLEDITPY, started=200.0)
+        fake_instance(self.dir, self.server, 101, instances.ROLE_MOLEDITPY, started=100.0)
+        fake_instance(self.dir, self.server, 102, instances.ROLE_MOLEDITPY, started=200.0)
         pids = [data["pid"] for data in instances.live_instances(self.dir)]
         self.assertEqual(pids, [102, 101])
 
-    def test_a_stale_heartbeat_is_a_dead_process_and_is_cleared(self):
-        old = time.time() - instances.STALE_AFTER_SECONDS - 5
-        fake_instance(self.dir, 101, instances.ROLE_TRAY, beat=old)
+    def test_a_closed_socket_is_a_dead_process_and_is_cleared(self):
+        fake_instance(self.dir, self.server, 101, instances.ROLE_TRAY)
+        self.server.close()
         with open(os.path.join(instances.instances_dir(self.dir), "101.request"), "w") as handle:
             handle.write("{}")
         self.assertEqual(instances.live_instances(self.dir), [])
@@ -71,11 +70,11 @@ class TestTheRegistry(RegistryTestCase):
         self.assertTrue(os.path.exists(path))
 
     def test_removing_takes_both_files(self):
-        instances.write_heartbeat(self.dir, instances.ROLE_TRAY)
+        instances.register_instance(self.dir, instances.ROLE_TRAY, time.time(), self.server)
         instances.send_request(self.dir, os.getpid(), instances.ACTION_STOP)
-        instances.remove_heartbeat(self.dir)
+        instances.unregister_instance(self.dir)
         self.assertEqual(os.listdir(instances.instances_dir(self.dir)), [])
-        instances.remove_heartbeat(self.dir)  # twice is fine
+        instances.unregister_instance(self.dir)  # twice is fine
 
     def test_a_refused_replace_is_retried_once(self):
         # Windows refuses to replace a file another process is reading.
@@ -89,19 +88,61 @@ class TestTheRegistry(RegistryTestCase):
             return real(src, dst)
 
         with patch("job_manager.instances.os.replace", side_effect=busy_once):
-            instances.write_heartbeat(self.dir, instances.ROLE_TRAY)
+            instances.register_instance(self.dir, instances.ROLE_TRAY, time.time(), self.server)
         self.assertEqual(len(calls), 2)
         self.assertEqual(os.listdir(instances.instances_dir(self.dir)), [f"{os.getpid()}.json"])
 
     def test_a_write_that_fails_leaves_no_temp_file(self):
         with patch("job_manager.instances.os.replace", side_effect=PermissionError("in use")):
             with self.assertRaises(PermissionError):
-                instances.write_heartbeat(self.dir, instances.ROLE_TRAY)
+                instances.register_instance(self.dir, instances.ROLE_TRAY, time.time(), self.server)
         self.assertEqual(os.listdir(instances.instances_dir(self.dir)), [])
 
     def test_no_temporary_file_is_left(self):
-        instances.write_heartbeat(self.dir, instances.ROLE_TRAY)
+        instances.register_instance(self.dir, instances.ROLE_TRAY, time.time(), self.server)
         self.assertEqual(os.listdir(instances.instances_dir(self.dir)), [f"{os.getpid()}.json"])
+
+    def test_registration_has_no_expiration_or_heartbeat(self):
+        fake_instance(self.dir, self.server, 101, instances.ROLE_TRAY, started=1.0)
+        path = os.path.join(instances.instances_dir(self.dir), "101.json")
+        before = os.stat(path).st_mtime_ns
+        with patch("job_manager.instances.time.time", return_value=10**12):
+            self.assertEqual(len(instances.live_instances(self.dir)), 1)
+        self.assertEqual(os.stat(path).st_mtime_ns, before)
+        with open(path, encoding="utf-8") as handle:
+            self.assertNotIn("beat", json.load(handle))
+
+    def test_reused_port_with_different_token_is_not_alive(self):
+        fake_instance(self.dir, self.server, 101, instances.ROLE_TRAY)
+        path = os.path.join(instances.instances_dir(self.dir), "101.json")
+        with open(path, encoding="utf-8") as handle:
+            data = json.load(handle)
+        data["token"] = "0" * 64
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(data, handle)
+        self.assertEqual(instances.live_instances(self.dir), [])
+
+    def test_old_heartbeat_protocol_is_ignored(self):
+        path = os.path.join(instances.instances_dir(self.dir), "101.json")
+        os.makedirs(os.path.dirname(path))
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump({"pid": 101, "role": "tray", "beat": time.time()}, handle)
+        self.assertEqual(instances.live_instances(self.dir), [])
+
+    def test_probe_timeout_keeps_uncertain_instance(self):
+        fake_instance(self.dir, self.server, 101, instances.ROLE_TRAY)
+        with patch("job_manager.instances.socket.create_connection", side_effect=TimeoutError):
+            self.assertEqual(len(instances.live_instances(self.dir)), 1)
+
+    def test_invalid_socket_metadata_is_rejected(self):
+        for port, token in [
+            (True, self.server.token),
+            (0, self.server.token),
+            (65536, self.server.token),
+            (self.server.port, "x" * 64),
+            (self.server.port, "short"),
+        ]:
+            self.assertFalse(instances._socket_alive({"port": port, "token": token}))
 
 
 class TestPickingWhomToAsk(unittest.TestCase):
@@ -136,15 +177,15 @@ class TestIsAStandaloneRunning(RegistryTestCase):
         self.assertFalse(instances.standalone_running(self.dir))
 
     def test_a_tray_process_or_monitor_counts(self):
-        fake_instance(self.dir, 101, instances.ROLE_TRAY)
+        fake_instance(self.dir, self.server, 101, instances.ROLE_TRAY)
         self.assertTrue(instances.standalone_running(self.dir))
 
     def test_a_moleditpy_does_not(self):
-        fake_instance(self.dir, 101, instances.ROLE_MOLEDITPY)
+        fake_instance(self.dir, self.server, 101, instances.ROLE_MOLEDITPY)
         self.assertFalse(instances.standalone_running(self.dir))
 
     def test_the_one_handing_over_does_not(self):
-        fake_instance(self.dir, 101, instances.ROLE_STANDALONE)
+        fake_instance(self.dir, self.server, 101, instances.ROLE_STANDALONE)
         self.assertFalse(instances.standalone_running(self.dir, ignore_pid=101))
         self.assertTrue(instances.standalone_running(self.dir, ignore_pid=999))
 
@@ -171,7 +212,7 @@ class TestRequests(RegistryTestCase):
     def test_one_that_never_answers_is_given_up_on(self):
         # Hung, or on its way out: the launch must not hang with it, nor leave
         # a request behind for whoever reuses that pid.
-        fake_instance(self.dir, 4242, instances.ROLE_TRAY)
+        fake_instance(self.dir, self.server, 4242, instances.ROLE_TRAY)
         started = time.monotonic()
         self.assertIsNone(
             instances.defer_to_running(self.dir, instances.ACTION_SHOW_MONITOR, timeout=0.3)
@@ -180,7 +221,7 @@ class TestRequests(RegistryTestCase):
         self.assertFalse(instances.request_pending(self.dir, 4242))
 
     def test_waiting_for_one_to_go(self):
-        fake_instance(self.dir, 4242, instances.ROLE_TRAY)
+        fake_instance(self.dir, self.server, 4242, instances.ROLE_TRAY)
         self.assertFalse(instances.wait_until_gone(self.dir, 4242, timeout=0.2, poll=0.05))
         os.remove(os.path.join(instances.instances_dir(self.dir), "4242.json"))
         self.assertTrue(instances.wait_until_gone(self.dir, 4242, timeout=0.2, poll=0.05))
@@ -261,8 +302,21 @@ class TestTwoRealProcesses(RegistryTestCase):
         while time.monotonic() < deadline and not instances.live_instances(self.dir):
             self.assertIsNone(process.poll(), "the stand-in exited on its own")
             time.sleep(0.05)
-        self.assertTrue(instances.live_instances(self.dir), "no heartbeat within 30 s")
+        self.assertTrue(instances.live_instances(self.dir), "no registration within 30 s")
         return process, marker
+
+    def test_idle_beacon_never_rewrites_registration(self):
+        process, _ = self.start_answerer()
+        path = os.path.join(instances.instances_dir(self.dir), f"{process.pid}.json")
+        before = os.stat(path).st_mtime_ns
+        time.sleep(2.3)  # Cross the old unconditional two-second rewrite.
+        self.assertEqual(os.stat(path).st_mtime_ns, before)
+        self.assertEqual([d["pid"] for d in instances.live_instances(self.dir)], [process.pid])
+
+    def test_killed_process_is_detected_without_waiting_for_expiration(self):
+        process, _ = self.start_answerer()
+        self._end(process)
+        self.assertEqual(instances.live_instances(self.dir), [])
 
     def test_a_request_reaches_the_running_one(self):
         process, marker = self.start_answerer()

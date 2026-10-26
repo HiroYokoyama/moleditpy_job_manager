@@ -38,6 +38,12 @@ editor. It also runs as a standalone desktop application.
   **Submit to Cluster...** button. Scripts and other applications can use the
   optional [local HTTP API](docs/API.md).
 
+Instance discovery writes one small registration file on startup and removes it
+on shutdown. Liveness checks use an in-memory loopback socket, with no periodic
+heartbeat writes. Window activation requests write only when requested. After
+updating from 3.3.0 or earlier, quit all existing Job Manager monitors and tray
+processes before restarting; the old file-heartbeat protocol is no longer used.
+
 Detailed instructions: [Standard workflow](docs/WORKFLOW.md).
 
 ## Requirements
