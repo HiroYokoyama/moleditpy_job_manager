@@ -1385,7 +1385,12 @@ class JobsDialog(QDialog):
             job,
             parent=self,
             on_open_callback=lambda path: self.open_result_files([path]),
-            on_text_callback=self.show_text_file,
+            on_text_callback=lambda path: self.show_text_file(
+                path,
+                on_opened=lambda: (
+                    dialog.accept() if not gone(dialog) and dialog.isVisible() else None
+                ),
+            ),
         )
         self._detail_dialogs.append(dialog)
         dialog.finished.connect(
@@ -1429,10 +1434,10 @@ class JobsDialog(QDialog):
 
         return False
 
-    def show_text_file(self, path: str) -> bool:
+    def show_text_file(self, path: str, on_opened=None) -> bool:
         """A file as plain text, in a window of this plugin's own."""
         try:
-            dialog = show_text_window(path, self)
+            dialog = show_text_window(path, self, on_opened=on_opened)
         except OSError as exc:
             self._append_error(f"Could not read {path}: {exc}")
             return False

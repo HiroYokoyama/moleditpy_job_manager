@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import codecs
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from PySide6.QtWidgets import QWidget
 
@@ -51,15 +51,32 @@ def is_binary_file(path: str) -> bool:
     return "\0" in text or controls / len(text) > 0.1
 
 
-def show_text_window(path: str, parent: Optional[QWidget] = None):
+def show_text_window(
+    path: str,
+    parent: Optional[QWidget] = None,
+    on_opened: Optional[Callable[[], None]] = None,
+):
     """Open ``path`` read-only in a text window, and return the window."""
     from .text_dialog import TextDialog
+
+    path = os.path.abspath(path)
 
     def reload() -> None:
         try:
             dialog.set_text(read_text_for_view(path))
         except OSError as exc:
             dialog.set_text(f"Could not read {path}: {exc}")
+
+    def open_source() -> bool:
+        if not open_in_host(path):
+            return False
+        if on_opened is not None:
+            try:
+                on_opened()
+            except RuntimeError:
+                # The originating browser may already have been destroyed.
+                pass
+        return True
 
     # A finished result is read from the top; only a tail starts at the end.
     dialog = TextDialog(
@@ -69,7 +86,15 @@ def show_text_window(path: str, parent: Optional[QWidget] = None):
         on_refresh=reload,
         follow=False,
         auto_refresh=False,
+        on_open_in_moleditpy=open_source,
     )
+    if is_text_file(path):
+        # OpenBabel's .txt importer treats arbitrary text as molecules and can
+        # freeze the editor. Keep this existing protection on the explicit button.
+        dialog.btn_open_in_moleditpy.setEnabled(False)
+        dialog.btn_open_in_moleditpy.setToolTip(
+            "Plain .txt files are displayed in this text viewer"
+        )
     dialog.set_text(read_text_for_view(path))
     dialog.present()
     return dialog

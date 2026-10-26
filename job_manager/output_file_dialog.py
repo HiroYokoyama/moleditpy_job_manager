@@ -628,7 +628,11 @@ class OutputFileSelectorDialog(QDialog):
             from .jobs_dialog import show_text_window
 
             # Keep the viewer independent of the browser's lifetime.
-            show_text_window(path, self.parentWidget())
+            show_text_window(
+                path,
+                self.parentWidget(),
+                on_opened=lambda: self.accept() if self.isVisible() else None,
+            )
             return True
         if self.on_open_callback is not None:
             return self.on_open_callback(path) is not False

@@ -866,7 +866,11 @@ MoleditPy. In **File Browser**, double-click a non-binary file to view its text,
 or use **Open in Text Viewer**. The browser and text viewer are modeless, so
 you can keep browsing while reading a file. **Open in MoleditPy** explicitly
 uses the host's file opener and closes the browser. The wider browser keeps its
-buttons on one row with enough room for their labels. **Ctrl+F** searches the
+buttons on one row with enough room for their labels. A file's Text Viewer also
+has **Open in MoleditPy**: it passes the original file to the editor and closes
+both the viewer and its originating File Browser. Cancelling or refusing the
+open leaves both windows open. Plain `.txt` files keep this button disabled to
+avoid OpenBabel treating arbitrary text as molecules. **Ctrl+F** searches the
 text — Enter or F3 for the next match, Shift for
 the one before. The same window shows **Tail Log** and **Details**.
 
