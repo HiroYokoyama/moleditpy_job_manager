@@ -57,9 +57,11 @@ def test_failed_creation_does_not_hide_a_legacy_list(tmp_path):
     assert not path.exists()
 
 
-def test_parallel_writers_keep_every_new_job(tmp_path):
+@pytest.mark.parametrize("initialized", [False, True])
+def test_parallel_writers_keep_every_new_job(tmp_path, initialized):
     path = str(tmp_path / "parallel.pmejdb")
-    database.write_document(path, document())
+    if initialized:
+        database.write_document(path, document())
 
     def write(index):
         return database.save_changes(path, document(job(str(index))), {}, set())

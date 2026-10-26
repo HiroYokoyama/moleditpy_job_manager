@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import sqlite3
+import tempfile
 from copy import deepcopy
 from contextlib import contextmanager
 from pathlib import Path
@@ -37,21 +38,19 @@ def connection(path: str, *, write=False, exclusive=False):
     """
     target = Path(path).absolute()
     created = False
-    committed = False
     db = None
+    temporary = None
     try:
         if write and (exclusive or not target.exists()):
             target.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                descriptor = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-            except FileExistsError:
-                if exclusive:
-                    raise
-            else:
-                os.close(descriptor)
-                created = True
+            if exclusive and target.exists():
+                raise FileExistsError(str(target))
+            descriptor, temporary = tempfile.mkstemp(prefix=".job-db-", dir=target.parent)
+            os.close(descriptor)
+            created = True
+        opened = Path(temporary) if temporary else target
         db = sqlite3.connect(
-            target.as_uri() + ("?mode=rw" if write else "?mode=ro"),
+            opened.as_uri() + ("?mode=rw" if write else "?mode=ro"),
             uri=True,
             timeout=2,
             isolation_level=None,
@@ -87,15 +86,18 @@ def connection(path: str, *, write=False, exclusive=False):
                 raise ValueError("Unsupported job database table definition")
         yield db
         db.commit()
-        committed = True
+        if created:
+            db.close()
+            db = None
+            # Publish only a complete file, without overwriting a concurrent creator.
+            os.link(temporary, target)
     except (sqlite3.Error, ValueError, TypeError, KeyError) as error:
         raise OSError(f"Could not access job database {target}: {error}") from error
     finally:
         if db is not None:
             db.close()  # Also rolls back an unsuccessful transaction.
-        if created and not committed and target.exists():
-            # A failed creation must not leave an empty file hiding a legacy list.
-            target.unlink()
+        if temporary is not None:
+            os.unlink(temporary)
 
 
 def _document(db):
@@ -169,6 +171,14 @@ def _merge(base, mine, theirs):
 
 
 def save_changes(path: str, document, baseline: dict, forgotten: set):
+    # Two windows may both save their first job before any database exists.
+    try:
+        return _save_changes(path, document, baseline, forgotten)
+    except FileExistsError:
+        return _save_changes(path, document, baseline, forgotten)
+
+
+def _save_changes(path: str, document, baseline: dict, forgotten: set):
     """Commit only local changes, preserving other windows' updates/removals."""
     with connection(path, write=True) as db:
         disk_document = _document(db)
