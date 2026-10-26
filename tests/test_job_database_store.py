@@ -26,6 +26,19 @@ def test_fresh_store_uses_sqlite_without_creating_it_on_read(tmp_path):
     assert not (tmp_path / "jobs.pmejbs").exists()
 
 
+def test_database_reads_and_unchanged_save_do_not_rewrite_file(tmp_path):
+    store = JobStore(str(tmp_path))
+    store.add_job(Job(id="synthetic"))
+    path = Path(store.jobs_path)
+    before = path.read_bytes(), path.stat().st_mtime_ns
+    reopened = JobStore(str(tmp_path))
+    reopened.reload_jobs()
+    reopened.read_job_list(str(path))
+    reopened.read_job_flags(str(path))
+    reopened.save_jobs()
+    assert (path.read_bytes(), path.stat().st_mtime_ns) == before
+
+
 @pytest.mark.parametrize("extension", [".pmejbs", ".json"])
 def test_loading_and_saving_legacy_never_implicitly_converts(tmp_path, extension):
     store, path = legacy_store(tmp_path, extension)

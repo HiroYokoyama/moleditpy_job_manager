@@ -27,6 +27,16 @@ def is_database(path: str) -> bool:
     return str(path).lower().endswith(EXTENSION)
 
 
+def install_new_file(source, target):
+    """Atomically install a complete file without replacing an existing name."""
+    if os.name == "nt":
+        # Windows rename refuses an existing target, and also works on FAT/
+        # removable drives where hard links are unavailable.
+        os.rename(source, target)
+    else:
+        os.link(source, target)
+
+
 @contextmanager
 def connection(path: str, *, write=False, exclusive=False):
     """Reading never creates a file; all writers serialize before reading rows.
@@ -88,13 +98,13 @@ def connection(path: str, *, write=False, exclusive=False):
             db.close()
             db = None
             # Publish only a complete file, without overwriting a concurrent creator.
-            os.link(temporary, target)
+            install_new_file(temporary, target)
     except (sqlite3.Error, ValueError, TypeError, KeyError) as error:
         raise OSError(f"Could not access job database {target}: {error}") from error
     finally:
         if db is not None:
             db.close()  # Also rolls back an unsuccessful transaction.
-        if temporary is not None:
+        if temporary is not None and os.path.exists(temporary):
             os.unlink(temporary)
 
 

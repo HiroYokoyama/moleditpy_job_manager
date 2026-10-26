@@ -851,7 +851,7 @@ class JobStore:
                     raise OSError("The legacy list changed during conversion; reopen it and retry")
             # Publish only after verification and a durable backup. A competing
             # conversion cannot overwrite a DB somebody has already opened.
-            os.link(candidate, target)
+            job_database.install_new_file(candidate, target)
             os.unlink(source)
         was_default = self.using_default_jobs_file()
         if was_default:

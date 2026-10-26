@@ -1,6 +1,8 @@
 """Real SQLite transactions and separate writers, using synthetic records only."""
 
 import sqlite3
+import os
+from unittest.mock import patch
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -139,4 +141,12 @@ def test_exclusive_snapshot_never_overwrites_a_target(tmp_path):
     database.write_document(path, document(job()))
     with pytest.raises(FileExistsError):
         database.write_document(path, document(), exclusive=True)
+    assert len(database.read_document(path)["jobs"]) == 1
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows rename has no-replace semantics")
+def test_new_windows_database_does_not_require_hard_links(tmp_path):
+    path = str(tmp_path / "removable.pmejdb")
+    with patch("job_manager.job_database.os.link", side_effect=OSError("No hard links")):
+        database.write_document(path, document(job()))
     assert len(database.read_document(path)["jobs"]) == 1
