@@ -159,7 +159,7 @@ class StandaloneTray(_StandaloneWindows):
         return instances.standalone_running(self.data_dir, self.after_pid)
 
     def start(self) -> bool:
-        """Put the icon up and start beating. False when there is no tray to use."""
+        """Put the icon up and register this instance. False when there is no tray to use."""
         if not notify.available():
             return False
         self.app.setQuitOnLastWindowClosed(False)

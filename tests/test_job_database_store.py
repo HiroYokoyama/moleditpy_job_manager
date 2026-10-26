@@ -181,13 +181,14 @@ def test_duplicate_legacy_ids_are_not_silently_lost_during_conversion(tmp_path):
 def test_another_live_tracker_prevents_false_interrupted_transfer_recovery(tmp_path):
     store = JobStore(str(tmp_path))
     store.add_job(Job(id="synthetic", state="UPLOADING"))
-    beats = tmp_path / "instances"
-    beats.mkdir()
-    heartbeat = beats / "999999.json"
-    atomic_write_json(
-        str(heartbeat),
-        {"pid": 999999, "role": "moleditpy", "beat": time.time(), "started": time.time()},
-    )
-    assert JobStore(str(tmp_path)).jobs["synthetic"].state == "UPLOADING"
-    heartbeat.unlink()
-    assert JobStore(str(tmp_path)).jobs["synthetic"].state == "FAILED"
+    from job_manager import instances
+
+    server = instances.LivenessServer()
+    try:
+        with patch("job_manager.instances.os.getpid", return_value=999999):
+            instances.register_instance(str(tmp_path), "moleditpy", time.time(), server)
+        assert JobStore(str(tmp_path)).jobs["synthetic"].state == "UPLOADING"
+        server.close()
+        assert JobStore(str(tmp_path)).jobs["synthetic"].state == "FAILED"
+    finally:
+        server.close()

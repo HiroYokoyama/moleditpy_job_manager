@@ -1,4 +1,4 @@
-"""Handing the jobs to a tray process: the files, the commands, the start.
+"""Handing the jobs to a tray process: the commands and process start.
 
 Pure stdlib, so these run in the pytest-only CI job too.
 """
@@ -11,98 +11,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 import types
 import unittest
 from unittest.mock import patch
 
 from job_manager import handoff
-
-
-def legacy_heartbeat(directory, relaunch=None, beat=None):
-    """What a 2.0 / 2.1 tray process wrote, which a newer MoleditPy still stops."""
-    os.makedirs(directory, exist_ok=True)
-    with open(handoff.tray_path(directory), "w", encoding="utf-8") as handle:
-        json.dump(
-            {
-                "pid": os.getpid(),
-                "beat": time.time() if beat is None else beat,
-                "relaunch": relaunch or [],
-            },
-            handle,
-        )
-
-
-class HandoffTestCase(unittest.TestCase):
-    def setUp(self):
-        self.dir = tempfile.mkdtemp(prefix="handoff_")
-        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
-
-
-class TestHeartbeat(HandoffTestCase):
-    def test_none_is_none(self):
-        self.assertIsNone(handoff.live_tray(self.dir))
-
-    def test_a_fresh_beat_is_alive(self):
-        legacy_heartbeat(self.dir, ["moleditpy"])
-        live = handoff.live_tray(self.dir)
-        self.assertEqual(live["pid"], os.getpid())
-        self.assertEqual(live["relaunch"], ["moleditpy"])
-
-    def test_a_stale_beat_is_a_dead_process(self):
-        # A crashed or killed tray process leaves its file; a MoleditPy must
-        # not wait on it, nor believe the jobs are tracked elsewhere.
-        legacy_heartbeat(self.dir)
-        later = time.time() + handoff.STALE_AFTER_SECONDS + 1
-        self.assertIsNone(handoff.live_tray(self.dir, now=later))
-
-    def test_a_damaged_file_is_not_alive(self):
-        with open(handoff.tray_path(self.dir), "w", encoding="utf-8") as handle:
-            handle.write("{not json")
-        self.assertIsNone(handoff.live_tray(self.dir))
-        with open(handoff.tray_path(self.dir), "w", encoding="utf-8") as handle:
-            json.dump(["a list"], handle)
-        self.assertIsNone(handoff.live_tray(self.dir))
-
-
-class TestStopping(HandoffTestCase):
-    def test_nothing_running_returns_at_once(self):
-        started = time.monotonic()
-        self.assertTrue(handoff.stop_running_tray(self.dir, timeout=5))
-        self.assertLess(time.monotonic() - started, 1)
-        self.assertFalse(handoff.stop_requested(self.dir))
-
-    def test_it_waits_for_the_process_to_go(self):
-        legacy_heartbeat(self.dir)
-
-        def tray_process():
-            # What a 2.0/2.1 tray process did: see the request, then leave.
-            # Bounded, and a daemon: if the request never came, a thread
-            # spinning for ever would keep the test process from exiting.
-            deadline = time.monotonic() + 10
-            while not handoff.stop_requested(self.dir):
-                if time.monotonic() > deadline:
-                    return
-                time.sleep(0.02)
-            time.sleep(0.2)
-            os.remove(handoff.tray_path(self.dir))
-
-        worker = threading.Thread(target=tray_process, daemon=True)
-        worker.start()
-        self.addCleanup(worker.join, 15)
-
-        self.assertTrue(handoff.stop_running_tray(self.dir, timeout=5, poll=0.02))
-        self.assertIsNone(handoff.live_tray(self.dir))
-        # The request is cleared, or the next tray process would stop at once.
-        self.assertFalse(handoff.stop_requested(self.dir))
-
-    def test_one_that_never_goes_is_given_up_on(self):
-        legacy_heartbeat(self.dir)
-        self.assertFalse(handoff.stop_running_tray(self.dir, timeout=0.2, poll=0.05))
-
-    def test_clearing_a_request_that_is_not_there_is_fine(self):
-        handoff.clear_stop(self.dir)
 
 
 class TestCommands(unittest.TestCase):
