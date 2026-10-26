@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+from job_manager.job_database import read_document as read_database
 from job_manager.models import Job
 from job_manager.store import JobStore, atomic_write_json
 
@@ -60,11 +61,15 @@ def test_save_as_and_archive_write_v2_without_rewriting_source(tmp_path):
     store.write_job_list(str(target), store.job_list(), reconstructed=True)
     archive = Path(store.archive_jobs())
     for path in (target, archive):
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = (
+            read_database(str(path))
+            if path.suffix == ".pmejdb"
+            else json.loads(path.read_text(encoding="utf-8"))
+        )
         assert payload["version"] == 2
         assert {job["id"]: job["number"] for job in payload["jobs"]} == {"older": 1, "newer": 2}
     assert json.loads(target.read_text(encoding="utf-8"))["reconstructed"] is True
-    assert json.loads(archive.read_text(encoding="utf-8"))["archived"] is True
+    assert read_database(str(archive))["archived"] is True
     assert source.read_bytes() == original
 
 
@@ -74,7 +79,7 @@ def test_merged_jobs_from_other_windows_have_unique_chronological_numbers(tmp_pa
     other = JobStore(str(tmp_path))
     other.add_job(Job(id="b", submitted_at=20))
     store.add_job(Job(id="c", submitted_at=30))
-    payload = json.loads(Path(store.jobs_path).read_text(encoding="utf-8"))
+    payload = read_database(store.jobs_path)
     assert payload["version"] == 2
     assert {job["id"]: job["number"] for job in payload["jobs"]} == {"a": 1, "b": 2, "c": 3}
 

@@ -20,9 +20,12 @@ import logging
 import math
 import os
 import time
+import tempfile
+from copy import deepcopy
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 from .job_dependencies import DependencyGraph
+from . import job_database
 from .job_dependencies import _will_run as _will_run
 from .models import (
     STATE_DONE,
@@ -54,7 +57,9 @@ SETTINGS_FILENAME = "settings.json"
 
 #: MoleditPy's extension for a saved job list, alongside .pmeprj for projects
 #: (pme + jbs). Ordinary JSON inside; the extension is what dialogs filter on.
-JOB_EXTENSION = ".pmejbs"
+JOB_EXTENSION = job_database.EXTENSION
+LEGACY_JOB_EXTENSION = ".pmejbs"
+JOB_EXTENSIONS = (JOB_EXTENSION, LEGACY_JOB_EXTENSION)
 JOBS_FILENAME = "jobs" + JOB_EXTENSION
 JOB_LIST_VERSION = 2
 #: Written by versions before the extension existed; read once, then migrated.
@@ -272,6 +277,12 @@ class JobStore:
         self.directory = directory or default_data_dir()
         self.settings_path = os.path.join(self.directory, SETTINGS_FILENAME)
         self.default_jobs_path = os.path.join(self.directory, JOBS_FILENAME)
+        if not os.path.exists(self.default_jobs_path):
+            for legacy in ("jobs.pmejbs", LEGACY_JOBS_FILENAME):
+                candidate = os.path.join(self.directory, legacy)
+                if os.path.exists(candidate):
+                    self.default_jobs_path = candidate
+                    break
         self.jobs_path = self.default_jobs_path
         self.legacy_jobs_path = os.path.join(self.directory, LEGACY_JOBS_FILENAME)
         self.hosts: Dict[str, HostProfile] = {}
@@ -293,6 +304,8 @@ class JobStore:
         #: What was last written to each file, so an unchanged document is not
         #: written again. See :meth:`_write_if_changed`.
         self._written: Dict[str, tuple] = {}
+        self._baselines: Dict[str, dict] = {}
+        self._opened_job_paths: set = set()
         self.load()
 
     # --- loading / saving ---------------------------------------------------
@@ -329,11 +342,7 @@ class JobStore:
             preset = SubmitPreset.from_dict(raw)
             self.presets[preset.id] = preset
 
-        source = self.jobs_path
-        if not os.path.exists(source) and os.path.exists(self.legacy_jobs_path):
-            # Written before .pmejbs existed; next save migrates to the new name.
-            source = self.legacy_jobs_path
-        jobs_doc = read_json(source, {}) or {}
+        jobs_doc = self._read_jobs(self.jobs_path, {}) or {}
         if not isinstance(jobs_doc, dict):
             jobs_doc = {}
         self.jobs = {}
@@ -343,6 +352,7 @@ class JobStore:
             job = Job.from_dict(raw)
             self.jobs[job.id] = job
         assign_job_numbers(list(self.jobs.values()))
+        self._remember_jobs()
         self.invalidate_chains()
         self._resolve_interrupted()
 
@@ -372,7 +382,7 @@ class JobStore:
             # that: it has been moved, renamed or not written yet, and reading
             # it as "everything was removed" would empty the table over it.
             return JobsReload()
-        payload = read_json(self.jobs_path, None)
+        payload = self._read_jobs(self.jobs_path, None)
         if not isinstance(payload, dict):
             # Unreadable is not empty: a file caught mid-copy, or damaged, would
             # otherwise read as "every job was removed elsewhere" and empty the
@@ -416,7 +426,37 @@ class JobStore:
         if added or updated or removed:
             self.invalidate_chains()
         assign_job_numbers(list(self.jobs.values()))
+        # Keep a dirty job's previous baseline so a later save still knows
+        # which fields this window changed, rather than claiming disk's edits.
+        baseline = self._baselines.setdefault(self.jobs_path, {})
+        for raw in records:
+            current = self.jobs.get(raw["id"])
+            if current is not None and current.to_dict() == Job.from_dict(raw).to_dict():
+                baseline[current.id] = current.to_dict()
         return JobsReload(added, updated, removed)
+
+    def _read_jobs(self, path: str, default):
+        if not job_database.is_database(path):
+            return read_json(path, default)
+        if not os.path.exists(path):
+            return default
+        try:
+            return job_database.read_document(path)
+        except OSError:
+            logging.exception("Job Manager: could not read job database %s", path)
+            return default
+
+    def _remember_jobs(self) -> None:
+        self._baselines[self.jobs_path] = {key: job.to_dict() for key, job in self.jobs.items()}
+        if os.path.exists(self.jobs_path):
+            self._opened_job_paths.add(self.jobs_path)
+
+    @staticmethod
+    def _write_jobs(path: str, document: dict) -> None:
+        if job_database.is_database(path):
+            job_database.write_document(path, document)
+        else:
+            atomic_write_json(path, document)
 
     def _resolve_interrupted(self) -> int:
         """Settle any job left mid-transfer by a previous session."""
@@ -466,6 +506,21 @@ class JobStore:
     def save_jobs(self) -> None:
         self.invalidate_chains()
         document = self._document(archived=False)
+        if self.jobs_path in self._opened_job_paths and not os.path.exists(self.jobs_path):
+            raise OSError("The job list was moved or converted elsewhere. Reopen the current list.")
+        if job_database.is_database(self.jobs_path):
+            saved = job_database.save_changes(
+                self.jobs_path, document, self._baselines.get(self.jobs_path, {}), self._forgotten
+            )
+            baseline = self._baselines.setdefault(self.jobs_path, {})
+            for identifier, job in self.jobs.items():
+                raw = saved.get(identifier)
+                if raw is not None:
+                    baseline[identifier] = deepcopy(raw)
+                    if job.state not in INTERRUPTED_STATES:
+                        job.__dict__.update(Job.from_dict(raw).__dict__)
+            self._opened_job_paths.add(self.jobs_path)
+            return
         document["jobs"] = self._merged_jobs(document["jobs"])
         # Number the merged list too: another instance can have added jobs
         # that are not yet in this window's in-memory store.
@@ -475,6 +530,7 @@ class JobStore:
             dict(raw, number=job.number) for raw, job in zip(document["jobs"], merged)
         ]
         self._write_if_changed(self.jobs_path, document, "jobs:" + self.jobs_path)
+        self._remember_jobs()
 
     def _merged_jobs(self, mine: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Ours, plus any job on disk that this session has never heard of.
@@ -712,6 +768,95 @@ class JobStore:
         """Where cleared job lists are kept: ``<data dir>/archived``."""
         return os.path.join(self.directory, ARCHIVE_DIRNAME)
 
+    def _in_archive(self, path: str) -> bool:
+        return os.path.normcase(os.path.abspath(os.path.dirname(path))) == os.path.normcase(
+            os.path.abspath(self.archive_dir())
+        ) and os.path.basename(path).startswith(ARCHIVE_PREFIX)
+
+    def can_convert_jobs(self) -> bool:
+        return (
+            not job_database.is_database(self.jobs_path)
+            and os.path.isfile(self.jobs_path)
+            and not self.read_job_flags(self.jobs_path)["archived"]
+        )
+
+    def convert_jobs(self) -> Tuple[str, str]:
+        """Explicitly convert the live legacy list, preserving its original bytes.
+
+        No load/reload path calls this. Other windows must leave the legacy list
+        before conversion; subsequent saves to a moved list are refused.
+        """
+        if not self.can_convert_jobs():
+            raise OSError("The current list is not a convertible legacy job list")
+        if any(job.state in INTERRUPTED_STATES for job in self.jobs.values()):
+            raise OSError("Wait for uploads and downloads to finish before converting")
+        source = self.jobs_path
+        with open(source, "rb") as handle:
+            original = handle.read()
+        try:
+            payload = json.loads(original)
+            records = payload["jobs"]
+            if not isinstance(records, list) or any(
+                not isinstance(raw, dict) or not isinstance(raw.get("id"), str) or not raw["id"]
+                for raw in records
+            ):
+                raise ValueError("Invalid jobs collection")
+        except (ValueError, TypeError, KeyError) as exc:
+            raise OSError("Could not read the legacy job list; no files were converted") from exc
+        disk = {raw["id"]: raw for raw in records if raw["id"] not in self._forgotten}
+        for job in self.jobs.values():
+            theirs = disk.get(job.id)
+            if theirs is None or job.updated_at >= Job.from_dict(theirs).updated_at:
+                disk[job.id] = job.to_dict()
+        jobs = [Job.from_dict(raw) for raw in disk.values()]
+        assign_job_numbers(jobs)
+        document = dict(
+            payload,
+            version=JOB_LIST_VERSION,
+            reconstructed=self.reconstructed,
+            jobs=[job.to_dict() for job in jobs],
+        )
+        target = os.path.splitext(source)[0] + JOB_EXTENSION
+        if os.path.exists(target):
+            raise FileExistsError(f"Already exists: {target}. Use Save As to choose another name.")
+        with tempfile.TemporaryDirectory(prefix=".convert-", dir=os.path.dirname(source)) as work:
+            candidate = os.path.join(work, "converted" + JOB_EXTENSION)
+            job_database.write_document(candidate, document, exclusive=True)
+            if job_database.read_document(candidate) != document:
+                raise OSError("Converted database verification failed; the old file is unchanged")
+            stamp = time.strftime("%Y%m%d_%H%M%S")
+            extension = os.path.splitext(source)[1]
+            os.makedirs(self.archive_dir(), mode=0o700, exist_ok=True)
+            suffix = 0
+            while True:
+                extra = f"_{suffix}" if suffix else ""
+                archive = os.path.join(self.archive_dir(), f"jobs_{stamp}_legacy{extra}{extension}")
+                try:
+                    descriptor = os.open(archive, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                    break
+                except FileExistsError:
+                    suffix += 1
+            try:
+                with os.fdopen(descriptor, "wb") as handle:
+                    handle.write(original)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            except OSError:
+                os.unlink(archive)  # A partial backup must not look like an archive.
+                raise
+            with open(source, "rb") as handle:
+                if handle.read() != original:
+                    raise OSError("The legacy list changed during conversion; reopen it and retry")
+            # Publish only after verification and a durable backup. A competing
+            # conversion cannot overwrite a DB somebody has already opened.
+            os.link(candidate, target)
+            os.unlink(source)
+        was_default = self.using_default_jobs_file()
+        if was_default:
+            self.default_jobs_path = target
+        self.use_jobs_file(target)
+        return target, archive
+
     def archive_jobs(self, when: Optional[float] = None) -> str:
         """Write the current list to ``archived/jobs_<date>.pmejbs``; returns its path.
 
@@ -725,7 +870,7 @@ class JobStore:
         while os.path.exists(target):
             target = os.path.join(directory, f"{ARCHIVE_PREFIX}{stamp}_{suffix}{JOB_EXTENSION}")
             suffix += 1
-        atomic_write_json(target, self._document(archived=True, when=when))
+        self._write_jobs(target, self._document(archived=True, when=when))
         return target
 
     def clear_jobs(self, when: Optional[float] = None) -> Tuple[str, int]:
@@ -747,7 +892,7 @@ class JobStore:
             os.path.join(directory, name)
             for name in os.listdir(directory)
             # .json too: archives written before the extension existed.
-            if name.startswith(ARCHIVE_PREFIX) and name.endswith((JOB_EXTENSION, ".json"))
+            if name.startswith(ARCHIVE_PREFIX) and name.endswith((*JOB_EXTENSIONS, ".json"))
         ]
         return sorted(names, reverse=True)
 
@@ -757,17 +902,17 @@ class JobStore:
         ``archived`` decides how the caller shows it: an archived job's queue id
         is stale, so offering to cancel or resubmit it would not work.
         """
-        payload = read_json(path, {}) or {}
+        payload = self._read_jobs(path, {}) or {}
         if not isinstance(payload, dict):
             return [], False
         jobs = [Job.from_dict(raw) for raw in _records(payload, "jobs") if isinstance(raw, dict)]
         assign_job_numbers(jobs)
-        return jobs, bool(payload.get("archived", False))
+        return jobs, bool(payload.get("archived", False) or self._in_archive(path))
 
     def write_job_list(self, path: str, jobs: List[Job], reconstructed: bool = False) -> str:
         """Write ``jobs`` to ``path`` as a job list that can be opened again."""
         assign_job_numbers(jobs)
-        atomic_write_json(
+        self._write_jobs(
             path,
             {
                 "version": JOB_LIST_VERSION,
@@ -780,11 +925,11 @@ class JobStore:
 
     def read_job_flags(self, path: str) -> Dict[str, bool]:
         """The two flags a job list carries about itself."""
-        payload = read_json(path, {}) or {}
+        payload = self._read_jobs(path, {}) or {}
         if not isinstance(payload, dict):
             return {"archived": False, "reconstructed": False}
         return {
-            "archived": bool(payload.get("archived", False)),
+            "archived": bool(payload.get("archived", False) or self._in_archive(path)),
             "reconstructed": bool(payload.get("reconstructed", False)),
         }
 
@@ -802,6 +947,7 @@ class JobStore:
         )
         jobs, _archived = self.read_job_list(self.jobs_path)
         self.jobs = {job.id: job for job in jobs}
+        self._remember_jobs()
         self.invalidate_chains()
         # Applied to the list being left, not this one -- else a removal here
         # would silently drop a job from the file just opened.
@@ -815,9 +961,20 @@ class JobStore:
         )
 
     def export_jobs(self, path: str) -> str:
-        """Write the job list to ``path``: CSV by extension, else .pmejbs JSON."""
+        """Save a portable SQLite/legacy JSON snapshot, or export CSV."""
+        try:
+            same_file = os.path.samefile(path, self.jobs_path)
+        except OSError:
+            same_file = os.path.normcase(os.path.abspath(path)) == os.path.normcase(
+                os.path.abspath(self.jobs_path)
+            )
+        if same_file:
+            self.save_jobs()
+            return path
         if os.path.splitext(path)[1].lower() == ".csv":
             self.export_jobs_csv(path)
+        elif job_database.is_database(path):
+            self._write_jobs(path, self._document(archived=False))
         else:
             self.export_jobs_json(path)
         return path

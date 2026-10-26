@@ -219,7 +219,7 @@ class TestAnUnreadableFile(ReloadTestCase):
     def test_reload_uses_the_document_it_already_validated(self):
         self.mine.add_job(make_job("j1", state=STATE_RUNNING))
         payload = {"jobs": [make_job("j1", state=STATE_DONE, updated_at=2000.0).to_dict()]}
-        with patch("job_manager.store.read_json", side_effect=[payload, None]):
+        with patch.object(self.mine, "_read_jobs", side_effect=[payload, None]):
             result = self.mine.reload_jobs()
         self.assertEqual(result.updated, 1)
         self.assertEqual(self.mine.jobs["j1"].state, STATE_DONE)
