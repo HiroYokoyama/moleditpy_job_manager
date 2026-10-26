@@ -102,7 +102,7 @@ def create_job_actions(parent, callbacks):
             "open_list",
             "Open List...",
             callbacks["_open_job_list_file"],
-            f"Open a saved job list ({JOB_EXTENSION}). A cleared list opens read only.",
+            "Open a SQLite or legacy JSON job list. A cleared list opens read only.",
         ),
         (
             "save_as",

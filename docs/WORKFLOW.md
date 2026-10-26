@@ -620,7 +620,7 @@ about; against your own workstation it is fine.
 
 **View ▸ Reload List** (`Ctrl+R`) asks a different question. Two Job
 Managers open at once — a second MoleditPy window, or the standalone monitor
-beside the plugin — share one `jobs.pmejbs`, and each holds the whole list in
+beside the plugin — share one `jobs.pmejdb`, and each holds the whole list in
 memory. Saving merges, so neither loses the other's jobs, but neither *sees*
 them either until it re-reads the file. Reload List is that re-read: a job
 submitted, finished or removed in the other window appears here. Refresh Now
@@ -645,7 +645,7 @@ The **No.** column numbers the current list by submission time, starting at 1
 for the oldest job. The default sort is **No.**, descending (newest first),
 matching **Submitted** order. Filtering or sorting another column keeps each
 job's number; adding or removing jobs recalculates the list's numbers.
-Job-list schema v2 saves this value as `number` on each job in `.pmejbs`.
+Job-list schema v2 saves this value as `number` on each job in both `.pmejdb` and legacy `.pmejbs`.
 Older files remain readable: opening them calculates numbers in memory without
 saving or converting the file. The next save writes schema v2. Saving a copy
 or archive writes v2 to that destination and leaves the original file alone.
@@ -835,7 +835,7 @@ plugin was installed, or left behind by a list that was cleared.
 Every directory below the folder that holds calculation outputs becomes one
 record — named after the input file where there is one, dated from the files
 themselves, and carrying the exit code where this plugin's own sentinel is
-still there. The list is written into that folder as `rebuilt_<date>.pmejbs`,
+still there. The list is written into that folder as `rebuilt_<date>.pmejdb`,
 so it travels with the results, and it is marked reconstructed: read only,
 for the reasons above.
 
@@ -915,15 +915,16 @@ arrow at the toolbar's right edge.
 | File menu action | Does |
 |---|---|
 | **Default List** | Returns to the plugin's usual live list |
-| **Open List...** | Opens a saved `.pmejbs` list (`Ctrl+O`) |
+| **Open List...** | Opens a saved `.pmejdb` or legacy `.pmejbs` list (`Ctrl+O`) |
 | **Rebuild from Folder...** | Builds a read-only list from calculation outputs on disk |
-| **Save As...** | Saves the list to a `.pmejbs` file — the same records the plugin stores, openable again |
+| **Save As...** | Offers SQLite `.pmejdb` and legacy JSON `.pmejbs` snapshots, both openable again |
+| **Convert to Job Database...** | Enabled for the current legacy list; verifies a DB, archives the original file, then switches tracking |
 | **Export CSV** | One row per job — state, exit code, timings, remote and local paths, the command |
 | **Load Archive...** | Opens a previously cleared list |
 | **Clear List...** | Empties the table, after saving it to `archived/` |
 
 **Clearing never deletes.** The current list is written to
-`~/.moleditpy/job_manager/archived/jobs_<date>_<time>.pmejbs` first, because a
+`~/.moleditpy/job_manager/archived/jobs_<date>_<time>.pmejdb` first, because a
 job's remote directory is often the only way back to results still sitting on
 the cluster. If any jobs are still active, the confirmation says so — clearing
 stops tracking them but cancels nothing.
@@ -935,7 +936,7 @@ archived folder** in your file manager; the read-only banner shows its path.
 
 Open saved lists with **File ▸ Open List...** (`Ctrl+O`) or **File ▸ Load Archive...**
 in the Job Manager, **File ▸ Import** in the main window (the
-plugin registers `.pmejbs` with the application), or by dropping the file onto
+plugin registers both `.pmejdb` and `.pmejbs` with the application), or by dropping the file onto
 the Job Manager window.
 
 What happens next depends on the file, not on where it sits:
@@ -959,14 +960,31 @@ What happens next depends on the file, not on where it sits:
 The flag lives inside the file, so a cleared list stays read-only after being
 moved, copied or mailed on.
 
-### The `.pmejbs` format
+### Job database and legacy formats
 
-MoleditPy's extension for a saved job list, alongside `.pmeprj` for a project.
-The contents are ordinary JSON — `version`, `archived`, `reconstructed`,
-`jobs`, and `archived_at` on an archived list — so anything that reads JSON can
-read it. A
-`jobs.json` written before the extension existed is still read, and the next
-save migrates it.
+New lists use SQLite **`.pmejdb`**, both for internal storage and saved/shared
+files. The DB schema version is stored inside the file; changing that version
+does not require another extension. Job records retain their version 2 fields,
+including `number`, nested presets, commands and paths. Settings and credentials
+are separate. Save As can also write legacy JSON **`.pmejbs`**; CSV remains a report.
+Both job-list extensions support File Import and drag-and-drop. An empty new DB
+can be saved and opened too. Use Save As for a consistent copy while tracking;
+completed exports have no WAL sidecars. Share the exported file, not a live DB
+across computers through network/synchronization folders.
+
+Existing `jobs.pmejbs` and `jobs.json` stay active in JSON format. Opening,
+reloading and ordinary job updates never change their format. To migrate, close
+other windows using that legacy list and choose **File ▸ Convert to Job Database...**.
+The action is enabled only for legacy lists, and waits for uploads/downloads to
+finish. Conversion refuses to overwrite an existing DB, verifies the new database,
+keeps the original bytes in `archived/jobs_<date>_legacy.pmejbs` (or `.json`), then
+switches tracking to the DB. Converted default lists remain the default after a
+restart; an external list still applies only for this session. Legacy conversion
+backups are read-only while in this archive folder. Failures before publication
+leave the original active file untouched.
+
+Save As offers both formats without switching the active list. No file is
+converted or saved merely by reading it.
 
 ## Reading job states
 

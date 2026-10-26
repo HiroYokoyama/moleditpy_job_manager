@@ -228,31 +228,39 @@ code would be silently destroyed.
 | File | Holds |
 |---|---|
 | `settings.json` | host profiles, submit presets, preferences, user command templates |
-| `jobs.pmejbs` | tracked jobs — global on purpose, since HPC jobs outlive both the open project and the session |
-| `archived/jobs_<date>.pmejbs` | lists written out by **Clear List**, never deleted automatically |
+| `jobs.pmejdb` | tracked jobs — global on purpose, since HPC jobs outlive both the open project and the session |
+| `archived/jobs_<date>.pmejdb` | lists written out by **Clear List**, never deleted automatically |
 | `downloads/` | fetched results, one directory per job |
 
-`.pmejbs` is MoleditPy's extension for a job list (`.pmeprj` is a project); the
-contents are ordinary JSON. A `jobs.json` written before the extension existed
-is still read, and the next save migrates it.
+`.pmejdb` is a SQLite database containing `metadata` and `jobs` tables. Each job
+row stores its complete JSON record and an internal revision; nested preset data
+and commands remain text. `application_id` identifies the format and `user_version`
+tracks DB schema independently of the job-record version. Foreign or newer schemas
+and unexpected SQL objects are refused before writing.
 
-Where a job list *sits* decides how it opens: a file inside `archived/` is
-history and is shown read-only, while one from anywhere else is merged into the
-live table. That is the only difference between the two paths.
+Connections are short-lived and never shared between threads. Writers acquire a
+`BEGIN IMMEDIATE` transaction before reading rows and commit only local changes.
+A per-window baseline preserves other windows' additions, deletions and edits;
+disjoint fields merge. Concurrent state observations use `updated_at` as a group,
+so exit codes are not mixed with another observation's state. Conflicting edits
+to the same ordinary field keep the committed value and log a warning.
+Chronological numbering is recalculated inside the transaction. New files are
+published only after a complete transaction, without overwriting a competing creator.
+Rollback journaling leaves a completed portable export in one file.
 
-Both are written atomically (temp file in the same directory + `os.replace`), so
-a crash mid-write cannot leave truncated JSON. Unknown keys are ignored on load,
-so a file written by a newer version does not break an older one.
+`settings.json` and legacy `.pmejbs`/`jobs.json` lists retain atomic JSON writes.
+Existing legacy lists remain active in place: load/reload never converts or saves.
+The explicit Convert action verifies a new DB, preserves the original bytes in
+`archived/`, then removes the legacy source and switches tracking. It refuses an
+existing destination and in-progress transfers; other windows must close the
+legacy list first. A stale window cannot recreate a source moved by conversion.
+Save As offers both SQLite and legacy JSON without converting the current list.
 
-An atomic *write* is not an atomic read-modify-write, and two MoleditPy windows
-share these files. Each holds the whole job list in memory, so the second to
-save would write its own view straight over the first's and the first window's
-jobs would simply be gone — along with the remote directory that is often the
-only way back to results still on the cluster. `save_jobs()` therefore re-reads
-the file and keeps any job this session has never heard of. Ours win wherever
-both know a job, so a save can never overwrite a state just observed, and ids
-removed on purpose are remembered so that keeping unknown jobs cannot undo a
-deletion.
+Clear List archives carry a flag inside the file and stay read-only when moved.
+Unmodified legacy originals archived by Convert are read-only while in this
+store's archive folder. Unarchived lists opened elsewhere replace the active list
+for this session; they are not merged into the default list. Settings, credentials
+and result file contents are not embedded in portable job files.
 
 Downloads are staged: each file arrives as `<name>.moleditpy-part` and is
 renamed once the transfer completes. Results land in the directory the user is
@@ -265,7 +273,8 @@ working in, so a transfer cut off half way would otherwise leave a truncated
 |---|---|
 | `__init__.py` | plugin entry point, menu actions, the public `submit_file()` and `submit_job()` handoffs |
 | `models.py` | `HostProfile`, `SubmitPreset`, `Job`, canonical states. Pure stdlib |
-| `store.py` | JSON persistence, preferences, pruning |
+| `store.py` | Settings, job-list routing/conversion, archives, preferences, pruning |
+| `job_database.py` | SQLite transactions, portable snapshots and concurrent delta writes |
 | `service.py` | session-scoped coordinator; owns the store, poller and passwords |
 | `poller.py` | the timer, per-host backoff and the in-flight guard |
 | `runner.py` | submit / poll / fetch / cancel / tail, blocking |
