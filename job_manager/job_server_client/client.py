@@ -1,8 +1,12 @@
 import base64
+import hashlib
 import json
 import ssl
+import threading
 import time
 import uuid
+import weakref
+from collections import OrderedDict
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import quote, urlsplit
@@ -13,6 +17,22 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from .auth import signing_message
 from .credentials import load_key, save_key
+
+
+# Only immutable authentication snapshots are shared. Each client owns its opener.
+_AUTH_STATES = OrderedDict()
+_AUTH_LOCK = threading.RLock()
+_AUTH_FLIGHTS = weakref.WeakValueDictionary()
+_MAX_AUTH_STATES = 64
+
+
+def _auth_flight(key):
+    with _AUTH_LOCK:
+        lock = _AUTH_FLIGHTS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _AUTH_FLIGHTS[key] = lock
+        return lock
 
 
 class ClientError(RuntimeError):
@@ -26,8 +46,19 @@ class NoRedirect(HTTPRedirectHandler):
         raise ClientError(code, {"message": "Server redirects are forbidden"})
 
 
+def job_path(identifier):
+    """Keep imported job IDs inside one UUID path segment."""
+    try:
+        identifier = str(uuid.UUID(str(identifier)))
+    except (ValueError, AttributeError, TypeError):
+        raise ValueError("Job ID must be a UUID") from None
+    return "/jobs/" + identifier
+
+
 class JobServerClient:
-    def __init__(self, url, key_path=None, ca_file=None, server_id=None, timeout=30):
+    def __init__(
+        self, url, key_path=None, ca_file=None, server_id=None, timeout=30, *, reuse_auth=False
+    ):
         parts = urlsplit(url)
         if parts.username or parts.password or parts.query or parts.fragment or not parts.hostname:
             raise ValueError("Invalid server URL")
@@ -38,22 +69,121 @@ class JobServerClient:
         self.url = url.rstrip("/")
         self.key_path = Path(key_path) if key_path else None
         self.server_id, self.timeout = server_id, timeout
-        handlers = [NoRedirect(), HTTPSHandler(context=ssl.create_default_context(cafile=ca_file))]
-        if parts.hostname in {"127.0.0.1", "localhost", "::1"}:
-            handlers.append(ProxyHandler({}))
-        self.opener = build_opener(*handlers)
+        self._expected_server_id = server_id
+        self._reuse_auth = reuse_auth
+        self._ca_file = Path(ca_file) if ca_file else None
+        self._loopback = parts.hostname in {"127.0.0.1", "localhost", "::1"}
+        self._configure_transport()
         self.token, self.expires = None, 0
         self.authenticated_at = 0
+        self._active_auth_key = None
 
-    def request(self, method, path, body=None, headers=None, authenticated=True, binary=False):
-        headers = dict(headers or {})
-        if authenticated:
+    def _configure_transport(self):
+        tls_context = ssl.create_default_context(cafile=self._ca_file)
+        self._ca_digest = self._file_digest(self._ca_file)
+        self._trust_identity = (
+            str(self._ca_file.resolve()) if self._ca_file else None,
+            self._ca_digest,
+            hashlib.sha256(b"".join(sorted(tls_context.get_ca_certs(binary_form=True)))).digest(),
+            ssl.get_default_verify_paths() if not self._ca_file else None,
+            tls_context.verify_mode,
+            tls_context.verify_flags,
+            tls_context.check_hostname,
+            tls_context.minimum_version,
+            tls_context.maximum_version,
+            tls_context.options,
+        )
+        handlers = [NoRedirect(), HTTPSHandler(context=tls_context)]
+        if self._loopback:
+            handlers.append(ProxyHandler({}))
+        self.opener = build_opener(*handlers)
+
+    @staticmethod
+    def _file_digest(path):
+        return hashlib.sha256(path.read_bytes()).digest() if path else None
+
+    def _auth_identity(self):
+        if self._file_digest(self._ca_file) != self._ca_digest:
+            self._configure_transport()
+        if not self.key_path or not self.key_path.is_file():
+            raise ValueError("Sign in and register this device first: credential file is missing")
+        credential = load_key(self.key_path)
+        public = (
+            credential["private_key"]
+            .public_key()
+            .public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+        )
+        return (
+            self.url,
+            self._expected_server_id,
+            str(self.key_path.resolve()),
+            credential["device_id"],
+            credential["server_id"],
+            public,
+            self._trust_identity,
+        ), credential
+
+    def _remember_auth(self, key):
+        with _AUTH_LOCK:
+            _AUTH_STATES[key] = (self.token, self.expires, self.authenticated_at, self.server_id)
+            _AUTH_STATES.move_to_end(key)
+            while len(_AUTH_STATES) > _MAX_AUTH_STATES:
+                _AUTH_STATES.popitem(last=False)
+        self._active_auth_key = key
+
+    def _ensure_auth(self, path):
+        if not self._reuse_auth:
             if (
                 not self.token
                 or self.expires <= time.time() + 10
                 or (path.startswith("/admin/") and time.time() - self.authenticated_at > 240)
             ):
                 self.authenticate()
+            return
+        key, credential = self._auth_identity()
+        # Serialize only this identity, never unrelated or unreachable hosts.
+        with _auth_flight(key):
+            if self._auth_identity()[0] != key:
+                raise ValueError("Credential or trust settings changed while waiting; retry")
+            with _AUTH_LOCK:
+                state = _AUTH_STATES.get(key)
+                if state:
+                    _AUTH_STATES.move_to_end(key)
+            if (
+                state
+                and state[1] > time.time() + 10
+                and not (path.startswith("/admin/") and time.time() - state[2] > 240)
+            ):
+                self.token, self.expires, self.authenticated_at, self.server_id = state
+                self._active_auth_key = key
+                return
+            self._authenticate(credential=credential)
+            if self._auth_identity()[0] != key:
+                self.token, self.expires = None, 0
+                raise ValueError(
+                    "Credential or trust settings changed during authentication; retry"
+                )
+            self._remember_auth(key)
+
+    def _forget_auth(self):
+        with _AUTH_LOCK:
+            state = _AUTH_STATES.get(self._active_auth_key)
+            if state and state[0] == self.token:
+                del _AUTH_STATES[self._active_auth_key]
+        self.token, self.expires = None, 0
+
+    def _open(self, request):
+        try:
+            return self.opener.open(request, timeout=self.timeout)
+        except HTTPError as exc:
+            if exc.code == 401:
+                self._forget_auth()
+            raise
+
+    def request(self, method, path, body=None, headers=None, authenticated=True, binary=False):
+        headers = dict(headers or {})
+        if authenticated:
+            self._ensure_auth(path)
             headers["Authorization"] = "Bearer " + self.token
         data = (
             body
@@ -66,7 +196,7 @@ class JobServerClient:
             headers["Content-Type"] = "application/json"
         request = Request(self.url + "/api/v1" + path, data=data, headers=headers, method=method)
         try:
-            with self.opener.open(request, timeout=self.timeout) as response:
+            with self._open(request) as response:
                 if response.headers.get("X-API-Version", "1") != "1":
                     raise ValueError("Incompatible server API version")
                 data = response.read(16 * 1024 * 1024 + 1)
@@ -109,16 +239,33 @@ class JobServerClient:
         self.authenticate(challenge)
 
     def authenticate(self, challenge=None):
-        if not self.key_path:
-            raise ValueError("Sign in and register this device first")
-        credential = load_key(self.key_path)
+        if not self._reuse_auth:
+            return self._authenticate(challenge)
+        key, credential = self._auth_identity()
+        with _auth_flight(key):
+            self._authenticate(challenge, credential)
+            if self._auth_identity()[0] != key:
+                self.token, self.expires = None, 0
+                raise ValueError(
+                    "Credential or trust settings changed during authentication; retry"
+                )
+            self._remember_auth(key)
+
+    def _authenticate(self, challenge=None, credential=None):
+        if not self.key_path or not self.key_path.is_file():
+            raise ValueError(
+                "This application's device credential is missing. Use Sign in / register device "
+                "with an existing Job Server account first. Each application or browser "
+                "registers its own device."
+            )
+        credential = credential or load_key(self.key_path)
         device = credential["device_id"]
         challenge = challenge or self.request(
             "POST", "/auth/challenge", {"device_id": device}, authenticated=False
         )
         if (
             challenge["server_id"] != credential["server_id"]
-            or (self.server_id and self.server_id != challenge["server_id"])
+            or (self._expected_server_id and self._expected_server_id != challenge["server_id"])
             or challenge["protocol_version"] != "1"
         ):
             raise ValueError("Server identity or protocol changed")
@@ -150,8 +297,8 @@ class JobServerClient:
         reservation = self.request(
             "POST", "/jobs", spec, headers={"Idempotency-Key": idempotency_key or str(uuid.uuid4())}
         )
-        job_id = reservation["id"]
-        status = self.request("GET", f"/jobs/{job_id}/uploads")
+        route = job_path(reservation["id"])
+        status = self.request("GET", route + "/uploads")
         capabilities = self.request("GET", "/capabilities")
         chunk_size = min(capabilities["max_chunk_bytes"], 8 * 1024 * 1024)
         for entry in status:
@@ -164,7 +311,7 @@ class JobServerClient:
                 while data := stream.read(chunk_size):
                     result = self.request(
                         "PUT",
-                        f"/jobs/{job_id}/files/" + quote(entry["path"], safe="/"),
+                        route + "/files/" + quote(entry["path"], safe="/"),
                         data,
                         headers={
                             "Content-Range": f"bytes {offset}-{offset + len(data) - 1}/{total}"
@@ -172,21 +319,16 @@ class JobServerClient:
                     )
                     offset = result["offset"]
                 if total == 0:
-                    self.request(
-                        "PUT", f"/jobs/{job_id}/files/" + quote(entry["path"], safe="/"), b""
-                    )
-        return self.request("POST", f"/jobs/{job_id}/commit")
+                    self.request("PUT", route + "/files/" + quote(entry["path"], safe="/"), b"")
+        return self.request("POST", route + "/commit")
 
     def download(self, job_id, relative, destination):
         from .files import open_regular, validate_path
 
         validate_path(relative)
+        route = job_path(job_id)
         entry = next(
-            (
-                item
-                for item in self.request("GET", f"/jobs/{job_id}/files")
-                if item["path"] == relative
-            ),
+            (item for item in self.request("GET", route + "/files") if item["path"] == relative),
             None,
         )
         if not entry:
@@ -198,17 +340,16 @@ class JobServerClient:
         if offset > entry["size"]:
             partial.unlink()
             offset = 0
-        if not self.token or self.expires <= time.time() + 10:
-            self.authenticate()
+        self._ensure_auth(route + "/files")
         if offset < entry["size"] or not partial.exists():
             headers = {"Authorization": "Bearer " + self.token}
             if offset:
                 headers["Range"] = f"bytes={offset}-"
             request = Request(
-                self.url + f"/api/v1/jobs/{job_id}/files/" + quote(relative, safe="/"),
+                self.url + "/api/v1" + route + "/files/" + quote(relative, safe="/"),
                 headers=headers,
             )
-            with self.opener.open(request, timeout=self.timeout) as response:
+            with self._open(request) as response:
                 if offset and (
                     response.status != 206
                     or not response.headers.get("Content-Range", "").startswith(f"bytes {offset}-")
