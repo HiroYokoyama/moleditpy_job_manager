@@ -5,11 +5,11 @@ since the Plugin Installer replaces the whole package directory on update and
 carries over only a file literally named ``settings.json``.
 
 * ``settings.json`` -- hosts, presets and preferences.
-* ``jobs.pmejbs`` -- the tracked jobs. Global on purpose; HPC jobs outlive both
+* ``jobs.pmejdb`` -- the tracked jobs in SQLite. Global on purpose; HPC jobs outlive both
   the open project and the application session.
 
-Both are written atomically (temp file + ``os.replace``) so a crash mid-write
-never leaves a truncated JSON behind.
+Settings and legacy JSON lists use atomic replacement. New job lists use
+SQLite transactions. Legacy files are converted only by an explicit Convert action.
 """
 
 from __future__ import annotations
@@ -56,13 +56,13 @@ from .store_io import (
 SETTINGS_FILENAME = "settings.json"
 
 #: MoleditPy's extension for a saved job list, alongside .pmeprj for projects
-#: (pme + jbs). Ordinary JSON inside; the extension is what dialogs filter on.
+#: SQLite for new lists; legacy .pmejbs JSON remains readable and writable.
 JOB_EXTENSION = job_database.EXTENSION
 LEGACY_JOB_EXTENSION = ".pmejbs"
 JOB_EXTENSIONS = (JOB_EXTENSION, LEGACY_JOB_EXTENSION)
 JOBS_FILENAME = "jobs" + JOB_EXTENSION
 JOB_LIST_VERSION = 2
-#: Written by versions before the extension existed; read once, then migrated.
+#: Read and saved in place until an explicit conversion.
 LEGACY_JOBS_FILENAME = "jobs.json"
 
 #: Cleared job lists are kept here rather than deleted.
@@ -271,7 +271,7 @@ def _records(document: dict, key: str) -> list:
 
 
 class JobStore:
-    """In-memory model of hosts/presets/jobs, backed by two JSON files."""
+    """In-memory models backed by settings JSON and SQLite/legacy job lists."""
 
     def __init__(self, directory: Optional[str] = None) -> None:
         self.directory = directory or default_data_dir()
@@ -801,6 +801,8 @@ class JobStore:
                 for raw in records
             ):
                 raise ValueError("Invalid jobs collection")
+            if len({raw["id"] for raw in records}) != len(records):
+                raise ValueError("Duplicate job IDs")
         except (ValueError, TypeError, KeyError) as exc:
             raise OSError("Could not read the legacy job list; no files were converted") from exc
         disk = {raw["id"]: raw for raw in records if raw["id"] not in self._forgotten}
@@ -810,12 +812,12 @@ class JobStore:
                 disk[job.id] = job.to_dict()
         jobs = [Job.from_dict(raw) for raw in disk.values()]
         assign_job_numbers(jobs)
-        document = dict(
-            payload,
-            version=JOB_LIST_VERSION,
-            reconstructed=self.reconstructed,
-            jobs=[job.to_dict() for job in jobs],
-        )
+        document = {
+            "version": JOB_LIST_VERSION,
+            "archived": False,
+            "reconstructed": self.reconstructed,
+            "jobs": [job.to_dict() for job in jobs],
+        }
         target = os.path.splitext(source)[0] + JOB_EXTENSION
         if os.path.exists(target):
             raise FileExistsError(f"Already exists: {target}. Use Save As to choose another name.")
@@ -858,7 +860,7 @@ class JobStore:
         return target, archive
 
     def archive_jobs(self, when: Optional[float] = None) -> str:
-        """Write the current list to ``archived/jobs_<date>.pmejbs``; returns its path.
+        """Write the current list to ``archived/jobs_<date>.pmejdb``; returns its path.
 
         Clearing the table must not lose the record -- a job's remote
         directory is often the only way back to results still on the cluster.

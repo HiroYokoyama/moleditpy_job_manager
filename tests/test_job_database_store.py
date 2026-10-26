@@ -139,3 +139,26 @@ def test_conversion_refuses_transfers(tmp_path):
     with pytest.raises(OSError, match="uploads and downloads"):
         store.convert_jobs()
     assert source.exists()
+
+
+def test_conversion_does_not_carry_configuration_from_a_legacy_document(tmp_path):
+    store, source = legacy_store(tmp_path)
+    payload = json.loads(source.read_text("utf-8"))
+    payload["hosts"] = [{"password": "synthetic-not-a-real-secret"}]
+    atomic_write_json(str(source), payload)
+    target, archive = store.convert_jobs()
+    assert "hosts" not in read_document(target)
+    # The preserved original is kept locally, byte for byte.
+    assert "hosts" in json.loads(Path(archive).read_text("utf-8"))
+
+
+def test_duplicate_legacy_ids_are_not_silently_lost_during_conversion(tmp_path):
+    store, source = legacy_store(tmp_path)
+    payload = json.loads(source.read_text("utf-8"))
+    payload["jobs"].append(dict(payload["jobs"][0], name="different record"))
+    atomic_write_json(str(source), payload)
+    before = source.read_bytes()
+    with pytest.raises(OSError, match="Could not read"):
+        store.convert_jobs()
+    assert source.read_bytes() == before
+    assert not source.with_suffix(".pmejdb").exists()

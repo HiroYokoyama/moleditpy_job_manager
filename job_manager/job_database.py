@@ -20,9 +20,7 @@ _SCHEMA = (
     "CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
     "CREATE TABLE jobs (id TEXT PRIMARY KEY, record TEXT NOT NULL, revision INTEGER NOT NULL)",
 )
-_STATE_FIELDS = frozenset(
-    {"state", "rc", "started_at", "finished_at", "last_server_state", "updated_at"}
-)
+_STATE_FIELDS = frozenset({"state", "rc", "started_at", "finished_at", "last_server_state"})
 
 
 def is_database(path: str) -> bool:
@@ -153,7 +151,7 @@ def _merge(base, mine, theirs):
     local_state = any(mine.get(key) != base.get(key) for key in _STATE_FIELDS)
     remote_state = any(theirs.get(key) != base.get(key) for key in _STATE_FIELDS)
     for key, value in mine.items():
-        if key == "number" or value == base.get(key):
+        if key in {"number", "updated_at"} or value == base.get(key):
             continue
         if key in _STATE_FIELDS:
             continue
@@ -167,6 +165,8 @@ def _merge(base, mine, theirs):
         for key in _STATE_FIELDS:
             if key in mine:
                 result[key] = mine[key]
+    if result != theirs:
+        result["updated_at"] = max(mine.get("updated_at", 0), theirs.get("updated_at", 0))
     return result
 
 

@@ -119,6 +119,21 @@ def test_newer_schema_is_never_overwritten(tmp_path):
         database.write_document(path, document())
 
 
+def test_timestamp_only_edit_does_not_claim_a_stale_scheduler_state(tmp_path):
+    path = str(tmp_path / "timestamp.pmejdb")
+    old = job(state="RUNNING", name="original")
+    database.write_document(path, document(old))
+    baseline = {old["id"]: old}
+    database.save_changes(
+        path, document(dict(old, state="DONE", rc=0, updated_at=200)), baseline, set()
+    )
+    database.save_changes(
+        path, document(dict(old, name="renamed", updated_at=300)), baseline, set()
+    )
+    saved = database.read_document(path)["jobs"][0]
+    assert (saved["state"], saved["rc"], saved["name"]) == ("DONE", 0, "renamed")
+
+
 def test_exclusive_snapshot_never_overwrites_a_target(tmp_path):
     path = str(tmp_path / "exists.pmejdb")
     database.write_document(path, document(job()))
