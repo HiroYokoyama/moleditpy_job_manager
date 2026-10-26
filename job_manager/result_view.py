@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import codecs
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from PySide6.QtWidgets import QWidget
 
@@ -51,15 +51,32 @@ def is_binary_file(path: str) -> bool:
     return "\0" in text or controls / len(text) > 0.1
 
 
-def show_text_window(path: str, parent: Optional[QWidget] = None):
+def show_text_window(
+    path: str,
+    parent: Optional[QWidget] = None,
+    on_opened: Optional[Callable[[], None]] = None,
+):
     """Open ``path`` read-only in a text window, and return the window."""
     from .text_dialog import TextDialog
+
+    path = os.path.abspath(path)
 
     def reload() -> None:
         try:
             dialog.set_text(read_text_for_view(path))
         except OSError as exc:
             dialog.set_text(f"Could not read {path}: {exc}")
+
+    def open_source() -> bool:
+        if not open_in_host(path):
+            return False
+        if on_opened is not None:
+            try:
+                on_opened()
+            except RuntimeError:
+                # The originating browser may already have been destroyed.
+                pass
+        return True
 
     # A finished result is read from the top; only a tail starts at the end.
     dialog = TextDialog(
@@ -69,7 +86,15 @@ def show_text_window(path: str, parent: Optional[QWidget] = None):
         on_refresh=reload,
         follow=False,
         auto_refresh=False,
+        on_open_in_moleditpy=open_source,
     )
+    if is_text_file(path):
+        # OpenBabel's .txt importer treats arbitrary text as molecules and can
+        # freeze the editor. Keep this existing protection on the explicit button.
+        dialog.btn_open_in_moleditpy.setEnabled(False)
+        dialog.btn_open_in_moleditpy.setToolTip(
+            "Plain .txt files are displayed in this text viewer"
+        )
     dialog.set_text(read_text_for_view(path))
     dialog.present()
     return dialog
@@ -146,30 +171,37 @@ def open_in_host(path: str) -> bool:
         logging.debug("Job Manager: no main window available", exc_info=True)
         return False
 
+    init_manager = getattr(main_window, "init_manager", None)
+    loader = getattr(init_manager, "load_command_line_file", None)
+    plugin_manager = getattr(main_window, "plugin_manager", None)
+    openers = getattr(plugin_manager, "file_openers", {}) or {}
+    extension = os.path.splitext(path)[1].lower()
+    registered = [
+        opener
+        for opener in openers.get(extension, [])
+        if isinstance(opener, dict) and callable(opener.get("callback"))
+    ]
+    builtin = extension in {".mol", ".sdf", ".xyz", ".pmeraw", ".pmeprj"}
+    # The host returns None even for unsupported types. Do not clear the
+    # document or close the caller merely because that method returned.
+    if not registered and not (callable(loader) and builtin):
+        return False
     if not clear_document(main_window):
         return False
 
-    init_manager = getattr(main_window, "init_manager", None)
-    loader = getattr(init_manager, "load_command_line_file", None)
     if callable(loader):
         try:
-            loader(path)
-            return True
+            return loader(path) is not False
         except Exception:
             logging.warning("Job Manager: host could not open %s", path, exc_info=True)
             return False
 
     # Older hosts: dispatch to the highest-priority plugin opener directly.
-    plugin_manager = getattr(main_window, "plugin_manager", None)
-    openers = getattr(plugin_manager, "file_openers", {}) or {}
-    extension = os.path.splitext(path)[1].lower()
-    for opener in openers.get(extension, []):
-        callback = opener.get("callback") if isinstance(opener, dict) else None
-        if not callable(callback):
-            continue
+    for opener in registered:
+        callback = opener["callback"]
         try:
-            callback(path)
-            return True
+            if callback(path) is not False:
+                return True
         except Exception:
             logging.warning("Job Manager: opener failed for %s", path, exc_info=True)
     return False

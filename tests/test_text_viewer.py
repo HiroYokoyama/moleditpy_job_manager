@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -100,6 +100,110 @@ class TestOpeningAResult(DialogTestCase):
         self.dialog = JobsDialog(self.service)
         self.addCleanup(self.dialog.deleteLater)
         self.tmp = tempfile.mkdtemp(prefix="textresult_")
+
+    def open_browser_text(self, extension=".out"):
+        from job_manager.tasks import gone
+
+        path = os.path.join(self.tmp, "result" + extension)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("Calculation complete\n")
+        job = make_job(local_dir=self.tmp, downloaded_files=[path], remote_dir="/opt/job")
+        with patch.object(self.dialog, "selected_job", return_value=job):
+            self.dialog._open_selected_result()
+        browser = self.dialog._detail_dialogs[-1]
+        self.addCleanup(lambda: browser.close() if not gone(browser) else None)
+        browser.tree.itemDoubleClicked.emit(browser.tree.currentItem(), 0)
+        viewer = self.dialog._detail_dialogs[-1]
+        self.addCleanup(viewer.close)
+        return path, browser, viewer
+
+    def test_open_in_moleditpy_closes_text_viewer_and_originating_browser(self):
+        path, browser, viewer = self.open_browser_text()
+        with patch("job_manager.result_view.open_in_host", return_value=True) as host:
+            viewer.btn_open_in_moleditpy.click()
+        host.assert_called_once_with(path)
+        self.assertFalse(viewer.isVisible())
+        self.assertFalse(browser.isVisible())
+        self.assertNotIn(viewer, self.dialog._detail_dialogs)
+        self.assertNotIn(browser, self.dialog._detail_dialogs)
+
+    def test_cancelled_host_open_leaves_both_windows_open(self):
+        _, browser, viewer = self.open_browser_text()
+        with patch("job_manager.result_view.open_in_host", return_value=False):
+            viewer.btn_open_in_moleditpy.click()
+        self.assertTrue(viewer.isVisible())
+        self.assertTrue(browser.isVisible())
+
+    def test_unsupported_file_preserves_the_document_and_both_windows(self):
+        _, browser, viewer = self.open_browser_text()
+        context = MagicMock()
+        window = context.get_main_window.return_value
+        window.plugin_manager.file_openers = {}
+        window.init_manager.load_command_line_file.return_value = None
+        with patch("job_manager.get_context", return_value=context):
+            viewer.btn_open_in_moleditpy.click()
+        window.edit_actions_manager.clear_all.assert_not_called()
+        window.init_manager.load_command_line_file.assert_not_called()
+        self.assertTrue(viewer.isVisible())
+        self.assertTrue(browser.isVisible())
+        self.assertTrue(viewer.lbl_open_status.isVisible())
+
+    def test_browser_without_a_custom_text_callback_also_closes_with_viewer(self):
+        path = os.path.join(self.tmp, "result.out")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("Calculation complete\n")
+        job = make_job(local_dir=self.tmp, downloaded_files=[path], remote_dir="/opt/job")
+        browser = OutputFileSelectorDialog(self.service, job, parent=self.dialog)
+        self.addCleanup(browser.close)
+        browser.show()
+        viewers = []
+        original = jobs_dialog.show_text_window
+
+        def show(*args, **kwargs):
+            viewer = original(*args, **kwargs)
+            viewers.append(viewer)
+            self.addCleanup(viewer.close)
+            return viewer
+
+        with patch.object(jobs_dialog, "show_text_window", side_effect=show):
+            self.assertTrue(browser._dispatch_open(path, as_text=True))
+        with patch("job_manager.result_view.open_in_host", return_value=True):
+            viewers[0].btn_open_in_moleditpy.click()
+        self.assertFalse(viewers[0].isVisible())
+        self.assertFalse(browser.isVisible())
+
+    def test_open_callback_exception_does_not_escape_the_qt_slot(self):
+        _, browser, viewer = self.open_browser_text()
+        with (
+            patch(
+                "job_manager.result_view.open_in_host", side_effect=ValueError("synthetic failure")
+            ),
+            self.assertLogs(level="WARNING"),
+        ):
+            viewer.btn_open_in_moleditpy.click()
+        self.assertTrue(viewer.isVisible())
+        self.assertTrue(browser.isVisible())
+
+    def test_open_still_works_after_originating_browser_is_destroyed(self):
+        from PySide6.QtCore import QCoreApplication, QEvent
+
+        path, browser, viewer = self.open_browser_text()
+        browser.close()
+        browser.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        with patch("job_manager.result_view.open_in_host", return_value=True) as host:
+            viewer.btn_open_in_moleditpy.click()
+        host.assert_called_once_with(path)
+        self.assertFalse(viewer.isVisible())
+
+    def test_plain_txt_button_keeps_the_existing_openbabel_freeze_protection(self):
+        _, browser, viewer = self.open_browser_text(".txt")
+        self.assertFalse(viewer.btn_open_in_moleditpy.isEnabled())
+        with patch("job_manager.result_view.open_in_host") as host:
+            viewer.btn_open_in_moleditpy.click()
+        host.assert_not_called()
+        self.assertTrue(viewer.isVisible())
+        self.assertTrue(browser.isVisible())
 
     def test_browser_and_text_viewer_are_modeless_and_close_independently(self):
         path = os.path.join(self.tmp, "result.out")

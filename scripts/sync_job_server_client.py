@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE_COMMIT = "b06bf900c703322ab526867964f8ff917936c01e"
+SOURCE_COMMIT = "85cf198b8082754a482b14c7ee1056375f930dc5"
 FILES = ("client.py", "credentials.py", "files.py", "errors.py")
 
 
@@ -47,9 +47,8 @@ def sync(source):
     manifest = {
         "repository": "https://github.com/HiroYokoyama/moleditpy_job_server",
         "commit": SOURCE_COMMIT,
-        "upstream_license": "GPL-3.0-only",
+        "upstream_license": "LGPL-3.0-or-later",
         "license": "LGPL-3.0-or-later",
-        "additional_permission": "Copyright holder grant in LICENSING.md for the pinned first-party client copies.",
         "files": {
             name: hashlib.sha256(content.encode()).hexdigest() for name, content in files.items()
         },

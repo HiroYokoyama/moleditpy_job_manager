@@ -286,7 +286,20 @@ whose certificate to trust. Anyone your ACLs let reach the machine can read
 your host names, job names and job states — which is the whole content of the
 page, and the reason it can do nothing else.
 
+## Optional Job Server authentication
+
+Job Server device credentials are separate from SSH settings; see
+[Job Server destination](JOB_SERVER.md). Backend operations share only a bounded,
+expiring in-memory authentication state, scoped to the server origin/identity,
+credential identity and TLS trust. They retain separate HTTP transports. Device
+revocation is still enforced by the server on every request. Unauthorized
+responses clear the cache and are not automatically retried for mutations.
+Credential access checks, key changes and trust changes are checked before reuse.
+No bearer-token cache is written to disk.
+
 ## Deliberate non-goals
+
+For SSH destinations:
 
 * **No credential storage, no keyring integration.** Adding a place to save
   passwords would mean owning their protection; SSH already solved this with

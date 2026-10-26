@@ -44,6 +44,16 @@ heartbeat writes. Window activation requests write only when requested. After
 updating from 3.3.0 or earlier, quit all existing Job Manager monitors and tray
 processes before restarting; the old file-heartbeat protocol is no longer used.
 
+The file Text Viewer has an **Open in MoleditPy** button. Passing the source
+file to the editor closes the viewer and its originating File Browser; cancelling
+or refusing the open leaves both windows available. Plain `.txt` files retain
+the existing protection against OpenBabel's text-to-molecules import.
+
+Job Server connections reuse expiring authentication state in memory across
+monitoring and file operations, avoiding a new authentication record on every
+poll. Credentials and certificate trust remain checked; bearer tokens are not
+saved to disk.
+
 Detailed instructions: [Standard workflow](docs/WORKFLOW.md).
 
 ## Requirements

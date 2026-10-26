@@ -97,6 +97,13 @@ class TestOpenInHost(unittest.TestCase):
         with open(self.path, "w", encoding="utf-8") as handle:
             handle.write("x")
 
+    def host_context(self):
+        context = MagicMock()
+        context.get_main_window.return_value.plugin_manager.file_openers = {
+            ".out": [{"callback": MagicMock()}]
+        }
+        return context
+
     def test_no_context_returns_false(self):
         with patch("job_manager.get_context", return_value=None):
             self.assertFalse(open_in_host(self.path))
@@ -106,14 +113,14 @@ class TestOpenInHost(unittest.TestCase):
             self.assertFalse(open_in_host(os.path.join(self.tmp, "nope.out")))
 
     def test_uses_the_host_command_line_loader(self):
-        context = MagicMock()
+        context = self.host_context()
         loader = context.get_main_window.return_value.init_manager.load_command_line_file
         with patch("job_manager.get_context", return_value=context):
             self.assertTrue(open_in_host(self.path))
         loader.assert_called_once_with(self.path)
 
     def test_falls_back_to_a_registered_plugin_opener(self):
-        context = MagicMock()
+        context = self.host_context()
         main_window = context.get_main_window.return_value
         main_window.init_manager = None
         callback = MagicMock()
@@ -123,7 +130,7 @@ class TestOpenInHost(unittest.TestCase):
         callback.assert_called_once_with(self.path)
 
     def test_a_failing_loader_is_contained(self):
-        context = MagicMock()
+        context = self.host_context()
         context.get_main_window.return_value.init_manager.load_command_line_file.side_effect = (
             RuntimeError("bad file")
         )
@@ -131,7 +138,7 @@ class TestOpenInHost(unittest.TestCase):
             self.assertFalse(open_in_host(self.path))
 
     def test_no_opener_for_the_extension(self):
-        context = MagicMock()
+        context = self.host_context()
         main_window = context.get_main_window.return_value
         main_window.init_manager = None
         main_window.plugin_manager.file_openers = {}
@@ -142,7 +149,7 @@ class TestOpenInHost(unittest.TestCase):
         # A result claimed by an analyzer plugin cleared nothing, so the
         # molecule from before the job stayed on the 2D canvas beside a 3D view
         # of the result -- two structures shown as one document.
-        context = MagicMock()
+        context = self.host_context()
         main_window = context.get_main_window.return_value
         order = []
         main_window.edit_actions_manager.clear_all.side_effect = lambda: order.append("clear")
@@ -154,7 +161,7 @@ class TestOpenInHost(unittest.TestCase):
     def test_cancelling_the_unsaved_prompt_opens_nothing(self):
         # clear_all() returns False when the user cancelled at the host's
         # unsaved-changes prompt; their work stays and so does the view.
-        context = MagicMock()
+        context = self.host_context()
         main_window = context.get_main_window.return_value
         main_window.edit_actions_manager.clear_all.return_value = False
         with patch("job_manager.get_context", return_value=context):
@@ -163,7 +170,7 @@ class TestOpenInHost(unittest.TestCase):
 
     def test_a_host_that_cannot_clear_still_opens_the_result(self):
         # An older host without the manager behaves exactly as it did.
-        context = MagicMock()
+        context = self.host_context()
         main_window = context.get_main_window.return_value
         main_window.edit_actions_manager = None
         with patch("job_manager.get_context", return_value=context):
@@ -171,12 +178,44 @@ class TestOpenInHost(unittest.TestCase):
         main_window.init_manager.load_command_line_file.assert_called_once_with(self.path)
 
     def test_a_failing_clear_does_not_replace_the_document(self):
-        context = MagicMock()
+        context = self.host_context()
         main_window = context.get_main_window.return_value
         main_window.edit_actions_manager.clear_all.side_effect = RuntimeError("no scene")
         with patch("job_manager.get_context", return_value=context):
             self.assertFalse(open_in_host(self.path))
         main_window.init_manager.load_command_line_file.assert_not_called()
+
+    def test_unsupported_type_is_rejected_before_clearing_the_document(self):
+        context = self.host_context()
+        window = context.get_main_window.return_value
+        window.plugin_manager.file_openers = {}
+        window.init_manager.load_command_line_file.return_value = None
+        with patch("job_manager.get_context", return_value=context):
+            self.assertFalse(open_in_host(self.path))
+        window.edit_actions_manager.clear_all.assert_not_called()
+        window.init_manager.load_command_line_file.assert_not_called()
+
+    def test_builtin_formats_need_no_plugin_registration(self):
+        for extension in ("mol", "sdf", "xyz", "pmeraw", "pmeprj"):
+            with self.subTest(extension=extension):
+                path = self.path + "." + extension
+                with open(path, "w", encoding="utf-8") as handle:
+                    handle.write("synthetic fixture")
+                context = self.host_context()
+                window = context.get_main_window.return_value
+                window.plugin_manager.file_openers = {}
+                window.init_manager.load_command_line_file.return_value = None
+                with patch("job_manager.get_context", return_value=context):
+                    self.assertTrue(open_in_host(path))
+                window.init_manager.load_command_line_file.assert_called_once_with(path)
+
+    def test_loader_false_is_not_accepted_as_success(self):
+        context = self.host_context()
+        context.get_main_window.return_value.init_manager.load_command_line_file.return_value = (
+            False
+        )
+        with patch("job_manager.get_context", return_value=context):
+            self.assertFalse(open_in_host(self.path))
 
 
 class TestJobTableModel(DialogTestCase):

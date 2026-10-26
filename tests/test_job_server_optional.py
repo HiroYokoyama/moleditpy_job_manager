@@ -7,6 +7,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from job_manager.models import HostProfile, Job
@@ -16,6 +17,31 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class TestOptionalServerClient(unittest.TestCase):
+    def test_disposable_backends_enable_shared_auth_but_keep_separate_clients(self):
+        from job_manager.server_backend import backend_for
+
+        client_type = Mock(side_effect=[Mock(), Mock()])
+        host = HostProfile(
+            backend="job_server", server_url="http://127.0.0.1:8766", server_key_path="fixture.key"
+        )
+        with (
+            patch("job_manager.server_backend.require_client"),
+            patch.dict(
+                sys.modules,
+                {
+                    "job_manager.job_server_client.client": SimpleNamespace(
+                        JobServerClient=client_type
+                    )
+                },
+            ),
+        ):
+            first, second = backend_for(host), backend_for(host)
+        self.assertIsNot(first.client, second.client)
+        self.assertEqual(client_type.call_count, 2)
+        self.assertTrue(
+            all(call.kwargs == {"reuse_auth": True} for call in client_type.call_args_list)
+        )
+
     def test_server_fetch_preserves_inputs_and_empty_patterns_download_results(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

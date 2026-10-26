@@ -82,6 +82,7 @@ class TextDialog(QDialog):
         store: Optional[object] = None,
         follow: bool = True,
         auto_refresh: bool = True,
+        on_open_in_moleditpy: Optional[Callable[[], bool]] = None,
     ) -> None:
         super().__init__(parent)
         #: When given, the auto-refresh choice is remembered in it. Optional so
@@ -92,6 +93,7 @@ class TextDialog(QDialog):
         apply_theme(self)
         self.resize(820, 560)
         self._on_refresh_callback = on_refresh
+        self._on_open_in_moleditpy = on_open_in_moleditpy
         #: Set while set_text replaces the contents, so the scroll bar moving
         #: under it is not taken for the reader scrolling away from the end.
         self._replacing = False
@@ -105,6 +107,10 @@ class TextDialog(QDialog):
         self.view.setPlainText(text)
         layout.addWidget(self.view, 1)
         layout.addWidget(self._build_find_bar())
+        self.lbl_open_status = QLabel()
+        self.lbl_open_status.setWordWrap(True)
+        self.lbl_open_status.hide()
+        layout.addWidget(self.lbl_open_status)
 
         bottom_row = QHBoxLayout()
 
@@ -148,6 +154,15 @@ class TextDialog(QDialog):
         bottom_row.addStretch(1)
 
         box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        self.btn_open_in_moleditpy = None
+        if on_open_in_moleditpy is not None:
+            self.btn_open_in_moleditpy = QPushButton("Open in MoleditPy")
+            self.btn_open_in_moleditpy.setAutoDefault(False)
+            self.btn_open_in_moleditpy.setToolTip(
+                "Open the source file in MoleditPy and close this viewer"
+            )
+            self.btn_open_in_moleditpy.clicked.connect(self._open_in_moleditpy)
+            box.addButton(self.btn_open_in_moleditpy, QDialogButtonBox.ButtonRole.ActionRole)
         if on_refresh is not None:
             self.btn_refresh = QPushButton("Reload")
             self.btn_refresh.setToolTip("Read the file again (F5)")
@@ -164,6 +179,24 @@ class TextDialog(QDialog):
         self.view.verticalScrollBar().valueChanged.connect(self._on_scrolled)
 
     # --- menus -----------------------------------------------------------------
+
+    def _open_in_moleditpy(self) -> None:
+        if self._on_open_in_moleditpy is None:
+            return
+        try:
+            if self._on_open_in_moleditpy() is not False:
+                self.accept()
+            else:
+                self.lbl_open_status.setText(
+                    "File not opened: opening was cancelled or MoleditPy has no available file opener."
+                )
+                self.lbl_open_status.show()
+        except Exception:
+            self.lbl_open_status.setText("Could not open this file in MoleditPy.")
+            self.lbl_open_status.show()
+            logging.warning(
+                "Job Manager: text viewer could not open the source file", exc_info=True
+            )
 
     def _build_menu_bar(self) -> QMenuBar:
         """File / Edit / View, so nothing here is reachable only through a key

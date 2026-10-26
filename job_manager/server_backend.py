@@ -121,6 +121,7 @@ class JobServerBackend:
             host.server_key_path,
             host.server_ca_file or None,
             host.server_id or None,
+            reuse_auth=True,
         )
 
     def submit(self, preset, job, local_files, after_id=None):
