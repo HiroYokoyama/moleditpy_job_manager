@@ -31,10 +31,19 @@ compatibility.
 
 ## Pinned first-party HTTP client
 
+The current first-party client is copied from Job Server commit
+`85cf198b8082754a482b14c7ee1056375f930dc5`, under that source's
+LGPL-3.0-or-later license, including the extracted `signing_message` function.
+The source revision and exact copied-file hashes are recorded in
+`job_manager/job_server_client/PROVENANCE.json`.
+
+### Historical source grant
+
+The following grant also applies to the earlier client copies:
+
 The owner also grants LGPL-3.0-or-later for the first-party client copied from
 Job Server commit `b06bf900c703322ab526867964f8ff917936c01e`, including the
-extracted `signing_message` function. The source commit and file hashes in
-`job_manager/job_server_client/PROVENANCE.json` remain provenance records.
-Its original upstream GPL-3.0-only grant is recorded separately; the additional
-LGPL permission applies to the client copies distributed here. No server-side
+extracted `signing_message` function. Earlier provenance records identify those
+historical files and their original GPL-3.0-only terms; the additional LGPL
+permission applies to those copies. No server-side
 or third-party code is implicitly relicensed by this client-specific grant.

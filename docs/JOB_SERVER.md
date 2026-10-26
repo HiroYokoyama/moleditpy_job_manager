@@ -35,6 +35,14 @@ Job Manager does not start another helper queue or apply SSH settings to it.
 > or router port forwarding. Jobs share the service OS account, so admission is
 > for trusted people rather than mutually untrusted tenants.
 
+From 3.3.2, Job Server backends reuse authentication state in a bounded
+process-local memory cache. Connections with different server identities,
+credentials or certificate trust are isolated. Expiry and recent administrative
+authentication rules still apply; changed/missing credentials or trust settings
+invalidate reuse. The server continues to validate every request, and an HTTP
+401 invalidates cached authentication without automatically replaying a command.
+HTTP clients keep their own transports, and bearer tokens are not saved to disk.
+
 TLS certificates are verified and redirects are refused. For a private certificate
 authority, supply its CA certificate file in the host profile. Private keys are
 kept outside the host/job JSON (DPAPI on Windows, private files on POSIX). Revoking
