@@ -35,6 +35,38 @@ class RegistryTestCase(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
         self.server = instances.LivenessServer()
         self.addCleanup(self.server.close)
+        # The fake instances' PIDs (101, 102) are not real processes.
+        pid_check = patch("job_manager.instances._pid_running", return_value=True)
+        pid_check.start()
+        self.addCleanup(pid_check.stop)
+
+
+class TestPidCheck(unittest.TestCase):
+    def test_this_process_is_running(self):
+        self.assertTrue(instances._pid_running(os.getpid()))
+
+    def test_an_exited_process_is_not(self):
+        process = subprocess.Popen([sys.executable, "-c", "pass"])
+        process.wait()
+        self.assertFalse(instances._pid_running(process.pid))
+
+    def test_nonpositive_pids_are_not(self):
+        self.assertFalse(instances._pid_running(0))
+        self.assertFalse(instances._pid_running(-1))
+
+    def test_a_dead_pid_skips_the_socket_and_clears_the_entry(self):
+        directory = tempfile.mkdtemp(prefix="instances_")
+        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
+        server = instances.LivenessServer()
+        self.addCleanup(server.close)
+        fake_instance(directory, server, 101, instances.ROLE_TRAY)
+        with (
+            patch("job_manager.instances._pid_running", return_value=False),
+            patch("job_manager.instances._socket_alive") as probe,
+        ):
+            self.assertEqual(instances.live_instances(directory), [])
+        probe.assert_not_called()
+        self.assertEqual(os.listdir(instances.instances_dir(directory)), [])
 
 
 class TestTheRegistry(RegistryTestCase):

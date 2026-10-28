@@ -187,8 +187,10 @@ def test_another_live_tracker_prevents_false_interrupted_transfer_recovery(tmp_p
     try:
         with patch("job_manager.instances.os.getpid", return_value=999999):
             instances.register_instance(str(tmp_path), "moleditpy", time.time(), server)
-        assert JobStore(str(tmp_path)).jobs["synthetic"].state == "UPLOADING"
-        server.close()
-        assert JobStore(str(tmp_path)).jobs["synthetic"].state == "FAILED"
+        # PID 999999 is not a real process; only the socket decides here.
+        with patch("job_manager.instances._pid_running", return_value=True):
+            assert JobStore(str(tmp_path)).jobs["synthetic"].state == "UPLOADING"
+            server.close()
+            assert JobStore(str(tmp_path)).jobs["synthetic"].state == "FAILED"
     finally:
         server.close()

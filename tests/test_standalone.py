@@ -50,6 +50,10 @@ class StandaloneTestCase(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
         self.instance_server = instances.LivenessServer()
         self.addCleanup(self.instance_server.close)
+        # The fake instances' PIDs (4242, 4343) are not real processes.
+        pid_check = patch("job_manager.instances._pid_running", return_value=True)
+        pid_check.start()
+        self.addCleanup(pid_check.stop)
         original = self.app.quitOnLastWindowClosed()
         self.addCleanup(self.app.setQuitOnLastWindowClosed, original)
         self.tray_icon = MagicMock()
@@ -368,6 +372,10 @@ class TestMoleditPyTakesItBack(unittest.TestCase):
         self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
         self.instance_server = instances.LivenessServer()
         self.addCleanup(self.instance_server.close)
+        # The fake instances' PIDs (4242, 4343) are not real processes.
+        pid_check = patch("job_manager.instances._pid_running", return_value=True)
+        pid_check.start()
+        self.addCleanup(pid_check.stop)
         previous = os.environ.get("MOLEDITPY_JOB_MANAGER_DIR")
         os.environ["MOLEDITPY_JOB_MANAGER_DIR"] = self.dir
 

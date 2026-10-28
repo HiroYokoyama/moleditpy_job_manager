@@ -85,6 +85,47 @@ class LivenessServer:
         self._thread.join(timeout=1.0)
 
 
+def _pid_running(pid: int) -> bool:
+    """False only when no process with *pid* exists on this machine.
+
+    Checked before the socket: on Windows a refused loopback connection takes
+    0.5-2 s to report, so every registration a crashed MoleditPy left behind
+    used to stall the next start by that much.
+    """
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            # ERROR_INVALID_PARAMETER means no such process; anything else
+            # (access denied) means it exists.
+            return ctypes.get_last_error() != 87
+        try:
+            code = wintypes.DWORD()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return True
+            # 259 is STILL_ACTIVE; a process that exited with 259 falls through
+            # to the socket check, which is no worse than before.
+            return code.value == 259
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True  # EPERM: it exists, under another user
+    return True
+
+
 def _socket_alive(data: Dict[str, Any]) -> bool:
     port = data.get("port")
     token = data.get("token")
@@ -205,7 +246,7 @@ def live_instances(directory: str) -> List[Dict[str, Any]]:
                 continue
             if data.get("protocol") != 2:
                 continue
-            alive = _socket_alive(data)
+            alive = _pid_running(pid) and _socket_alive(data)
         except (OSError, ValueError, TypeError, KeyError):
             # Unreadable now may be a file a moment from being replaced; it is
             # skipped this time, not deleted.
