@@ -275,6 +275,19 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
             "-ErrorAction SilentlyContinue | Select-Object -First 1",
             "            if ($jobPid -match '^\\d+$' -and "
             "(Get-Process -Id ([int]$jobPid) -ErrorAction SilentlyContinue)) { continue }",
+            # A forced start swaps its own pid for the job's with Move-Item
+            # -Force, which in Windows PowerShell deletes the old file before
+            # renaming the new one. A read in between found no pid, and the
+            # reaper moved a job that was just starting out from under it: it
+            # never ran, and sat in done/ with no exit code. Look once more.
+            "            Start-Sleep -Milliseconds 500",
+            "            if (Test-Path -LiteralPath ('status\\' + $entry)) { $jobPid = $null }",
+            "            else {",
+            "                $jobPid = Get-Content -LiteralPath ('pids\\' + $entry) "
+            "-ErrorAction SilentlyContinue | Select-Object -First 1",
+            "                if ($jobPid -match '^\\d+$' -and "
+            "(Get-Process -Id ([int]$jobPid) -ErrorAction SilentlyContinue)) { continue }",
+            "            }",
             "        }",
             "        # An empty pid file means the job never started; either way it is",
             "        # over, and leaving it here would hold its cores for ever.",
