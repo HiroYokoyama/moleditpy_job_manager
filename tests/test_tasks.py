@@ -5,6 +5,7 @@ from __future__ import annotations
 import unittest
 import threading
 import weakref
+import gc
 
 import pytest
 
@@ -24,7 +25,8 @@ _app = QApplication.instance() or QApplication([])
 
 @pytest.mark.parametrize("kind", ["background", "poll"])
 @pytest.mark.parametrize("fails", [False, True])
-def test_pool_senders_are_destroyed_on_gui_thread(kind, fails):
+@pytest.mark.parametrize("cycle", [False, True])
+def test_pool_senders_are_destroyed_on_gui_thread(kind, fails, cycle):
     """Finishing a runnable must not delete its QObject on the pool thread."""
     host = make_host()
 
@@ -34,6 +36,8 @@ def test_pool_senders_are_destroyed_on_gui_thread(kind, fails):
         return FakeTransport(host) if args else "done"
 
     task = BackgroundTask(work, quiet=True) if kind == "background" else _PollTask(host, [], work)
+    if cycle:
+        task.retained = task
     destroyed = []
     task.signals.destroyed.connect(
         lambda: destroyed.append(threading.get_ident()), Qt.ConnectionType.DirectConnection
@@ -45,6 +49,8 @@ def test_pool_senders_are_destroyed_on_gui_thread(kind, fails):
     assert pool.waitForDone(5000)
     assert destroyed == []
     assert sender() is not None and shiboken6.isValid(sender())
+    # Qt finishing the runnable does not collect cycles in its Python wrapper.
+    gc.collect()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     assert destroyed == [threading.get_ident()]
 
