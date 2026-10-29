@@ -17,9 +17,7 @@ sys.path.insert(0, str(ROOT))
 
 
 def main():
-    with tempfile.TemporaryDirectory(
-        prefix="job-manager-website-", ignore_cleanup_errors=True
-    ) as directory:
+    with tempfile.TemporaryDirectory(prefix="job-manager-website-") as directory:
         os.environ["MOLEDITPY_JOB_MANAGER_DIR"] = directory
         from PySide6.QtCore import Qt
         from PySide6.QtGui import QColor, QFont, QFontDatabase, QPalette
