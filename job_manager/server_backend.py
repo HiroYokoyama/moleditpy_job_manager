@@ -220,6 +220,8 @@ class JobServerBackend:
         return self.client.request("GET", f"/jobs/{job.remote_job_id}/files")
 
     def tail_file(self, job, relative, lines=200):
+        if relative in ("", "job.log"):
+            return self.tail(job, lines)
         validate_path(relative)
         entry = next((item for item in self.files(job) if item["path"] == relative), None)
         if entry is None:
