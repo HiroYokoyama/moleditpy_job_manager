@@ -95,4 +95,5 @@ def test_release_workflow_expects_this_distribution():
     assert f"dist/{stem}-${{VERSION}}.tar.gz" in workflow
     assert f"https://pypi.org/p/{name}" in workflow
     assert "scripts/smoke_test_installed.py" in workflow
+    assert "dist/*.publish.attestation" in workflow
     assert (ROOT / "scripts" / "smoke_test_installed.py").is_file()

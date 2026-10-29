@@ -135,3 +135,20 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # PEP 740 attestations, the default under trusted publishing: signed
+          # provenance for each file, written to dist/ as .publish.attestation.
+          attestations: true
+
+      - name: Attach PEP 740 attestations to the GitHub Release
+        # So the provenance travels with the GitHub copies too, not only PyPI's.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shopt -s nullglob
+          attestations=(dist/*.publish.attestation)
+          if [ ${#attestations[@]} -eq 0 ]; then
+            echo "::error::The publish step wrote no .publish.attestation files."
+            exit 1
+          fi
+          gh release upload "v${VERSION}" "${attestations[@]}" --clobber
