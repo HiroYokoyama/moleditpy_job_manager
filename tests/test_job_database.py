@@ -2,6 +2,7 @@
 
 import sqlite3
 import os
+import threading
 from unittest.mock import patch
 from concurrent.futures import ThreadPoolExecutor
 
@@ -73,6 +74,23 @@ def test_parallel_writers_keep_every_new_job(tmp_path, initialized):
     records = database.read_document(path)["jobs"]
     assert {row["id"] for row in records} == {str(i) for i in range(12)}
     assert len({row["number"] for row in records}) == 12
+
+
+def test_a_writer_waits_out_a_lock_held_past_two_seconds(tmp_path):
+    # A 2 s busy timeout lost a save on a Windows runner while four writers
+    # queued behind each other's fsyncs. Hold the lock longer than that.
+    path = str(tmp_path / "held.pmejdb")
+    database.write_document(path, document())
+    holder = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
+    holder.execute("BEGIN IMMEDIATE")
+    released = threading.Timer(2.5, holder.commit)
+    released.start()
+    try:
+        database.save_changes(path, document(job("late")), {}, set())
+    finally:
+        released.join()
+        holder.close()
+    assert [row["id"] for row in database.read_document(path)["jobs"]] == ["late"]
 
 
 def test_stale_writer_preserves_updates_and_deletions(tmp_path):

@@ -21,6 +21,12 @@ _SCHEMA = (
     "CREATE TABLE jobs (id TEXT PRIMARY KEY, record TEXT NOT NULL, revision INTEGER NOT NULL)",
 )
 _STATE_FIELDS = frozenset({"state", "rc", "started_at", "finished_at", "last_server_state"})
+# How long a connection waits for another one's lock. Each writer holds it for
+# a few full fsyncs, so a queue of them adds up: 2 s raised "database is locked"
+# on a Windows runner with four writers, losing a save. A reader only waits out
+# one commit, and may be on the GUI thread, so it gives up sooner.
+WRITE_TIMEOUT = 30.0
+READ_TIMEOUT = 10.0
 
 
 def is_database(path: str) -> bool:
@@ -60,7 +66,7 @@ def connection(path: str, *, write=False, exclusive=False):
         db = sqlite3.connect(
             opened.as_uri() + ("?mode=rw" if write else "?mode=ro"),
             uri=True,
-            timeout=2,
+            timeout=WRITE_TIMEOUT if write else READ_TIMEOUT,
             isolation_level=None,
         )
         db.execute("PRAGMA trusted_schema=OFF")
