@@ -62,3 +62,76 @@ jobs:
         env:
           REGISTRY_PAT: ${{ secrets.REGISTRY_PAT }}
         run: python scripts/release_common.py notify --version "$VERSION"
+
+  pypi:
+    name: Publish moleditpy-job-manager to PyPI
+    needs: release
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/moleditpy-job-manager
+    permissions:
+      # Trusted publishing (OIDC): PyPI trusts this repository, release.yml and
+      # the pypi environment, so no API token is stored here.
+      id-token: write
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Resolve version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          if [ "$EVENT_NAME" = "push" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="$INPUT_VERSION"
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+
+      - name: Verify the built version matches the tag
+        run: |
+          ls dist/
+          test -f "dist/moleditpy_job_manager-${VERSION}.tar.gz"
+          test -f "dist/moleditpy_job_manager-${VERSION}-py3-none-any.whl"
+
+      - name: Install Qt runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libxkbcommon-x11-0 libdbus-1-3 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0
+
+      - name: Smoke-test the wheel before publishing
+        # A clean environment, run from another directory, so the check cannot
+        # pass by importing the checkout instead of the installed package.
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          python -m venv "$RUNNER_TEMP/wheel-check"
+          "$RUNNER_TEMP/wheel-check/bin/pip" install "dist/moleditpy_job_manager-${VERSION}-py3-none-any.whl[all]"
+          cp scripts/smoke_test_installed.py "$RUNNER_TEMP/"
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/wheel-check/bin/python" smoke_test_installed.py --extras all --version "$VERSION"
+
+      - name: Attach sdist and wheel to the GitHub Release
+        # Before publishing, so the files reach the release even if the PyPI
+        # upload fails.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "v${VERSION}" dist/*.whl dist/*.tar.gz --clobber
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

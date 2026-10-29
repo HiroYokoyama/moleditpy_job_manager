@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "moleditpy-job-manager"
+dynamic = ["version"]
+description = "Submit, monitor and collect computational chemistry jobs over SSH, on schedulers, locally or through a Job Server. Runs standalone or as a MoleditPy plugin."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "LGPL-3.0-or-later"
+license-files = ["LICENSE", "COPYING", "LICENSING.md"]
+authors = [{ name = "Hiromichi Yokoyama" }]
+keywords = [
+    "computational chemistry",
+    "job manager",
+    "hpc",
+    "slurm",
+    "pbs",
+    "ssh",
+    "orca",
+    "gaussian",
+    "moleditpy",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: System :: Distributed Computing",
+    "Operating System :: OS Independent",
+]
+# The API is loopback-only, so a client always runs beside a Job Manager that
+# already needs Qt; a Qt-free client is api_client.py copied on its own.
+dependencies = ["PySide6-Essentials>=6.9,<6.12"]
+
+[project.optional-dependencies]
+ssh = ["paramiko"]
+job-server = ["cryptography>=50.0.2"]
+all = ["paramiko", "cryptography>=50.0.2"]
+
+[project.scripts]
+moleditpy-job-manager = "job_manager.__main__:main"
+moleditpy-job = "job_manager.api_client:main"
+
+[project.urls]
+Homepage = "https://hiroyokoyama.github.io/moleditpy_job_manager/"
+Repository = "https://github.com/HiroYokoyama/moleditpy_job_manager"
+Documentation = "https://github.com/HiroYokoyama/moleditpy_job_manager/tree/main/docs"
+Issues = "https://github.com/HiroYokoyama/moleditpy_job_manager/issues"
+
+[tool.setuptools.packages.find]
+include = ["job_manager", "job_manager.*"]
+
+[tool.setuptools.package-data]
+"job_manager.job_server_client" = ["LICENSE", "COPYING", "LICENSING.md", "PROVENANCE.json"]
+
+[tool.setuptools.dynamic]
+version = { attr = "job_manager.PLUGIN_VERSION" }
