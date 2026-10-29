@@ -207,8 +207,12 @@ class TestItRunsWhatIsQueued(RunnerHarness):
 
         self.start_runner()
 
+        # Three dispatches one after another, each forking a dozen processes:
+        # under a full parallel suite Git Bash on Windows took longer than the
+        # usual ten seconds for the third, with the runner alive and ccc next.
         self.wait_for(
             lambda: len(self.listing()) == 3 and all(v == "done" for v in self.listing().values()),
+            timeout=30.0,
             what="all three to finish",
         )
         with open(self.marker("order"), encoding="utf-8") as handle:
