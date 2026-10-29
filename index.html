@@ -51,21 +51,14 @@
 
     <section class="agents" id="agents"><div class="wrap">
       <div class="agents-grid"><div class="agents-copy"><p class="kicker">02 / Built for agent workflows</p><h2>Many agents.<br>One shared resource budget.</h2><p>Let agents submit work through the local API. On a workstation, the shared helper queue schedules calculations within the CPU and memory budgets you set, helping prevent a flood of submissions from overloading the machine.</p><div class="resource-note"><strong>8 cores + 32 GB budget</strong>Two jobs requesting 4 cores and 16 GB each run together. Additional jobs wait for capacity.</div><a class="text-link" href="https://github.com/HiroYokoyama/moleditpy_job_manager/blob/main/docs/API.md">Explore the API <svg class="icon icon-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" focusable="false"><path d="M5 12h14"/><path d="m13 6 6 6-6 6"/></svg></a></div>
-      <div><div class="code-window"><div class="code-header"><span>Python / agent workflow</span><button class="copy" type="button" data-copy="agent-code"><svg class="icon icon-copy" aria-hidden="true" focusable="false" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>Copy code</button></div><pre><code id="agent-code"><span class="code-key">from</span> job_manager.api_client <span class="code-key">import</span> JobManagerClient
+      <div><div class="code-window"><div class="code-header"><span>Shell / agent workflow</span><button class="copy" type="button" data-copy="agent-code"><svg class="icon icon-copy" aria-hidden="true" focusable="false" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>Copy code</button></div><pre><code id="agent-code"><span class="code-comment"># Submit, wait, fetch results</span>
+python -m job_manager.api_client submit molecule.inp \
+    --host <span class="code-string">workstation</span> \
+    --command <span class="code-string">"/opt/orca/orca {input} &gt; {stem}.out"</span> \
+    --cpus 4 --memory <span class="code-string">16GB</span> \
+    <span class="code-key">--wait</span>
 
-client = JobManagerClient()
-job = client.submit(
-    host=<span class="code-string">"workstation"</span>,
-    files=[<span class="code-string">"molecule.inp"</span>],
-    command=<span class="code-string">"/opt/orca/orca {input} &gt; {stem}.out"</span>,
-    cpus_per_task=4,
-    memory=<span class="code-string">"16GB"</span>,
-)
-
-final = client.wait(job[<span class="code-string">"id"</span>])
-<span class="code-key">if</span> final[<span class="code-string">"state"</span>] != <span class="code-string">"DONE"</span>:
-    <span class="code-key">raise</span> RuntimeError(final[<span class="code-string">"state"</span>])
-results = client.download(job[<span class="code-string">"id"</span>], wait=<span class="code-key">True</span>)</code></pre><div class="code-footer">Local HTTP API · Token authentication · Python standard library client</div></div><p class="status-message" id="copy-status" role="status"></p></div></div>
+<span class="code-comment"># Exit 0 if DONE, else 2</span></code></pre><div class="code-footer">Local HTTP API · Token found automatically · Python client for scripts</div></div><p class="status-message" id="copy-status" role="status"></p></div></div>
       <p class="agents-footnote">Use the same host profile and helper queue, with accurate resource requests. Budgets schedule declared requests; they do not enforce process limits or account for unrelated applications. Force run bypasses budgets. Cluster destinations use their own scheduler. The API is opt-in, loopback-only, and requires Job Manager to be running.</p>
     </div></section>
 
