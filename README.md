@@ -13,6 +13,11 @@ running calculations over SSH, locally, inside WSL, or through a LAN Job Server.
 Upload inputs, submit jobs, monitor progress, fetch results and open them in the
 editor. It also runs as a standalone desktop application.
 
+AI agents can submit calculations through the local HTTP API, monitor jobs and
+retrieve results. Multiple agents can feed the same host-side helper queue,
+which schedules jobs within configured CPU and memory budgets to help prevent
+overloading a workstation.
+
 ![Job Manager](img/job-manager.png)
 ![Host Monitor](img/host-monitor.png)
 
@@ -34,9 +39,11 @@ editor. It also runs as a standalone desktop application.
 - **Collect results.** Download outputs automatically beside the input file and
   open them through the installed result analyzer. Save job lists as SQLite `.pmejdb` or legacy `.pmejbs`,
   export CSV, or rebuild a read-only list from existing result folders.
-- **Submit from other tools.** ORCA and Gaussian Input Generator Pro provide a
-  **Submit to Cluster...** button. Scripts and other applications can use the
-  optional [local HTTP API](docs/API.md).
+- **Submit from AI agents and other tools.** The optional [local HTTP API](docs/API.md)
+  lets agents and scripts submit jobs, inspect status and logs, and retrieve
+  results. Agents using the same helper queue share its resource budgets;
+  jobs wait until their requested cores and memory fit.
+  ORCA and Gaussian Input Generator Pro provide a **Submit to Cluster...** button.
 
 Instance discovery writes one small registration file on startup and removes it
 on shutdown. Liveness checks use an in-memory loopback socket, with no periodic
@@ -222,14 +229,39 @@ This option is off by default.
 
 ## Integrations
 
+### AI agents and automation
+
+An AI agent running on the same machine as Job Manager can use the HTTP API,
+Python client or command-line client to submit calculations without opening the
+submission dialog. It can list configured hosts and presets, check host load
+and queue status, submit jobs, read logs, cancel jobs and download results.
+
+For multiple agents targeting one workstation, use the same host profile with
+**Queueing** set to **Queue them with a helper on the host**. Configure its
+**Cores available** and **Memory available** budgets, and have each agent declare
+its job's CPU and memory requests. The shared queue starts jobs only when those
+requests fit the remaining budgets; other jobs wait. For example, with an
+8-core, 32 GB budget, jobs requesting 4 cores and 16 GB each run two at a time,
+even when several agents submit work at once.
+
+These budgets account for declared requests, rather than enforcing process
+CPU or memory limits. Set requests to match the calculation's actual usage,
+leave capacity for other applications, and avoid **Force run**, which bypasses
+the budgets. This coordination applies to jobs in the same helper queue;
+SLURM, PBS and SGE destinations use their scheduler's resource management.
+See the [helper queue guide](docs/RUNNER.md#scheduling-on-resources).
+
+Enable **Local API...** under **Extensions → Job Manager** and keep Job Manager
+running. The API is off by default, requires a token and binds only to
+`127.0.0.1`. The bundled client discovers the active endpoint and token.
+
 ### Input generators and scripts
 
 ORCA and Gaussian Input Generator Pro offer **Submit to Cluster...** beside
 Save when Job Manager is installed. Other plugins can call
 `job_manager.submit_file(paths, name="")` through the host's plugin list.
 
-For external programs, enable **Local API...** under **Extensions → Job
-Manager**. The API is off by default and binds only to `127.0.0.1`.
+External programs and AI agents can use the bundled command-line or Python client:
 
 ```bash
 python -m job_manager.api_client submit h2o.inp --host mycluster --command "/opt/orca/orca {input} > {stem}.out" --cpus 8 --memory 16GB
@@ -244,8 +276,14 @@ job = client.submit(
     host="mycluster",
     files=["h2o.inp"],
     command="/opt/orca/orca {input} > {stem}.out",
+    cpus_per_task=4,
+    memory="16GB",
+    fetch_globs=["*.out", "*.xyz"],
 )
 final = client.wait(job["id"])
+if final["state"] != "DONE":
+    raise RuntimeError(f"Job {final['id']}: {final['state']}")
+paths = client.download(final["id"], wait=True)["files"]
 ```
 
 The client discovers the running Job Manager and uses the same submission
@@ -304,7 +342,7 @@ and the [security model](docs/SECURITY_MODEL.md) for storage and trust boundarie
 | [Job Server](docs/JOB_SERVER.md) | LAN server setup, authentication and supported operations |
 | [Helper queue](docs/RUNNER.md) | Dispatch, dependencies, resource budgets and queue files |
 | [Command placeholders](docs/COMMAND_PLACEHOLDERS.md) | Command fields and expansion rules |
-| [Local API](docs/API.md) | External clients, endpoints and authentication |
+| [Local API](docs/API.md) | AI agents, external clients, endpoints and authentication |
 | [Web monitor](docs/WEB_MONITOR.md) | Browser dashboard, Tailscale and data usage |
 | [Architecture](docs/ARCHITECTURE.md) | Service layers, threading, polling and plugin integration |
 | [Security model](docs/SECURITY_MODEL.md) | Credentials, host keys, downloads and trust boundaries |
