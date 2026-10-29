@@ -207,12 +207,16 @@ described in [its setup guide](docs/JOB_SERVER.md).
 
 ## Standalone mode
 
-Launch the full Job Manager without opening MoleditPy:
+Launch the full Job Manager without opening MoleditPy, or without installing
+it at all — see [Job Manager without MoleditPy](docs/STANDALONE.md):
 
 ```bash
-python -m job_manager
-python -m job_manager --host-monitor
+pip install moleditpy-job-manager
+moleditpy-job-manager
+moleditpy-job-manager --host-monitor
 ```
+
+From the plugin folder or the release zip, `python -m job_manager` does the same.
 
 Alternatively, run `python __main__.py` inside the plugin folder. On Windows,
 use `launch_job_manager.bat` or `launch_host_monitor.bat`; create a desktop
@@ -339,6 +343,7 @@ and the [security model](docs/SECURITY_MODEL.md) for storage and trust boundarie
 | Guide | Covers |
 |---|---|
 | [Standard workflow](docs/WORKFLOW.md) | Setup, submission, results, notifications and troubleshooting |
+| [Without MoleditPy](docs/STANDALONE.md) | pip install, the standalone app and command line, sharing data with the plugin |
 | [Job Server](docs/JOB_SERVER.md) | LAN server setup, authentication and supported operations |
 | [Helper queue](docs/RUNNER.md) | Dispatch, dependencies, resource budgets and queue files |
 | [Command placeholders](docs/COMMAND_PLACEHOLDERS.md) | Command fields and expansion rules |
