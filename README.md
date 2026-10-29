@@ -18,8 +18,8 @@ retrieve results. Multiple agents can feed the same host-side helper queue,
 which schedules jobs within configured CPU and memory budgets to help prevent
 overloading a workstation.
 
-![Job Manager](img/job-manager.png)
-![Host Monitor](img/host-monitor.png)
+![Job Manager](img/website/job-monitor.png)
+![Host Monitor](img/website/host-monitor.png)
 
 ## Features
 
