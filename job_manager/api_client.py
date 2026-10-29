@@ -90,8 +90,9 @@ def discover(directory: str = "") -> Dict[str, Any]:
             data = json.load(handle)
     except FileNotFoundError as exc:
         raise JobApiError(
-            f"The Job Manager API is not running: no {path}. Enable it in "
-            f"MoleditPy under Extensions > Job Manager > Local API..."
+            f"The Job Manager API is not running: no {path}. Switch it on under "
+            f"Extensions > Job Manager > Local API... in MoleditPy, or "
+            f"Settings... > Local API... in the standalone Job Manager."
         ) from exc
     except (OSError, ValueError) as exc:
         raise JobApiError(f"Could not read {path}: {exc}") from exc
@@ -162,7 +163,7 @@ class JobManagerClient:
         except urllib.error.URLError as exc:
             raise JobApiError(
                 f"Could not reach the Job Manager API at {self.url}: {exc.reason}. "
-                f"Is MoleditPy still running?"
+                f"Is Job Manager still running?"
             ) from exc
 
     @staticmethod

@@ -19,12 +19,17 @@ from __future__ import annotations
 import logging
 from typing import List, Optional
 
-from PySide6.QtCore import QObject
+from PySide6.QtCore import QObject, QTimer
 from PySide6.QtWidgets import QApplication
 
 from . import instances, notify, presence
 from .beacon import InstanceBeacon
 from .window_utils import bring_to_front, exec_once
+
+
+#: How long the tray waits for a closing MoleditPy to give up the API's port.
+API_WAIT_MS = 1000
+API_WAITS = 60
 
 
 class _StandaloneWindows(QObject):
@@ -39,6 +44,7 @@ class _StandaloneWindows(QObject):
         self.host_monitor = None
         self.presence = None
         self.beacon: Optional[InstanceBeacon] = None
+        self._api_waits = 0
 
     def _start_beacon(self, role: str, extra=None) -> None:
         handlers = {
@@ -75,7 +81,6 @@ class _StandaloneWindows(QObject):
     def open_settings(self) -> None:
         from .settings_dialog import SettingsDialog
 
-        # No local API from here: MoleditPy serves it.
         exec_once("settings", lambda: SettingsDialog(self.service, None, standalone=True))
 
     def select_job(self, job_id: str) -> None:
@@ -88,6 +93,25 @@ class _StandaloneWindows(QObject):
             web_service.resume(self.service, wait_for_port=wait_for_port)
         except Exception:
             logging.warning("Job Manager: the web monitor did not start", exc_info=True)
+
+    def start_api(self, wait_for_port: bool = False) -> None:
+        """Serve the local API again when it was left on, as MoleditPy does at load.
+
+        Without this a Job Manager used without MoleditPy lost its API at every
+        launch, and with it the command line and every agent pointed at it.
+        """
+        from . import _resume_api, api_external_port
+
+        try:
+            _resume_api(self.service.store)
+        except Exception:
+            logging.warning("Job Manager: the local API did not start", exc_info=True)
+            return
+        # A MoleditPy handing over serves the API until it has exited, and this
+        # process then defers to it; ask again once it is gone.
+        if wait_for_port and api_external_port() and self._api_waits < API_WAITS:
+            self._api_waits += 1
+            QTimer.singleShot(API_WAIT_MS, lambda: self.start_api(wait_for_port=True))
 
     def stop(self) -> None:
         """Everything this process put up, taken down. Called after the loop ends."""
@@ -208,6 +232,7 @@ def run(
         tray.start_as_window()
     # The MoleditPy handing over may still hold the port the saved links name.
     tray.start_web(wait_for_port=True)
+    tray.start_api(wait_for_port=True)
     try:
         return app.exec()
     finally:
@@ -219,6 +244,7 @@ def run_monitor(app: QApplication, service, data_dir: str, host_view: bool = Fal
     windows = StandaloneMonitor(app, service, data_dir)
     windows.start(host_view)
     windows.start_web()
+    windows.start_api()
     try:
         return app.exec()
     finally:

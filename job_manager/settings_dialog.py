@@ -62,8 +62,7 @@ class SettingsDialog(QDialog):
         layout.addWidget(self._job_end_group())
         layout.addWidget(self._desktop_group())
         layout.addWidget(self._web_group())
-        if not standalone:
-            layout.addWidget(self._api_group())
+        layout.addWidget(self._api_group())
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
         buttons.accepted.connect(self.accept)
@@ -308,8 +307,6 @@ class SettingsDialog(QDialog):
         )
 
     def _sync_api_status(self) -> None:
-        if self.standalone:
-            return
         try:
             from . import api_external_port, api_is_running, get_api_server
 
@@ -317,7 +314,7 @@ class SettingsDialog(QDialog):
                 server = get_api_server(create=False)
                 text = f"On, listening on 127.0.0.1:{server.port}"
             elif api_external_port():
-                text = f"Served by another MoleditPy on port {api_external_port()}"
+                text = f"Served by another Job Manager on port {api_external_port()}"
             elif self.store.get_pref("api_enabled", False):
                 text = "On, but not listening"
             else:

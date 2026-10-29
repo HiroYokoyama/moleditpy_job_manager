@@ -174,7 +174,7 @@ class ApiDialog(QDialog):
 
             external = api_external_port()
             self.lbl_status.setText(
-                f"Already served by another MoleditPy instance on port {external}."
+                f"Already served by another Job Manager on port {external}."
                 if external
                 else "Not listening."
             )

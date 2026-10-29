@@ -19,7 +19,7 @@ pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 import job_manager  # noqa: E402
-from job_manager import instances, notify, presence  # noqa: E402
+from job_manager import instances, notify, presence, standalone  # noqa: E402
 from job_manager.models import STATE_RUNNING, Job  # noqa: E402
 from job_manager.service import JobService  # noqa: E402
 from job_manager.standalone import StandaloneMonitor, StandaloneTray, run  # noqa: E402
@@ -118,6 +118,38 @@ class TestStarting(StandaloneTestCase):
         self.assertFalse(web_service.for_service(service).running)
         self.assertTrue(service.store.get_pref("host_monitor_web", False))
 
+    def test_run_serves_the_api_when_it_was_left_on(self):
+        service = self.service()
+        with (
+            patch("job_manager._resume_api") as resume,
+            patch.object(self.app, "exec", return_value=0),
+        ):
+            run(self.app, service, self.dir, ["moleditpy"])
+        resume.assert_called_once_with(service.store)
+
+    def test_the_tray_waits_for_a_closing_moleditpy_to_give_the_api_up(self):
+        # MoleditPy serves the API until it has exited, and the tray it handed
+        # over to defers to it meanwhile; without asking again the tray would
+        # never serve it at all.
+        tray = self.standalone()
+        with (
+            patch("job_manager._resume_api") as resume,
+            patch("job_manager.api_external_port", side_effect=[8765, 8765, 0]),
+            patch("job_manager.standalone.QTimer.singleShot", side_effect=lambda _ms, fn: fn()),
+        ):
+            tray.start_api(wait_for_port=True)
+        self.assertEqual(resume.call_count, 3)
+
+    def test_the_tray_stops_asking_eventually(self):
+        tray = self.standalone()
+        with (
+            patch("job_manager._resume_api") as resume,
+            patch("job_manager.api_external_port", return_value=8765),
+            patch("job_manager.standalone.QTimer.singleShot", side_effect=lambda _ms, fn: fn()),
+        ):
+            tray.start_api(wait_for_port=True)
+        self.assertEqual(resume.call_count, standalone.API_WAITS + 1)
+
     def test_without_a_tray_it_says_so(self):
         self.tray_class.isSystemTrayAvailable.return_value = False
         self.assertFalse(self.standalone().start())
@@ -215,6 +247,18 @@ class TestAMonitorOpenedByHand(StandaloneTestCase):
         with patch.object(windows, "open_host_monitor") as hosts:
             windows.start(host_view=True)
         hosts.assert_called_once()
+
+    def test_run_monitor_serves_the_api_when_it_was_left_on(self):
+        from job_manager.standalone import run_monitor
+
+        service = self.service()
+        with (
+            patch("job_manager._resume_api") as resume,
+            patch.object(StandaloneMonitor, "open_monitor"),
+            patch.object(self.app, "exec", return_value=0),
+        ):
+            run_monitor(self.app, service, self.dir)
+        resume.assert_called_once_with(service.store)
 
     def test_opened_by_hand_counts_as_opened(self):
         # Keep running applies only to a session in which the Job Manager was

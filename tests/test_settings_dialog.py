@@ -47,11 +47,11 @@ class TestItHoldsEverything(SettingsTestCase):
             ["Polling", "Results", "When a job ends", "Desktop", "Web Monitor", "Local API"],
         )
 
-    def test_the_tray_process_has_no_api_to_offer(self):
-        # The API is served by MoleditPy; switching it on from the tray process
-        # would start a second server there.
+    def test_the_tray_process_offers_the_api_too(self):
+        # Without MoleditPy the standalone process is the only one that can
+        # serve it. A second server never starts: start_api defers to a live one.
         titles = [g.title() for g in self.dialog(standalone=True).findChildren(QGroupBox)]
-        self.assertNotIn("Local API", titles)
+        self.assertIn("Local API", titles)
 
     def test_it_reflects_what_is_stored(self):
         self.store.set_pref("notify_on_finish", False)
