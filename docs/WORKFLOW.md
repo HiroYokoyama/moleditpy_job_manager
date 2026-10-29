@@ -696,7 +696,9 @@ monitor all carry on. Results are downloaded but not
 opened, since there is no MoleditPy to open them in.
 
 Its menu is the same, with **Open MoleditPy** and **Quit Job Manager** at the
-bottom; its Settings has everything but the local API, which MoleditPy serves. Opening MoleditPy — from there or any other way — takes the jobs back:
+bottom; its Settings has everything the plugin's has. A local API that was on
+keeps being served: the tray process takes it over once the MoleditPy handing
+over has let go of it. Opening MoleditPy — from there or any other way — takes the jobs back:
 the plugin asks the tray process to stop and waits for it before reading the
 job list, so the two never track the same jobs at once. Opening the standalone
 Job Manager by hand while it runs brings up the tray process's own monitor

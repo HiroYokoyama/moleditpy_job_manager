@@ -73,8 +73,8 @@ moleditpy-job jobs --state ACTIVE
 ```
 
 It talks to a running Job Manager, so start the window and switch the API on
-first (**Settings... > Local API...**). `python -m job_manager.api_client` is the
-same program.
+once (**Settings... > Local API...**); it is served again at every launch until
+you switch it off. `python -m job_manager.api_client` is the same program.
 
 ## Agents and scripts
 

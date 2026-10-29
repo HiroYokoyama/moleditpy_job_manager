@@ -255,8 +255,8 @@ the budgets. This coordination applies to jobs in the same helper queue;
 SLURM, PBS and SGE destinations use their scheduler's resource management.
 See the [helper queue guide](docs/RUNNER.md#scheduling-on-resources).
 
-Enable **Local API...** under **Extensions → Job Manager** and keep Job Manager
-running. The API is off by default, requires a token and binds only to
+Enable **Local API...** under **Extensions → Job Manager**, or under
+**Settings...** in the standalone Job Manager, and keep Job Manager running. The API is off by default, requires a token and binds only to
 `127.0.0.1`. The bundled client discovers the active endpoint and token.
 
 ### Input generators and scripts

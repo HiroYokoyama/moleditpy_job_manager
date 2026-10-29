@@ -27,7 +27,9 @@ downloaded and announced exactly like one you typed in.
 
 ## Switching it on
 
-**Extensions > Job Manager > Local API...**
+**Extensions > Job Manager > Local API...** in MoleditPy, or
+**Settings... > Local API...** in the standalone Job Manager
+(`moleditpy-job-manager`, see [Job Manager without MoleditPy](STANDALONE.md)).
 
 Tick *Allow local programs to submit jobs*. The window then shows the URL and
 the token a client needs, and the API starts listening immediately — and again
