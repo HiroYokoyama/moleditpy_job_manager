@@ -11,7 +11,7 @@ temporary directory before running it for exactly that reason.
     python smoke_test_installed.py --version 3.3.4    # and insist on a version
 
 Nothing here touches the user's job list: the window runs against a temporary
-data directory, and the client talks to a stand-in API on a free port.
+data directory, with this machine as its only host.
 
 Set ``JOB_MANAGER_SMOKE_ALLOW_LOCAL=1`` to skip the "must be an installed copy"
 guard when trying the script out from the source tree.
@@ -152,43 +152,131 @@ def _check_client_command() -> None:
     print("[ok] moleditpy-job ping reached the API with the token")
 
 
-def _check_window_command(seconds: float) -> None:
-    """``moleditpy-job-manager`` starts and stays up, on a throwaway data dir."""
-    data_dir = tempfile.mkdtemp(prefix="job-manager-smoke-")
+def _settings_for_a_local_host(work_dir: str) -> dict:
+    """The API switched on, and one host that is this machine, as a user sets up."""
+    from job_manager.models import (
+        BACKEND_LOCAL,
+        SCHEDULER_SHELL,
+        SCHEDULER_WINDOWS,
+        HostProfile,
+    )
+
+    host = HostProfile(
+        name="smoke",
+        backend=BACKEND_LOCAL,
+        scheduler=SCHEDULER_WINDOWS if sys.platform == "win32" else SCHEDULER_SHELL,
+        remote_root=os.path.join(work_dir, "host"),
+    )
+    prefs = {
+        "api_enabled": True,
+        "api_port": 0,
+        "poll_interval": 5,
+        "notify_on_finish": False,
+        "open_result_after_download": False,
+    }
+    return {"version": 1, "prefs": prefs, "hosts": [host.to_dict()], "presets": []}
+
+
+def _wait_for_file(path: str, process: subprocess.Popen, seconds: float) -> bool:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        if os.path.exists(path):
+            return True
+        if process.poll() is not None:
+            return False
+        time.sleep(0.5)
+    return False
+
+
+def _check_a_real_job(seconds: float) -> None:
+    """The window serves the API, and a job submitted through it comes back.
+
+    ``moleditpy-job-manager`` on a throwaway data directory, with the API left
+    on and this machine as a host -- then ``moleditpy-job submit --wait`` runs a
+    command there, waits for the queue and downloads what it wrote. Everything
+    a user without MoleditPy relies on, end to end.
+    """
+    work_dir = tempfile.mkdtemp(prefix="job-manager-smoke-")
+    data_dir = os.path.join(work_dir, "data")
+    inputs = os.path.join(work_dir, "inputs")
+    os.makedirs(data_dir)
+    os.makedirs(inputs)
+    with open(os.path.join(data_dir, "settings.json"), "w", encoding="utf-8") as handle:
+        json.dump(_settings_for_a_local_host(work_dir), handle)
+    marker = f"smoke-{os.getpid()}"
+    with open(os.path.join(inputs, "smoke.inp"), "w", encoding="utf-8") as handle:
+        handle.write(marker + "\n")
+    command = (
+        "Get-Content {input} | Set-Content {stem}.out"
+        if sys.platform == "win32"
+        else "cat {input} > {stem}.out"
+    )
+
     env = dict(os.environ)
     env["MOLEDITPY_JOB_MANAGER_DIR"] = data_dir
     env.setdefault("QT_QPA_PLATFORM", "offscreen")
-    log_path = os.path.join(data_dir, "window.log")
+    log_path = os.path.join(work_dir, "window.log")
     with open(log_path, "w", encoding="utf-8") as log:
-        process = subprocess.Popen(
+        window = subprocess.Popen(
             [_command("moleditpy-job-manager")], env=env, stdout=log, stderr=log
         )
         try:
-            deadline = time.monotonic() + seconds
-            while time.monotonic() < deadline and process.poll() is None:
-                time.sleep(0.5)
-            code = process.poll()
+            served = _wait_for_file(os.path.join(data_dir, "api.json"), window, 60)
+            assert served, (
+                f"the window did not start the API it was left on with:\n{_read(log_path)}"
+            )
+            assert os.path.isdir(os.path.join(data_dir, "instances")), "no instance registry"
+            print("[ok] moleditpy-job-manager started and served the local API")
+
+            submitted = subprocess.run(
+                [
+                    _command("moleditpy-job"),
+                    "submit",
+                    "smoke.inp",
+                    "--host",
+                    "smoke",
+                    "--command",
+                    command,
+                    "--fetch",
+                    "*.out",
+                    "--wait",
+                ],
+                cwd=inputs,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=seconds,
+            )
+            assert window.poll() is None, f"the window exited:\n{_read(log_path)}"
         finally:
-            if process.poll() is None:
-                process.kill()
-                process.wait(timeout=30)
-    with open(log_path, encoding="utf-8", errors="replace") as log:
-        output = log.read()
-    assert code is None, f"the window exited with {code} within {seconds:.0f}s:\n{output}"
-    # The instance registry is the first thing the standalone app writes, and
-    # it must have gone to the directory it was given.
-    assert os.path.isdir(os.path.join(data_dir, "instances")), (
-        f"no instance registry in {data_dir}:\n{output}"
-    )
-    shutil.rmtree(data_dir, ignore_errors=True)
-    print(f"[ok] moleditpy-job-manager ran for {seconds:.0f}s on a temporary data dir")
+            if window.poll() is None:
+                window.kill()
+                window.wait(timeout=30)
+    detail = f"stdout:\n{submitted.stdout}\nstderr:\n{submitted.stderr}\nwindow:\n{_read(log_path)}"
+    assert submitted.returncode == 0, f"submit --wait exited {submitted.returncode}\n{detail}"
+    results = [
+        os.path.join(folder, name)
+        for folder, _dirs, names in os.walk(inputs)
+        for name in names
+        if name == "smoke.out"
+    ]
+    assert results, f"smoke.out was not downloaded under {inputs}\n{detail}"
+    with open(results[0], encoding="utf-8", errors="replace") as handle:
+        assert marker in handle.read(), f"{results[0]} does not hold what the job wrote"
+    shutil.rmtree(work_dir, ignore_errors=True)
+    print("[ok] moleditpy-job submit --wait ran a job on this machine and downloaded its output")
+
+
+def _read(path: str) -> str:
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        return handle.read()
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--extras", choices=("default", "all"), default="default")
     parser.add_argument("--version", default="", help="Fail unless this version is installed")
-    parser.add_argument("--window-seconds", type=float, default=10.0)
+    parser.add_argument("--job-seconds", type=float, default=180.0)
     args = parser.parse_args()
 
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -201,7 +289,7 @@ def main() -> int:
         _command(name)
     print("[ok] both commands are installed")
     _check_client_command()
-    _check_window_command(args.window_seconds)
+    _check_a_real_job(args.job_seconds)
     print("All smoke tests passed.")
     return 0
 
