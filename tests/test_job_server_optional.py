@@ -17,6 +17,17 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class TestOptionalServerClient(unittest.TestCase):
+    def test_default_server_log_uses_the_dedicated_log_endpoint(self):
+        backend = object.__new__(JobServerBackend)
+        backend.tail = Mock(return_value="server output")
+        backend.client = Mock()
+        job = Job(log_file="job.log")
+        for filename in ("", "job.log"):
+            with self.subTest(filename=filename):
+                self.assertEqual(backend.tail_file(job, filename, 50), "server output")
+                backend.tail.assert_called_with(job, 50)
+        backend.client.request.assert_not_called()
+
     def test_disposable_backends_enable_shared_auth_but_keep_separate_clients(self):
         from job_manager.server_backend import backend_for
 
