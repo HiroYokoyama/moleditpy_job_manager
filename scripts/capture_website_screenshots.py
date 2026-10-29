@@ -29,6 +29,7 @@ def main():
         from job_manager.jobs_dialog import JobsDialog
         from job_manager.models import HostProfile, Job
         from job_manager.poller import JobPoller
+        from job_manager.remote_runner import entry_name
         from job_manager.service import JobService
         from job_manager.store import JobStore
 
@@ -78,14 +79,17 @@ def main():
         ]
         for index, (name, host_index, state, elapsed) in enumerate(examples):
             host = hosts[host_index]
+            job_id = f"a1b2c3d4{index + 1:04x}"
             job = Job(
-                id=f"demo-job-{index + 1}",
+                id=job_id,
                 name=name,
                 host_id=host.id,
                 host_name=host.name,
                 scheduler=host.scheduler,
                 state=state,
-                remote_job_id=str(4201 + index),
+                remote_job_id=(
+                    entry_name(index + 1, job_id) if host_index == 0 else str(4201 + index)
+                ),
                 submitted_at=now - 3600,
                 started_at=now - elapsed if elapsed else 0,
                 updated_at=now,
@@ -119,6 +123,7 @@ def main():
                 1, monitor.table.horizontalHeader().ResizeMode.Stretch
             )
             monitor.table.setColumnWidth(2, 155)
+            monitor.table.setColumnWidth(3, 190)
             monitor.table.setColumnWidth(6, 110)
             monitor.table.sortByColumn(0, Qt.SortOrder.AscendingOrder)
             app.processEvents()
