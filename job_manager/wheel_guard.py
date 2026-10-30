@@ -8,26 +8,33 @@ the event goes on to the scroll area.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QObject, Qt
-from PySide6.QtWidgets import (
-    QAbstractSlider,
-    QAbstractSpinBox,
-    QComboBox,
-    QScrollBar,
-    QWidget,
-)
+try:
+    from PySide6.QtCore import QEvent, QObject, Qt
+    from PySide6.QtWidgets import (
+        QAbstractSlider,
+        QAbstractSpinBox,
+        QComboBox,
+        QScrollBar,
+        QWidget,
+    )
+except ImportError:
+    # Headless tests replace PySide6 with stand-ins that lack these names.
+    QObject = object
+    QWidget = None
+    _VALUE_WIDGETS: tuple = ()
+else:
+    _VALUE_WIDGETS = (QAbstractSpinBox, QComboBox, QAbstractSlider)
 
-_VALUE_WIDGETS = (QAbstractSpinBox, QComboBox, QAbstractSlider)
 _GUARDED = "_wheel_guarded"
 
 
-def _is_value_field(widget: QObject) -> bool:
+def _is_value_field(widget) -> bool:
     # A scroll bar is a slider too, but it is what should receive the wheel.
     return isinstance(widget, _VALUE_WIDGETS) and not isinstance(widget, QScrollBar)
 
 
 class _WheelGuard(QObject):
-    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+    def eventFilter(self, obj, event) -> bool:
         etype = event.type()
         if etype == QEvent.Type.Wheel:
             if _is_value_field(obj) and not obj.hasFocus():
@@ -41,7 +48,7 @@ class _WheelGuard(QObject):
                 self.cover(child)
         return False
 
-    def cover(self, widget: QWidget) -> None:
+    def cover(self, widget) -> None:
         if widget.isWindow() or widget.property(_GUARDED):
             return
         widget.setProperty(_GUARDED, True)
@@ -54,9 +61,9 @@ class _WheelGuard(QObject):
                 self.cover(child)
 
 
-def install_wheel_guard(root: QWidget) -> None:
+def install_wheel_guard(root) -> None:
     """Guard every value field under ``root`` (typically a scroll area's widget)."""
-    if not isinstance(root, QWidget):
+    if QWidget is None or not isinstance(root, QWidget):
         # Headless tests build dialogs from stand-in widgets; nothing to guard.
         return
     guard = _WheelGuard(root)
