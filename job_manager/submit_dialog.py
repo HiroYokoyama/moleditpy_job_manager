@@ -107,6 +107,7 @@ from .submission_resources import SubmissionResources
 from .submission_templates import SubmissionTemplates
 from .theme import apply_theme
 from .window_utils import make_independent, set_spin_value
+from .wheel_guard import install_wheel_guard
 
 
 class SubmitDialog(QDialog):
@@ -246,6 +247,7 @@ class SubmitDialog(QDialog):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         body = QWidget()
         scroll.setWidget(body)
+        install_wheel_guard(body)
         outer.addWidget(scroll, 1)
         layout = QVBoxLayout(body)
         layout.setContentsMargins(0, 0, 0, 0)

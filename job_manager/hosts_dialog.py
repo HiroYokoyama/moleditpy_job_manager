@@ -50,6 +50,7 @@ from .transport.base import HostKeyRejected
 from .transport.local import INSTALL_HINT as LOCAL_INSTALL_HINT
 from .transport.local import POWERSHELL_HINT, SHELL_POSIX, SHELL_POWERSHELL
 from .window_utils import make_independent, set_spin_value
+from .wheel_guard import install_wheel_guard
 
 
 def _running_on_windows() -> bool:
@@ -197,6 +198,7 @@ class HostsDialog(QDialog):
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         scroll.setWidget(right_panel)
+        install_wheel_guard(right_panel)
         column.addWidget(scroll, 1)
         # Outside the scroll area: Save and Close stay put however far it scrolls.
         column.addWidget(box)
