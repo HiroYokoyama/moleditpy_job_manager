@@ -47,6 +47,7 @@ from .remote_runner import (
     SLOTS_NAME,
     STATUS_BLOCKED,
     SUBDIRS,
+    FORCED_DIR,
     require_entry,
 )
 from .schedulers.windows import ps_quote
@@ -207,7 +208,7 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
             "    } else {",
             f"        $v = Get-Header $path {ps_quote(PRIORITY_TAG)}",
             "    }",
-            f"    if ($v -match '^\\d{{1,4}}$' -and [int]$v -le {MAX_PRIORITY}) {{ return [int]$v }}",
+            f"    if ($v -match '^[0-9]{{1,4}}$' -and [int]$v -le {MAX_PRIORITY}) {{ return [int]$v }}",
             "    return 0",
             "}",
             "",
@@ -332,12 +333,43 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
             "    return $false",
             "}",
             "",
+            "function Start-Entry($entry) {",
+            "    # Claiming a job *is* moving it: Move-Item fails when the",
+            "    # destination exists, so two runners cannot both win.",
+            "    try {",
+            "        Move-Item -LiteralPath ('queue\\' + $entry) "
+            "-Destination ('running\\' + $entry) -ErrorAction Stop",
+            "    } catch { return }",
+            "    $proc = Start-Process -FilePath $__moleditpy_shell -ArgumentList "
+            f"{_PS_ARGS},(Join-Path $__moleditpy_dir ('running\\' + $entry)) "
+            "-WorkingDirectory $__moleditpy_dir -WindowStyle Hidden -PassThru",
+            # Written then moved, as in the bash runner: Set-Content creates
+            # the file before it writes the id, and a cancel reading it then
+            # found nothing to kill and reported success.
+            "    Set-Content -Path ('tmp\\' + $entry + '.pid') -Value $proc.Id -Encoding ascii",
+            "    Move-Item -LiteralPath ('tmp\\' + $entry + '.pid') "
+            "-Destination ('pids\\' + $entry) -Force",
+            "}",
+            "",
+            "function Invoke-Forced {",
+            f"    foreach ($f in @(Get-ChildItem -LiteralPath {ps_quote(FORCED_DIR)} -File -ErrorAction SilentlyContinue)) {{",
+            "        $entry = $f.Name",
+            "        if (Test-Path -LiteralPath ('queue\\' + $entry)) {",
+            "            if (-not (Test-Ready $entry)) { continue }",
+            "            Start-Entry $entry",
+            "        } elseif (Test-Path -LiteralPath ('tmp\\' + $entry)) { continue }",
+            "        Remove-Item -LiteralPath $f.FullName -Force -ErrorAction SilentlyContinue",
+            "    }",
+            "}",
+            "",
             "function Invoke-Dispatch {",
+            "    Invoke-Forced",
             "    # Pausing stops new work only. Killing what is already running would",
             "    # make 'pause' mean 'throw away the last six hours'.",
             f"    if (Test-Path -LiteralPath {ps_quote(PAUSED_NAME)}) {{ return }}",
             # Only once a job could start, as in the bash runner: each is a CIM
             # query, and most passes start nothing.
+            "    if ((Get-DirCount 'running') -ge (Get-Slots)) { return }",
             "    $cap = $null",
             "    $memcap = $null",
             # Sorted on the number itself, not as text: past 9999 the padding
@@ -371,21 +403,7 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
             "        if ($memcap -gt 0 -and ((Get-UsedMemory) + $wantmem) -gt $memcap) {",
             "            break",
             "        }",
-            "        # Claiming a job *is* moving it: Move-Item fails when the",
-            "        # destination exists, so two runners cannot both win.",
-            "        try {",
-            "            Move-Item -LiteralPath ('queue\\' + $entry) "
-            "-Destination ('running\\' + $entry) -ErrorAction Stop",
-            "        } catch { continue }",
-            "        $proc = Start-Process -FilePath $__moleditpy_shell -ArgumentList "
-            f"{_PS_ARGS},(Join-Path $__moleditpy_dir ('running\\' + $entry)) "
-            "-WorkingDirectory $__moleditpy_dir -WindowStyle Hidden -PassThru",
-            # Written then moved, as in the bash runner: Set-Content creates
-            # the file before it writes the id, and a cancel reading it then
-            # found nothing to kill and reported success.
-            "        Set-Content -Path ('tmp\\' + $entry + '.pid') -Value $proc.Id -Encoding ascii",
-            "        Move-Item -LiteralPath ('tmp\\' + $entry + '.pid') "
-            "-Destination ('pids\\' + $entry) -Force",
+            "        Start-Entry $entry",
             "    }",
             "}",
             "",
@@ -498,7 +516,7 @@ def list_command(directory: str) -> str:
     )
 
 
-def enqueue_command(directory: str, entry: str) -> str:
+def enqueue_command(directory: str, entry: str, *, force: bool = False) -> str:
     """Move an uploaded script from ``tmp`` into ``queue``."""
     # Built before the f-strings, not inside them: a backslash in an f-string
     # *expression* is a syntax error before Python 3.12, and this plugin
@@ -507,9 +525,14 @@ def enqueue_command(directory: str, entry: str) -> str:
     entry = require_entry(entry)
     source = ps_quote(_join("tmp", entry))
     target = ps_quote(_join("queue", entry))
+    marker = (
+        f"New-Item -ItemType File -Path {ps_quote(_join(FORCED_DIR, entry))} -Force -ErrorAction Stop | Out-Null; "
+        if force
+        else ""
+    )
     return (
         f"Set-Location -LiteralPath {ps_quote(directory)}; "
-        f"Move-Item -LiteralPath {source} -Destination {target} -Force"
+        f"{marker}Move-Item -LiteralPath {source} -Destination {target} -Force"
     )
 
 
@@ -655,7 +678,7 @@ def queue_detail_command(directory: str) -> str:
         f"if ($line.StartsWith({priority_tag})) {{ $p = $line.Substring({len(PRIORITY_TAG)}).Trim() }} }}; "
         f"$override = Join-Path {ps_quote(PRIORITY_DIR)} $f.Name; "
         "if (Test-Path -LiteralPath $override) { $p = Get-Content -LiteralPath $override | Select-Object -First 1 }; "
-        f"if ($p -notmatch '^\\d{{1,4}}$' -or [int]$p -gt {MAX_PRIORITY}) {{ $p = 0 }}; "
+        f"if ($p -notmatch '^[0-9]{{1,4}}$' -or [int]$p -gt {MAX_PRIORITY}) {{ $p = 0 }}; "
         '"entry $d $($f.Name) $c $m $p" } }'
     )
 

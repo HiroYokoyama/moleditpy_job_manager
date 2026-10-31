@@ -334,6 +334,7 @@ somebody's input by accident is worse than an error.
 | `chain_any` | Chain on the predecessor *ending*, not on it succeeding |
 | `start_after` | Hold until then: an epoch second, or `2026-01-31T18:30` |
 | `force_run` | Start it now, ahead of the queue — see [above](#starting-a-small-job-ahead-of-the-queue) |
+| `force_after_previous` | With `force_run` on a helper host, wait for the previous forced job to end (even if it fails); default false |
 
 Naming a `preset` and a field together is fine: the field wins, and the stored
 preset is not modified.

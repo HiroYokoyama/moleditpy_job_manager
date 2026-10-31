@@ -704,6 +704,10 @@ class JobStore:
         """
         return DependencyGraph(self.jobs).chain_tail(host_id)
 
+    def forced_tail(self, host_id: str) -> Optional[Job]:
+        """Last runnable forced job, including a submission still uploading."""
+        return DependencyGraph(self.jobs).forced_tail(host_id)
+
     def runnable_jobs(self, host_id: str) -> List[Job]:
         """Active jobs on this host that are still going to run."""
         return DependencyGraph(self.jobs).runnable_jobs(host_id)

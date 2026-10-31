@@ -427,6 +427,11 @@ def build_parser() -> argparse.ArgumentParser:
         dest="force_run",
         help="Start it now, ahead of the helper queue (hosts with no scheduler)",
     )
+    submit.add_argument(
+        "--force-after-previous",
+        action="store_true",
+        help="With --force, wait until the previous forced job ends on this host",
+    )
     submit.add_argument("--wait", action="store_true", help="Block until the job finishes")
 
     cancel = sub.add_parser("cancel", help="Cancel a running job")
@@ -527,6 +532,8 @@ def _submit_fields(args: argparse.Namespace) -> Dict[str, Any]:
         fields["auto_download"] = False
     if args.force_run:
         fields["force_run"] = True
+    if args.force_after_previous:
+        fields["force_after_previous"] = True
     return fields
 
 

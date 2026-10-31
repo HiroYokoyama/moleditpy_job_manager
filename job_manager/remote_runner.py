@@ -108,13 +108,14 @@ MEMORY_TAG = "# moleditpy-memory:"
 
 PRIORITY_TAG = "# moleditpy-priority:"
 PRIORITY_DIR = "priorities"
+FORCED_DIR = "forced"
 
 #: How often the runner reaps finished jobs and dispatches waiting ones. Every
-#: check is a shell builtin or one ``ls``, so this costs nothing measurable.
+#: pass reads helper metadata; calculation outputs are read only on request.
 RUNNER_POLL_SECONDS = 5
 
 #: Sub-directories the runner needs.
-SUBDIRS = ("queue", "running", "done", "pids", "tmp", "status", PRIORITY_DIR)
+SUBDIRS = ("queue", "running", "done", "pids", "tmp", "status", PRIORITY_DIR, FORCED_DIR)
 
 #: Presence of this file stops the runner dispatching anything new. Running
 #: jobs are left alone -- pausing a queue must never kill work in progress.
@@ -369,11 +370,15 @@ header() {{ sed -n "s|^$2 *||p" "$1" 2>/dev/null | head -n 1; }}
 job_priority() {{
   entry=${{1##*/}}
   if [ -f "{PRIORITY_DIR}/$entry" ]; then
-    value=$(cat "{PRIORITY_DIR}/$entry" 2>/dev/null)
+    IFS= read -r value < "{PRIORITY_DIR}/$entry" || :
   else
-    value=$(header "$1" '{PRIORITY_TAG}')
+    value=$(awk '/^# moleditpy-priority: / {{print $3; exit}}' "$1" 2>/dev/null)
   fi
-  printf '%s\\n' "$value" | awk '/^[0-9]+$/ && length($0)<=4 && $0<={MAX_PRIORITY} {{print $0+0; found=1; exit}} END {{if (!found) print 0}}'
+  case "$value" in ''|*[!0-9]*) value=0 ;; esac
+  if [ "${{#value}}" -gt 4 ]; then value=0; fi
+  value=$((10#$value))
+  [ "$value" -le {MAX_PRIORITY} ] || value=0
+  printf '%s\\n' "$value"
 }}
 
 queue_order() {{
@@ -458,13 +463,48 @@ ready() {{
   return 1
 }}
 
+start_entry() {{
+  entry=$1
+  # Claiming a job *is* moving it: two runners cannot both win this mv, so
+  # no job is ever dispatched twice.
+  mv "queue/$entry" "running/$entry" 2>/dev/null || return
+  # The job script redirects its own output, so the wrapper's streams go
+  # nowhere. The braces matter: `A && nohup B & echo $!` backgrounds the
+  # whole list, and the subshell then holds this runner's stdout open until
+  # the job ends -- which would stall the queue behind it.
+  # Its own process group, so cancelling it cannot reach this runner or the
+  # jobs beside it.
+  ( {{ $SETSID nohup bash "running/$entry" > /dev/null 2>&1 < /dev/null & }} && echo $! ) \\
+    > "tmp/$entry.pid" 2>/dev/null
+  # Written then moved, as the exit code is: `>` empties pids/ before the
+  # pid is in it, and a cancel reading it then found nothing to kill and
+  # reported success.
+  mv -f "tmp/$entry.pid" "pids/$entry" 2>/dev/null
+}}
+
+dispatch_forced() {{
+  for marker in {FORCED_DIR}/job_*; do
+    [ -f "$marker" ] || continue
+    entry=${{marker##*/}}
+    if [ -f "queue/$entry" ]; then
+      ready "$entry" || continue
+      start_entry "$entry"
+    elif [ -f "tmp/$entry" ]; then
+      continue
+    fi
+    rm -f "$marker"
+  done
+}}
+
 dispatch() {{
+  dispatch_forced
   # Pausing stops new work only. Killing what is already running would make
   # "pause" mean "throw away the last six hours".
   [ -f {PAUSED_NAME} ] && return 0
   # The machine's size is read only once a job could start. With no limits
   # file it is detected -- a dozen processes, lscpu and /proc pipelines --
   # and most passes start nothing: the queue is empty or every slot is busy.
+  [ "$(count running)" -lt "$(slots)" ] || return 0
   cap=
   # Sorted on the number itself, not as text: past 9999 the padding runs out
   # and `sort` puts job_10000 before job_9999, which is the dispatch order
@@ -494,21 +534,7 @@ dispatch() {{
     if [ "$memcap" -gt 0 ] && [ $(($(used_memory) + wantmem)) -gt "$memcap" ]; then
       break
     fi
-    # Claiming a job *is* moving it: two runners cannot both win this mv, so
-    # no job is ever dispatched twice.
-    mv "queue/$entry" "running/$entry" 2>/dev/null || continue
-    # The job script redirects its own output, so the wrapper's streams go
-    # nowhere. The braces matter: `A && nohup B & echo $!` backgrounds the
-    # whole list, and the subshell then holds this runner's stdout open until
-    # the job ends -- which would stall the queue behind it.
-    # Its own process group, so cancelling it cannot reach this runner or the
-    # jobs beside it.
-    ( {{ $SETSID nohup bash "running/$entry" > /dev/null 2>&1 < /dev/null & }} && echo $! ) \\
-      > "tmp/$entry.pid" 2>/dev/null
-    # Written then moved, as the exit code is: `>` empties pids/ before the
-    # pid is in it, and a cancel reading it then found nothing to kill and
-    # reported success.
-    mv -f "tmp/$entry.pid" "pids/$entry" 2>/dev/null
+    start_entry "$entry"
   done
 }}
 
@@ -674,10 +700,11 @@ def parse_listing(stdout: str) -> dict:
     return states
 
 
-def enqueue_command(directory: str, entry: str) -> str:
+def enqueue_command(directory: str, entry: str, *, force: bool = False) -> str:
     """Move an uploaded script from ``tmp/`` into ``queue/``."""
     entry = require_entry(entry)
-    return f'cd {quote(directory)} && mv "tmp/{entry}" "queue/{entry}"'
+    marker = f'touch "{FORCED_DIR}/{entry}" && ' if force else ""
+    return f'cd {quote(directory)} && {marker}mv "tmp/{entry}" "queue/{entry}"'
 
 
 def ensure_runner_command(directory: str, script_name: str) -> str:
@@ -794,7 +821,7 @@ def queue_detail_command(directory: str) -> str:
     """The queue as the helper sees it: what runs, what waits, and its limits.
 
     Lines of ``paused 1``, ``limit <name> <value>`` and
-    ``entry <running|queue> <entry> <cores> <memory_mb>``. Read on request
+    ``entry <running|queue> <entry> <cores> <memory_mb> <priority>``. Read on request
     only -- one ``awk`` per entry is nothing for a person asking, and too much
     for every poll.
     """
@@ -818,9 +845,8 @@ def queue_detail_command(directory: str) -> str:
 def parse_queue_detail(stdout: str) -> dict:
     """What :func:`queue_detail_command` printed, in dispatch order.
 
-    Shared by both flavours. ``waiting`` is sorted on the dispatch number, the
-    order the helper itself works through it -- not the text order a listing
-    happens to come back in.
+    Shared by both flavours. Waiting entries use priority then numeric sequence,
+    matching dispatch. Older reports without a priority imply zero.
     """
     detail: dict = {"paused": False, "limits": {}, "running": [], "waiting": []}
     for line in (stdout or "").splitlines():
@@ -977,6 +1003,7 @@ __all__: List[str] = [
     "CORES_NAME",
     "CORES_TAG",
     "FORCED",
+    "FORCED_DIR",
     "NOT_QUEUED",
     "force_command",
     "parse_queue_detail",

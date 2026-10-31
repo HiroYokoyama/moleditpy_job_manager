@@ -441,7 +441,7 @@ def submit_to_runner(
 
     ``relay_source_dir``/``relay_filenames``: see :func:`submit_job`.
 
-    ``force`` starts the job the moment it is queued, ahead of everything
+    ``force`` starts the job once its predecessor ends (immediately if absent), ahead of everything
     waiting and past every limit -- see :func:`remote_runner.force_command`.
     """
     scheduler = get_scheduler(host.scheduler)
@@ -513,18 +513,21 @@ def submit_to_runner(
     )
     # Into tmp/, then moved: the runner must never see a half-uploaded script.
     _upload_text(transport, job_script, remote_paths.join(directory, "tmp", entry))
-    result = transport.run(flavour.enqueue_command(directory, entry))
+    result = transport.run(
+        flavour.enqueue_command(directory, entry, force=force and after_job is not None)
+    )
     if not result.ok:
         raise TransportError(
             f"Could not queue the job (rc={result.rc}): "
             f"{(result.stderr or result.stdout).strip()[:300]}"
         )
 
-    if force:
+    if force and after_job is None:
         # Before the helper is started, so it cannot take the job in its turn
         # first. A helper already up may still win the claim; then the job
         # simply started the ordinary way, which is not worth an error.
         transport.run(flavour.force_command(directory, entry))
+    if force:
         job.force_run = True
 
     # Only now: a runner started before the job was queued could empty the

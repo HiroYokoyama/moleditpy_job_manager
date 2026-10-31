@@ -39,6 +39,12 @@ class DependencyGraph:
             return None
         return max(runnable, key=lambda job: job.submitted_at or job.updated_at)
 
+    def forced_tail(self, host_id: str) -> Optional[Job]:
+        candidates = [job for job in self.runnable_jobs(host_id) if job.force_run]
+        followed = {job.after_job_id for job in candidates}
+        tails = [job for job in candidates if job.id not in followed]
+        return max(tails, key=lambda job: job.submitted_at or job.updated_at, default=None)
+
     def runnable_jobs(self, host_id: str) -> List[Job]:
         """Active jobs on this host that are still going to run."""
         return [

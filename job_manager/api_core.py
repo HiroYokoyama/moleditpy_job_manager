@@ -341,6 +341,9 @@ class JobApi:
             raise ApiError(400, "'remote_input' names a file inside 'remote_dir', which is unset")
         preset = self._preset(host, body)
         force_run = self._optional_bool(body, "force_run", False)
+        force_wait = self._optional_bool(body, "force_after_previous", False)
+        if force_wait and (not force_run or not host.uses_remote_runner):
+            raise ApiError(400, "force_after_previous requires force_run with the built-in helper")
         if force_run:
             self._check_forceable(host, body)
         after_job = None
@@ -365,6 +368,7 @@ class JobApi:
             remote_dir=remote_dir,
             remote_input=remote_input,
             force_run=force_run,
+            force_after_previous=force_wait,
         )
         return {"job": job_payload(job, self.store)}
 

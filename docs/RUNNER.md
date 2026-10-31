@@ -44,6 +44,23 @@ moleditpy-job priority JOB_ID 25
 The Python client exposes `client.set_priority(job_id, 25)`. Queue status lists
 waiting entries in priority order and includes each entry's `priority`.
 
+## Sequential forced jobs
+
+With **Force run** checked, optionally check **Wait for previous forced job**.
+The new job waits for the last runnable forced job on the same host, then
+starts even if that predecessor failed. Ordinary jobs and other hosts do not
+enter this chain. With no previous forced job, it starts immediately.
+Batch submissions append to the chain, including jobs still uploading.
+
+This still bypasses the normal slot, core, memory, and pause limits once the
+dependency is satisfied. It never interrupts running jobs. The host helper
+checks the dependency; no extra GUI timer or worker waits for completion.
+Pending forced markers are removed after dispatch or cancellation. Full normal
+queues skip priority reads and sorting until a slot is available.
+
+API: `force_run: true, force_after_previous: true`; CLI:
+`moleditpy-job submit --host myhost --force --force-after-previous`.
+
 ## Layout
 
 Everything lives under `<remote_root>/.moleditpy_runner/`:
@@ -55,6 +72,7 @@ running/    the same script, while its job runs
 done/       the same script, once it has ended        (kept)
 status/     the exit code the runner observed         (kept)
 pids/       the wrapper pid of each running job
+forced/     pending forced starts waiting for a predecessor
 priorities/ optional numeric priority overrides for queued entries
 tmp/        scripts mid-upload, before they are moved into queue/
 slots  cores  memory  paused  sequence  runner.version

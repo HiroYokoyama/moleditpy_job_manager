@@ -13,6 +13,7 @@ import os
 import time
 import unittest
 
+from job_manager import remote_runner, remote_runner_ps
 from job_manager.models import SCHEDULER_WINDOWS, Job
 from job_manager.runner import (
     download_host_paths,
@@ -22,6 +23,7 @@ from job_manager.runner import (
     runner_queue,
     stat_host_path,
     submit_to_runner,
+    effective_root,
 )
 
 from .bash_support import bash_path
@@ -51,10 +53,13 @@ class TestBashForce(EndToEndCase):
     def command_that_waits(self, path: str) -> str:
         return f"while [ ! -f {bash_path(path)} ]; do sleep 0.1; done"
 
-    def submit_job(self, name, command, force=False) -> Job:
+    def submit_job(self, name, command, force=False, after=None) -> Job:
         job = Job(name=name, host_id=self.host.id, scheduler=self.scheduler)
         preset = make_preset(command_template=command)
-        return submit_to_runner(self.transport(), self.host, preset, job, [self.input], force=force)
+        job.chain_any = True
+        return submit_to_runner(
+            self.transport(), self.host, preset, job, [self.input], force=force, after_job=after
+        )
 
     def fill_the_only_slot(self) -> Job:
         ready = self.marker("BLOCKER_STARTED")
@@ -89,6 +94,31 @@ class TestBashForce(EndToEndCase):
             what="the forced job",
         )
         self.assertFalse(os.path.exists(self.stop))
+
+    def test_forced_successor_waits_then_bypasses_full_paused_queue_after_failure(self):
+        self.fill_the_only_slot()
+        gate = self.marker("FORCE_RELEASE")
+        self.addCleanup(lambda: open(gate, "a").close())
+        parent = self.submit_job(
+            "forced-parent", self.command_that_waits(gate) + "\nexit 1", force=True
+        )
+        child_marker = self.marker("FORCED_CHILD")
+        child = self.submit_job(
+            "forced-child", self.command_that_touches(child_marker), force=True, after=parent
+        )
+        flavour = remote_runner_ps if self.scheduler == SCHEDULER_WINDOWS else remote_runner
+        directory = remote_runner.runner_dir(effective_root(self.host))
+        self.transport().run(flavour.pause_command(directory, True))
+        time.sleep(0.5)
+        self.assertFalse(os.path.exists(child_marker))
+        open(gate, "a").close()
+        self.wait_for(
+            lambda: os.path.exists(child_marker),
+            timeout=START_TIMEOUT,
+            what="forced successor after failure",
+        )
+        self.assertFalse(os.path.exists(self.stop))
+        self.assertTrue(child.force_run)
 
     def test_a_forced_submission_starts_at_once(self):
         self.fill_the_only_slot()

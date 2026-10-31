@@ -154,6 +154,7 @@ class JobService(QObject):
         relay_filenames: Optional[List[str]] = None,
         upload_files: Optional[List[str]] = None,
         force_run: bool = False,
+        force_after_previous: bool = False,
     ) -> Job:
         """Create the job record and start the upload/submit on a worker.
 
@@ -188,6 +189,7 @@ class JobService(QObject):
             relay_filenames,
             upload_files,
             force_run,
+            force_after_previous,
         )
 
     @staticmethod

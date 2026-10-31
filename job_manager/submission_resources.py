@@ -188,6 +188,12 @@ class SubmissionResources(QWidget):
         self.chk_force = QCheckBox(FORCE_TEXT)
         self.chk_force.setVisible(False)
         self.chk_force.toggled.connect(self._on_force_toggled)
+        self.chk_force_wait = QCheckBox("Wait for previous forced job")
+        self.chk_force_wait.setVisible(False)
+        self.chk_force_wait.setToolTip(
+            "On this host, wait until the previous forced job ends, even if it fails."
+        )
+        self.chk_force_wait.toggled.connect(self._on_force_toggled)
 
         for widget in (
             self.txt_queue,
@@ -230,6 +236,7 @@ class SubmissionResources(QWidget):
         form.addRow(self.lbl_chain)
         form.addRow(start_row)
         form.addRow(self.chk_force)
+        form.addRow(self.chk_force_wait)
 
     def _browse_download_root(self) -> None:
         start = self.store.download_root()
