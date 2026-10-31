@@ -147,6 +147,12 @@ def create_job_actions(parent, callbacks):
             "Start a waiting helper-queue job now.",
         ),
         (
+            "priority",
+            "Set Priority...",
+            callbacks["_priority_selected"],
+            "Change a waiting job's priority. Higher numbers run first.",
+        ),
+        (
             "recheck",
             RECHECK_ACTION_TEXT,
             callbacks["_recheck_selected"],
@@ -176,6 +182,7 @@ def create_job_actions(parent, callbacks):
             None,
             "resubmit",
             "force",
+            "priority",
             "recheck",
             None,
             "cancel",

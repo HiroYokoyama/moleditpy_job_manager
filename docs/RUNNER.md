@@ -5,7 +5,8 @@ group server, a login node you are allowed to compute on — nothing stops five
 submissions starting at once and fighting over the same cores and the same
 memory.
 
-The helper is a small script *on the host* holding a real FIFO queue. It is the
+The helper is a small script *on the host* holding a priority queue, FIFO for
+jobs with the same priority. It is the
 default for such a host, and is never offered where a scheduler already exists:
 a second queue on a SLURM login node is both pointless and the thing sysadmins
 object to.
@@ -13,6 +14,35 @@ object to.
 This document is the whole design. For using it, see
 [WORKFLOW.md](WORKFLOW.md); for where it sits in the plugin, see
 [ARCHITECTURE.md](ARCHITECTURE.md).
+
+## Numeric priority
+
+Set **Priority** in the submission resources, or select a waiting job and choose
+**Set Priority...**. The allowed range is 0–1000; higher numbers go first.
+The default is 0, so existing saved jobs, presets, and queued scripts retain
+FIFO behavior. Priority is saved with each job and its resubmission preset.
+
+Changing a priority writes an atomic override in `priorities/<entry>`; it does
+not rewrite or rename the queued script. Both Bash and PowerShell read it on
+each dispatch pass. Already running jobs are never interrupted. Dependencies,
+start times, pausing, and core/memory limits remain in force. If the next ready
+job cannot fit, lower-priority jobs do not consume its reserved opportunity.
+
+Priority belongs to the built-in helper, not SLURM/PBS/SGE, direct background
+mode, or a Job Server. A nonzero priority is rejected for those backends.
+Old helpers that are already running finish with their original scheduling
+rules. Let that queue drain before relying on priorities after an upgrade;
+the next submission starts the new versioned helper.
+
+API and command-line examples:
+
+```sh
+moleditpy-job submit --host myhost --command "mycommand" --priority 10
+moleditpy-job priority JOB_ID 25
+```
+
+The Python client exposes `client.set_priority(job_id, 25)`. Queue status lists
+waiting entries in priority order and includes each entry's `priority`.
 
 ## Layout
 
@@ -25,6 +55,7 @@ running/    the same script, while its job runs
 done/       the same script, once it has ended        (kept)
 status/     the exit code the runner observed         (kept)
 pids/       the wrapper pid of each running job
+priorities/ optional numeric priority overrides for queued entries
 tmp/        scripts mid-upload, before they are moved into queue/
 slots  cores  memory  paused  sequence  runner.version
 moleditpy_runner_v<version>.sh
@@ -41,7 +72,7 @@ Two halves, deliberately not the same thing.
 
 | Half | Is | Comes from | Answers |
 |---|---|---|---|
-| `0007` | the dispatch number | claimed from the host's `sequence` | *when* — position in the queue |
+| `0007` | the submission sequence | claimed from the host's `sequence` | FIFO order within one priority |
 | `a1b2c3d4e5f6` | the job id | the job record, a `uuid4` prefix | *who* — which job in your list |
 
 Neither can do the other's work:
@@ -61,7 +92,7 @@ Neither can do the other's work:
   predecessor's queue position, and that position is meaningless once the
   predecessor has run.
 
-So the number orders the queue and the id identifies the job, and the name
+So priority and sequence order the queue, the id identifies the job, and the name
 carries both because the runner needs to do both things with an `ls`.
 
 ## What a queue entry is
@@ -71,6 +102,7 @@ One self-contained script per job:
 ```bash
 #!/bin/bash
 # MoleditPy job: opt
+# moleditpy-priority: 0
 # moleditpy-cores: 8
 # moleditpy-memory: 24000
 # moleditpy-after: a1b2c3d4e5f6
@@ -133,8 +165,8 @@ to `done/` and drop the pid file. An empty pid file means the job never started
 at all, which is equally over; leaving it in `running/` would hold its cores
 for ever.
 
-**dispatch** — if `paused` exists, do nothing. Otherwise walk `queue/` in number
-order and start an entry only if the job count is under `slots`, its cores fit,
+**dispatch** — if `paused` exists, do nothing. Otherwise walk `queue/` by descending
+priority and ascending submission sequence. Start an entry only if the job count is under `slots`, its cores fit,
 and its memory fits. Claiming is the `mv` into `running/`.
 
 **exit** — the moment nothing is running and nothing is queued, the runner is
@@ -272,7 +304,7 @@ a 120 GB machine because the CPU happened to be free. Overcommitting CPU makes a
 calculation slow; overcommitting memory gets it killed hours in, which is the
 failure a user cannot recover from.
 
-Dispatch is strict FIFO: an entry that does not fit stops the pass rather than
+Dispatch follows priority order, with FIFO ties: an entry that does not fit stops the pass rather than
 letting smaller ones past, which would starve anything asking for most of the
 machine. A job asking for more than the machine has is clamped to the whole
 machine, so it runs alone instead of waiting for ever.
@@ -363,8 +395,8 @@ green.
 
 ## What it is not
 
-FIFO with two resource budgets and one-predecessor dependencies. No priorities,
-no backfill, no fair share, no reservations, no accounting. It exists so a
+Numeric priorities with FIFO ties, two resource budgets and one-predecessor dependencies.
+No backfill, no fair share, no reservations, no accounting. It exists so a
 workstation does not thrash, not to replace SLURM.
 
 ## Where the code is

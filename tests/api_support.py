@@ -66,6 +66,7 @@ class FakeService:
             input_files=list(files),
             command=preset.command_template,
             preset=preset.to_dict(),
+            priority=preset.priority,
         )
         self.submitted.append((host, preset, name, list(files), dict(kwargs)))
         self.store.add_job(job)
@@ -111,6 +112,18 @@ class FakeService:
 
     def force_refusal(self, job):
         return self.refusal
+
+    def priority_refusal(self, job):
+        return self.refusal
+
+    def set_priority(self, job, priority, on_done=None, on_error=None, owner=None):
+        if self.fail_with:
+            on_error(self.fail_with)
+        else:
+            updated = self.answers.get("priority", True)
+            if updated:
+                job.priority = priority
+            on_done(job, updated)
 
     def force_run(self, job, on_done=None, on_error=None, owner=None):
         self.forced = getattr(self, "forced", []) + [job.id]

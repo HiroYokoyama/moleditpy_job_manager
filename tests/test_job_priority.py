@@ -32,9 +32,10 @@ def test_queue_details_keep_legacy_entries_and_priority_order():
         "entry queue job_10000_b.ps1 1 100 8\n"
         "entry queue job_9999_c.sh 1 100 8\n"
         "entry queue job_0003_d.sh 1 100 invalid\n"
+        "entry queue job_0004_e.sh 1 100 ²\n"
     )
-    assert [item["job_id"] for item in result["waiting"]] == ["c", "b", "a", "d"]
-    assert [item["priority"] for item in result["waiting"]] == [8, 8, 0, 0]
+    assert [item["job_id"] for item in result["waiting"]] == ["c", "b", "a", "d", "e"]
+    assert [item["priority"] for item in result["waiting"]] == [8, 8, 0, 0, 0]
 
 
 class PriorityBehavior:
@@ -80,6 +81,25 @@ class PriorityBehavior:
         self.enqueue("child", self.append("child"), after="parent", priority=100)
         self.enqueue("other", self.append("other"), priority=1)
         self.finish_order(["other", "parent", "child"])
+
+    def test_fifo_ties_use_numeric_sequences_beyond_9999(self):
+        self.set_limit("slots", 1)
+        seed = os.path.join(self.dir, "done", "job_9998_seed" + self.flavour.ENTRY_SUFFIX)
+        with open(seed, "w", encoding="ascii"):
+            pass
+        self.enqueue("first", self.append("first"), priority=10)
+        self.enqueue("second", self.append("second"), priority=10)
+        os.unlink(seed)
+        self.finish_order(["first", "second"])
+
+    def test_priority_change_cannot_modify_an_already_claimed_job(self):
+        entry = self.enqueue("claimed", self.append("claimed"), priority=3)
+        os.replace(os.path.join(self.dir, "queue", entry), os.path.join(self.dir, "running", entry))
+        assert (
+            self.command(self.flavour.set_priority_command(self.directory(), entry, 100))
+            == remote_runner.NOT_QUEUED
+        )
+        assert not os.path.exists(os.path.join(self.dir, remote_runner.PRIORITY_DIR, entry))
 
     def test_reprioritizing_updates_report_and_dispatch_without_rewriting_job(self):
         self.set_limit("slots", 1)

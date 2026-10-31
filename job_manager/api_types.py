@@ -46,6 +46,7 @@ DOWNLOAD_TIMEOUT = 1800.0
 #: Names a submission may set on the preset it builds. Anything else in the
 #: body is either a job field handled explicitly or a mistake worth reporting.
 PRESET_FIELDS = {
+    "priority": int,
     "queue": str,
     "account": str,
     "walltime": str,
@@ -82,6 +83,7 @@ ROUTES = (
     ("GET", "/jobs/{id}/log", "tail its log; ?lines=, ?file="),
     ("GET", "/jobs/{id}/files", "list its remote directory"),
     ("POST", "/jobs/{id}/force", "start it now, ahead of the helper queue"),
+    ("POST", "/jobs/{id}/priority", "set a waiting helper-queue job's numeric priority"),
     ("POST", "/jobs/{id}/recheck", "look again at a LOST job"),
 )
 

@@ -31,6 +31,7 @@ from .models import (
     Job,
     SubmitPreset,
     sanitize_name,
+    validate_priority,
 )
 from .poller import JobPoller
 from .runner import (
@@ -46,6 +47,7 @@ from .runner import (
     release_in_runner,
     require_remote_path,
     runner_queue,
+    set_runner_priority,
     stat_host_path,
     tail_log,
     tail_remote_file,
@@ -580,6 +582,58 @@ class JobService(QObject):
             self.poller.prime(job.host_id)
             if on_done is not None:
                 on_done(job, started)
+
+        run_async(self.pool, work, on_success=done, on_error=fail, owner=owner)
+
+    def priority_refusal(self, job: Job) -> str:
+        host = self.store.hosts.get(job.host_id)
+        if (
+            host is None
+            or not host.uses_remote_runner
+            or not remote_runner.parse_entry(job.remote_job_id)[1]
+        ):
+            return "Priority is only available for jobs in the built-in helper queue"
+        if job.state not in (STATE_SUBMITTED, STATE_PENDING):
+            return "Only waiting jobs can change priority"
+        return ""
+
+    def set_priority(
+        self, job: Job, priority: int, on_done=None, on_error=None, owner=None
+    ) -> None:
+        fail = on_error or self.error.emit
+        try:
+            priority = validate_priority(priority)
+        except ValueError as exc:
+            fail(str(exc))
+            return
+        refusal = self.priority_refusal(job)
+        if refusal:
+            fail(refusal)
+            return
+        host = self.store.hosts[job.host_id]
+
+        def work():
+            transport = self.transport_for(host)
+            try:
+                return set_runner_priority(transport, host, job, priority)
+            finally:
+                transport.close()
+
+        def done(updated):
+            if self.store.jobs.get(job.id) is not job:
+                fail("The job list changed while setting priority")
+                return
+            if updated:
+                job.priority = priority
+                job.preset["priority"] = priority
+                job.touch()
+                self.store.save_jobs()
+                self.job_updated.emit(job.id)
+                self.message.emit(f"Set priority for {job.name} to {priority}")
+            elif on_done is None:
+                fail(not_waiting(job))
+            if on_done is not None:
+                on_done(job, updated)
 
         run_async(self.pool, work, on_success=done, on_error=fail, owner=owner)
 

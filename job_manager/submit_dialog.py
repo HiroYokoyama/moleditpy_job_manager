@@ -593,6 +593,7 @@ class SubmitDialog(QDialog):
         self.lbl_chain = self.resources.lbl_chain
         self.lbl_scanned = self.resources.lbl_scanned
         self.spin_cpus = self.resources.spin_cpus
+        self.spin_priority = self.resources.spin_priority
         self.spin_nodes = self.resources.spin_nodes
         self.spin_ntasks = self.resources.spin_ntasks
         self.txt_account = self.resources.txt_account
@@ -712,8 +713,11 @@ class SubmitDialog(QDialog):
         return max(0, int(host.max_concurrent or 0))
 
     def _update_force_row(self) -> None:
-        """Offer Force run only on a host where this plugin keeps the queue."""
+        """Offer helper-queue controls only on applicable hosts."""
         host = self.current_host()
+        priority_enabled = bool(host and host.uses_remote_runner)
+        self.resources.lbl_priority.setVisible(priority_enabled)
+        self.spin_priority.setVisible(priority_enabled)
         offered = host is not None and host.scheduler in (SCHEDULER_SHELL, SCHEDULER_WINDOWS)
         if not offered:
             self.chk_force.setChecked(False)
@@ -884,6 +888,7 @@ class SubmitDialog(QDialog):
         set_spin_value(self.spin_ntasks, int(preset.ntasks or 1), extend=True)
         set_spin_value(self.spin_cpus, int(preset.cpus_per_task or 1), extend=True)
         self.txt_memory.setText(preset.memory)
+        self.spin_priority.setValue(preset.priority)
         self.txt_modules.setPlainText("\n".join(preset.modules or []))
         self.txt_pre.setPlainText("\n".join(preset.pre_commands or []))
         self.txt_extra.setPlainText("\n".join(preset.extra_directives or []))
@@ -909,6 +914,7 @@ class SubmitDialog(QDialog):
             ntasks=int(self.spin_ntasks.value()),
             cpus_per_task=int(self.spin_cpus.value()),
             memory=self.txt_memory.text().strip(),
+            priority=(self.spin_priority.value() if host and host.uses_remote_runner else 0),
             modules=[m.strip() for m in self.txt_modules.toPlainText().splitlines() if m.strip()],
             pre_commands=[c.strip() for c in self.txt_pre.toPlainText().splitlines() if c.strip()],
             extra_directives=[

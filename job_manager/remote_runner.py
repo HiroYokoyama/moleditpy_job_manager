@@ -845,6 +845,7 @@ def parse_queue_detail(stdout: str) -> dict:
                 "priority": (
                     int(parts[5])
                     if len(parts) > 5
+                    and parts[5].isascii()
                     and parts[5].isdigit()
                     and len(parts[5]) <= 4
                     and int(parts[5]) <= MAX_PRIORITY

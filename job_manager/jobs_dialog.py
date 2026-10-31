@@ -192,6 +192,7 @@ class JobsDialog(QDialog):
             "_export": self._export,
             "_convert_job_list": self._convert_job_list,
             "_force_selected": self._force_selected,
+            "_priority_selected": self._priority_selected,
             "_load_archive": self._load_archive,
             "_open_job_list_file": self._open_job_list_file,
             "_open_selected_result": self._open_selected_result,
@@ -499,6 +500,7 @@ class JobsDialog(QDialog):
             "export_csv": not archived,
             "clear": not archived,
             "force": bool(live and job and not self.service.force_refusal(job)),
+            "priority": bool(live and job and not self.service.priority_refusal(job)),
             "recheck": bool(live and job and job.state == STATE_LOST),
         }
         for key, action in self.job_actions.items():
@@ -731,6 +733,25 @@ class JobsDialog(QDialog):
             self.service.cancel(job, release_dependents=False)
             return
         self.service.cancel(job)
+
+    def _priority_selected(self) -> None:
+        from .models import MAX_PRIORITY
+
+        job = self.selected_job()
+        if job is None:
+            return
+        if self.service.priority_refusal(job) or not self._has_credentials(job):
+            return
+        value, accepted = QInputDialog.getInt(
+            self,
+            "Job Priority",
+            "Priority (higher runs first; equal values keep submission order):",
+            job.priority,
+            0,
+            MAX_PRIORITY,
+        )
+        if accepted:
+            self.service.set_priority(job, value, owner=self)
 
     def _force_selected(self) -> None:
         """Start the selected waiting job now, ahead of its host's queue."""
@@ -1017,6 +1038,7 @@ class JobsDialog(QDialog):
             ("Host", job.host_name or (host.name if host else "(profile removed)")),
             ("Scheduler", job.scheduler),
             ("Queue id", job.remote_job_id or "-"),
+            ("Priority", f"{job.priority} (higher runs first in the helper queue)"),
             ("Submitted", format_stamp(job.submitted_at)),
             ("Started", format_stamp(job.started_at)),
             ("Finished", format_stamp(job.finished_at)),
