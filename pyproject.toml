@@ -61,3 +61,7 @@ include = ["job_manager", "job_manager.*"]
 
 [tool.setuptools.dynamic]
 version = { attr = "job_manager.PLUGIN_VERSION" }
+
+[tool.coverage.run]
+source = ["job_manager"]
+relative_files = true
