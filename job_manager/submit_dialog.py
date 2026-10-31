@@ -585,6 +585,7 @@ class SubmitDialog(QDialog):
         self.chk_chain_any = self.resources.chk_chain_any
         self.chk_download_all = self.resources.chk_download_all
         self.chk_force = self.resources.chk_force
+        self.chk_force_wait = self.resources.chk_force_wait
         self.chk_scan_resources = self.resources.chk_scan_resources
         self.chk_start_at = self.resources.chk_start_at
         self.cmb_template = self.resources.cmb_template
@@ -593,6 +594,7 @@ class SubmitDialog(QDialog):
         self.lbl_chain = self.resources.lbl_chain
         self.lbl_scanned = self.resources.lbl_scanned
         self.spin_cpus = self.resources.spin_cpus
+        self.spin_priority = self.resources.spin_priority
         self.spin_nodes = self.resources.spin_nodes
         self.spin_ntasks = self.resources.spin_ntasks
         self.txt_account = self.resources.txt_account
@@ -712,12 +714,16 @@ class SubmitDialog(QDialog):
         return max(0, int(host.max_concurrent or 0))
 
     def _update_force_row(self) -> None:
-        """Offer Force run only on a host where this plugin keeps the queue."""
+        """Offer helper-queue controls only on applicable hosts."""
         host = self.current_host()
+        priority_enabled = bool(host and host.uses_remote_runner)
+        self.resources.lbl_priority.setVisible(priority_enabled)
+        self.spin_priority.setVisible(priority_enabled)
         offered = host is not None and host.scheduler in (SCHEDULER_SHELL, SCHEDULER_WINDOWS)
         if not offered:
             self.chk_force.setChecked(False)
         self.chk_force.setVisible(offered)
+        self.chk_force_wait.setVisible(priority_enabled and self.chk_force.isChecked())
         if host is not None and host.uses_remote_runner:
             self.chk_force.setToolTip(
                 f"Start this job the moment it reaches {host.name}: ahead of every job "
@@ -734,7 +740,19 @@ class SubmitDialog(QDialog):
     def force_requested(self) -> bool:
         return not self.chk_force.isHidden() and self.chk_force.isChecked()
 
+    def force_wait_requested(self) -> bool:
+        host = self.current_host()
+        return bool(
+            host
+            and host.uses_remote_runner
+            and self.force_requested()
+            and self.chk_force_wait.isChecked()
+        )
+
     def _on_force_toggled(self, checked: bool) -> None:
+        checked = self.force_requested()
+        host = self.current_host()
+        self.chk_force_wait.setVisible(bool(checked and host and host.uses_remote_runner))
         # "Now" and "not before six" cannot both hold.
         if checked:
             self.chk_start_at.setChecked(False)
@@ -746,10 +764,18 @@ class SubmitDialog(QDialog):
         """Every scheduler can chain; only the mechanism differs."""
         host = self.current_host()
         if host is not None and self.force_requested():
-            # Forcing is the opposite of waiting for something.
+            # Forced jobs use a separate optional dependency on the forced lane.
             self.chk_chain.setVisible(False)
             self.chk_chain_any.setVisible(False)
             self.lbl_chain.setVisible(True)
+            if self.force_wait_requested():
+                predecessor = self.store.forced_tail(host.id)
+                self.lbl_chain.setText(
+                    f"Waits until {predecessor.name} ends, then starts past the host limits."
+                    if predecessor
+                    else "No previous forced job on this host; starts immediately."
+                )
+                return
             waiting = len(self.store.runnable_jobs(host.id))
             self.lbl_chain.setText(
                 f"Starts as soon as it reaches {host.name}, ahead of the {waiting} "
@@ -884,6 +910,7 @@ class SubmitDialog(QDialog):
         set_spin_value(self.spin_ntasks, int(preset.ntasks or 1), extend=True)
         set_spin_value(self.spin_cpus, int(preset.cpus_per_task or 1), extend=True)
         self.txt_memory.setText(preset.memory)
+        self.spin_priority.setValue(preset.priority)
         self.txt_modules.setPlainText("\n".join(preset.modules or []))
         self.txt_pre.setPlainText("\n".join(preset.pre_commands or []))
         self.txt_extra.setPlainText("\n".join(preset.extra_directives or []))
@@ -909,6 +936,7 @@ class SubmitDialog(QDialog):
             ntasks=int(self.spin_ntasks.value()),
             cpus_per_task=int(self.spin_cpus.value()),
             memory=self.txt_memory.text().strip(),
+            priority=(self.spin_priority.value() if host and host.uses_remote_runner else 0),
             modules=[m.strip() for m in self.txt_modules.toPlainText().splitlines() if m.strip()],
             pre_commands=[c.strip() for c in self.txt_pre.toPlainText().splitlines() if c.strip()],
             extra_directives=[
@@ -1496,6 +1524,7 @@ class SubmitDialog(QDialog):
             remote_input=self.remote_input(),
             upload_files=upload_files,
             force_run=self.force_requested(),
+            force_after_previous=self.force_wait_requested(),
         )
         self._remember(host, preset)
         self.accept()
@@ -1537,6 +1566,7 @@ class SubmitDialog(QDialog):
                 start_after=self.selected_start_time(),
                 chain_any=self.chain_any_requested(),
                 force_run=self.force_requested(),
+                force_after_previous=self.force_wait_requested(),
             )
         self._remember(host, preset)
 

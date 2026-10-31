@@ -164,7 +164,7 @@ unparseable.
 A host with no scheduler has nothing deciding what runs when. Chained lanes
 (`store.chain_lane_tail`) answer that without leaving anything behind, but the
 order is fixed at submit time and they know nothing about cores or memory. The
-helper is the other answer: a small script on the host holding a real FIFO
+helper is the other answer: a small script on the host holding a priority
 queue, in bash (`remote_runner.py`) or PowerShell (`remote_runner_ps.py`),
 dispatching on physical cores and memory and exiting the moment its queue is
 empty.

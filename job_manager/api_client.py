@@ -250,6 +250,10 @@ class JobManagerClient:
     def forget(self, job_id: str) -> Dict[str, Any]:
         return self.request("DELETE", f"jobs/{job_id}")
 
+    def set_priority(self, job_id: str, priority: int) -> Dict[str, Any]:
+        """Set a waiting helper-queue job's priority (-1000 to 1000; higher runs first)."""
+        return self.request("POST", f"jobs/{job_id}/priority", body={"priority": priority})
+
     def force(self, job_id: str) -> Dict[str, Any]:
         """Start a job waiting in a helper queue now, ahead of the rest."""
         return self.request("POST", f"jobs/{job_id}/force", body={})
@@ -390,6 +394,12 @@ def build_parser() -> argparse.ArgumentParser:
     submit.add_argument("--preset", default="", help="A saved preset on that host")
     submit.add_argument("--name", default="", help="Job name (default: the input's)")
     submit.add_argument("--queue", default="")
+    submit.add_argument(
+        "--priority",
+        type=int,
+        default=None,
+        help="Helper queue priority, -1000 to 1000; higher runs first",
+    )
     submit.add_argument("--account", default="")
     submit.add_argument("--walltime", default="")
     submit.add_argument("--nodes", type=int)
@@ -416,6 +426,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         dest="force_run",
         help="Start it now, ahead of the helper queue (hosts with no scheduler)",
+    )
+    submit.add_argument(
+        "--force-after-previous",
+        action="store_true",
+        help="With --force, wait until the previous forced job ends on this host",
     )
     submit.add_argument("--wait", action="store_true", help="Block until the job finishes")
 
@@ -448,6 +463,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     force = sub.add_parser("force", help="Start a waiting job now, ahead of the helper queue")
     force.add_argument("job_id")
+    priority = sub.add_parser("priority", help="Set a waiting helper-queue job's priority")
+    priority.add_argument("job_id")
+    priority.add_argument("priority", type=int)
 
     recheck = sub.add_parser("recheck", help="Look again at a LOST job")
     recheck.add_argument("job_id")
@@ -489,7 +507,7 @@ def _submit_fields(args: argparse.Namespace) -> Dict[str, Any]:
     ):
         if getattr(args, key, ""):
             fields[key] = getattr(args, key)
-    for key in ("nodes", "ntasks", "cpus_per_task"):
+    for key in ("nodes", "ntasks", "cpus_per_task", "priority"):
         if getattr(args, key, None) is not None:
             fields[key] = getattr(args, key)
     for key in ("modules", "pre_commands", "fetch_globs"):
@@ -514,6 +532,8 @@ def _submit_fields(args: argparse.Namespace) -> Dict[str, Any]:
         fields["auto_download"] = False
     if args.force_run:
         fields["force_run"] = True
+    if args.force_after_previous:
+        fields["force_after_previous"] = True
     return fields
 
 
@@ -583,6 +603,8 @@ def _run(client: JobManagerClient, args: argparse.Namespace) -> int:
     elif args.subcommand == "force":
         reply = client.force(args.job_id)
         _print(reply) if raw else print(_job_line(reply.get("job", {})))
+    elif args.subcommand == "priority":
+        _print(client.set_priority(args.job_id, args.priority))
     elif args.subcommand == "recheck":
         reply = client.recheck(args.job_id)
         if raw:

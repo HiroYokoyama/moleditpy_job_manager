@@ -18,7 +18,7 @@ retrieve results. Multiple agents can feed the same host-side helper queue,
 which schedules jobs within configured CPU and memory budgets to help prevent
 overloading a workstation.
 
-![Job Manager](img/website/job-monitor.png)
+![Job Manager with example jobs, signed priorities, and the Tail File action](img/website/job-monitor.png)
 ![Host Monitor](img/website/host-monitor.png)
 
 ## Features
@@ -177,7 +177,15 @@ Torque/commercial UGE version, multinode MPI/GPU setup or site-specific policy.
 On hosts without a cluster scheduler, the helper queue dispatches jobs within
 physical-core and memory budgets. It runs only while work remains, keeps its
 queue in readable files on the host, and supports dependencies, pausing and
-scheduled starts. A chained-lanes mode is also available.
+scheduled starts. **Priority** is a number from −1000 to 1000 (default 0): higher
+numbers run first, with submission order preserved for equal values. Use
+**Set Priority...** on a waiting job to change it. A chained-lanes mode is also available.
+
+Use **Wait for previous forced job** with **Force run** to serialize forced jobs on a host.
+**Tail File** beside **Tail Log** opens the existing file chooser and tail viewer.
+
+Double-click a waiting job to see its status, priority, and dependencies.
+Running jobs open their log; finished jobs open their results.
 
 Cluster jobs use the scheduler's own dependency and submission flags. Configure
 **Submit options** on the host or preset for billing groups, resource groups or

@@ -10,7 +10,7 @@ from typing import Any, List, Mapping, Optional
 
 from .api_types import PRESET_FIELDS, ApiError
 from .input_names import check_input_name
-from .models import HostProfile, Job, SubmitPreset
+from .models import HostProfile, Job, SubmitPreset, validate_priority
 
 
 class ApiInputs:
@@ -116,6 +116,12 @@ class ApiInputs:
                 setattr(preset, key, self._coerce(body[key], key, kind))
         if not preset.command_template.strip():
             raise ApiError(400, "The command line is empty")
+        try:
+            validate_priority(preset.priority)
+        except ValueError as exc:
+            raise ApiError(400, str(exc)) from exc
+        if preset.priority and not host.uses_remote_runner:
+            raise ApiError(400, "Priority is only supported by the built-in helper queue")
         return preset
 
     def _named_preset(self, host: HostProfile, named: str) -> SubmitPreset:
@@ -142,7 +148,7 @@ class ApiInputs:
             # made a mistake worth reporting rather than reading as 1.
             if isinstance(value, bool) or not isinstance(value, int):
                 raise ApiError(400, f"'{key}' must be a whole number")
-            if value < 0:
+            if value < 0 and key != "priority":
                 raise ApiError(400, f"'{key}' cannot be negative")
             return value
         if kind is list:

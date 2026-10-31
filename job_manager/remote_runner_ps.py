@@ -37,6 +37,8 @@ from .remote_runner import (
     VERSION_NAME,
     MEMORY_NAME,
     MEMORY_TAG,
+    PRIORITY_DIR,
+    PRIORITY_TAG,
     PAUSED_NAME,
     REQUIRE_SUCCESS_TAG,
     RUNNER_LOG_NAME,
@@ -45,9 +47,11 @@ from .remote_runner import (
     SLOTS_NAME,
     STATUS_BLOCKED,
     SUBDIRS,
+    FORCED_DIR,
     require_entry,
 )
 from .schedulers.windows import ps_quote
+from .models import MAX_PRIORITY, MIN_PRIORITY, validate_priority
 
 #: The unversioned name, as in the bash flavour: kept for the harnesses and
 #: for a runner left by an older plugin. What is written and started is
@@ -96,6 +100,7 @@ def build_job_script(
     require_success: bool = True,
     cores: int = 1,
     memory_mb: int = 0,
+    priority: int = 0,
 ) -> str:
     """The small script the queue holds for one job.
 
@@ -105,7 +110,7 @@ def build_job_script(
     wrapper's own sentinel lives in the job directory.
     """
     status_path = _join(directory, "status", entry)
-    lines = []
+    lines = [f"{PRIORITY_TAG} {validate_priority(priority)}"]
     if job_name:
         lines.append("# MoleditPy job: " + " ".join(str(job_name).splitlines()))
     lines.append(f"{CORES_TAG} {max(1, int(cores or 1))}")
@@ -194,6 +199,17 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
             "        if ($line.StartsWith($tag)) { return $line.Substring($tag.Length).Trim() }",
             "    }",
             "    return ''",
+            "}",
+            "",
+            "function Get-JobPriority($path) {",
+            f"    $override = Join-Path {ps_quote(PRIORITY_DIR)} ([IO.Path]::GetFileName($path))",
+            "    if (Test-Path -LiteralPath $override) {",
+            "        $v = Get-Content -LiteralPath $override -ErrorAction SilentlyContinue | Select-Object -First 1",
+            "    } else {",
+            f"        $v = Get-Header $path {ps_quote(PRIORITY_TAG)}",
+            "    }",
+            f"    if ($v -match '^-?[0-9]{{1,4}}$' -and [int]$v -ge {MIN_PRIORITY} -and [int]$v -le {MAX_PRIORITY}) {{ return [int]$v }}",
+            "    return 0",
             "}",
             "",
             "function Get-JobCores($path) {",
@@ -317,12 +333,43 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
             "    return $false",
             "}",
             "",
+            "function Start-Entry($entry) {",
+            "    # Claiming a job *is* moving it: Move-Item fails when the",
+            "    # destination exists, so two runners cannot both win.",
+            "    try {",
+            "        Move-Item -LiteralPath ('queue\\' + $entry) "
+            "-Destination ('running\\' + $entry) -ErrorAction Stop",
+            "    } catch { return }",
+            "    $proc = Start-Process -FilePath $__moleditpy_shell -ArgumentList "
+            f"{_PS_ARGS},(Join-Path $__moleditpy_dir ('running\\' + $entry)) "
+            "-WorkingDirectory $__moleditpy_dir -WindowStyle Hidden -PassThru",
+            # Written then moved, as in the bash runner: Set-Content creates
+            # the file before it writes the id, and a cancel reading it then
+            # found nothing to kill and reported success.
+            "    Set-Content -Path ('tmp\\' + $entry + '.pid') -Value $proc.Id -Encoding ascii",
+            "    Move-Item -LiteralPath ('tmp\\' + $entry + '.pid') "
+            "-Destination ('pids\\' + $entry) -Force",
+            "}",
+            "",
+            "function Invoke-Forced {",
+            f"    foreach ($f in @(Get-ChildItem -LiteralPath {ps_quote(FORCED_DIR)} -File -ErrorAction SilentlyContinue)) {{",
+            "        $entry = $f.Name",
+            "        if (Test-Path -LiteralPath ('queue\\' + $entry)) {",
+            "            if (-not (Test-Ready $entry)) { continue }",
+            "            Start-Entry $entry",
+            "        } elseif (Test-Path -LiteralPath ('tmp\\' + $entry)) { continue }",
+            "        Remove-Item -LiteralPath $f.FullName -Force -ErrorAction SilentlyContinue",
+            "    }",
+            "}",
+            "",
             "function Invoke-Dispatch {",
+            "    Invoke-Forced",
             "    # Pausing stops new work only. Killing what is already running would",
             "    # make 'pause' mean 'throw away the last six hours'.",
             f"    if (Test-Path -LiteralPath {ps_quote(PAUSED_NAME)}) {{ return }}",
             # Only once a job could start, as in the bash runner: each is a CIM
             # query, and most passes start nothing.
+            "    if ((Get-DirCount 'running') -ge (Get-Slots)) { return }",
             "    $cap = $null",
             "    $memcap = $null",
             # Sorted on the number itself, not as text: past 9999 the padding
@@ -330,7 +377,8 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
             # dispatch order exactly when a queue has been busy a long time.
             "    foreach ($f in @(Get-ChildItem -LiteralPath 'queue' -File "
             "-ErrorAction SilentlyContinue | "
-            "Sort-Object @{Expression={[int](($_.Name -split '_')[1])}}, Name)) {",
+            "Sort-Object @{Expression={Get-JobPriority $_.FullName};Descending=$true}, "
+            "@{Expression={[long](($_.Name -split '_')[1])}}, Name)) {",
             "        if ((Get-DirCount 'running') -ge (Get-Slots)) { break }",
             "        $entry = $f.Name",
             "        if (-not (Test-Ready $entry)) { continue }",
@@ -355,21 +403,7 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
             "        if ($memcap -gt 0 -and ((Get-UsedMemory) + $wantmem) -gt $memcap) {",
             "            break",
             "        }",
-            "        # Claiming a job *is* moving it: Move-Item fails when the",
-            "        # destination exists, so two runners cannot both win.",
-            "        try {",
-            "            Move-Item -LiteralPath ('queue\\' + $entry) "
-            "-Destination ('running\\' + $entry) -ErrorAction Stop",
-            "        } catch { continue }",
-            "        $proc = Start-Process -FilePath $__moleditpy_shell -ArgumentList "
-            f"{_PS_ARGS},(Join-Path $__moleditpy_dir ('running\\' + $entry)) "
-            "-WorkingDirectory $__moleditpy_dir -WindowStyle Hidden -PassThru",
-            # Written then moved, as in the bash runner: Set-Content creates
-            # the file before it writes the id, and a cancel reading it then
-            # found nothing to kill and reported success.
-            "        Set-Content -Path ('tmp\\' + $entry + '.pid') -Value $proc.Id -Encoding ascii",
-            "        Move-Item -LiteralPath ('tmp\\' + $entry + '.pid') "
-            "-Destination ('pids\\' + $entry) -Force",
+            "        Start-Entry $entry",
             "    }",
             "}",
             "",
@@ -482,7 +516,7 @@ def list_command(directory: str) -> str:
     )
 
 
-def enqueue_command(directory: str, entry: str) -> str:
+def enqueue_command(directory: str, entry: str, *, force: bool = False) -> str:
     """Move an uploaded script from ``tmp`` into ``queue``."""
     # Built before the f-strings, not inside them: a backslash in an f-string
     # *expression* is a syntax error before Python 3.12, and this plugin
@@ -491,9 +525,14 @@ def enqueue_command(directory: str, entry: str) -> str:
     entry = require_entry(entry)
     source = ps_quote(_join("tmp", entry))
     target = ps_quote(_join("queue", entry))
+    marker = (
+        f"New-Item -ItemType File -Path {ps_quote(_join(FORCED_DIR, entry))} -Force -ErrorAction Stop | Out-Null; "
+        if force
+        else ""
+    )
     return (
         f"Set-Location -LiteralPath {ps_quote(directory)}; "
-        f"Move-Item -LiteralPath {source} -Destination {target} -Force"
+        f"{marker}Move-Item -LiteralPath {source} -Destination {target} -Force"
     )
 
 
@@ -620,6 +659,7 @@ def queue_detail_command(directory: str) -> str:
     limits = ",".join(ps_quote(name) for name in (SLOTS_NAME, CORES_NAME, MEMORY_NAME))
     cores_tag = ps_quote(CORES_TAG)
     memory_tag = ps_quote(MEMORY_TAG)
+    priority_tag = ps_quote(PRIORITY_TAG)
     return (
         f"if (-not (Test-Path -LiteralPath {quoted})) {{ exit 0 }}; "
         f"Set-Location -LiteralPath {quoted}; "
@@ -629,13 +669,36 @@ def queue_detail_command(directory: str) -> str:
         'if ($v) { "limit $n $v" } }; '
         "foreach ($d in @('running','queue')) { "
         "foreach ($f in @(Get-ChildItem -LiteralPath $d -File -ErrorAction SilentlyContinue)) { "
-        "$c = 0; $m = 0; "
+        "$c = 0; $m = 0; $p = 0; "
         "foreach ($line in (Get-Content -LiteralPath $f.FullName -ErrorAction SilentlyContinue)) { "
         f"if ($line.StartsWith({cores_tag})) {{ $v = $line.Substring({len(CORES_TAG)}).Trim(); "
         r"if ($v -match '^\d+$') { $c = [int]$v } }; "
         f"if ($line.StartsWith({memory_tag})) {{ $v = $line.Substring({len(MEMORY_TAG)}).Trim(); "
-        r"if ($v -match '^\d+$') { $m = [int]$v } } }; "
-        '"entry $d $($f.Name) $c $m" } }'
+        r"if ($v -match '^\d+$') { $m = [int]$v } }; "
+        f"if ($line.StartsWith({priority_tag})) {{ $p = $line.Substring({len(PRIORITY_TAG)}).Trim() }} }}; "
+        f"$override = Join-Path {ps_quote(PRIORITY_DIR)} $f.Name; "
+        "if (Test-Path -LiteralPath $override) { $p = Get-Content -LiteralPath $override | Select-Object -First 1 }; "
+        f"if ($p -notmatch '^-?[0-9]{{1,4}}$' -or [int]$p -lt {MIN_PRIORITY} -or [int]$p -gt {MAX_PRIORITY}) {{ $p = 0 }}; "
+        '"entry $d $($f.Name) $c $m $p" } }'
+    )
+
+
+def set_priority_command(directory: str, entry: str, priority: int) -> str:
+    """Same waiting-only priority override as the Bash runner."""
+    entry = require_entry(entry)
+    priority = validate_priority(priority)
+    return (
+        "$ErrorActionPreference = 'Stop'; "
+        f"Set-Location -LiteralPath {ps_quote(directory)} -ErrorAction Stop; "
+        f"if (-not (Test-Path -LiteralPath {ps_quote(_join('queue', entry))})) {{ '{NOT_QUEUED}'; exit 0 }}; "
+        f"$priorityRoot = Join-Path (Get-Location).Path {ps_quote(PRIORITY_DIR)}; "
+        "[IO.Directory]::CreateDirectory($priorityRoot) | Out-Null; "
+        f"$priorityTarget = Join-Path $priorityRoot {ps_quote(entry)}; "
+        "$priorityTemp = Join-Path (Join-Path (Get-Location).Path 'tmp') ([guid]::NewGuid().ToString() + '.priority'); "
+        f"[IO.File]::WriteAllText($priorityTemp, '{priority}', [Text.Encoding]::ASCII); "
+        "try { [IO.File]::Move($priorityTemp, $priorityTarget) } "
+        "catch [IO.IOException] { [IO.File]::Replace($priorityTemp, $priorityTarget, [NullString]::Value) }; "
+        f"if (Test-Path -LiteralPath {ps_quote(_join('queue', entry))}) {{ 'updated' }} else {{ '{NOT_QUEUED}' }}"
     )
 
 

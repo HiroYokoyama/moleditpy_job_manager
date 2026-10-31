@@ -47,6 +47,16 @@ class SubmissionResources(QWidget):
         self.spin_ntasks.setRange(1, 4096)
         self.spin_cpus = QSpinBox()
         self.spin_cpus.setRange(1, 512)
+        from .models import MAX_PRIORITY, MIN_PRIORITY
+
+        self.lbl_priority = QLabel("Priority")
+        self.spin_priority = QSpinBox()
+        self.spin_priority.setRange(MIN_PRIORITY, MAX_PRIORITY)
+        self.spin_priority.setToolTip(
+            "Higher numbers run first in the built-in queue. Equal priorities keep submission order. "
+            "Running jobs, dependencies, and resource limits are unchanged."
+        )
+        self.spin_priority.valueChanged.connect(self._refresh_preview)
         self.txt_memory = QLineEdit()
         self.txt_memory.setPlaceholderText("e.g. 8G")
         self.txt_memory.setToolTip(
@@ -178,6 +188,12 @@ class SubmissionResources(QWidget):
         self.chk_force = QCheckBox(FORCE_TEXT)
         self.chk_force.setVisible(False)
         self.chk_force.toggled.connect(self._on_force_toggled)
+        self.chk_force_wait = QCheckBox("Wait for previous forced job")
+        self.chk_force_wait.setVisible(False)
+        self.chk_force_wait.setToolTip(
+            "On this host, wait until the previous forced job ends, even if it fails."
+        )
+        self.chk_force_wait.toggled.connect(self._on_force_toggled)
 
         for widget in (
             self.txt_queue,
@@ -198,6 +214,7 @@ class SubmissionResources(QWidget):
         form.addRow("Tasks", self.spin_ntasks)
         form.addRow("CPUs per task", self.spin_cpus)
         form.addRow("Memory", self.txt_memory)
+        form.addRow(self.lbl_priority, self.spin_priority)
         form.addRow(self.chk_scan_resources)
         form.addRow(self.lbl_scanned)
         form.addRow("Modules", self.txt_modules)
@@ -219,6 +236,7 @@ class SubmissionResources(QWidget):
         form.addRow(self.lbl_chain)
         form.addRow(start_row)
         form.addRow(self.chk_force)
+        form.addRow(self.chk_force_wait)
 
     def _browse_download_root(self) -> None:
         start = self.store.download_root()

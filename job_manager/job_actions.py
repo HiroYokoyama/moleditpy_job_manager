@@ -70,7 +70,7 @@ def create_job_actions(parent, callbacks):
         ),
         (
             "tail_file",
-            "Tail File...",
+            "Tail File…",
             callbacks["_tail_specific_file"],
             "Read the tail of a chosen remote output/log file in the job's directory.",
         ),
@@ -147,6 +147,12 @@ def create_job_actions(parent, callbacks):
             "Start a waiting helper-queue job now.",
         ),
         (
+            "priority",
+            "Set Priority...",
+            callbacks["_priority_selected"],
+            "Change a waiting job's priority. Higher numbers run first.",
+        ),
+        (
             "recheck",
             RECHECK_ACTION_TEXT,
             callbacks["_recheck_selected"],
@@ -156,6 +162,7 @@ def create_job_actions(parent, callbacks):
     actions: dict[str, QAction] = {
         key: make_action(parent, text, callback, tooltip) for key, text, callback, tooltip in specs
     }
+    actions["tail_file"].setIconText(actions["tail_file"].text())
     for key, shortcut in (
         ("new", "Ctrl+N"),
         ("open_list", "Ctrl+O"),
@@ -176,6 +183,7 @@ def create_job_actions(parent, callbacks):
             None,
             "resubmit",
             "force",
+            "priority",
             "recheck",
             None,
             "cancel",

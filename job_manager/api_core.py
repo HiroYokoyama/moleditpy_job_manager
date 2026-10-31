@@ -237,6 +237,8 @@ class JobApi:
             return self._require("GET", method, lambda: self.files(job_id))
         if action == "force":
             return self._require("POST", method, lambda: self.force(job_id))
+        if action == "priority":
+            return self._require("POST", method, lambda: self.priority(job_id, body))
         if action == "recheck":
             return self._require("POST", method, lambda: self.recheck(job_id))
         raise ApiError(404, f"Unknown job action '{action}'")
@@ -339,6 +341,9 @@ class JobApi:
             raise ApiError(400, "'remote_input' names a file inside 'remote_dir', which is unset")
         preset = self._preset(host, body)
         force_run = self._optional_bool(body, "force_run", False)
+        force_wait = self._optional_bool(body, "force_after_previous", False)
+        if force_wait and (not force_run or not host.uses_remote_runner):
+            raise ApiError(400, "force_after_previous requires force_run with the built-in helper")
         if force_run:
             self._check_forceable(host, body)
         after_job = None
@@ -363,6 +368,7 @@ class JobApi:
             remote_dir=remote_dir,
             remote_input=remote_input,
             force_run=force_run,
+            force_after_previous=force_wait,
         )
         return {"job": job_payload(job, self.store)}
 
@@ -511,6 +517,28 @@ class JobApi:
             deferred.set_result({"job": job_payload(current, self.store), "forced": True})
 
         self.service.force_run(job, on_done=done, on_error=deferred.set_error)
+        return deferred
+
+    def priority(self, job_id: str, body: Mapping[str, Any]) -> Deferred:
+        from .models import validate_priority
+
+        try:
+            value = validate_priority(body.get("priority"))
+        except ValueError as exc:
+            raise ApiError(400, str(exc)) from exc
+        job = self._job(job_id)
+        refusal = self.service.priority_refusal(job)
+        if refusal:
+            raise ApiError(409, refusal)
+        deferred = Deferred()
+
+        def done(current: Job, updated: bool):
+            if updated:
+                deferred.set_result({"job": job_payload(current, self.store), "updated": True})
+            else:
+                deferred.set_error("The job is no longer waiting in the queue", 409)
+
+        self.service.set_priority(job, value, on_done=done, on_error=deferred.set_error)
         return deferred
 
     def recheck(self, job_id: str) -> Deferred:

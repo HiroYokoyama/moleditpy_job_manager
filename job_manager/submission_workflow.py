@@ -40,6 +40,7 @@ class SubmissionWorkflow:
         relay_filenames: Optional[List[str]] = None,
         upload_files: Optional[List[str]] = None,
         force_run: bool = False,
+        force_after_previous: bool = False,
     ) -> Job:
         """Create the job record and start the upload/submit on a worker.
 
@@ -59,6 +60,20 @@ class SubmissionWorkflow:
         job at once anyway unless it is chained, and choosing not to chain is
         the caller's part.
         """
+        from .models import validate_priority
+
+        priority = validate_priority(preset.priority)
+        if priority and not host.uses_remote_runner:
+            raise ValueError("Priority is only supported by the built-in helper queue")
+        if force_after_previous:
+            if not force_run or not host.uses_remote_runner:
+                raise ValueError("Waiting for a previous forced job requires helper Force run")
+            if after_job is not None or start_after:
+                raise ValueError(
+                    "Force waiting cannot be combined with another dependency or start time"
+                )
+            after_job = self.service.store.forced_tail(host.id)
+            chain_any = True
         job = Job(
             name=name or self._default_name(local_files, remote_input, remote_dir),
             host_id=host.id,
@@ -76,6 +91,7 @@ class SubmissionWorkflow:
             remote_dir_provided=bool((remote_dir or "").strip()),
             remote_input=(remote_input or "").strip(),
             force_run=bool(force_run),
+            priority=priority,
         )
         job.touch(STATE_UPLOADING)
         self.service.store.add_job(job)

@@ -173,6 +173,7 @@ is not one of them, so a client can find them without this page.
 | `GET` | `/jobs/{id}/log` | Tail its log; `?lines=`, `?file=` |
 | `GET` | `/jobs/{id}/files` | List its remote directory |
 | `POST` | `/jobs/{id}/force` | Start it now, ahead of the helper queue |
+| `POST` | `/jobs/{id}/priority` | Change a waiting helper job's priority; body `{"priority": 10}` |
 | `POST` | `/jobs/{id}/recheck` | Look again at a `LOST` job |
 
 `{id}` in a host route is the host's id or its name; a name with a space in it
@@ -322,6 +323,7 @@ somebody's input by accident is worse than an error.
 | `name` | Job name; defaults to the input's filename |
 | `queue`, `account`, `walltime` | Passed to the scheduler |
 | `nodes`, `ntasks`, `cpus_per_task`, `memory` | The resource request |
+| `priority` | Helper queue only: integer −1000 to 1000, default 0. Higher runs first; ties keep submission order |
 | `modules`, `pre_commands`, `extra_directives` | Added to the generated script |
 | `submit_options` | Extra arguments for the submit command (`qsub <these> script`), after the host's own |
 | `fetch_globs` | What to bring back |
@@ -332,6 +334,7 @@ somebody's input by accident is worse than an error.
 | `chain_any` | Chain on the predecessor *ending*, not on it succeeding |
 | `start_after` | Hold until then: an epoch second, or `2026-01-31T18:30` |
 | `force_run` | Start it now, ahead of the queue — see [above](#starting-a-small-job-ahead-of-the-queue) |
+| `force_after_previous` | With `force_run` on a helper host, wait for the previous forced job to end (even if it fails); default false |
 
 Naming a `preset` and a field together is fine: the field wins, and the stored
 preset is not modified.

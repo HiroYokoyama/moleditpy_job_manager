@@ -81,6 +81,21 @@ class TestTheWizardsForceBox(GuiCase):
         self.assertTrue(submit.call_args.kwargs["force_run"])
         self.assertIsNone(submit.call_args.kwargs["after_job"])
 
+    def test_force_wait_is_optional_and_only_applies_to_helpers(self):
+        dialog = self.submit_dialog(self.box)
+        assert dialog.chk_force_wait.isHidden()
+        dialog.chk_force.setChecked(True)
+        assert not dialog.chk_force_wait.isHidden()
+        dialog.chk_force_wait.setChecked(True)
+        assert dialog.force_wait_requested()
+        dialog.chk_force_wait.setChecked(False)
+        assert not dialog.chk_start_at.isEnabled()
+        dialog.chk_force_wait.setChecked(True)
+        self.box.concurrency_mode = "direct"
+        dialog._update_force_row()
+        assert dialog.chk_force_wait.isHidden()
+        assert not dialog.force_wait_requested()
+
 
 class TestTheServicesRefusals(GuiCase):
     def queued(self, **fields) -> Job:

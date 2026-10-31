@@ -39,7 +39,18 @@ from .theme import (
     CY_TEAL,
 )
 
-COLUMNS = ("No.", "Name", "Host", "Queue ID", "State", "After", "Elapsed", "Submitted", "Updated")
+COLUMNS = (
+    "No.",
+    "Name",
+    "Host",
+    "Queue ID",
+    "State",
+    "After",
+    "Elapsed",
+    "Submitted",
+    "Updated",
+    "Priority",
+)
 
 
 _STATE_COLORS = {
@@ -189,6 +200,8 @@ class JobTableModel(QAbstractTableModel):
                 return job.number
             if column == "Name":
                 return job.name
+            if column == "Priority":
+                return job.priority
             if column == "Host":
                 return job.host_name
             if column == "Queue ID":

@@ -112,6 +112,21 @@ PROFILE_COMMANDS = (
 MODE_LANES = "lanes"
 MODE_RUNNER = "runner"
 
+MIN_PRIORITY = -1000
+MAX_PRIORITY = 1000
+
+
+def validate_priority(value: Any) -> int:
+    """A helper-queue priority; larger numbers run first, zero is the default."""
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not MIN_PRIORITY <= value <= MAX_PRIORITY
+    ):
+        raise ValueError(f"Priority must be a whole number from {MIN_PRIORITY} to {MAX_PRIORITY}")
+    return value
+
+
 #: Written by the generated run script; see schedulers.base.
 SENTINEL_NAME = ".moleditpy_rc"
 #: Touched by a chained job once its predecessor has finished and it starts
@@ -202,6 +217,11 @@ def _from_dict(cls: type, data: Dict[str, Any]) -> Any:
         value = _coerce(data[spec.name], _default_of(spec))
         if value is not _NOT_GIVEN:
             kwargs[spec.name] = value
+    if cls.__name__ in ("Job", "SubmitPreset") and "priority" in kwargs:
+        try:
+            validate_priority(kwargs["priority"])
+        except ValueError:
+            kwargs["priority"] = 0
     if cls.__name__ == "Job" and kwargs.get("preset"):
         snapshot = kwargs["preset"]
         normalized = SubmitPreset.from_dict(snapshot).to_dict()
@@ -519,6 +539,7 @@ class SubmitPreset:
     #: For what a site wants on the command line rather than as a directive,
     #: and appended after the host's own :attr:`HostProfile.submit_options`.
     submit_options: str = ""
+    priority: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -587,6 +608,7 @@ class Job:
     last_server_state: str = ""
     #: Position by submission time in the saved job list; 0 before numbering.
     number: int = 0
+    priority: int = 0
 
     @property
     def is_active(self) -> bool:

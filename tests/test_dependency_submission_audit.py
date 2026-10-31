@@ -48,3 +48,44 @@ class TestAudit(ServiceTestCase):
         predecessor = Job(host_id=self.host.id, state="UPLOADING")
         with self.assertRaises(TimeoutError):
             self.service._chain_pid(predecessor, timeout=0)
+
+    def test_forced_wait_uses_last_forced_lane_and_records_dependency(self):
+        self.host.scheduler = "shell"
+        self.host.concurrency_mode = "runner"
+        parent = Job(
+            host_id=self.host.id, state="RUNNING", force_run=True, submitted_at=10, updated_at=100
+        )
+        tail = Job(
+            host_id=self.host.id,
+            state="UPLOADING",
+            force_run=True,
+            after_job_id=parent.id,
+            chain_any=True,
+            updated_at=20,
+        )
+        ordinary = Job(host_id=self.host.id, state="RUNNING", submitted_at=200)
+        foreign = Job(host_id="another", state="RUNNING", force_run=True, submitted_at=300)
+        for job in (parent, tail, ordinary, foreign):
+            self.store.jobs[job.id] = job
+        with (
+            patch.object(self.service, "_chain_pid", return_value="queueid"),
+            patch(
+                "job_manager.submission_workflow.submit_to_runner",
+                side_effect=lambda *a, **kw: a[3],
+            ) as submit,
+        ):
+            result = self.submit(force_run=True, force_after_previous=True)
+        assert result.after_job_id == tail.id
+        assert result.chain_any and result.force_run
+        assert submit.call_args.kwargs["after_job"] is tail
+        assert submit.call_args.kwargs["force"]
+
+    def test_forced_wait_without_previous_job_starts_immediately(self):
+        self.host.scheduler = "shell"
+        self.host.concurrency_mode = "runner"
+        with patch(
+            "job_manager.submission_workflow.submit_to_runner", side_effect=lambda *a, **kw: a[3]
+        ) as submit:
+            job = self.submit(force_run=True, force_after_previous=True)
+        assert not job.after_job_id
+        assert submit.call_args.kwargs["after_job"] is None

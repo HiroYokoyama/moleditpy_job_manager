@@ -71,9 +71,15 @@ from .job_table import (
     format_stamp as format_stamp,
 )
 from .models import (
+    STATE_BLOCKED,
     STATE_DONE,
     STATE_FAILED,
     STATE_LOST,
+    STATE_NEW,
+    STATE_PENDING,
+    STATE_QUEUED,
+    STATE_SUBMITTED,
+    STATE_UPLOADING,
     Job,
 )
 from .result_view import (
@@ -192,6 +198,7 @@ class JobsDialog(QDialog):
             "_export": self._export,
             "_convert_job_list": self._convert_job_list,
             "_force_selected": self._force_selected,
+            "_priority_selected": self._priority_selected,
             "_load_archive": self._load_archive,
             "_open_job_list_file": self._open_job_list_file,
             "_open_selected_result": self._open_selected_result,
@@ -335,11 +342,13 @@ class JobsDialog(QDialog):
 
     def _build_job_toolbar(self, layout: QVBoxLayout) -> None:
         self.job_toolbar = action_toolbar(
-            self, (self.job_actions[key] for key in ("open", "download", "tail", "details"))
+            self,
+            (self.job_actions[key] for key in ("open", "download", "tail", "tail_file", "details")),
         )
         self.btn_open = self.job_toolbar.widgetForAction(self.job_actions["open"])
         self.btn_download = self.job_toolbar.widgetForAction(self.job_actions["download"])
         self.btn_tail = self.job_toolbar.widgetForAction(self.job_actions["tail"])
+        self.btn_tail_file = self.job_toolbar.widgetForAction(self.job_actions["tail_file"])
         self.btn_details = self.job_toolbar.widgetForAction(self.job_actions["details"])
         spacer = QWidget(self.job_toolbar)
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -499,6 +508,7 @@ class JobsDialog(QDialog):
             "export_csv": not archived,
             "clear": not archived,
             "force": bool(live and job and not self.service.force_refusal(job)),
+            "priority": bool(live and job and not self.service.priority_refusal(job)),
             "recheck": bool(live and job and job.state == STATE_LOST),
         }
         for key, action in self.job_actions.items():
@@ -732,6 +742,25 @@ class JobsDialog(QDialog):
             return
         self.service.cancel(job)
 
+    def _priority_selected(self) -> None:
+        from .models import MAX_PRIORITY, MIN_PRIORITY
+
+        job = self.selected_job()
+        if job is None:
+            return
+        if self.service.priority_refusal(job) or not self._has_credentials(job):
+            return
+        value, accepted = QInputDialog.getInt(
+            self,
+            "Job Priority",
+            "Priority (higher runs first; equal values keep submission order):",
+            job.priority,
+            MIN_PRIORITY,
+            MAX_PRIORITY,
+        )
+        if accepted:
+            self.service.set_priority(job, value, owner=self)
+
     def _force_selected(self) -> None:
         """Start the selected waiting job now, ahead of its host's queue."""
         job = self.selected_job()
@@ -847,9 +876,19 @@ class JobsDialog(QDialog):
         self.service.download(job, into=folder, names=chosen)
 
     def _open_double_clicked(self) -> None:
-        """Tail the log while a job runs; open the result once it has finished."""
+        """Show waiting-job details, running logs, or finished-job results."""
         job = self.selected_job()
         if job is None:
+            return
+        if self.model.display_state(job) in (
+            STATE_NEW,
+            STATE_UPLOADING,
+            STATE_SUBMITTED,
+            STATE_PENDING,
+            STATE_QUEUED,
+            STATE_BLOCKED,
+        ):
+            self._show_details()
             return
         if job.is_terminal and self.job_actions["open"].isEnabled():
             self._open_selected_result()
@@ -1017,6 +1056,7 @@ class JobsDialog(QDialog):
             ("Host", job.host_name or (host.name if host else "(profile removed)")),
             ("Scheduler", job.scheduler),
             ("Queue id", job.remote_job_id or "-"),
+            ("Priority", f"{job.priority} (higher runs first in the helper queue)"),
             ("Submitted", format_stamp(job.submitted_at)),
             ("Started", format_stamp(job.started_at)),
             ("Finished", format_stamp(job.finished_at)),
@@ -1028,6 +1068,17 @@ class JobsDialog(QDialog):
         ]
         if job.force_run:
             rows.insert(5, ("Force run", "started ahead of the queue"))
+        if self.model.display_state(job) in (
+            STATE_NEW,
+            STATE_UPLOADING,
+            STATE_SUBMITTED,
+            STATE_PENDING,
+            STATE_QUEUED,
+            STATE_BLOCKED,
+        ):
+            rows.insert(
+                2, ("Waiting", "This job has not started yet; its log and results may not exist.")
+            )
         # The snapshot taken at submit time, not the named preset -- which may
         # since have been edited or deleted.
         preset = job.preset or {}
