@@ -1714,6 +1714,7 @@ class TestTailWindow(DialogTestCase):
         self.assertIs(self.dialog._tail_dialog, first)
 
     def test_double_clicking_a_row_tails_it(self):
+        self.store.jobs["j1"].state = STATE_RUNNING
         self.dialog.table.doubleClicked.emit(self.dialog.model.index(0, 0))
         self.assertIsNotNone(self.dialog._tail_dialog)
         self.addCleanup(self.dialog._tail_dialog.deleteLater)

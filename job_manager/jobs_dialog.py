@@ -71,9 +71,15 @@ from .job_table import (
     format_stamp as format_stamp,
 )
 from .models import (
+    STATE_BLOCKED,
     STATE_DONE,
     STATE_FAILED,
     STATE_LOST,
+    STATE_NEW,
+    STATE_PENDING,
+    STATE_QUEUED,
+    STATE_SUBMITTED,
+    STATE_UPLOADING,
     Job,
 )
 from .result_view import (
@@ -868,9 +874,19 @@ class JobsDialog(QDialog):
         self.service.download(job, into=folder, names=chosen)
 
     def _open_double_clicked(self) -> None:
-        """Tail the log while a job runs; open the result once it has finished."""
+        """Show waiting-job details, running logs, or finished-job results."""
         job = self.selected_job()
         if job is None:
+            return
+        if self.model.display_state(job) in (
+            STATE_NEW,
+            STATE_UPLOADING,
+            STATE_SUBMITTED,
+            STATE_PENDING,
+            STATE_QUEUED,
+            STATE_BLOCKED,
+        ):
+            self._show_details()
             return
         if job.is_terminal and self.job_actions["open"].isEnabled():
             self._open_selected_result()
@@ -1050,6 +1066,17 @@ class JobsDialog(QDialog):
         ]
         if job.force_run:
             rows.insert(5, ("Force run", "started ahead of the queue"))
+        if self.model.display_state(job) in (
+            STATE_NEW,
+            STATE_UPLOADING,
+            STATE_SUBMITTED,
+            STATE_PENDING,
+            STATE_QUEUED,
+            STATE_BLOCKED,
+        ):
+            rows.insert(
+                2, ("Waiting", "This job has not started yet; its log and results may not exist.")
+            )
         # The snapshot taken at submit time, not the named preset -- which may
         # since have been edited or deleted.
         preset = job.preset or {}

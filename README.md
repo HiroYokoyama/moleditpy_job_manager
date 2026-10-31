@@ -182,6 +182,9 @@ numbers run first, with submission order preserved for equal values. Use
 **Set Priority...** on a waiting job to change it. A chained-lanes mode is also available.
 
 
+Double-click a waiting job to see its status, priority, and dependencies.
+Running jobs open their log; finished jobs open their results.
+
 Cluster jobs use the scheduler's own dependency and submission flags. Configure
 **Submit options** on the host or preset for billing groups, resource groups or
 other arguments that belong on the `sbatch`/`qsub` command line. Host options
