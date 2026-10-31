@@ -448,6 +448,9 @@ def submit_to_runner(
     flavour = remote_runner.flavour_for(host)
     if not (preset.command_template or "").strip():
         raise ValueError("No command to run")
+    from .models import validate_priority
+
+    job.priority = validate_priority(preset.priority)
 
     remote_runner.require_entry(remote_runner.entry_name(1, job.id, flavour.ENTRY_SUFFIX))
     if after_job is not None:
@@ -506,6 +509,7 @@ def submit_to_runner(
         require_success=not job.chain_any,
         cores=requested_cores(preset),
         memory_mb=requested_memory_mb(preset),
+        priority=job.priority,
     )
     # Into tmp/, then moved: the runner must never see a half-uploaded script.
     _upload_text(transport, job_script, remote_paths.join(directory, "tmp", entry))
@@ -606,6 +610,22 @@ def force_in_runner(transport: Transport, host: HostProfile, job: Job) -> bool:
             f"{(result.stderr or result.stdout).strip()[:300]}"
         )
     _start_runner(transport, host, script_name, "The job was started")
+    return True
+
+
+def set_runner_priority(transport: Transport, host: HostProfile, job: Job, priority: int) -> bool:
+    """Change the scheduling priority only while the job is waiting."""
+    directory = remote_runner.runner_dir(effective_root(host))
+    flavour = remote_runner.flavour_for(host)
+    script_name = _prepare_runner(transport, host)
+    result = transport.run(flavour.set_priority_command(directory, job.remote_job_id, priority))
+    result.check("change queue priority")
+    answer = result.stdout.strip().splitlines()[-1:]
+    if answer == [remote_runner.NOT_QUEUED]:
+        return False
+    if answer != ["updated"]:
+        raise TransportError("The helper did not confirm the priority change")
+    _start_runner(transport, host, script_name, "The queue priority was changed")
     return True
 
 

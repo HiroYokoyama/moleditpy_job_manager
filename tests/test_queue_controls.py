@@ -408,11 +408,11 @@ class TestTheDispatchNumberOnlyClimbs(unittest.TestCase):
         # Past 9999 the padding runs out, and `sort` puts job_10000 before
         # job_9999 -- the dispatch order inverted exactly when a queue has been
         # busy for a long time.
-        self.assertIn("sort -t_ -k2,2n", remote_runner.build_runner_script("/r"))
+        self.assertIn("sort -k1,1nr -k2,2n", remote_runner.build_runner_script("/r"))
 
     def test_the_windows_runner_sorts_numerically_too(self):
         script = remote_runner_ps.build_runner_script(r"C:\r")
-        self.assertIn("[int](($_.Name -split '_')[1])", script)
+        self.assertIn("[long](($_.Name -split '_')[1])", script)
 
 
 @unittest.skipUnless(BASH, "needs a bash")

@@ -91,7 +91,13 @@ class RunnerHarness(unittest.TestCase):
             handle.write(f"{value}\n")
 
     def enqueue(
-        self, job_id: str, body: str, cores: int = 1, after: str = "", require_success: bool = True
+        self,
+        job_id: str,
+        body: str,
+        cores: int = 1,
+        after: str = "",
+        require_success: bool = True,
+        priority: int = 0,
     ) -> str:
         """Write a job's wrapper and queue a script for it, as the plugin does."""
         job_dir = os.path.join(self.jobs, job_id)
@@ -118,6 +124,7 @@ class RunnerHarness(unittest.TestCase):
             after_job_id=after,
             require_success=require_success,
             cores=cores,
+            priority=priority,
         )
         # tmp/ then mv, exactly as the real submission does: the runner must
         # never be able to start a half-written script.

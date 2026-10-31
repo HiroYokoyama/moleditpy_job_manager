@@ -37,6 +37,8 @@ from .remote_runner import (
     VERSION_NAME,
     MEMORY_NAME,
     MEMORY_TAG,
+    PRIORITY_DIR,
+    PRIORITY_TAG,
     PAUSED_NAME,
     REQUIRE_SUCCESS_TAG,
     RUNNER_LOG_NAME,
@@ -48,6 +50,7 @@ from .remote_runner import (
     require_entry,
 )
 from .schedulers.windows import ps_quote
+from .models import MAX_PRIORITY, validate_priority
 
 #: The unversioned name, as in the bash flavour: kept for the harnesses and
 #: for a runner left by an older plugin. What is written and started is
@@ -96,6 +99,7 @@ def build_job_script(
     require_success: bool = True,
     cores: int = 1,
     memory_mb: int = 0,
+    priority: int = 0,
 ) -> str:
     """The small script the queue holds for one job.
 
@@ -105,7 +109,7 @@ def build_job_script(
     wrapper's own sentinel lives in the job directory.
     """
     status_path = _join(directory, "status", entry)
-    lines = []
+    lines = [f"{PRIORITY_TAG} {validate_priority(priority)}"]
     if job_name:
         lines.append("# MoleditPy job: " + " ".join(str(job_name).splitlines()))
     lines.append(f"{CORES_TAG} {max(1, int(cores or 1))}")
@@ -194,6 +198,17 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
             "        if ($line.StartsWith($tag)) { return $line.Substring($tag.Length).Trim() }",
             "    }",
             "    return ''",
+            "}",
+            "",
+            "function Get-JobPriority($path) {",
+            f"    $override = Join-Path {ps_quote(PRIORITY_DIR)} ([IO.Path]::GetFileName($path))",
+            "    if (Test-Path -LiteralPath $override) {",
+            "        $v = Get-Content -LiteralPath $override -ErrorAction SilentlyContinue | Select-Object -First 1",
+            "    } else {",
+            f"        $v = Get-Header $path {ps_quote(PRIORITY_TAG)}",
+            "    }",
+            f"    if ($v -match '^\\d{{1,4}}$' -and [int]$v -le {MAX_PRIORITY}) {{ return [int]$v }}",
+            "    return 0",
             "}",
             "",
             "function Get-JobCores($path) {",
@@ -330,7 +345,8 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
             # dispatch order exactly when a queue has been busy a long time.
             "    foreach ($f in @(Get-ChildItem -LiteralPath 'queue' -File "
             "-ErrorAction SilentlyContinue | "
-            "Sort-Object @{Expression={[int](($_.Name -split '_')[1])}}, Name)) {",
+            "Sort-Object @{Expression={Get-JobPriority $_.FullName};Descending=$true}, "
+            "@{Expression={[long](($_.Name -split '_')[1])}}, Name)) {",
             "        if ((Get-DirCount 'running') -ge (Get-Slots)) { break }",
             "        $entry = $f.Name",
             "        if (-not (Test-Ready $entry)) { continue }",
@@ -620,6 +636,7 @@ def queue_detail_command(directory: str) -> str:
     limits = ",".join(ps_quote(name) for name in (SLOTS_NAME, CORES_NAME, MEMORY_NAME))
     cores_tag = ps_quote(CORES_TAG)
     memory_tag = ps_quote(MEMORY_TAG)
+    priority_tag = ps_quote(PRIORITY_TAG)
     return (
         f"if (-not (Test-Path -LiteralPath {quoted})) {{ exit 0 }}; "
         f"Set-Location -LiteralPath {quoted}; "
@@ -629,13 +646,32 @@ def queue_detail_command(directory: str) -> str:
         'if ($v) { "limit $n $v" } }; '
         "foreach ($d in @('running','queue')) { "
         "foreach ($f in @(Get-ChildItem -LiteralPath $d -File -ErrorAction SilentlyContinue)) { "
-        "$c = 0; $m = 0; "
+        "$c = 0; $m = 0; $p = 0; "
         "foreach ($line in (Get-Content -LiteralPath $f.FullName -ErrorAction SilentlyContinue)) { "
         f"if ($line.StartsWith({cores_tag})) {{ $v = $line.Substring({len(CORES_TAG)}).Trim(); "
         r"if ($v -match '^\d+$') { $c = [int]$v } }; "
         f"if ($line.StartsWith({memory_tag})) {{ $v = $line.Substring({len(MEMORY_TAG)}).Trim(); "
-        r"if ($v -match '^\d+$') { $m = [int]$v } } }; "
-        '"entry $d $($f.Name) $c $m" } }'
+        r"if ($v -match '^\d+$') { $m = [int]$v } }; "
+        f"if ($line.StartsWith({priority_tag})) {{ $p = $line.Substring({len(PRIORITY_TAG)}).Trim() }} }}; "
+        f"$override = Join-Path {ps_quote(PRIORITY_DIR)} $f.Name; "
+        "if (Test-Path -LiteralPath $override) { $p = Get-Content -LiteralPath $override | Select-Object -First 1 }; "
+        f"if ($p -notmatch '^\\d{{1,4}}$' -or [int]$p -gt {MAX_PRIORITY}) {{ $p = 0 }}; "
+        '"entry $d $($f.Name) $c $m $p" } }'
+    )
+
+
+def set_priority_command(directory: str, entry: str, priority: int) -> str:
+    """Same waiting-only priority override as the Bash runner."""
+    entry = require_entry(entry)
+    priority = validate_priority(priority)
+    return (
+        f"Set-Location -LiteralPath {ps_quote(directory)} -ErrorAction Stop; "
+        f"if (-not (Test-Path -LiteralPath {ps_quote(_join('queue', entry))})) {{ '{NOT_QUEUED}'; exit 0 }}; "
+        f"[IO.Directory]::CreateDirectory({ps_quote(PRIORITY_DIR)}) | Out-Null; "
+        "$priorityTemp = Join-Path 'tmp' ([guid]::NewGuid().ToString() + '.priority'); "
+        f"[IO.File]::WriteAllText((Join-Path (Get-Location).Path $priorityTemp), '{priority}', [Text.Encoding]::ASCII); "
+        f"Move-Item -LiteralPath $priorityTemp -Destination {ps_quote(_join(PRIORITY_DIR, entry))} -Force -ErrorAction Stop; "
+        f"if (Test-Path -LiteralPath {ps_quote(_join('queue', entry))}) {{ 'updated' }} else {{ '{NOT_QUEUED}' }}"
     )
 
 

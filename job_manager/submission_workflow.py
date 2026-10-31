@@ -59,6 +59,11 @@ class SubmissionWorkflow:
         job at once anyway unless it is chained, and choosing not to chain is
         the caller's part.
         """
+        from .models import validate_priority
+
+        priority = validate_priority(preset.priority)
+        if priority and not host.uses_remote_runner:
+            raise ValueError("Priority is only supported by the built-in helper queue")
         job = Job(
             name=name or self._default_name(local_files, remote_input, remote_dir),
             host_id=host.id,
@@ -76,6 +81,7 @@ class SubmissionWorkflow:
             remote_dir_provided=bool((remote_dir or "").strip()),
             remote_input=(remote_input or "").strip(),
             force_run=bool(force_run),
+            priority=priority,
         )
         job.touch(STATE_UPLOADING)
         self.service.store.add_job(job)

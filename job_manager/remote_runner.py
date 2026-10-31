@@ -6,14 +6,14 @@ anything on the host, but the order is fixed at submit time -- a job that
 finishes early cannot let the next one start, and a cancelled job leaves a gap
 in its chain.
 
-This module is the other option: a small bash runner holding a real FIFO queue.
+This module is the other option: a small bash runner holding a priority queue (FIFO for equal priorities).
 It exits the moment the queue empties, so nothing is left running on a shared
 login node between batches.
 
 Layout under ``<remote_root>/.moleditpy_runner/``::
 
     lock/       the single-instance lock (an atomic mkdir), holding pid
-    queue/      job_0001_<id>.sh, job_0002_<id>.sh, ... run in number order
+    queue/      job_0001_<id>.sh, job_0002_<id>.sh, ... ordered by priority, then number
     running/    the script while its job runs
     pids/       the wrapper pid for each running job
     done/       the script once the job has ended, kept
@@ -69,6 +69,7 @@ import sys
 from typing import List, Sequence
 
 from .remote_paths import quote
+from .models import MAX_PRIORITY, validate_priority
 
 #: Directory the runner keeps its state in, under the host's remote root.
 RUNNER_DIRNAME = ".moleditpy_runner"
@@ -105,12 +106,15 @@ MEMORY_NAME = "memory"
 #: Header line by which a job asks for memory, always in megabytes.
 MEMORY_TAG = "# moleditpy-memory:"
 
+PRIORITY_TAG = "# moleditpy-priority:"
+PRIORITY_DIR = "priorities"
+
 #: How often the runner reaps finished jobs and dispatches waiting ones. Every
 #: check is a shell builtin or one ``ls``, so this costs nothing measurable.
 RUNNER_POLL_SECONDS = 5
 
 #: Sub-directories the runner needs.
-SUBDIRS = ("queue", "running", "done", "pids", "tmp", "status")
+SUBDIRS = ("queue", "running", "done", "pids", "tmp", "status", PRIORITY_DIR)
 
 #: Presence of this file stops the runner dispatching anything new. Running
 #: jobs are left alone -- pausing a queue must never kill work in progress.
@@ -270,6 +274,7 @@ def build_job_script(
     require_success: bool = True,
     cores: int = 1,
     memory_mb: int = 0,
+    priority: int = 0,
 ) -> str:
     """The small script the queue holds for one job.
 
@@ -284,6 +289,7 @@ def build_job_script(
     directory, which the runner does not read.
     """
     lines = ["#!/bin/bash"]
+    lines.append(f"{PRIORITY_TAG} {validate_priority(priority)}")
     if job_name:
         lines.append("# MoleditPy job: " + " ".join(str(job_name).splitlines()))
     lines.append(f"{CORES_TAG} {max(1, int(cores or 1))}")
@@ -359,6 +365,25 @@ total_memory() {{
 }}
 
 header() {{ sed -n "s|^$2 *||p" "$1" 2>/dev/null | head -n 1; }}
+
+job_priority() {{
+  entry=${{1##*/}}
+  if [ -f "{PRIORITY_DIR}/$entry" ]; then
+    value=$(cat "{PRIORITY_DIR}/$entry" 2>/dev/null)
+  else
+    value=$(header "$1" '{PRIORITY_TAG}')
+  fi
+  printf '%s\\n' "$value" | awk '/^[0-9]+$/ && length($0)<=4 && $0<={MAX_PRIORITY} {{print $0+0; found=1; exit}} END {{if (!found) print 0}}'
+}}
+
+queue_order() {{
+  for path in queue/job_*; do
+    [ -f "$path" ] || continue
+    name=${{path##*/}}
+    sequence=${{name#job_}}; sequence=${{sequence%%_*}}
+    printf '%s %s %s\\n' "$(job_priority "$path")" "$sequence" "$name"
+  done | sort -k1,1nr -k2,2n -k3,3 | awk '{{print $3}}'
+}}
 
 job_cores() {{ positive "$(header "$1" '{CORES_TAG}')" 1; }}
 
@@ -444,7 +469,7 @@ dispatch() {{
   # Sorted on the number itself, not as text: past 9999 the padding runs out
   # and `sort` puts job_10000 before job_9999, which is the dispatch order
   # inverted at exactly the point a queue has been busy for a long time.
-  for entry in $(ls -1 queue 2>/dev/null | sort -t_ -k2,2n); do
+  for entry in $(queue_order); do
     [ "$(count running)" -lt "$(slots)" ] || break
     ready "$entry" || continue
     if [ -z "$cap" ]; then
@@ -458,7 +483,7 @@ dispatch() {{
     [ "$want" -gt "$cap" ] && want=$cap
     if [ "$memcap" -gt 0 ] && [ "$wantmem" -gt "$memcap" ]; then wantmem=$memcap; fi
     if [ $(($(used_cores) + want)) -gt "$cap" ]; then
-      # Strict FIFO: wait for room rather than letting small jobs jump the
+      # Reserve room for the next priority-ordered job instead of letting small jobs jump the
       # queue, which would starve anything asking for most of the machine.
       break
     fi
@@ -774,7 +799,7 @@ def queue_detail_command(directory: str) -> str:
     for every poll.
     """
     limits = " ".join((SLOTS_NAME, CORES_NAME, MEMORY_NAME))
-    awk = f"awk '/^{CORES_TAG}/{{c=$3}} /^{MEMORY_TAG}/{{m=$3}} END{{print c+0, m+0}}'"
+    awk = f"awk '/^{CORES_TAG}/{{c=$3}} /^{MEMORY_TAG}/{{m=$3}} /^{PRIORITY_TAG}/{{p=$3}} END{{print c+0, m+0, p+0}}'"
     return (
         f"cd {quote(directory)} 2>/dev/null || exit 0; "
         f"if [ -f {PAUSED_NAME} ]; then echo paused 1; fi; "
@@ -782,7 +807,10 @@ def queue_detail_command(directory: str) -> str:
         'if [ -n "$v" ]; then echo "limit $n $v"; fi; done; '
         "for d in running queue; do "
         'for e in $(ls -1 "$d" 2>/dev/null); do '
-        f'echo "entry $d $e $({awk} "$d/$e" 2>/dev/null)"; '
+        f'v=$({awk} "$d/$e" 2>/dev/null); '
+        f'if [ -f "{PRIORITY_DIR}/$e" ]; then '
+        f'p=$(cat "{PRIORITY_DIR}/$e"); v="$(echo "$v" | cut -d\' \' -f1-2) $p"; fi; '
+        'echo "entry $d $e $v"; '
         "done; done"
     )
 
@@ -814,11 +842,34 @@ def parse_queue_detail(stdout: str) -> dict:
                 "job_id": job_id,
                 "cores": max(1, numbers[0]),
                 "memory_mb": numbers[1],
+                "priority": (
+                    int(parts[5])
+                    if len(parts) > 5
+                    and parts[5].isdigit()
+                    and len(parts[5]) <= 4
+                    and int(parts[5]) <= MAX_PRIORITY
+                    else 0
+                ),
             }
             detail["running" if parts[1] == "running" else "waiting"].append(item)
     detail["running"].sort(key=lambda item: (item["sequence"], item["entry"]))
-    detail["waiting"].sort(key=lambda item: (item["sequence"], item["entry"]))
+    detail["waiting"].sort(key=lambda item: (-item["priority"], item["sequence"], item["entry"]))
     return detail
+
+
+def set_priority_command(directory: str, entry: str, priority: int) -> str:
+    """Atomically override the priority of an entry that is still waiting."""
+    entry = require_entry(entry)
+    priority = validate_priority(priority)
+    return (
+        f"cd {quote(directory)} || exit 1; "
+        f'[ -f "queue/{entry}" ] || {{ echo {NOT_QUEUED}; exit 0; }}; '
+        f"mkdir -p {PRIORITY_DIR} || exit 1; "
+        "priority_temp=$(mktemp tmp/priority.XXXXXX) || exit 1; "
+        f'printf "%s\\n" {priority} > "$priority_temp" && '
+        f'mv -f "$priority_temp" "{PRIORITY_DIR}/{entry}" || exit 1; '
+        f'if [ -f "queue/{entry}" ]; then echo updated; else echo {NOT_QUEUED}; fi'
+    )
 
 
 def set_slots_command(directory: str, slots: int) -> str:
@@ -919,6 +970,9 @@ def is_paused_command(directory: str) -> str:
 
 __all__: List[str] = [
     "AFTER_TAG",
+    "PRIORITY_TAG",
+    "PRIORITY_DIR",
+    "set_priority_command",
     "CORES_NAME",
     "CORES_TAG",
     "FORCED",
