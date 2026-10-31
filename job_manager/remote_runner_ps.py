@@ -688,12 +688,16 @@ def set_priority_command(directory: str, entry: str, priority: int) -> str:
     entry = require_entry(entry)
     priority = validate_priority(priority)
     return (
+        "$ErrorActionPreference = 'Stop'; "
         f"Set-Location -LiteralPath {ps_quote(directory)} -ErrorAction Stop; "
         f"if (-not (Test-Path -LiteralPath {ps_quote(_join('queue', entry))})) {{ '{NOT_QUEUED}'; exit 0 }}; "
-        f"[IO.Directory]::CreateDirectory({ps_quote(PRIORITY_DIR)}) | Out-Null; "
-        "$priorityTemp = Join-Path 'tmp' ([guid]::NewGuid().ToString() + '.priority'); "
-        f"[IO.File]::WriteAllText((Join-Path (Get-Location).Path $priorityTemp), '{priority}', [Text.Encoding]::ASCII); "
-        f"Move-Item -LiteralPath $priorityTemp -Destination {ps_quote(_join(PRIORITY_DIR, entry))} -Force -ErrorAction Stop; "
+        f"$priorityRoot = Join-Path (Get-Location).Path {ps_quote(PRIORITY_DIR)}; "
+        "[IO.Directory]::CreateDirectory($priorityRoot) | Out-Null; "
+        f"$priorityTarget = Join-Path $priorityRoot {ps_quote(entry)}; "
+        "$priorityTemp = Join-Path (Join-Path (Get-Location).Path 'tmp') ([guid]::NewGuid().ToString() + '.priority'); "
+        f"[IO.File]::WriteAllText($priorityTemp, '{priority}', [Text.Encoding]::ASCII); "
+        "try { [IO.File]::Move($priorityTemp, $priorityTarget) } "
+        "catch [IO.IOException] { [IO.File]::Replace($priorityTemp, $priorityTarget, [NullString]::Value) }; "
         f"if (Test-Path -LiteralPath {ps_quote(_join('queue', entry))}) {{ 'updated' }} else {{ '{NOT_QUEUED}' }}"
     )
 

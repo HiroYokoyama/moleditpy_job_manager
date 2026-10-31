@@ -147,3 +147,18 @@ class TestBashPriority(PriorityBehavior, BashHarness):
 
 class TestPowerShellPriority(PriorityBehavior, PowerShellHarness):
     flavour = remote_runner_ps
+
+    def test_priority_override_uses_helper_directory_and_replaces_existing_value(self):
+        entry = self.enqueue("queued", self.append("queued"))
+        os.rmdir(os.path.join(self.dir, remote_runner.PRIORITY_DIR))
+        unrelated = self.marker("dotnet-cwd")
+        os.mkdir(unrelated)
+        for value in (3, 7):
+            command = (
+                f"[Environment]::CurrentDirectory = '{unrelated}'; "
+                + self.flavour.set_priority_command(self.directory(), entry, value)
+            )
+            assert self.command(command) == "updated"
+            with open(os.path.join(self.dir, remote_runner.PRIORITY_DIR, entry)) as handle:
+                assert handle.read() == str(value)
+        assert not os.path.exists(os.path.join(unrelated, remote_runner.PRIORITY_DIR))
