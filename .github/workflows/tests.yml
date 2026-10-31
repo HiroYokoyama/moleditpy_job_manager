@@ -43,7 +43,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: pip install pytest pytest-cov pytest-xdist pytest-timeout
+        run: pip install -r requirements-test.txt
 
       - name: Run tests with coverage
         # -n auto: the script-execution tests spend their time waiting on real
@@ -74,7 +74,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install -e ".[all]" pytest pytest-cov pytest-xdist pytest-timeout
+        run: pip install -e ".[all]" -r requirements-test.txt
 
       - name: Verify coverage dependencies and Bash execution
         run: python -c "from PySide6.QtWidgets import QApplication; import paramiko, cryptography; from tests.bash_support import BASH; assert BASH, 'No usable Bash; helper tests would skip'"
@@ -173,7 +173,7 @@ jobs:
       # real SSHConfig parser -- a stub would test nothing, so those tests skip
       # themselves unless the package is actually here.
       - name: Install dependencies
-        run: pip install -e ".[all]" pytest pytest-cov pytest-xdist pytest-timeout
+        run: pip install -e ".[all]" -r requirements-test.txt
 
       - name: Verify coverage dependencies and Bash execution
         run: python -c "from PySide6.QtWidgets import QApplication; import paramiko, cryptography; from tests.bash_support import BASH; assert BASH, 'No usable Bash; helper tests would skip'"
@@ -230,7 +230,7 @@ jobs:
       # the plugin_interface chain reaches rdkit. Without both, the real-context
       # tier can only ever skip itself.
       - name: Install dependencies
-        run: pip install -e ".[all]" pytest pytest-cov rdkit pytest-timeout
+        run: pip install -e ".[all]" rdkit -r requirements-test.txt
 
       - name: Clone main MoleditPy application
         shell: bash

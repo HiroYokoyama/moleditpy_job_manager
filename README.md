@@ -363,7 +363,7 @@ and the [security model](docs/SECURITY_MODEL.md) for storage and trust boundarie
 ## Development
 
 ```bash
-pip install -e ".[all]" pytest pytest-cov pytest-xdist pytest-timeout
+pip install -e ".[all]" -r requirements-test.txt
 python -m pytest tests/ -q -n auto --cov=job_manager --cov-report=term-missing --cov-report=xml
 ruff format job_manager tests
 ruff check job_manager tests
@@ -383,7 +383,7 @@ The Codecov badge combines the full Linux Qt suite, Windows (including native
 desktop tests), and real MoleditPy integration reports. CI preserves each XML
 report for comparison with the local `coverage.xml`. Coverage jobs check required
 dependencies and a usable Bash; the native Windows and real-context gates fail
-if their required tiers skip. The shared coverage settings measure the complete
+if their required tiers skip. Pinned test tooling and shared coverage settings measure the complete
 `job_manager` package, without additional coverage exclusions. A combined cross-platform
 report can cover more lines than a single-platform local run.
 
