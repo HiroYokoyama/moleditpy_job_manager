@@ -18,18 +18,18 @@ class TestPriorityApi(ApiTestCase):
         self.host.concurrency_mode = MODE_RUNNER
 
     def test_submit_records_priority(self):
-        _, data = self.post("/jobs", **self.submit_body(priority=42))
-        assert data["job"]["priority"] == 42
-        assert self.service.submitted[-1][1].priority == 42
+        _, data = self.post("/jobs", **self.submit_body(priority=-42))
+        assert data["job"]["priority"] == -42
+        assert self.service.submitted[-1][1].priority == -42
 
     def test_update_priority(self):
         job = self.add_job(state=STATE_PENDING)
-        _, deferred = self.post(f"/jobs/{job.id}/priority", priority=75)
-        assert deferred.wait(0)["job"]["priority"] == 75
+        _, deferred = self.post(f"/jobs/{job.id}/priority", priority=-75)
+        assert deferred.wait(0)["job"]["priority"] == -75
 
     def test_invalid_priority_and_refused_job(self):
         job = self.add_job(state=STATE_PENDING)
-        for value in (-1, 1001, True, 3.2, "7", None):
+        for value in (-1001, 1001, True, 3.2, "7", None):
             with pytest.raises(ApiError) as error:
                 self.post(f"/jobs/{job.id}/priority", priority=value)
             assert error.value.status == 400
@@ -63,3 +63,8 @@ def test_client_and_cli_use_numeric_priority_including_zero_override():
         ["submit", "--host", "myhost", "--command", "true", "--priority", "0"]
     )
     assert _submit_fields(args)["priority"] == 0
+
+
+def test_cli_accepts_negative_priority():
+    args = build_parser().parse_args(["submit", "--host", "myhost", "--priority", "-10"])
+    assert _submit_fields(args)["priority"] == -10

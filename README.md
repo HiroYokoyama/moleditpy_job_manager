@@ -177,7 +177,7 @@ Torque/commercial UGE version, multinode MPI/GPU setup or site-specific policy.
 On hosts without a cluster scheduler, the helper queue dispatches jobs within
 physical-core and memory budgets. It runs only while work remains, keeps its
 queue in readable files on the host, and supports dependencies, pausing and
-scheduled starts. **Priority** is a number from 0 to 1000 (default 0): higher
+scheduled starts. **Priority** is a number from −1000 to 1000 (default 0): higher
 numbers run first, with submission order preserved for equal values. Use
 **Set Priority...** on a waiting job to change it. A chained-lanes mode is also available.
 

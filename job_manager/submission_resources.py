@@ -47,11 +47,11 @@ class SubmissionResources(QWidget):
         self.spin_ntasks.setRange(1, 4096)
         self.spin_cpus = QSpinBox()
         self.spin_cpus.setRange(1, 512)
-        from .models import MAX_PRIORITY
+        from .models import MAX_PRIORITY, MIN_PRIORITY
 
         self.lbl_priority = QLabel("Priority")
         self.spin_priority = QSpinBox()
-        self.spin_priority.setRange(0, MAX_PRIORITY)
+        self.spin_priority.setRange(MIN_PRIORITY, MAX_PRIORITY)
         self.spin_priority.setToolTip(
             "Higher numbers run first in the built-in queue. Equal priorities keep submission order. "
             "Running jobs, dependencies, and resource limits are unchanged."

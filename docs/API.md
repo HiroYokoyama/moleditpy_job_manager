@@ -323,7 +323,7 @@ somebody's input by accident is worse than an error.
 | `name` | Job name; defaults to the input's filename |
 | `queue`, `account`, `walltime` | Passed to the scheduler |
 | `nodes`, `ntasks`, `cpus_per_task`, `memory` | The resource request |
-| `priority` | Helper queue only: integer 0–1000, default 0. Higher runs first; ties keep submission order |
+| `priority` | Helper queue only: integer −1000 to 1000, default 0. Higher runs first; ties keep submission order |
 | `modules`, `pre_commands`, `extra_directives` | Added to the generated script |
 | `submit_options` | Extra arguments for the submit command (`qsub <these> script`), after the host's own |
 | `fetch_globs` | What to bring back |

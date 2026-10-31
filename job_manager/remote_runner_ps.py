@@ -51,7 +51,7 @@ from .remote_runner import (
     require_entry,
 )
 from .schedulers.windows import ps_quote
-from .models import MAX_PRIORITY, validate_priority
+from .models import MAX_PRIORITY, MIN_PRIORITY, validate_priority
 
 #: The unversioned name, as in the bash flavour: kept for the harnesses and
 #: for a runner left by an older plugin. What is written and started is
@@ -208,7 +208,7 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
             "    } else {",
             f"        $v = Get-Header $path {ps_quote(PRIORITY_TAG)}",
             "    }",
-            f"    if ($v -match '^[0-9]{{1,4}}$' -and [int]$v -le {MAX_PRIORITY}) {{ return [int]$v }}",
+            f"    if ($v -match '^-?[0-9]{{1,4}}$' -and [int]$v -ge {MIN_PRIORITY} -and [int]$v -le {MAX_PRIORITY}) {{ return [int]$v }}",
             "    return 0",
             "}",
             "",
@@ -678,7 +678,7 @@ def queue_detail_command(directory: str) -> str:
         f"if ($line.StartsWith({priority_tag})) {{ $p = $line.Substring({len(PRIORITY_TAG)}).Trim() }} }}; "
         f"$override = Join-Path {ps_quote(PRIORITY_DIR)} $f.Name; "
         "if (Test-Path -LiteralPath $override) { $p = Get-Content -LiteralPath $override | Select-Object -First 1 }; "
-        f"if ($p -notmatch '^[0-9]{{1,4}}$' -or [int]$p -gt {MAX_PRIORITY}) {{ $p = 0 }}; "
+        f"if ($p -notmatch '^-?[0-9]{{1,4}}$' -or [int]$p -lt {MIN_PRIORITY} -or [int]$p -gt {MAX_PRIORITY}) {{ $p = 0 }}; "
         '"entry $d $($f.Name) $c $m $p" } }'
     )
 

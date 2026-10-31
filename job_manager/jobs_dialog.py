@@ -743,7 +743,7 @@ class JobsDialog(QDialog):
         self.service.cancel(job)
 
     def _priority_selected(self) -> None:
-        from .models import MAX_PRIORITY
+        from .models import MAX_PRIORITY, MIN_PRIORITY
 
         job = self.selected_job()
         if job is None:
@@ -755,7 +755,7 @@ class JobsDialog(QDialog):
             "Job Priority",
             "Priority (higher runs first; equal values keep submission order):",
             job.priority,
-            0,
+            MIN_PRIORITY,
             MAX_PRIORITY,
         )
         if accepted:

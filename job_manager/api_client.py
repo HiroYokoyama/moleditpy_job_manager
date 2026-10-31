@@ -251,7 +251,7 @@ class JobManagerClient:
         return self.request("DELETE", f"jobs/{job_id}")
 
     def set_priority(self, job_id: str, priority: int) -> Dict[str, Any]:
-        """Set a waiting helper-queue job's priority (0-1000; higher runs first)."""
+        """Set a waiting helper-queue job's priority (-1000 to 1000; higher runs first)."""
         return self.request("POST", f"jobs/{job_id}/priority", body={"priority": priority})
 
     def force(self, job_id: str) -> Dict[str, Any]:
@@ -398,7 +398,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--priority",
         type=int,
         default=None,
-        help="Helper queue priority, 0-1000; higher runs first",
+        help="Helper queue priority, -1000 to 1000; higher runs first",
     )
     submit.add_argument("--account", default="")
     submit.add_argument("--walltime", default="")

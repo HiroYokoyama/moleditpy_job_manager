@@ -18,7 +18,7 @@ This document is the whole design. For using it, see
 ## Numeric priority
 
 Set **Priority** in the submission resources, or select a waiting job and choose
-**Set Priority...**. The allowed range is 0–1000; higher numbers go first.
+**Set Priority...**. The allowed range is −1000 to 1000; higher numbers go first.
 The default is 0, so existing saved jobs, presets, and queued scripts retain
 FIFO behavior. Priority is saved with each job and its resubmission preset.
 

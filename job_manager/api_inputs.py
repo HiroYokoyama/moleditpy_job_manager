@@ -148,7 +148,7 @@ class ApiInputs:
             # made a mistake worth reporting rather than reading as 1.
             if isinstance(value, bool) or not isinstance(value, int):
                 raise ApiError(400, f"'{key}' must be a whole number")
-            if value < 0:
+            if value < 0 and key != "priority":
                 raise ApiError(400, f"'{key}' cannot be negative")
             return value
         if kind is list:

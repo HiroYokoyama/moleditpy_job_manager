@@ -69,7 +69,7 @@ import sys
 from typing import List, Sequence
 
 from .remote_paths import quote
-from .models import MAX_PRIORITY, validate_priority
+from .models import MAX_PRIORITY, MIN_PRIORITY, validate_priority
 
 #: Directory the runner keeps its state in, under the host's remote root.
 RUNNER_DIRNAME = ".moleditpy_runner"
@@ -374,10 +374,12 @@ job_priority() {{
   else
     value=$(awk '/^# moleditpy-priority: / {{print $3; exit}}' "$1" 2>/dev/null)
   fi
-  case "$value" in ''|*[!0-9]*) value=0 ;; esac
-  if [ "${{#value}}" -gt 4 ]; then value=0; fi
-  value=$((10#$value))
-  [ "$value" -le {MAX_PRIORITY} ] || value=0
+  sign=1; magnitude=$value
+  case "$value" in -*) sign=-1; magnitude=${{value#-}} ;; esac
+  case "$magnitude" in ''|*[!0-9]*) magnitude=0 ;; esac
+  if [ "${{#magnitude}}" -gt 4 ]; then magnitude=0; fi
+  value=$((sign * 10#$magnitude))
+  [ "$value" -ge {MIN_PRIORITY} ] && [ "$value" -le {MAX_PRIORITY} ] || value=0
   printf '%s\\n' "$value"
 }}
 
@@ -871,10 +873,8 @@ def parse_queue_detail(stdout: str) -> dict:
                 "priority": (
                     int(parts[5])
                     if len(parts) > 5
-                    and parts[5].isascii()
-                    and parts[5].isdigit()
-                    and len(parts[5]) <= 4
-                    and int(parts[5]) <= MAX_PRIORITY
+                    and re.fullmatch(r"-?[0-9]{1,4}", parts[5])
+                    and MIN_PRIORITY <= int(parts[5]) <= MAX_PRIORITY
                     else 0
                 ),
             }

@@ -112,13 +112,18 @@ PROFILE_COMMANDS = (
 MODE_LANES = "lanes"
 MODE_RUNNER = "runner"
 
+MIN_PRIORITY = -1000
 MAX_PRIORITY = 1000
 
 
 def validate_priority(value: Any) -> int:
     """A helper-queue priority; larger numbers run first, zero is the default."""
-    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= MAX_PRIORITY:
-        raise ValueError(f"Priority must be a whole number from 0 to {MAX_PRIORITY}")
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not MIN_PRIORITY <= value <= MAX_PRIORITY
+    ):
+        raise ValueError(f"Priority must be a whole number from {MIN_PRIORITY} to {MAX_PRIORITY}")
     return value
 
 

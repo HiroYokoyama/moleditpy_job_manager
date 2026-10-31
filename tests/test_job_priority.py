@@ -14,7 +14,7 @@ from .test_remote_runner import BASH, RunnerHarness as BashHarness
 from .test_remote_runner_ps import POWERSHELL, RunnerHarness as PowerShellHarness
 
 
-@pytest.mark.parametrize("value", [True, False, -1, 1001, 1.5, "3", None])
+@pytest.mark.parametrize("value", [True, False, -1001, 1001, 1.5, "3", None])
 def test_priority_rejects_invalid_numbers(value):
     with pytest.raises(ValueError, match="Priority"):
         validate_priority(value)
@@ -23,7 +23,8 @@ def test_priority_rejects_invalid_numbers(value):
 def test_saved_priorities_and_legacy_defaults():
     assert Job.from_dict({}).priority == SubmitPreset.from_dict({}).priority == 0
     for model in (Job, SubmitPreset):
-        assert model.from_dict(model(priority=10).to_dict()).priority == 10
+        for value in (-1000, -1, 0, 10, 1000):
+            assert model.from_dict(model(priority=value).to_dict()).priority == value
 
 
 def test_queue_details_keep_legacy_entries_and_priority_order():
@@ -67,6 +68,22 @@ class PriorityBehavior:
         )
         with open(self.marker("order"), encoding="utf-8") as handle:
             assert handle.read().splitlines() == expected
+
+    def test_negative_priorities_sort_below_default_and_overrides_are_reported(self):
+        self.set_limit("slots", 1)
+        self.enqueue("lowest", self.append("lowest"), priority=-1000)
+        self.enqueue("low", self.append("low"), priority=-10)
+        self.enqueue("normal", self.append("normal"))
+        entry = self.enqueue("changed", self.append("changed"), priority=10)
+        assert (
+            self.command(self.flavour.set_priority_command(self.directory(), entry, -5))
+            == "updated"
+        )
+        detail = remote_runner.parse_queue_detail(
+            self.command(self.flavour.queue_detail_command(self.directory()))
+        )
+        assert [item["priority"] for item in detail["waiting"]] == [0, -5, -10, -1000]
+        self.finish_order(["normal", "changed", "low", "lowest"])
 
     def test_higher_priority_first_with_fifo_ties(self):
         self.set_limit("slots", 1)

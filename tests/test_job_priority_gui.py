@@ -25,8 +25,8 @@ class TestPriorityUi(DialogTestCase):
     def test_submission_priority_round_trips_and_only_applies_to_helpers(self):
         dialog = SubmitDialog(self.service)
         self.addCleanup(dialog.deleteLater)
-        dialog._apply_preset(SubmitPreset(priority=30))
-        assert dialog.collect_preset().priority == 30
+        dialog._apply_preset(SubmitPreset(priority=-30))
+        assert dialog.collect_preset().priority == -30
         assert not dialog.spin_priority.isHidden()
         self.host.scheduler = "slurm"
         dialog._update_force_row()
@@ -50,11 +50,11 @@ class TestPriorityUi(DialogTestCase):
         assert cell.data(Qt.ItemDataRole.UserRole) == 2
         assert dialog.job_actions["priority"].isEnabled()
         with (
-            patch("job_manager.jobs_dialog.QInputDialog.getInt", return_value=(12, True)),
+            patch("job_manager.jobs_dialog.QInputDialog.getInt", return_value=(-12, True)),
             patch.object(self.service, "set_priority") as update,
         ):
             dialog._priority_selected()
-        update.assert_called_once_with(job, 12, owner=dialog)
+        update.assert_called_once_with(job, -12, owner=dialog)
 
     def test_service_updates_saved_job_and_resubmit_snapshot_after_host_confirms(self):
         job = Job(
