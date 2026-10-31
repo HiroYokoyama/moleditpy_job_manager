@@ -51,3 +51,14 @@ class TestWaitingJobDoubleClick(DialogTestCase):
             dialog._open_double_clicked()
             tail.assert_called_once()
             details.assert_not_called()
+
+    def test_tail_file_toolbar_reuses_the_existing_action(self):
+        dialog = JobsDialog(self.service)
+        self.addCleanup(dialog.deleteLater)
+        actions = dialog.job_toolbar.actions()
+        assert (
+            actions.index(dialog.job_actions["tail_file"])
+            == actions.index(dialog.job_actions["tail"]) + 1
+        )
+        assert dialog.btn_tail_file.defaultAction() is dialog.job_actions["tail_file"]
+        assert dialog.btn_tail_file.text() == "Tail File…"

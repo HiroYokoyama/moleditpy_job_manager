@@ -342,11 +342,13 @@ class JobsDialog(QDialog):
 
     def _build_job_toolbar(self, layout: QVBoxLayout) -> None:
         self.job_toolbar = action_toolbar(
-            self, (self.job_actions[key] for key in ("open", "download", "tail", "details"))
+            self,
+            (self.job_actions[key] for key in ("open", "download", "tail", "tail_file", "details")),
         )
         self.btn_open = self.job_toolbar.widgetForAction(self.job_actions["open"])
         self.btn_download = self.job_toolbar.widgetForAction(self.job_actions["download"])
         self.btn_tail = self.job_toolbar.widgetForAction(self.job_actions["tail"])
+        self.btn_tail_file = self.job_toolbar.widgetForAction(self.job_actions["tail_file"])
         self.btn_details = self.job_toolbar.widgetForAction(self.job_actions["details"])
         spacer = QWidget(self.job_toolbar)
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
