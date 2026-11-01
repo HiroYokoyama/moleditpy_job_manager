@@ -4,7 +4,7 @@ Added in Job Manager 2.6.0.
 
 Release 2.6.0 publishes the plugin ZIP and requests the normal registry update.
 
-MoleditPy Job Server is a LAN computational helper: an authenticated shared queue
+[MoleditPy Job Server](https://github.com/HiroYokoyama/moleditpy_job_server) is a LAN computational helper: an authenticated shared queue
 running on a workstation/server. Job Manager remains the desktop client.
 
 Only **cryptography >=50.0.2** is added as an optional dependency. Install it in

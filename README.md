@@ -24,7 +24,7 @@ overloading a workstation.
 ## Features
 
 - **Submit calculations** to SLURM, PBS/Torque, SGE/UGE, a background process,
-  or [MoleditPy Job Server](docs/JOB_SERVER.md). Native Windows jobs use PowerShell;
+  or [MoleditPy Job Server](https://github.com/HiroYokoyama/moleditpy_job_server). Native Windows jobs use PowerShell;
   WSL jobs use bash inside the selected Linux distribution.
 - **Manage workstation resources** with a built-in queue that schedules by
   physical cores and memory. Pause the queue, change its limits, chain jobs,
