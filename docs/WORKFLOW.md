@@ -918,6 +918,13 @@ Host profiles and preferences are under **Tools ▸ Hosts...** and **Tools ▸ S
 On a narrow window, toolbar operations that do not fit are available from the
 arrow at the toolbar's right edge.
 
+In **Details**, **Full record and script** shows the saved job record and
+submission preset, including priority, force run, force chain, the preceding
+job and its completion condition, scheduled start, timestamps, download status,
+file paths and Job Server identifiers when present. The current host profile
+is labelled separately from the submission snapshot. The generated script is
+at the end of the record.
+
 | File menu action | Does |
 |---|---|
 | **Default List** | Returns to the plugin's usual live list |
