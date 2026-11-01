@@ -1,0 +1,9 @@
+codecov:
+  disable_default_path_fixes: true
+  notify:
+    after_n_builds: 3
+    wait_for_ci: true
+
+# coverage.py writes paths relative to the job_manager source directory.
+fixes:
+  - "::job_manager/"

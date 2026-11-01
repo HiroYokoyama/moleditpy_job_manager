@@ -2,7 +2,7 @@
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22671687.svg)](https://doi.org/10.5281/zenodo.22671687)
 [![Tests](https://github.com/HiroYokoyama/moleditpy_job_manager/actions/workflows/tests.yml/badge.svg)](https://github.com/HiroYokoyama/moleditpy_job_manager/actions/workflows/tests.yml)
-![Coverage](https://img.shields.io/badge/coverage-%3E80%25-brightgreen)
+[![Codecov](https://codecov.io/gh/HiroYokoyama/moleditpy_job_manager/branch/main/graph/badge.svg)](https://app.codecov.io/gh/HiroYokoyama/moleditpy_job_manager)
 [![GitHub tag](https://img.shields.io/github/v/tag/HiroYokoyama/moleditpy_job_manager?label=version)](https://github.com/HiroYokoyama/moleditpy_job_manager/tags)
 [![GitHub Downloads](https://img.shields.io/github/downloads/HiroYokoyama/moleditpy_job_manager/total)](https://github.com/HiroYokoyama/moleditpy_job_manager/releases)
 [![License: GPL v3](https://img.shields.io/badge/License-LGPLv3-blue.svg)](LICENSE)
@@ -363,7 +363,8 @@ and the [security model](docs/SECURITY_MODEL.md) for storage and trust boundarie
 ## Development
 
 ```bash
-python -m pytest tests/ -q -n auto
+pip install -e ".[all]" -r requirements-test.txt
+python -m pytest tests/ -q -n auto --cov=job_manager --cov-report=term-missing --cov-report=xml
 ruff format job_manager tests
 ruff check job_manager tests
 ```
@@ -377,6 +378,14 @@ CI covers Python 3.11–3.13, real Qt, native Windows and integration with
 MoleditPy. Optional test tiers skip when their prerequisites are absent; CI
 enforces the tiers assigned to each job. See [CLAUDE.md](CLAUDE.md) for the
 development and release workflow.
+
+The Codecov badge combines the full Linux Qt suite, Windows (including native
+desktop tests), and real MoleditPy integration reports. CI preserves each XML
+report for comparison with the local `coverage.xml`. Coverage jobs check required
+dependencies and a usable Bash; the native Windows and real-context gates fail
+if their required tiers skip. Pinned test tooling and shared coverage settings measure the complete
+`job_manager` package, without additional coverage exclusions. A combined cross-platform
+report can cover more lines than a single-platform local run.
 
 ## License
 

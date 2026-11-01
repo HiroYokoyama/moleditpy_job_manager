@@ -1,0 +1,6 @@
+# Match local and CI instrumentation so executable-line counts are comparable.
+coverage==7.13.4
+pytest==9.0.1
+pytest-cov==7.0.0
+pytest-xdist==3.8.0
+pytest-timeout==2.4.0

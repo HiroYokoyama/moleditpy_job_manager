@@ -43,7 +43,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: pip install pytest pytest-cov pytest-xdist pytest-timeout
+        run: pip install -r requirements-test.txt
 
       - name: Run tests with coverage
         # -n auto: the script-execution tests spend their time waiting on real
@@ -74,7 +74,10 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install pytest pytest-xdist pytest-timeout PySide6-Essentials
+        run: pip install -e ".[all]" -r requirements-test.txt
+
+      - name: Verify coverage dependencies and Bash execution
+        run: python -c "from PySide6.QtWidgets import QApplication; import paramiko, cryptography; from tests.bash_support import BASH; assert BASH, 'No usable Bash; helper tests would skip'"
 
       - name: Run the suite on Windows
         timeout-minutes: 20
@@ -82,7 +85,7 @@ jobs:
           QT_QPA_PLATFORM: offscreen
           PYTHONFAULTHANDLER: "1"
           JOB_MANAGER_QT_DIAGNOSTICS: "1"
-        run: python -m pytest tests/ -v --tb=short -n auto -rs --timeout=300 --timeout-method=thread
+        run: python -m pytest tests/ -v --tb=short -n auto -rs --timeout=300 --timeout-method=thread --cov=job_manager --cov-report=term-missing --cov-report=xml:coverage.xml
 
       - name: Preserve Windows Qt crash diagnostics
         if: always()
@@ -100,8 +103,10 @@ jobs:
         # is exactly the state it was added to end.
         run: |
           python -m pytest tests/test_windows_scheduler.py tests/test_remote_runner_ps.py `
-            -k "TestItReallyRuns or TestItRunsWhatIsQueued" -q --no-header -rs > tier.log 2>&1
+            -k "TestItReallyRuns or TestItRunsWhatIsQueued" -q --no-header -rs --cov=job_manager --cov-append --cov-report=xml:coverage.xml > tier.log 2>&1
+          $tierExit = $LASTEXITCODE
           type tier.log
+          if ($tierExit -ne 0) { exit $tierExit }
           if (Select-String -Path tier.log -Pattern "skipped" -Quiet) {
             echo "::error::The PowerShell execution tests skipped; this job exists to run them."
             exit 1
@@ -115,7 +120,7 @@ jobs:
         env:
           QT_QPA_PLATFORM: windows
         run: |
-          python -m pytest tests/test_win_taskbar_native.py tests/test_win_taskbar.py -v -rs --timeout=300 --timeout-method=thread > native.log 2>&1
+          python -m pytest tests/test_win_taskbar_native.py tests/test_win_taskbar.py -v -rs --timeout=300 --timeout-method=thread --cov=job_manager --cov-append --cov-report=xml:coverage.xml > native.log 2>&1
           $code = $LASTEXITCODE
           type native.log
           if ($code -ne 0) { exit $code }
@@ -123,6 +128,22 @@ jobs:
             echo "::error::The native task bar tests skipped; this step exists to run them."
             exit 1
           }
+
+      - name: Preserve coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-windows
+          path: coverage.xml
+          if-no-files-found: error
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage.xml
+          flags: windows
+          disable_search: true
+          fail_ci_if_error: true
 
   # -------------------------------------------------------------------------
   # GUI tests  Ereal PySide6, headless. Roughly half of this plugin is dialogs
@@ -152,7 +173,10 @@ jobs:
       # real SSHConfig parser -- a stub would test nothing, so those tests skip
       # themselves unless the package is actually here.
       - name: Install dependencies
-        run: pip install pytest pytest-cov PySide6-Essentials paramiko pytest-xdist pytest-timeout
+        run: pip install -e ".[all]" -r requirements-test.txt
+
+      - name: Verify coverage dependencies and Bash execution
+        run: python -c "from PySide6.QtWidgets import QApplication; import paramiko, cryptography; from tests.bash_support import BASH; assert BASH, 'No usable Bash; helper tests would skip'"
 
       - name: Run the full suite with real Qt
         env:
@@ -161,7 +185,23 @@ jobs:
         # bash and PowerShell processes, so the suite parallelises almost
         # perfectly -- 88s to 28s locally. Each test owns its own temp
         # directory and its own processes, so there is nothing shared to race.
-        run: python -m pytest tests/ -v --tb=short -n auto --timeout=300 --timeout-method=thread --cov=job_manager --cov-report=term-missing
+        run: python -m pytest tests/ -v --tb=short -n auto --timeout=300 --timeout-method=thread --cov=job_manager --cov-report=term-missing --cov-report=xml:coverage.xml
+
+      - name: Preserve coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-linux
+          path: coverage.xml
+          if-no-files-found: error
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage.xml
+          flags: linux
+          disable_search: true
+          fail_ci_if_error: true
 
   # -------------------------------------------------------------------------
   # Integration tests  Eclones the main MoleditPy app to enable real
@@ -190,7 +230,7 @@ jobs:
       # the plugin_interface chain reaches rdkit. Without both, the real-context
       # tier can only ever skip itself.
       - name: Install dependencies
-        run: pip install pytest pytest-cov PySide6-Essentials rdkit pytest-timeout
+        run: pip install -e ".[all]" rdkit -r requirements-test.txt
 
       - name: Clone main MoleditPy application
         shell: bash
@@ -212,17 +252,35 @@ jobs:
           QT_QPA_PLATFORM: offscreen
         # -rs prints skip reasons: a silently skipped real-context tier looks
         # exactly like a passing one in the log.
-        run: python -m pytest tests/test_plugin_integration.py tests/test_api.py -v -rs --timeout=300 --timeout-method=thread
+        run: python -m pytest tests/test_plugin_integration.py tests/test_api.py -v -rs --timeout=300 --timeout-method=thread --cov=job_manager --cov-report=term-missing --cov-report=xml:coverage.xml
 
       - name: Fail if the real-context tier did not actually run
         env:
           CI_MAIN_APP_SRC: ${{ github.workspace }}/../python_molecular_editor/moleditpy/src
           QT_QPA_PLATFORM: offscreen
         run: |
+          tier_status=0
           python -m pytest tests/test_plugin_integration.py \
-            -k TestWithRealPluginContext -q --no-header -rs > tier.log 2>&1 || true
+            -k TestWithRealPluginContext -q --no-header -rs --cov=job_manager --cov-append --cov-report=xml:coverage.xml > tier.log 2>&1 || tier_status=$?
           cat tier.log
+          if [ "$tier_status" -ne 0 ]; then exit "$tier_status"; fi
           if grep -q "skipped" tier.log; then
             echo "::error::The real-PluginContext tests skipped; this job exists to run them."
             exit 1
           fi
+
+      - name: Preserve coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-integration
+          path: coverage.xml
+          if-no-files-found: error
+
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage.xml
+          flags: integration
+          disable_search: true
+          fail_ci_if_error: true
