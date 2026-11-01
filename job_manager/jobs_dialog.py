@@ -6,6 +6,7 @@ affected rows instead of rebuilding every cell on a timer.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
@@ -1048,27 +1049,73 @@ class JobsDialog(QDialog):
             self._detail_dialogs.remove(dialog)
 
     def _describe(self, job: Job) -> str:
-        """The job record as text: what was asked for, and what happened."""
+        """The saved job and submit snapshot, followed by its generated script."""
         host = self.service.store.hosts.get(job.host_id)
+        predecessor = self.service.store.jobs.get(job.after_job_id)
+        display_state = self.model.display_state(job)
+        now = time.time()
         rows = [
             ("Name", job.name),
-            ("State", job.state + (f" (exit {job.rc})" if job.rc is not None else "")),
+            ("Job id", job.id),
+            ("Job number", job.number),
+            ("State", display_state),
+            ("Recorded state", job.state),
+            ("Exit code", job.rc),
             ("Host", job.host_name or (host.name if host else "(profile removed)")),
+            ("Host id", job.host_id),
             ("Scheduler", job.scheduler),
-            ("Queue id", job.remote_job_id or "-"),
-            ("Priority", f"{job.priority} (higher runs first in the helper queue)"),
+            ("Queue id", job.remote_job_id),
+            ("Priority", job.priority),
+            ("Last error", job.last_error),
+            ("", ""),
+            ("", "--- scheduling ---"),
+            ("Force run", job.force_run),
+            ("Force chain", bool(job.force_run and job.after_job_id)),
+            (
+                "After job",
+                f"{predecessor.name or 'job'} ({job.after_job_id})"
+                if predecessor is not None
+                else job.after_job_id,
+            ),
+            ("After queue id", predecessor.remote_job_id if predecessor is not None else ""),
+            (
+                "After state",
+                predecessor.state
+                if predecessor is not None
+                else ("not in current job list" if job.after_job_id else ""),
+            ),
+            ("Chain on any result", job.chain_any),
+            (
+                "Wait condition",
+                ("completion (success or failure)" if job.chain_any else "successful completion")
+                if job.after_job_id
+                else "",
+            ),
+            ("Scheduled start", format_stamp(job.start_after)),
+            ("", ""),
+            ("", "--- timing ---"),
             ("Submitted", format_stamp(job.submitted_at)),
             ("Started", format_stamp(job.started_at)),
+            ("Updated", format_stamp(job.updated_at)),
             ("Finished", format_stamp(job.finished_at)),
+            ("Queue wait", format_duration(job.waiting(now))),
+            ("Run time", format_duration(job.elapsed(now))),
+            ("", ""),
+            ("", "--- files and downloads ---"),
             ("Remote directory", job.remote_dir),
+            ("Provided directory", job.remote_dir_provided),
+            ("Remote input", job.remote_input),
+            ("Script file", job.script_name or "(scheduler default)"),
+            ("Completion sentinel", job.sentinel_name or "(default)"),
             ("Log file", job.log_file),
-            ("Input files", ", ".join(job.input_files) or "-"),
-            ("Downloaded to", job.local_dir or "-"),
-            ("Last error", job.last_error or "-"),
+            ("Input files", job.input_files),
+            ("Results folder", job.local_dir),
+            ("Fetch patterns", job.fetch_globs),
+            ("Auto download", job.auto_download),
+            ("Downloaded", job.downloaded),
+            ("Downloaded files", job.downloaded_files),
         ]
-        if job.force_run:
-            rows.insert(5, ("Force run", "started ahead of the queue"))
-        if self.model.display_state(job) in (
+        if display_state in (
             STATE_NEW,
             STATE_UPLOADING,
             STATE_SUBMITTED,
@@ -1077,39 +1124,77 @@ class JobsDialog(QDialog):
             STATE_BLOCKED,
         ):
             rows.insert(
-                2, ("Waiting", "This job has not started yet; its log and results may not exist.")
+                4, ("Waiting", "This job has not started yet; its log and results may not exist.")
             )
-        # The snapshot taken at submit time, not the named preset -- which may
-        # since have been edited or deleted.
+        server_fields = (
+            ("Server job id", job.server_job_id),
+            ("Server id", job.server_id),
+            ("Owner user id", job.owner_user_id),
+            ("Execution OS", job.execution_os),
+            ("Last server state", job.last_server_state),
+        )
+        if any(value for _, value in server_fields) or (host is not None and host.is_job_server):
+            rows += [("", ""), ("", "--- Job Server ---"), *server_fields]
         preset = job.preset or {}
         if preset:
-            rows += [
-                ("", ""),
-                ("Command", preset.get("command_template", "")),
-                ("Queue / partition", preset.get("queue", "") or "-"),
-                ("Account", preset.get("account", "") or "-"),
-                ("Walltime", preset.get("walltime", "") or "-"),
-                ("Nodes", str(preset.get("nodes", "") or "-")),
-                ("Tasks", str(preset.get("ntasks", "") or "-")),
-                ("CPUs per task", str(preset.get("cpus_per_task", "") or "-")),
-                ("Memory", preset.get("memory", "") or "-"),
-                ("Modules", ", ".join(preset.get("modules") or []) or "-"),
-                ("Pre-commands", "; ".join(preset.get("pre_commands") or []) or "-"),
-                ("Extra directives", "; ".join(preset.get("extra_directives") or []) or "-"),
-                ("Submit options", preset.get("submit_options", "") or "-"),
-                ("Fetch patterns", ", ".join(preset.get("fetch_globs") or []) or "-"),
-            ]
+            labels = (
+                ("id", "Preset id"),
+                ("name", "Preset name"),
+                ("host_id", "Preset host id"),
+                ("command_template", "Command template"),
+                ("queue", "Queue / partition"),
+                ("account", "Account"),
+                ("walltime", "Walltime"),
+                ("nodes", "Nodes"),
+                ("ntasks", "Tasks"),
+                ("cpus_per_task", "CPUs per task"),
+                ("memory", "Memory"),
+                ("priority", "Preset priority"),
+                ("modules", "Modules"),
+                ("pre_commands", "Pre-commands"),
+                ("extra_directives", "Extra directives"),
+                ("submit_options", "Submit options"),
+                ("fetch_globs", "Preset fetch patterns"),
+                ("auto_download", "Preset auto download"),
+            )
+            rows += [("", ""), ("", "--- submission preset ---")]
+            rows += [(label, preset.get(key)) for key, label in labels]
+            known = {key for key, _ in labels}
+            rows += [(f"Preset {key}", value) for key, value in preset.items() if key not in known]
         if host is not None:
             rows += [
                 ("", ""),
+                ("", "--- current host profile ---"),
                 ("Host target", host.target),
-                ("Reads login files", "yes" if host.load_profile else "no"),
-                ("Login commands", "; ".join(host.login_commands or []) or "-"),
-                ("Host submit options", host.submit_options or "-"),
+                ("Host backend", host.backend),
+                ("Host scheduler", host.scheduler),
+                ("Host job root", host.remote_root),
+                ("Concurrency mode", host.concurrency_mode),
+                ("Concurrent jobs limit", host.max_concurrent),
+                ("Detect resources", host.runner_detect),
+                ("Runner cores", host.runner_cores),
+                ("Runner memory (MB)", host.runner_memory_mb),
+                ("Reads login files", host.load_profile),
+                ("Login commands", host.login_commands),
+                ("Host submit options", host.submit_options),
             ]
+
+        def value_text(value):
+            if value is None or value == "":
+                return "-"
+            if isinstance(value, bool):
+                return "yes" if value else "no"
+            if isinstance(value, (list, tuple)):
+                return ", ".join(str(item) for item in value) or "-"
+            if isinstance(value, dict):
+                return json.dumps(value, ensure_ascii=False, sort_keys=True)
+            return str(value)
+
         width = max(len(label) for label, _ in rows)
-        lines = [f"{label.ljust(width)}  {value}".rstrip() for label, value in rows]
-        # Last and in full: the thing worth copying into a terminal by hand.
+        lines = [
+            f"{label.ljust(width)}  {value_text(value)}" if label else value
+            for label, value in rows
+        ]
         lines += ["", "--- script ---", job.command or "(not recorded)"]
         return "\n".join(lines)
 
