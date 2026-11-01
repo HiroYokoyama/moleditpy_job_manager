@@ -22,6 +22,7 @@ import pytest
 
 from job_manager.remote_runner import (
     CORES_NAME,
+    MEMORY_NAME,
     PAUSED_NAME,
     RUNNER_SCRIPT_NAME,
     SLOTS_NAME,
@@ -269,6 +270,9 @@ class TestTheLimits(RunnerHarness):
         for name in ("aaa", "bbb", "ccc"):
             self.enqueue(name, f"echo x >> {self.marker('live')}; sleep {BUSY}")
         self.set_limit(SLOTS_NAME, 2)
+        # This checks slots, so machine probing must not consume its deadline.
+        self.set_limit(CORES_NAME, 4)
+        self.set_limit(MEMORY_NAME, 0)
 
         self.start_runner()
 
@@ -367,6 +371,9 @@ class TestDependencies(RunnerHarness):
         self.enqueue("aaa", f"sleep {BUSY / 2}; echo aaa >> {self.marker('order')}")
         self.enqueue("bbb", f"echo bbb >> {self.marker('order')}", after="aaa")
         self.set_limit(SLOTS_NAME, 4)
+        # Dependency ordering is independent of the CI machine's resources.
+        self.set_limit(CORES_NAME, 4)
+        self.set_limit(MEMORY_NAME, 0)
 
         self.start_runner()
 

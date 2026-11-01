@@ -117,6 +117,27 @@ class TestWhatItShows(HostMonitorTestCase):
         dialog = self.monitor()
         self.assertEqual(len(dialog.cards), 2)
 
+    def test_all_running_jobs_refresh_without_sampling_the_host_again(self):
+        for i in range(3):
+            self.store.add_job(
+                Job(
+                    id=f"j{i}",
+                    name=f"job{i}",
+                    host_id=self.host.id,
+                    state="RUNNING",
+                    submitted_at=float(i),
+                )
+            )
+        dialog = self.monitor()
+        card = dialog.cards[self.host.id]
+        probes = self.transports[self.host.id].runs
+        self.assertEqual(len(card._running_job_labels), 2)
+        self.assertEqual(card.lbl_job._head, "job2")
+        self.store.jobs["j0"].state = "DONE"
+        dialog._refresh_card_jobs()
+        self.assertEqual(len(card._running_job_labels), 1)
+        self.assertEqual(self.transports[self.host.id].runs, probes)
+
     def test_the_first_sample_arrives_without_waiting_for_the_timer(self):
         # Opening the window and looking at an empty card for two seconds is a
         # worse first impression than one command's delay.

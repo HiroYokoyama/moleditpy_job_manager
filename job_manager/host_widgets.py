@@ -585,16 +585,21 @@ class HostCard(QFrame):
             widget.setVisible(False)
             outer.addWidget(widget, 1)
 
-        # One line for the job, one for the counts -- two labels, never one
-        # wrapping label, or a long job name would push the counts out of the
-        # card's fixed height.
         self._jobs: list = []
         self.lbl_job = _FixedLine(self)
+        self.other_running_jobs = QWidget(self)
+        self._running_jobs_layout = QVBoxLayout(self.other_running_jobs)
+        self._running_jobs_layout.setContentsMargins(0, 0, 0, 0)
+        self._running_jobs_layout.setSpacing(2)
+        self._running_job_labels: list = []
+        self._running_job_rows: tuple = ()
+        self.other_running_jobs.hide()
         self.lbl_job_counts = _FixedLine(self)
         counts_font = self.lbl_job_counts.font()
         counts_font.setPointSizeF(max(7.5, counts_font.pointSizeF() * 0.85))
         self.lbl_job_counts.setFont(counts_font)
         outer.addWidget(self.lbl_job)
+        outer.addWidget(self.other_running_jobs)
         outer.addWidget(self.lbl_job_counts)
 
         self.restyle()
@@ -665,20 +670,40 @@ class HostCard(QFrame):
         self._outer.setStretchFactor(self._meter_row, 0 if expanded else 1)
 
     def show_jobs(self, jobs: list) -> None:
-        """One line for what this host is doing, one for how far it has got.
-
-        The named job is chosen by state, not list order: whatever is
-        running, else most recently submitted, else the last to finish.
-        Matching only RUNNING left a card blank for the whole of a
-        resubmission, since a handed-over job starts in NEW/UPLOADING first.
-        """
+        """Show every running job, or a summary when none are running."""
         self._jobs = list(jobs)
         self._render_jobs()
+
+    def _show_other_running_jobs(self, jobs: list) -> None:
+        rows = tuple((job.id, job.name or "job", job.remote_job_id) for job in jobs)
+        if rows == self._running_job_rows:
+            return
+        self._running_job_rows = rows
+        while len(self._running_job_labels) > len(rows):
+            label = self._running_job_labels.pop()
+            self._running_jobs_layout.removeWidget(label)
+            label.hide()
+            label.deleteLater()
+        while len(self._running_job_labels) < len(rows):
+            label = _FixedLine(self.other_running_jobs)
+            self._running_jobs_layout.addWidget(label)
+            self._running_job_labels.append(label)
+        for label, (job_id, name, remote_id) in zip(self._running_job_labels, rows):
+            label.show_line(
+                name,
+                " - running",
+                head_style=f"color:{CY_GREEN};font-weight:bold",
+                tail_style=f"color:{CY_GREY}",
+            )
+            label.setToolTip(f"{name}\nQueue ID: {remote_id or job_id}")
+        self.other_running_jobs.setVisible(bool(rows))
 
     def _render_jobs(self) -> None:
         jobs = self._jobs
         if not jobs:
             self.lbl_job.clear_line()
+            self.lbl_job.setToolTip("")
+            self._show_other_running_jobs([])
             self.lbl_job_counts.clear_line()
             return
 
@@ -693,7 +718,12 @@ class HostCard(QFrame):
         # to fall through both halves and vanish from the card.
         unfinished = [job for job in jobs if not job.is_terminal]
         starting = [job for job in jobs if job.state in (STATE_NEW, STATE_UPLOADING)]
-        running = [job for job in jobs if job.state == STATE_RUNNING]
+        running = sorted(
+            (job for job in jobs if job.state == STATE_RUNNING),
+            key=lambda job: (job.started_at or job.submitted_at, job.id),
+            reverse=True,
+        )
+        self._show_other_running_jobs(running[1:])
         waiting = [job for job in jobs if job.state in ACTIVE_STATES and job.state != STATE_RUNNING]
         fetching = [job for job in jobs if job.state == STATE_DOWNLOADING]
 
@@ -704,7 +734,7 @@ class HostCard(QFrame):
             return max(candidates, key=lambda job: (job.started_at or job.submitted_at, job.id))
 
         if running:
-            primary, word, color, mark = latest(running), "running", CY_GREEN, ""
+            primary, word, color, mark = running[0], "running", CY_GREEN, ""
         elif starting:
             primary, word, color, mark = latest(starting), "submitting", CY_AMBER, HOURGLASS
         elif waiting:
@@ -722,7 +752,10 @@ class HostCard(QFrame):
             head_style=f"color:{color};font-weight:bold",
             tail_style=f"color:{CY_GREY}",
         )
+        self.lbl_job.setToolTip(f"{primary.name or 'job'} - {word}")
         counts = [f"{len(unfinished)} active"] if unfinished else []
+        if len(running) > 1:
+            counts.insert(0, f"{len(running)} running")
         counts.append(f"{len(finished)}/{total} finished")
         if failed:
             counts.append(f"{len(failed)} failed")
