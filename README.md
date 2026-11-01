@@ -34,7 +34,8 @@ overloading a workstation.
   job. ORCA, Gaussian, Psi4, NWChem, Q-Chem and GAMESS inputs can supply their own
   core and memory requests.
 - **Monitor jobs and hosts.** Sort and filter jobs, browse remote files and logs,
-  and view CPU, memory and load in the Host Monitor. Desktop notifications,
+  and view CPU, memory, load and every running job in each Host Monitor card.
+  Desktop notifications,
   task-bar progress, a tray icon and Slack/Discord/Teams webhooks are available.
 - **Collect results.** Download outputs automatically beside the input file and
   open them through the installed result analyzer. Save job lists as SQLite `.pmejdb` or legacy `.pmejbs`,

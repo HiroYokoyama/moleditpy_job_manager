@@ -14,6 +14,7 @@ pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 
 from PySide6.QtCore import QEvent  # noqa: E402
 from PySide6.QtGui import QPalette, QColor  # noqa: E402
+from PySide6.QtWidgets import QApplication, QAbstractScrollArea  # noqa: E402
 
 from job_manager import theme  # noqa: E402
 from job_manager.host_monitor import BLANK, HOURGLASS, _ActiveJobsBar  # noqa: E402
@@ -414,7 +415,7 @@ class TestActiveJobsBar(HostMonitorTestCase):
 
 
 class TestHostCardJobsStrip(HostMonitorTestCase):
-    """Each card says what its own host is doing, on exactly two lines."""
+    """Each card lists running jobs and summarizes its host progress."""
 
     def _card(self, width: int = 300):
         from job_manager.host_monitor import HostCard
@@ -493,6 +494,54 @@ class TestHostCardJobsStrip(HostMonitorTestCase):
         card.show_jobs(jobs)
         self.assertIn("job7", card.lbl_job.text())
         self.assertIn("8 active", card.lbl_job_counts.text())
+
+    def test_every_running_job_is_listed_with_stable_order(self):
+        card = self._card()
+        jobs = [self._job(id=f"j{i}", name=f"job{i}", submitted_at=float(i)) for i in range(8)]
+        jobs.append(self._job(id="waiting", name="queued", state="PENDING"))
+        card.show_jobs(jobs)
+        self.assertEqual(card.lbl_job._head, "job7")
+        self.assertEqual(
+            [label._head for label in card._running_job_labels],
+            [f"job{i}" for i in range(6, -1, -1)],
+        )
+        self.assertIn("8 running", card.lbl_job_counts.text())
+        first = card._running_job_labels[0]
+        jobs[0].touch()
+        card.show_jobs(list(reversed(jobs)))
+        self.assertIs(card._running_job_labels[0], first)
+
+    def test_running_list_clears_when_jobs_finish_or_are_removed(self):
+        card = self._card()
+        first = self._job(id="first", name="first", submitted_at=10)
+        second = self._job(id="second", name="second", submitted_at=20)
+        card.show_jobs([first, second])
+        self.assertFalse(card.other_running_jobs.isHidden())
+        first.state = "DONE"
+        card.show_jobs([first, second])
+        self.assertEqual(len(card._running_job_labels), 0)
+        self.assertTrue(card.other_running_jobs.isHidden())
+        card.show_jobs([self._job(id="third", name="third"), second])
+        card.show_jobs([])
+        self.assertEqual(len(card._running_job_labels), 0)
+        self.assertTrue(card.other_running_jobs.isHidden())
+        self.assertEqual(card.lbl_job.toolTip(), "")
+
+    def test_every_running_job_has_a_direct_card_line(self):
+        card = self._card(width=220)
+        jobs = [
+            self._job(id=f"j{i}", name=f"<job{i}>" + "x" * 100, submitted_at=float(i))
+            for i in range(40)
+        ]
+        card.show_jobs(jobs)
+        QApplication.processEvents()
+        self.assertEqual(len(card._running_job_labels), 39)
+        self.assertEqual(card.findChildren(QAbstractScrollArea), [])
+        for label, job in zip(card._running_job_labels, reversed(jobs[:-1])):
+            self.assertEqual(label._head, job.name)
+            self.assertIn(job.name, label.toolTip())
+            self.assertFalse(label.wordWrap())
+        self.assertNotIn("<job38>", card._running_job_labels[0].text())
 
     def test_the_named_job_does_not_change_when_a_poll_touches_the_others(self):
         # updated_at is rewritten for every job a poll resolves, so choosing by
