@@ -171,23 +171,56 @@ class TestWhatItShows(HostMonitorTestCase):
         card = dialog.cards[self.host.id]
         self.assertLess(card.minimumSizeHint().width(), dialog.CARD_WIDTH)
 
-    def test_the_bar_takes_the_height_the_card_has_spare(self):
+    def test_the_card_grows_without_stretching_the_bars(self):
         dialog = self.monitor()
         card = dialog.cards[self.host.id]
+        card.resize(400, card.sizeHint().height())
+        card.layout().activate()
+        meter_height = card.meter_cpu.height()
+        job_top = card.lbl_job.y()
         tall = card.height() + 120
         card.resize(card.width(), tall)
         card.layout().activate()
-        self.assertGreater(card.meter_cpu.height(), 160)
+        self.assertEqual(card.height(), tall)
+        self.assertEqual(card.meter_cpu.height(), meter_height)
+        self.assertEqual(card.lbl_job.y(), job_top)
 
-    def test_the_hidden_bars_do_not_hold_height_back_from_the_graphs(self):
-        # The meters sit in a nested layout, which -- unlike a hidden widget --
-        # stays in the parent layout and would keep its share of the card.
+    def test_history_graphs_keep_their_height_when_the_card_grows(self):
         dialog = self.monitor()
         card = dialog.cards[self.host.id]
         card.set_expanded(True)
-        self.assertEqual(card._outer.stretch(card._outer.indexOf(card._meter_row)), 0)
+        card.resize(400, card.sizeHint().height())
+        card.layout().activate()
+        heights = (card.graph_cpu.height(), card.graph_memory.height())
+        card.resize(card.width(), card.height() + 180)
+        card.layout().activate()
+        self.assertEqual((card.graph_cpu.height(), card.graph_memory.height()), heights)
+        self.assertTrue(card.meter_cpu.isHidden())
         card.set_expanded(False)
-        self.assertEqual(card._outer.stretch(card._outer.indexOf(card._meter_row)), 1)
+        self.assertTrue(card.graph_cpu.isHidden())
+        self.assertFalse(card.meter_cpu.isHidden())
+
+    def test_first_and_later_job_rows_have_the_same_spacing(self):
+        from PySide6.QtWidgets import QApplication
+
+        for index in range(4):
+            self.store.add_job(
+                Job(
+                    id=f"row{index}",
+                    host_id=self.host.id,
+                    name=f"Calculation {index}",
+                    state="RUNNING",
+                )
+            )
+        dialog = self.monitor()
+        dialog.show()
+        QApplication.processEvents()
+        card = dialog.cards[self.host.id]
+        labels = [card.lbl_job, *card._running_job_labels]
+        tops = [label.mapTo(card, label.rect().topLeft()).y() for label in labels]
+        pitches = [second - first for first, second in zip(tops, tops[1:])]
+        self.assertEqual(len(labels), 4)
+        self.assertEqual(len(set(pitches)), 1, pitches)
 
     def test_the_history_button_opens_every_card_at_once(self):
         self.store.add_host(make_host(id="second", name="workstation"))
