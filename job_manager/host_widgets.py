@@ -283,9 +283,7 @@ class Meter(QWidget):
         self.setMinimumHeight(132)
         self.setMinimumWidth(67)
         self.setMaximumWidth(132)
-        # The bar is the thing this card exists to show, so it takes whatever
-        # height the card has spare.
-        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
 
     def sizeHint(self) -> QSize:
         # Tall enough to compare across cards at a glance, short enough that
@@ -376,7 +374,7 @@ class Sparkline(QWidget):
         # Room for the label row above the plot as well as the plot itself;
         # a tighter minimum left the plot barely taller than its caption.
         self.setMinimumHeight(110)
-        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding)
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
 
     def sizeHint(self) -> QSize:
         return QSize(180, 128)
@@ -574,16 +572,14 @@ class HostCard(QFrame):
         columns.addWidget(self.meter_cpu)
         columns.addWidget(self.meter_memory)
         columns.addStretch(1)
-        outer.addLayout(columns, 1)
-        self._outer = outer
-        self._meter_row = columns
+        outer.addLayout(columns)
 
         self.graph_cpu = Sparkline(GRAPH_CPU, "CPU")
         self.graph_load = self.graph_cpu
         self.graph_memory = Sparkline(GRAPH_MEMORY, "memory")
         for widget in (self.graph_cpu, self.graph_memory):
             widget.setVisible(False)
-            outer.addWidget(widget, 1)
+            outer.addWidget(widget)
 
         self._jobs: list = []
         self.lbl_job = _FixedLine(self)
@@ -598,9 +594,16 @@ class HostCard(QFrame):
         counts_font = self.lbl_job_counts.font()
         counts_font.setPointSizeF(max(7.5, counts_font.pointSizeF() * 0.85))
         self.lbl_job_counts.setFont(counts_font)
-        outer.addWidget(self.lbl_job)
-        outer.addWidget(self.other_running_jobs)
+        job_rows = QVBoxLayout()
+        job_rows.setContentsMargins(0, 0, 0, 0)
+        job_rows.setSpacing(self._running_jobs_layout.spacing())
+        job_rows.addWidget(self.lbl_job)
+        job_rows.addWidget(self.other_running_jobs)
+        outer.addLayout(job_rows)
         outer.addWidget(self.lbl_job_counts)
+        # Cards share a grid-row height; extra room belongs below their
+        # content so different job counts never stretch the graphs.
+        outer.addStretch(1)
 
         self.restyle()
 
@@ -664,10 +667,6 @@ class HostCard(QFrame):
         self.graph_memory.setVisible(expanded)
         self.meter_cpu.setVisible(not expanded)
         self.meter_memory.setVisible(not expanded)
-        # A hidden widget drops out of the layout, but the nested row holding
-        # it does not: left with a stretch factor it would still claim height
-        # for two invisible bars.
-        self._outer.setStretchFactor(self._meter_row, 0 if expanded else 1)
 
     def show_jobs(self, jobs: list) -> None:
         """Show every running job, or a summary when none are running."""
