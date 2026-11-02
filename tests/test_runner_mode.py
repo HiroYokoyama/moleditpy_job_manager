@@ -269,19 +269,25 @@ class TestPolling(RunnerModeTestCase):
 
     def test_a_waiting_job_reads_as_pending(self):
         job = self._job()
-        self.transport.when("for d in queue running done", stdout=f"queue {job.remote_job_id}\n")
+        self.transport.when(
+            remote_runner.list_command(self.directory), stdout=f"queue {job.remote_job_id}\n"
+        )
 
         self.assertEqual(poll_runner(self.transport, self.host, [job]), {job.id: STATE_PENDING})
 
     def test_a_dispatched_job_reads_as_running(self):
         job = self._job()
-        self.transport.when("for d in queue running done", stdout=f"running {job.remote_job_id}\n")
+        self.transport.when(
+            remote_runner.list_command(self.directory), stdout=f"running {job.remote_job_id}\n"
+        )
 
         self.assertEqual(poll_runner(self.transport, self.host, [job]), {job.id: STATE_RUNNING})
 
     def test_an_unchanged_state_is_not_reported(self):
         job = self._job(state=STATE_RUNNING)
-        self.transport.when("for d in queue running done", stdout=f"running {job.remote_job_id}\n")
+        self.transport.when(
+            remote_runner.list_command(self.directory), stdout=f"running {job.remote_job_id}\n"
+        )
 
         self.assertEqual(poll_runner(self.transport, self.host, [job]), {})
 
@@ -289,7 +295,9 @@ class TestPolling(RunnerModeTestCase):
         # The runner's opinion is not consulted for the exit code: the wrapper
         # wrote the real one, the same as on every other backend.
         job = self._job()
-        self.transport.when("for d in queue running done", stdout=f"done {job.remote_job_id}\n")
+        self.transport.when(
+            remote_runner.list_command(self.directory), stdout=f"done {job.remote_job_id}\n"
+        )
         self.transport.when("@@MOLEDITPY@@", stdout="@@MOLEDITPY@@\n0\n")
 
         updates = poll_runner(self.transport, self.host, [job])
@@ -299,7 +307,9 @@ class TestPolling(RunnerModeTestCase):
 
     def test_a_job_the_runner_blocked_is_reported_as_failed_with_a_reason(self):
         job = self._job()
-        self.transport.when("for d in queue running done", stdout=f"done {job.remote_job_id}\n")
+        self.transport.when(
+            remote_runner.list_command(self.directory), stdout=f"done {job.remote_job_id}\n"
+        )
         self.transport.when("status/", stdout=f"@@MOLEDITPY@@\n{remote_runner.STATUS_BLOCKED}\n")
         self.transport.when("@@MOLEDITPY@@", stdout="@@MOLEDITPY@@\nMISSING\n")
 
@@ -314,12 +324,14 @@ class TestPolling(RunnerModeTestCase):
 
     def test_one_listing_covers_every_job(self):
         jobs = [self._job(1), self._job(2)]
-        self.transport.when("for d in queue running done", stdout="")
+        self.transport.when(remote_runner.list_command(self.directory), stdout="")
         self.transport.when("@@MOLEDITPY@@", stdout="@@MOLEDITPY@@\n0\n@@MOLEDITPY@@\n0\n")
 
         poll_runner(self.transport, self.host, jobs)
 
-        listings = [c for c in self.transport.commands if "for d in queue running done" in c]
+        listings = [
+            c for c in self.transport.commands if c == remote_runner.list_command(self.directory)
+        ]
         self.assertEqual(len(listings), 1)
 
 
@@ -385,7 +397,9 @@ class TestCancelling(RunnerModeTestCase):
         command = self.transport.commands[-1]
         # A waiting job is cancelled by leaving the queue, which frees its slot
         # at once; only a running one needs killing.
-        self.assertIn(f'mv "queue/{job.remote_job_id}"', command)
+        self.assertIn(
+            remote_runner.cancel_command(self.directory, job.remote_job_id), self.transport.commands
+        )
         self.assertIn("kill", command)
 
 

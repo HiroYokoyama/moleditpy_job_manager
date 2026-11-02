@@ -56,6 +56,9 @@ class FakeService:
         self._tail_error: Optional[Callable] = None
         self._list_ok: Optional[Callable] = None
         self._list_error: Optional[Callable] = None
+        self.answers: dict = {}
+        self.fail_with: str = ""
+        self.refusal: str = ""
 
     def submit(self, host, preset, name, files, **kwargs):
         job = Job(
@@ -100,10 +103,6 @@ class FakeService:
     #: Each of these answers at once, with whatever the test put in
     #: ``answers`` -- or reports ``fail_with`` if that is set.
 
-    answers: dict = {}
-    fail_with: str = ""
-    refusal: str = ""
-
     def _answer(self, key, on_done, on_error, default=None):
         if self.fail_with:
             on_error(self.fail_with)
@@ -115,6 +114,18 @@ class FakeService:
 
     def priority_refusal(self, job):
         return self.refusal
+
+    def hold_refusal(self, job, held=True):
+        return self.refusal
+
+    def set_hold(self, job, held, on_done=None, on_error=None, owner=None):
+        if self.fail_with:
+            on_error(self.fail_with)
+        else:
+            updated = self.answers.get("hold", True)
+            if updated:
+                job.state = "HELD" if held else "PENDING"
+            on_done(job, updated)
 
     def set_priority(self, job, priority, on_done=None, on_error=None, owner=None):
         if self.fail_with:

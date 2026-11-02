@@ -78,7 +78,8 @@ from .models import (
     STATE_LOST,
     STATE_NEW,
     STATE_PENDING,
-    STATE_QUEUED,
+    STATE_HELD,
+    hold_reasons,
     STATE_SUBMITTED,
     STATE_UPLOADING,
     Job,
@@ -200,6 +201,8 @@ class JobsDialog(QDialog):
             "_convert_job_list": self._convert_job_list,
             "_force_selected": self._force_selected,
             "_priority_selected": self._priority_selected,
+            "_hold_selected": self._hold_selected,
+            "_release_selected": self._release_selected,
             "_load_archive": self._load_archive,
             "_open_job_list_file": self._open_job_list_file,
             "_open_selected_result": self._open_selected_result,
@@ -510,6 +513,8 @@ class JobsDialog(QDialog):
             "clear": not archived,
             "force": bool(live and job and not self.service.force_refusal(job)),
             "priority": bool(live and job and not self.service.priority_refusal(job)),
+            "hold": bool(live and job and not self.service.hold_refusal(job, True)),
+            "release": bool(live and job and not self.service.hold_refusal(job, False)),
             "recheck": bool(live and job and job.state == STATE_LOST),
         }
         for key, action in self.job_actions.items():
@@ -743,6 +748,27 @@ class JobsDialog(QDialog):
             return
         self.service.cancel(job)
 
+    def _hold_selected(self, held: bool = True) -> None:
+        job = self.selected_job()
+        if job is None or not self._has_credentials(job):
+            return
+        key = "hold" if held else "release"
+        self._set_action_busy(key, True)
+
+        def done(current, updated):
+            self._set_action_busy(key, False)
+            if not updated:
+                self._append_message("The job is no longer waiting in the queue")
+
+        def failed(message):
+            self._set_action_busy(key, False)
+            self._append_message(message)
+
+        self.service.set_hold(job, held, on_done=done, on_error=failed, owner=self)
+
+    def _release_selected(self) -> None:
+        self._hold_selected(False)
+
     def _priority_selected(self) -> None:
         from .models import MAX_PRIORITY, MIN_PRIORITY
 
@@ -886,7 +912,7 @@ class JobsDialog(QDialog):
             STATE_UPLOADING,
             STATE_SUBMITTED,
             STATE_PENDING,
-            STATE_QUEUED,
+            STATE_HELD,
             STATE_BLOCKED,
         ):
             self._show_details()
@@ -1035,6 +1061,7 @@ class JobsDialog(QDialog):
             f"Job Manager {PLUGIN_VERSION} - {job.name}",
             self,
             read_only=self.viewing_archive() or self.viewing_reconstructed(),
+            describe=self._describe,
         )
         dialog.show()
         # Held so Python does not collect the window the moment this returns.
@@ -1069,6 +1096,8 @@ class JobsDialog(QDialog):
             ("Last error", job.last_error),
             ("", ""),
             ("", "--- scheduling ---"),
+            ("Manual hold", job.state == STATE_HELD),
+            ("Hold reasons", hold_reasons(job, self.service.store.jobs)),
             ("Force run", job.force_run),
             ("Force chain", bool(job.force_run and job.after_job_id)),
             (
@@ -1120,7 +1149,7 @@ class JobsDialog(QDialog):
             STATE_UPLOADING,
             STATE_SUBMITTED,
             STATE_PENDING,
-            STATE_QUEUED,
+            STATE_HELD,
             STATE_BLOCKED,
         ):
             rows.insert(

@@ -24,6 +24,7 @@ STATE_NEW = "NEW"
 STATE_UPLOADING = "UPLOADING"
 STATE_SUBMITTED = "SUBMITTED"
 STATE_PENDING = "PENDING"
+STATE_HELD = "HELD"
 STATE_RUNNING = "RUNNING"
 STATE_COMPLETING = "COMPLETING"
 STATE_DOWNLOADING = "DOWNLOADING"
@@ -31,7 +32,8 @@ STATE_DONE = "DONE"
 STATE_FAILED = "FAILED"
 STATE_CANCELLED = "CANCELLED"
 STATE_LOST = "LOST"
-#: Display only: a chained job whose predecessor has not finished. The wrapper
+#: Legacy display spelling, retained for callers; the UI now uses STATE_HELD.
+#: A chained job whose predecessor has not finished. The wrapper
 #: is alive and waiting, so the queue reports it running -- but "RUNNING" would
 #: tell the user their calculation had started when it has not.
 STATE_QUEUED = "QUEUED"
@@ -46,6 +48,7 @@ ALL_STATES = (
     STATE_UPLOADING,
     STATE_SUBMITTED,
     STATE_PENDING,
+    STATE_HELD,
     STATE_RUNNING,
     STATE_COMPLETING,
     STATE_DOWNLOADING,
@@ -60,6 +63,7 @@ ACTIVE_STATES = frozenset(
     {
         STATE_SUBMITTED,
         STATE_PENDING,
+        STATE_HELD,
         STATE_RUNNING,
         STATE_COMPLETING,
     }
@@ -672,3 +676,14 @@ def assign_job_numbers(jobs: List[Job]) -> None:
     """Number a list chronologically in memory, without writing its file."""
     for number, job in enumerate(sorted(jobs, key=lambda job: (job.submitted_at, job.id)), start=1):
         job.number = number
+
+
+def hold_reasons(job: Job, jobs: Dict[str, Job]) -> List[str]:
+    """Manual and dependency gates; releasing one never removes the other."""
+    if not job.is_active:
+        return []
+    reasons = ["Manual"] if job.state == STATE_HELD else []
+    predecessor = jobs.get(job.after_job_id)
+    if predecessor is not None and not predecessor.is_terminal:
+        reasons.append(f"After: {predecessor.name or predecessor.id}")
+    return reasons

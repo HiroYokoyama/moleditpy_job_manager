@@ -17,7 +17,7 @@ from typing import Callable, List, Optional
 
 from PySide6.QtCore import QObject
 
-from .models import STATE_FAILED, STATE_LOST, STATE_RUNNING
+from .models import STATE_FAILED, STATE_LOST, STATE_RUNNING, hold_reasons
 
 #: Ending states that want the user's attention rather than just a note.
 FAILURE_STATES = (STATE_FAILED, STATE_LOST)
@@ -30,7 +30,7 @@ def count_jobs(store) -> dict:
     for job in store.active_jobs():
         if job.id in blocked_ids:
             blocked += 1
-        elif job.state == STATE_RUNNING:
+        elif job.state == STATE_RUNNING and not hold_reasons(job, store.jobs):
             running += 1
         else:
             waiting += 1

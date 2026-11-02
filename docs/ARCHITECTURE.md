@@ -176,7 +176,7 @@ make it safe, resource scheduling, dependencies, and the two flavours.
 
 What matters at this level:
 
-* **A job's directory is its state.** `queue/`, `running/`, `done/` — nothing
+* **A job's directory is its state.** `held/`, `queue/`, `running/`, `done/` — nothing
   is tracked separately, which is what lets the whole queue be read over plain
   `ssh` with `ls`.
 * **The wrapper is the same one every other backend runs**, so completion is

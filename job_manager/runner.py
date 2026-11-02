@@ -38,6 +38,7 @@ from .models import (
     STATE_FAILED,
     STATE_LOST,
     STATE_PENDING,
+    STATE_HELD,
     STATE_RUNNING,
     STATE_SUBMITTED,
     HostProfile,
@@ -632,6 +633,22 @@ def set_runner_priority(transport: Transport, host: HostProfile, job: Job, prior
     return True
 
 
+def set_runner_hold(transport: Transport, host: HostProfile, job: Job, held: bool) -> bool:
+    directory = remote_runner.runner_dir(effective_root(host))
+    flavour = remote_runner.flavour_for(host)
+    script_name = _prepare_runner(transport, host)
+    result = transport.run(flavour.set_hold_command(directory, job.remote_job_id, held))
+    result.check("hold job" if held else "release manual hold")
+    answer = result.stdout.strip().splitlines()[-1:]
+    if answer == [remote_runner.NOT_QUEUED]:
+        return False
+    if answer != ["updated"]:
+        raise TransportError("The helper did not confirm the hold change")
+    if not held:
+        _start_runner(transport, host, script_name, "The manual hold was released")
+    return True
+
+
 def runner_queue(transport: Transport, host: HostProfile) -> dict:
     """The helper queue on ``host``: what runs, what waits in what order, the limits."""
     directory = remote_runner.runner_dir(effective_root(host))
@@ -796,7 +813,8 @@ def poll_runner(transport: Transport, host: HostProfile, jobs: Sequence[Job]) ->
         return {}
 
     directory = remote_runner.runner_dir(effective_root(host))
-    result = transport.run(remote_runner.flavour_for(host).list_command(directory))
+    listing_command = remote_runner.flavour_for(host).list_command(directory)
+    result = transport.run(listing_command)
     result.check("query helper queue")
     where = remote_runner.parse_listing(result.stdout)
 
@@ -807,6 +825,9 @@ def poll_runner(transport: Transport, host: HostProfile, jobs: Sequence[Job]) ->
         if place == "queue":
             if job.state != STATE_PENDING:
                 updates[job.id] = STATE_PENDING
+        elif place == "held":
+            if job.state != STATE_HELD:
+                updates[job.id] = STATE_HELD
         elif place == "running":
             if job.state != STATE_RUNNING:
                 updates[job.id] = STATE_RUNNING
@@ -814,6 +835,7 @@ def poll_runner(transport: Transport, host: HostProfile, jobs: Sequence[Job]) ->
             finished.append(job)
 
     if finished:
+        missing = []
         outcomes = _read_sentinels(transport, finished)
         statuses = _runner_statuses(transport, directory, finished)
         for job, outcome in zip(finished, outcomes):
@@ -833,6 +855,25 @@ def poll_runner(transport: Transport, host: HostProfile, jobs: Sequence[Job]) ->
                 outcome = STATE_DONE if job.rc == 0 else STATE_FAILED
             if outcome != job.state:
                 updates[job.id] = outcome
+            if outcome == STATE_LOST:
+                missing.append(job)
+        if missing:
+            # Hold/Release moves entries in both directions. Another client
+            # can move one between directory scans; do not retire it as LOST
+            # on that single observation. Only unresolved jobs trigger a retry.
+            retry = transport.run(listing_command)
+            retry.check("recheck missing helper entries")
+            locations = remote_runner.parse_listing(retry.stdout)
+            states = {"held": STATE_HELD, "queue": STATE_PENDING, "running": STATE_RUNNING}
+            for job in missing:
+                place = locations.get(job.id)
+                if place in states:
+                    if states[place] == job.state:
+                        updates.pop(job.id, None)
+                    else:
+                        updates[job.id] = states[place]
+                elif place == "done":
+                    updates.pop(job.id, None)  # The next poll reads its completion evidence.
     return updates
 
 

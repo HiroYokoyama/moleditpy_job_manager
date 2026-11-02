@@ -25,7 +25,6 @@ from .host_sampler import (  # noqa: E402,F401 - re-exported for callers of this
     OPENSSH_INTERVAL_SECONDS,
 )
 from .models import (
-    ACTIVE_STATES,
     STATE_CANCELLED,
     STATE_DONE,
     STATE_DOWNLOADING,
@@ -35,6 +34,7 @@ from .models import (
     STATE_RUNNING,
     STATE_UPLOADING,
     HostProfile,
+    hold_reasons,
 )
 from .theme import (
     CY_ACCENT,
@@ -718,13 +718,17 @@ class HostCard(QFrame):
         # to fall through both halves and vanish from the card.
         unfinished = [job for job in jobs if not job.is_terminal]
         starting = [job for job in jobs if job.state in (STATE_NEW, STATE_UPLOADING)]
+        jobs_by_id = {job.id: job for job in jobs}
+        held = {job.id: hold_reasons(job, jobs_by_id) for job in jobs}
         running = sorted(
-            (job for job in jobs if job.state == STATE_RUNNING),
+            (job for job in jobs if job.state == STATE_RUNNING and not held[job.id]),
             key=lambda job: (job.started_at or job.submitted_at, job.id),
             reverse=True,
         )
         self._show_other_running_jobs(running[1:])
-        waiting = [job for job in jobs if job.state in ACTIVE_STATES and job.state != STATE_RUNNING]
+        waiting = [
+            job for job in jobs if job.is_active and (job.state != STATE_RUNNING or held[job.id])
+        ]
         fetching = [job for job in jobs if job.state == STATE_DOWNLOADING]
 
         def latest(candidates: list):
@@ -739,6 +743,8 @@ class HostCard(QFrame):
             primary, word, color, mark = latest(starting), "submitting", CY_AMBER, HOURGLASS
         elif waiting:
             primary, word, color, mark = latest(waiting), "queued", CY_AMBER, HOURGLASS
+            if held[primary.id]:
+                word = "held — " + " / ".join(held[primary.id])
         elif fetching:
             primary, word, color, mark = latest(fetching), "downloading", CY_AMBER, ""
         else:
@@ -898,7 +904,11 @@ class _ActiveJobsBar(QWidget):
 
         blocked_ids = store.blocked_ids()
         running = sum(
-            1 for job in active if job.state == STATE_RUNNING and job.id not in blocked_ids
+            1
+            for job in active
+            if job.state == STATE_RUNNING
+            and job.id not in blocked_ids
+            and not hold_reasons(job, store.jobs)
         )
         blocked = sum(1 for job in active if job.id in blocked_ids)
         waiting = len(active) - running - blocked

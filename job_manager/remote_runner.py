@@ -115,7 +115,18 @@ FORCED_DIR = "forced"
 RUNNER_POLL_SECONDS = 5
 
 #: Sub-directories the runner needs.
-SUBDIRS = ("queue", "running", "done", "pids", "tmp", "status", PRIORITY_DIR, FORCED_DIR)
+SUBDIRS = (
+    "held",
+    "after_any",
+    "queue",
+    "running",
+    "done",
+    "pids",
+    "tmp",
+    "status",
+    PRIORITY_DIR,
+    FORCED_DIR,
+)
 
 #: Presence of this file stops the runner dispatching anything new. Running
 #: jobs are left alone -- pausing a queue must never kill work in progress.
@@ -419,7 +430,7 @@ used_memory() {{
 # Where a job id currently is, as "<dir> <entry>". Nothing printed if the job
 # was never queued here at all.
 find_entry() {{
-  for d in queue running done; do
+  for d in held queue running done; do
     e=$(ls -1 "$d" 2>/dev/null | grep -- "_$1\\.sh$" | head -n 1)
     if [ -n "$e" ]; then echo "$d $e"; return 0; fi
   done
@@ -457,6 +468,7 @@ ready() {{
   loc=$(find_entry "$after") || {{ block "$1"; return 1; }}
   set -- "$1" $loc
   [ "$2" = "done" ] || return 1
+  [ -f "after_any/$1" ] && return 0
   need=$(header "queue/$1" '{REQUIRE_SUCCESS_TAG}')
   [ "$need" = "1" ] || return 0
   rc=$(cat "status/$3" 2>/dev/null)
@@ -491,7 +503,7 @@ dispatch_forced() {{
     if [ -f "queue/$entry" ]; then
       ready "$entry" || continue
       start_entry "$entry"
-    elif [ -f "tmp/$entry" ]; then
+    elif [ -f "tmp/$entry" ] || [ -f "held/$entry" ]; then
       continue
     fi
     rm -f "$marker"
@@ -555,6 +567,7 @@ while :; do
     # it, in which case that one will dispatch the job and this one is done.
     mkdir lock 2>/dev/null || exit 0
     echo $$ > lock/pid
+    echo holds1 > lock/features
     continue
   fi
   sleep {poll:g}
@@ -586,7 +599,7 @@ def claim_sequence_command(directory: str) -> str:
         "cd " + quoted + " 2>/dev/null || exit 1; "
         "n=$(cat " + SEQUENCE_NAME + " 2>/dev/null); "
         "case \"$n\" in ''|*[!0-9]*) n=0 ;; esac; "
-        "for d in queue running done; do "
+        "for d in held queue running done; do "
         'for e in $(ls -1 "$d" 2>/dev/null); do '
         # ${e#job_} then %%_* leaves just the number, with no call to sed.
         "m=${e#job_}; m=${m%%_*}; "
@@ -682,7 +695,7 @@ def list_command(directory: str) -> str:
     """
     return (
         f"cd {quote(directory)} 2>/dev/null || exit 0; "
-        "for d in queue running done; do "
+        "for d in held queue running done; do "
         'for e in $(ls -1 "$d" 2>/dev/null); do echo "$d $e"; done; '
         "done"
     )
@@ -697,7 +710,7 @@ def parse_listing(stdout: str) -> dict:
             continue
         where, entry = parts
         job_id = parse_entry(entry)[1]
-        if job_id and where in ("queue", "running", "done"):
+        if job_id and where in ("held", "queue", "running", "done"):
             states[job_id] = where
     return states
 
@@ -736,7 +749,7 @@ def ensure_runner_command(directory: str, script_name: str) -> str:
         "if mkdir lock 2>/dev/null; then "
         f'{{ {SETSID_PREFIX} nohup bash "{script_name}" '
         f'> "{RUNNER_LOG_NAME}" 2>&1 < /dev/null & }} '
-        "&& echo $! > lock/pid && echo started; "
+        "&& echo $! > lock/pid && echo holds1 > lock/features && echo started; "
         "else echo running; fi"
     )
 
@@ -750,7 +763,7 @@ def cancel_command(directory: str, entry: str) -> str:
     entry = require_entry(entry)
     return (
         f"cd {quote(directory)} 2>/dev/null || exit 0; "
-        f'if mv "queue/{entry}" "done/{entry}" 2>/dev/null; then echo dequeued; exit 0; fi; '
+        f'for d in held queue; do if mv "$d/{entry}" "done/{entry}" 2>/dev/null; then echo dequeued; exit 0; fi; done; '
         f'p=$(cat "pids/{entry}" 2>/dev/null); '
         '[ -n "$p" ] || exit 0; ' + kill_job_command('"$p"')
         # The process group, so the payload dies with its wrapper.
@@ -772,6 +785,9 @@ def release_command(directory: str, entry: str) -> str:
     entry = require_entry(entry)
     return (
         f"cd {quote(directory)} 2>/dev/null || exit 0; "
+        # Held files may be released concurrently. A metadata override avoids
+        # recreating a second script at the old path after that atomic move.
+        f'if [ -f "held/{entry}" ]; then mkdir -p after_any && touch "after_any/{entry}" && echo released; exit; fi; '
         f'f="queue/{entry}"; [ -f "$f" ] || exit 0; '
         f'sed \'s|^{REQUIRE_SUCCESS_TAG} .*|{REQUIRE_SUCCESS_TAG} 0|\' "$f" > "tmp/{entry}" '
         f'&& mv "tmp/{entry}" "$f" && echo released'
@@ -834,7 +850,7 @@ def queue_detail_command(directory: str) -> str:
         f"if [ -f {PAUSED_NAME} ]; then echo paused 1; fi; "
         f'for n in {limits}; do v=$(cat "$n" 2>/dev/null); '
         'if [ -n "$v" ]; then echo "limit $n $v"; fi; done; '
-        "for d in running queue; do "
+        "for d in running held queue; do "
         'for e in $(ls -1 "$d" 2>/dev/null); do '
         f'v=$({awk} "$d/$e" 2>/dev/null); '
         f'if [ -f "{PRIORITY_DIR}/$e" ]; then '
@@ -878,10 +894,32 @@ def parse_queue_detail(stdout: str) -> dict:
                     else 0
                 ),
             }
+            item["held"] = parts[1] == "held"
             detail["running" if parts[1] == "running" else "waiting"].append(item)
     detail["running"].sort(key=lambda item: (item["sequence"], item["entry"]))
     detail["waiting"].sort(key=lambda item: (-item["priority"], item["sequence"], item["entry"]))
     return detail
+
+
+def set_hold_command(directory: str, entry: str, held: bool) -> str:
+    """Move the entry atomically: a successful hold wins against dispatch."""
+    entry = require_entry(entry)
+    source, target = ("queue", "held") if held else ("held", "queue")
+    compatible = (
+        (
+            "p=$(cat lock/pid 2>/dev/null); "
+            'if [ -n "$p" ] && kill -0 "$p" 2>/dev/null && '
+            '[ "$(cat lock/features 2>/dev/null)" != holds1 ]; then '
+            'echo "An older helper is running; let its queue finish before holding jobs." >&2; exit 1; fi; '
+        )
+        if held
+        else ""
+    )
+    return (
+        f"cd {quote(directory)} || exit 1; " + compatible + f"mkdir -p held || exit 1; "
+        f'if mv "{source}/{entry}" "{target}/{entry}" 2>/dev/null; then echo updated; '
+        f'elif [ -f "{target}/{entry}" ]; then echo updated; else echo {NOT_QUEUED}; fi'
+    )
 
 
 def set_priority_command(directory: str, entry: str, priority: int) -> str:
@@ -890,12 +928,12 @@ def set_priority_command(directory: str, entry: str, priority: int) -> str:
     priority = validate_priority(priority)
     return (
         f"cd {quote(directory)} || exit 1; "
-        f'[ -f "queue/{entry}" ] || {{ echo {NOT_QUEUED}; exit 0; }}; '
+        f'{{ [ -f "queue/{entry}" ] || [ -f "held/{entry}" ]; }} || {{ echo {NOT_QUEUED}; exit 0; }}; '
         f"mkdir -p {PRIORITY_DIR} || exit 1; "
         "priority_temp=$(mktemp tmp/priority.XXXXXX) || exit 1; "
         f'printf "%s\\n" {priority} > "$priority_temp" && '
         f'mv -f "$priority_temp" "{PRIORITY_DIR}/{entry}" || exit 1; '
-        f'if [ -f "queue/{entry}" ]; then echo updated; else echo {NOT_QUEUED}; fi'
+        f'if {{ [ -f "queue/{entry}" ] || [ -f "held/{entry}" ]; }}; then echo updated; else echo {NOT_QUEUED}; fi'
     )
 
 
@@ -1000,6 +1038,7 @@ __all__: List[str] = [
     "PRIORITY_TAG",
     "PRIORITY_DIR",
     "set_priority_command",
+    "set_hold_command",
     "CORES_NAME",
     "CORES_TAG",
     "FORCED",

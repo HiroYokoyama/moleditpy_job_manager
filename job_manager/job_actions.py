@@ -146,6 +146,13 @@ def create_job_actions(parent, callbacks):
             callbacks["_force_selected"],
             "Start a waiting helper-queue job now.",
         ),
+        ("hold", "Hold", callbacks["_hold_selected"], "Keep this waiting job from starting."),
+        (
+            "release",
+            "Release",
+            callbacks["_release_selected"],
+            "Remove only the manual hold; keep After conditions.",
+        ),
         (
             "priority",
             "Set Priority...",
@@ -184,6 +191,8 @@ def create_job_actions(parent, callbacks):
             "resubmit",
             "force",
             "priority",
+            "hold",
+            "release",
             "recheck",
             None,
             "cancel",

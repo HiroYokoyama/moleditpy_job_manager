@@ -262,7 +262,7 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
             "",
             "# Where a job id currently is, as @(dir, entry). $null if never queued here.",
             "function Find-Entry($jobId) {",
-            "    foreach ($d in @('queue','running','done')) {",
+            "    foreach ($d in @('held','queue','running','done')) {",
             "        $m = @(Get-ChildItem -LiteralPath $d -File -ErrorAction SilentlyContinue | "
             "Where-Object { $_.Name -like ('*_' + $jobId + '.*') })",
             "        if ($m.Count -gt 0) { return @($d, $m[0].Name) }",
@@ -324,6 +324,7 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
             "    $loc = Find-Entry $after",
             "    if ($null -eq $loc) { Block-Entry $entry; return $false }",
             "    if ($loc[0] -ne 'done') { return $false }",
+            "    if (Test-Path -LiteralPath ('after_any\\' + $entry)) { return $true }",
             f"    $need = Get-Header ('queue\\' + $entry) {ps_quote(REQUIRE_SUCCESS_TAG)}",
             "    if ($need -ne '1') { return $true }",
             "    $rc = Get-Content -LiteralPath ('status\\' + $loc[1]) "
@@ -357,7 +358,7 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
             "        if (Test-Path -LiteralPath ('queue\\' + $entry)) {",
             "            if (-not (Test-Ready $entry)) { continue }",
             "            Start-Entry $entry",
-            "        } elseif (Test-Path -LiteralPath ('tmp\\' + $entry)) { continue }",
+            "        } elseif ((Test-Path -LiteralPath ('tmp\\' + $entry)) -or (Test-Path -LiteralPath ('held\\' + $entry))) { continue }",
             "        Remove-Item -LiteralPath $f.FullName -Force -ErrorAction SilentlyContinue",
             "    }",
             "}",
@@ -421,6 +422,7 @@ def build_runner_script(directory: str, poll_seconds: int = RUNNER_POLL_SECONDS)
             "        try { New-Item -ItemType Directory -Path 'lock' -ErrorAction Stop "
             "| Out-Null } catch { exit 0 }",
             "        Set-Content -Path 'lock\\pid' -Value $PID -Encoding ascii",
+            "        Set-Content -Path 'lock\\features' -Value holds1 -Encoding ascii",
             "        continue",
             "    }",
             f"    Start-Sleep -Seconds {poll:g}",
@@ -457,7 +459,7 @@ def claim_sequence_command(directory: str) -> str:
         f"$v = Get-Content -LiteralPath {counter} -ErrorAction SilentlyContinue | "
         "Select-Object -First 1; "
         r"$n = 0; if ($v -match '^\d+$') { $n = [int]$v }; "
-        "foreach ($d in @('queue','running','done')) { "
+        "foreach ($d in @('held','queue','running','done')) { "
         "foreach ($f in @(Get-ChildItem -LiteralPath $d -File "
         "-ErrorAction SilentlyContinue)) { "
         "$m = ($f.Name -split '_')[1]; "
@@ -510,7 +512,7 @@ def list_command(directory: str) -> str:
     return (
         f"if (-not (Test-Path -LiteralPath {quoted})) {{ exit 0 }}; "
         f"Set-Location -LiteralPath {quoted}; "
-        "foreach ($d in @('queue','running','done')) { "
+        "foreach ($d in @('held','queue','running','done')) { "
         "foreach ($f in @(Get-ChildItem -LiteralPath $d -File "
         '-ErrorAction SilentlyContinue)) { "$d $($f.Name)" } }'
     )
@@ -572,6 +574,7 @@ def ensure_runner_command(directory: str, script_name: str) -> str:
         # runner writes its own log instead (Start-Transcript).
         f"-WorkingDirectory {quoted} -WindowStyle Hidden -PassThru; "
         "Set-Content -Path 'lock\\pid' -Value $proc.Id -Encoding ascii; "
+        "Set-Content -Path 'lock\\features' -Value holds1 -Encoding ascii; "
         "'started'"
     )
 
@@ -586,6 +589,7 @@ def cancel_command(directory: str, entry: str) -> str:
     pid_file = ps_quote(_join("pids", entry))
     return (
         f"Set-Location -LiteralPath {quoted}; "
+        f"try {{ Move-Item -LiteralPath {ps_quote(_join('held', entry))} -Destination {finished} -ErrorAction Stop; 'dequeued'; exit 0 }} catch {{ }}; "
         f"try {{ Move-Item -LiteralPath {queued} "
         f"-Destination {finished} -ErrorAction Stop; 'dequeued'; exit 0 }} "
         "catch { }; "
@@ -606,6 +610,9 @@ def release_command(directory: str, entry: str) -> str:
     tag = ps_quote(REQUIRE_SUCCESS_TAG)
     return (
         f"Set-Location -LiteralPath {quoted}; "
+        f"if (Test-Path -LiteralPath {ps_quote(_join('held', entry))}) {{ "
+        "[IO.Directory]::CreateDirectory((Join-Path (Get-Location).Path 'after_any')) | Out-Null; "
+        f"[IO.File]::WriteAllText((Join-Path (Get-Location).Path {ps_quote(_join('after_any', entry))}), '1'); 'released'; exit 0 }}; "
         f"if (-not (Test-Path -LiteralPath {queued})) {{ exit 0 }}; "
         f"$lines = Get-Content -LiteralPath {queued}; "
         f"$lines = $lines | ForEach-Object {{ if ($_ -like ({tag} + '*')) "
@@ -667,7 +674,7 @@ def queue_detail_command(directory: str) -> str:
         f"foreach ($n in @({limits})) {{ "
         "$v = Get-Content -LiteralPath $n -ErrorAction SilentlyContinue | Select-Object -First 1; "
         'if ($v) { "limit $n $v" } }; '
-        "foreach ($d in @('running','queue')) { "
+        "foreach ($d in @('running','held','queue')) { "
         "foreach ($f in @(Get-ChildItem -LiteralPath $d -File -ErrorAction SilentlyContinue)) { "
         "$c = 0; $m = 0; $p = 0; "
         "foreach ($line in (Get-Content -LiteralPath $f.FullName -ErrorAction SilentlyContinue)) { "
@@ -683,6 +690,31 @@ def queue_detail_command(directory: str) -> str:
     )
 
 
+def set_hold_command(directory: str, entry: str, held: bool) -> str:
+    """The same atomic queue/held claim as the Bash helper."""
+    entry = require_entry(entry)
+    source, target = ("queue", "held") if held else ("held", "queue")
+    compatible = (
+        (
+            "$helperPid = Get-Content -LiteralPath 'lock\\pid' -ErrorAction SilentlyContinue | Select-Object -First 1; "
+            "$features = Get-Content -LiteralPath 'lock\\features' -ErrorAction SilentlyContinue | Select-Object -First 1; "
+            "if ($helperPid -match '^\\d+$' -and (Get-Process -Id $helperPid -ErrorAction SilentlyContinue) -and $features -ne 'holds1') "
+            "{ throw 'An older helper is running; let its queue finish before holding jobs.' }; "
+        )
+        if held
+        else ""
+    )
+    return (
+        "$ErrorActionPreference = 'Stop'; "
+        f"Set-Location -LiteralPath {ps_quote(directory)}; "
+        + compatible
+        + "[IO.Directory]::CreateDirectory((Join-Path (Get-Location).Path 'held')) | Out-Null; "
+        f"$sourceFile = {ps_quote(_join(source, entry))}; $targetFile = {ps_quote(_join(target, entry))}; "
+        "try { [IO.File]::Move((Join-Path (Get-Location).Path $sourceFile), (Join-Path (Get-Location).Path $targetFile)); 'updated' } "
+        f"catch [IO.IOException] {{ if (Test-Path -LiteralPath $targetFile) {{ 'updated' }} else {{ '{NOT_QUEUED}' }} }}"
+    )
+
+
 def set_priority_command(directory: str, entry: str, priority: int) -> str:
     """Same waiting-only priority override as the Bash runner."""
     entry = require_entry(entry)
@@ -690,7 +722,7 @@ def set_priority_command(directory: str, entry: str, priority: int) -> str:
     return (
         "$ErrorActionPreference = 'Stop'; "
         f"Set-Location -LiteralPath {ps_quote(directory)} -ErrorAction Stop; "
-        f"if (-not (Test-Path -LiteralPath {ps_quote(_join('queue', entry))})) {{ '{NOT_QUEUED}'; exit 0 }}; "
+        f"if (-not ((Test-Path -LiteralPath {ps_quote(_join('queue', entry))}) -or (Test-Path -LiteralPath {ps_quote(_join('held', entry))}))) {{ '{NOT_QUEUED}'; exit 0 }}; "
         f"$priorityRoot = Join-Path (Get-Location).Path {ps_quote(PRIORITY_DIR)}; "
         "[IO.Directory]::CreateDirectory($priorityRoot) | Out-Null; "
         f"$priorityTarget = Join-Path $priorityRoot {ps_quote(entry)}; "
@@ -698,7 +730,7 @@ def set_priority_command(directory: str, entry: str, priority: int) -> str:
         f"[IO.File]::WriteAllText($priorityTemp, '{priority}', [Text.Encoding]::ASCII); "
         "try { [IO.File]::Move($priorityTemp, $priorityTarget) } "
         "catch [IO.IOException] { [IO.File]::Replace($priorityTemp, $priorityTarget, [NullString]::Value) }; "
-        f"if (Test-Path -LiteralPath {ps_quote(_join('queue', entry))}) {{ 'updated' }} else {{ '{NOT_QUEUED}' }}"
+        f"if ((Test-Path -LiteralPath {ps_quote(_join('queue', entry))}) -or (Test-Path -LiteralPath {ps_quote(_join('held', entry))})) {{ 'updated' }} else {{ '{NOT_QUEUED}' }}"
     )
 
 

@@ -141,8 +141,15 @@ def job_payload(job: Job, store: Any = None) -> Dict[str, Any]:
     data["elapsed_seconds"] = round(job.elapsed(), 3)
     data["waiting_seconds"] = round(job.waiting(), 3)
     if store is not None:
+        from .models import STATE_BLOCKED, STATE_HELD, hold_reasons
+
+        reasons = hold_reasons(job, store.jobs)
+        data["hold_reasons"] = reasons
+        data["display_state"] = STATE_HELD if reasons else job.state
         blocker = store.chain_blocker(job)
         data["blocked_by"] = blocker.id if blocker is not None else ""
+        if blocker is not None:
+            data["display_state"] = STATE_BLOCKED
     return data
 
 
@@ -237,6 +244,8 @@ class JobApi:
             return self._require("GET", method, lambda: self.files(job_id))
         if action == "force":
             return self._require("POST", method, lambda: self.force(job_id))
+        if action in ("hold", "release"):
+            return self._require("POST", method, lambda: self.hold(job_id, action == "hold"))
         if action == "priority":
             return self._require("POST", method, lambda: self.priority(job_id, body))
         if action == "recheck":
@@ -517,6 +526,22 @@ class JobApi:
             deferred.set_result({"job": job_payload(current, self.store), "forced": True})
 
         self.service.force_run(job, on_done=done, on_error=deferred.set_error)
+        return deferred
+
+    def hold(self, job_id: str, held: bool) -> Deferred:
+        job = self._job(job_id)
+        refusal = self.service.hold_refusal(job, held)
+        if refusal:
+            raise ApiError(409, refusal)
+        deferred = Deferred()
+
+        def done(current, updated):
+            if updated:
+                deferred.set_result({"job": job_payload(current, self.store), "updated": True})
+            else:
+                deferred.set_error("The job is no longer waiting in the queue", 409)
+
+        self.service.set_hold(job, held, on_done=done, on_error=deferred.set_error)
         return deferred
 
     def priority(self, job_id: str, body: Mapping[str, Any]) -> Deferred:

@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPlainTextEdit,
     QPushButton,
+    QSpinBox,
     QTableWidgetItem,
     QTabWidget,
     QVBoxLayout,
@@ -35,7 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from .file_table import FilePathTable
-from .models import Job
+from .models import MAX_PRIORITY, MIN_PRIORITY, Job, hold_reasons
 from .theme import apply_theme
 from .window_utils import make_independent
 
@@ -52,11 +53,16 @@ class JobDetailsDialog(QDialog):
         parent: Optional[QWidget] = None,
         *,
         read_only: bool = False,
+        describe=None,
     ) -> None:
         super().__init__(parent)
         self.service = service
         self.job = job
         self.read_only = read_only
+        self._describe = describe
+        self._queue_busy = False
+        self._priority_dirty = False
+        self._updates_connected = True
         self.setWindowTitle(title)
         make_independent(self)
         apply_theme(self)
@@ -98,6 +104,31 @@ class JobDetailsDialog(QDialog):
         form.addRow("Results folder", folder_row)
         form.addRow("", self.chk_auto)
         layout.addWidget(box)
+
+        scheduling = QGroupBox("Queue settings — applied immediately")
+        queue_form = QFormLayout(scheduling)
+        self.lbl_hold = QLabel()
+        self.lbl_hold.setWordWrap(True)
+        queue_form.addRow("Hold", self.lbl_hold)
+        priority_row = QHBoxLayout()
+        self.spin_priority = QSpinBox()
+        self.spin_priority.setRange(MIN_PRIORITY, MAX_PRIORITY)
+        self.spin_priority.setValue(job.priority)
+        self.spin_priority.valueChanged.connect(self._priority_edited)
+        self.btn_priority = QPushButton("Apply Priority")
+        self.btn_priority.clicked.connect(self._apply_priority)
+        priority_row.addWidget(self.spin_priority)
+        priority_row.addWidget(self.btn_priority)
+        self.btn_hold = QPushButton("Hold")
+        self.btn_hold.clicked.connect(lambda: self._apply_hold(True))
+        self.btn_release = QPushButton("Release")
+        self.btn_release.setToolTip("Remove the manual hold. After conditions remain in effect.")
+        self.btn_release.clicked.connect(lambda: self._apply_hold(False))
+        priority_row.addWidget(self.btn_hold)
+        priority_row.addWidget(self.btn_release)
+        priority_row.addStretch()
+        queue_form.addRow("Priority", priority_row)
+        layout.addWidget(scheduling)
 
         tabs = QTabWidget()
         files_page = QWidget()
@@ -153,6 +184,95 @@ class JobDetailsDialog(QDialog):
             for widget in (self.txt_name, self.txt_globs, self.txt_local, self.chk_auto):
                 widget.setEnabled(False)
         layout.addWidget(buttons)
+        self.service.job_updated.connect(self._refresh_queue)
+        self.service.jobs_changed.connect(self._refresh_queue)
+        self.finished.connect(self._disconnect_updates)
+        self._refresh_queue()
+
+    def _disconnect_updates(self, *_args) -> None:
+        if not self._updates_connected:
+            return
+        self._updates_connected = False
+        self.service.job_updated.disconnect(self._refresh_queue)
+        self.service.jobs_changed.disconnect(self._refresh_queue)
+
+    def _priority_edited(self) -> None:
+        self._priority_dirty = True
+
+    def _refresh_queue(self, *_args) -> None:
+        current = self.service.store.jobs.get(self.job.id) is self.job
+        editable = current and not self.read_only and not self._queue_busy
+        reasons = hold_reasons(self.job, self.service.store.jobs)
+        self.lbl_hold.setText(" / ".join(reasons) or "None")
+        can_priority = editable and not self.service.priority_refusal(self.job)
+        self.spin_priority.setEnabled(bool(can_priority))
+        self.btn_priority.setEnabled(bool(can_priority))
+        self.btn_hold.setEnabled(bool(editable and not self.service.hold_refusal(self.job, True)))
+        self.btn_release.setEnabled(
+            bool(editable and not self.service.hold_refusal(self.job, False))
+        )
+        if not self._priority_dirty:
+            self.spin_priority.blockSignals(True)
+            self.spin_priority.setValue(self.job.priority)
+            self.spin_priority.blockSignals(False)
+        if self._describe is not None:
+            record = self._describe(self.job)
+            if record != self.view.toPlainText():
+                cursor = self.view.textCursor()
+                position, anchor = cursor.position(), cursor.anchor()
+                scroll = self.view.verticalScrollBar().value()
+                self.view.setPlainText(record)
+                cursor = self.view.textCursor()
+                end = self.view.document().characterCount() - 1
+                cursor.setPosition(min(anchor, end))
+                cursor.setPosition(min(position, end), cursor.MoveMode.KeepAnchor)
+                self.view.setTextCursor(cursor)
+                self.view.verticalScrollBar().setValue(scroll)
+
+    def _queue_operation(self, operation, *, priority: bool = False) -> None:
+        if (
+            self.read_only
+            or self._queue_busy
+            or self.service.store.jobs.get(self.job.id) is not self.job
+        ):
+            return
+        from .credentials import ensure_password
+
+        host = self.service.store.hosts.get(self.job.host_id)
+        if host is None or not ensure_password(self.service, host, self):
+            return
+        self._queue_busy = True
+        self._refresh_queue()
+
+        def done(job, updated):
+            self._queue_busy = False
+            if updated and priority:
+                self._priority_dirty = False
+            self.lbl_saved.setText(
+                "Queue setting updated."
+                if updated
+                else "The job is no longer waiting in the queue."
+            )
+            self._refresh_queue()
+
+        def failed(message):
+            self._queue_busy = False
+            self.lbl_saved.setText(message)
+            self._refresh_queue()
+
+        operation(on_done=done, on_error=failed, owner=self)
+
+    def _apply_priority(self) -> None:
+        value = self.spin_priority.value()
+        self._queue_operation(
+            lambda **callbacks: self.service.set_priority(self.job, value, **callbacks),
+            priority=True,
+        )
+
+    def _apply_hold(self, held: bool) -> None:
+        self._queue_operation(
+            lambda **callbacks: self.service.set_hold(self.job, held, **callbacks)
+        )
 
     def _show_file_path(self) -> None:
         rows = self.file_table.selected_rows()
