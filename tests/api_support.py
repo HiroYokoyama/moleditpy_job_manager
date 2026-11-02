@@ -56,6 +56,9 @@ class FakeService:
         self._tail_error: Optional[Callable] = None
         self._list_ok: Optional[Callable] = None
         self._list_error: Optional[Callable] = None
+        self.answers: dict = {}
+        self.fail_with: str = ""
+        self.refusal: str = ""
 
     def submit(self, host, preset, name, files, **kwargs):
         job = Job(
@@ -99,10 +102,6 @@ class FakeService:
     # --- forcing, re-checking, and the host itself ---------------------------
     #: Each of these answers at once, with whatever the test put in
     #: ``answers`` -- or reports ``fail_with`` if that is set.
-
-    answers: dict = {}
-    fail_with: str = ""
-    refusal: str = ""
 
     def _answer(self, key, on_done, on_error, default=None):
         if self.fail_with:
