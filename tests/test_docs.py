@@ -170,10 +170,10 @@ class TestDocumentedChainingAndScheduling(unittest.TestCase):
             ]
             self.assertIn(shape, " ".join(documented), name)
 
-    def test_the_queued_state_is_documented(self):
-        from job_manager.models import STATE_QUEUED
+    def test_the_held_state_is_documented(self):
+        from job_manager.models import STATE_HELD
 
-        self.assertIn(f"`{STATE_QUEUED}`", self.workflow)
+        self.assertIn(f"`{STATE_HELD}`", self.workflow)
 
     def test_the_blocked_state_is_documented(self):
         from job_manager.models import STATE_BLOCKED

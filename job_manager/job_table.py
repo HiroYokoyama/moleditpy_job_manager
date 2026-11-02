@@ -24,7 +24,8 @@ from .models import (
     STATE_FAILED,
     STATE_LOST,
     STATE_PENDING,
-    STATE_QUEUED,
+    STATE_HELD,
+    hold_reasons,
     STATE_RUNNING,
     Job,
     assign_job_numbers,
@@ -59,7 +60,7 @@ _STATE_COLORS = {
     STATE_DONE: CY_TEAL,
     STATE_FAILED: CY_RED,
     STATE_LOST: CY_PURPLE,
-    STATE_QUEUED: CY_GREY,
+    STATE_HELD: CY_GREY,
     STATE_BLOCKED: CY_RED,
 }
 
@@ -127,13 +128,6 @@ class JobTableModel(QAbstractTableModel):
         self._submitted_at = {job.id: job.submitted_at for job in self._rows}
         self.endResetModel()
 
-    def _is_waiting(self, job: Job) -> bool:
-        """True while a chained job is still waiting for its predecessor."""
-        if not job.after_job_id or not job.is_active:
-            return False
-        predecessor = self.service.store.jobs.get(job.after_job_id)
-        return predecessor is not None and predecessor.is_active
-
     def display_state(self, job: Job) -> str:
         """What the State column says, which is not always ``job.state``.
 
@@ -145,8 +139,8 @@ class JobTableModel(QAbstractTableModel):
         # and chain_blocker walks the whole chain each time.
         if job.id in self.service.store.blocked_ids():
             return STATE_BLOCKED
-        if self._is_waiting(job):
-            return STATE_QUEUED
+        if hold_reasons(job, self.service.store.jobs):
+            return STATE_HELD
         return job.state
 
     def predecessor_of(self, job: Job) -> Optional[Job]:
@@ -208,7 +202,8 @@ class JobTableModel(QAbstractTableModel):
                 return job.remote_job_id or "-"
             if column == "State":
                 state = self.display_state(job)
-                suffix = ""
+                reasons = hold_reasons(job, self.service.store.jobs)
+                suffix = " — " + " / ".join(reasons) if state == STATE_HELD and reasons else ""
                 if state == STATE_FAILED and job.rc is not None:
                     suffix = f" (rc={job.rc})"
                 return f"{state}{suffix}"
@@ -249,6 +244,9 @@ class JobTableModel(QAbstractTableModel):
                 return QColor(color)
         elif role == Qt.ItemDataRole.ToolTipRole:
             lines = [f"Remote: {job.remote_dir or '-'}"]
+            reasons = hold_reasons(job, self.service.store.jobs)
+            if reasons:
+                lines.insert(0, "Held: " + " / ".join(reasons))
             if job.local_dir:
                 lines.append(f"Local: {job.local_dir}")
             if job.submitted_at:

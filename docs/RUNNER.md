@@ -68,6 +68,8 @@ Everything lives under `<remote_root>/.moleditpy_runner/`:
 ```
 lock/       single-instance lock (an atomic mkdir), holding the runner's pid
 queue/      job_0001_<id>.sh, job_0002_<id>.sh …   waiting
+held/       manually held scripts; not eligible for dispatch
+after_any/  completion-policy overrides for held dependents kept after cancellation
 running/    the same script, while its job runs
 done/       the same script, once it has ended        (kept)
 status/     the exit code the runner observed         (kept)
@@ -78,6 +80,18 @@ tmp/        scripts mid-upload, before they are moved into queue/
 slots  cores  memory  paused  sequence  runner.version
 moleditpy_runner_v<version>.sh
 ```
+
+**Manual holds** move one waiting entry atomically between `queue/` and `held/`.
+Dispatch, force and hold compete for the same source file, so a successful hold
+cannot leave a running copy. Held entries use no running slots or resources;
+the helper may exit when only held entries remain. Release starts the current
+helper again, preserving the entry's priority, scheduled start and After header.
+Dependency lookup includes `held/`, so children keep waiting for a held parent.
+Pending forced-start markers stay attached to held entries.
+
+`lock/features` advertises hold support. A live helper from an older version
+has no such capability and must drain its queue before manual holds are accepted.
+It is never killed mid-dispatch or overwritten in place.
 
 **A job's directory is its state.** Nothing tracks it separately — where the
 file sits *is* the answer, which is why the whole queue can be read, reordered
@@ -378,6 +392,7 @@ contract the queue-based schedulers meet with a single `squeue`.
 | Where the entry is | State shown |
 |---|---|
 | `queue/` | PENDING |
+| `held/` | HELD (manual) |
 | `running/` | RUNNING |
 | not listed | ended — resolved by the sentinel sweep |
 | `status/` says `blocked` | FAILED, with the reason |

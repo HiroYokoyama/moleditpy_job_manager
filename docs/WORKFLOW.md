@@ -335,11 +335,33 @@ that has already failed before reaching the queue.
 
 It matters most where there is **no queue** — including this machine — because
 nothing else would stop two submissions starting at once and fighting over the
-same cores. A job still waiting there shows as **QUEUED** rather than RUNNING,
+same cores. A job still waiting there shows as **HELD — After: job name** rather than RUNNING,
 since its wrapper is alive but the calculation has not begun.
 
 The waiting always happens on the host, never in MoleditPy: close the
 application, log out, lose the network, and the chain keeps moving.
+
+#### Manually holding a waiting job
+
+For the built-in helper queue (Linux/Bash or Windows/PowerShell), select
+**Hold** in the Job menu or open **Details** and press **Hold**. The job stays
+on the host but does not start, even with Force enabled. Running jobs cannot
+be held. A manual hold does not reserve a running slot, cores or memory.
+
+The State column displays **HELD — Manual**, **HELD — After: job name**, or
+both reasons. **Release** removes only the manual hold: the original After
+condition, scheduled start and priority still apply. Release is disabled for
+an After-only wait. Failed dependencies continue to show **BLOCKED** when the
+scheduler retains the job.
+
+In **Details**, **Apply Priority**, **Hold** and **Release** take effect
+immediately. Name, fetch patterns, results folder and automatic download still
+use **Save**. Queue controls are disabled for running jobs and read-only lists.
+The full record shows the manual hold and all current hold reasons.
+
+An older helper already running on the host must finish its queue before
+manual holds become available. This prevents the old helper treating a held
+predecessor as missing. Hold and Release do not suspend running processes.
 
 #### When the job in front fails
 
@@ -1009,7 +1031,7 @@ converted or saved merely by reading it.
 | `FAILED` | wrapper finished, non-zero — the code is shown in the table |
 | `CANCELLED` | you cancelled it |
 | `LOST` | gone from the queue with no exit code recorded |
-| `QUEUED` | chained behind another job that has not finished yet |
+| `HELD` | manually held, or waiting for an After predecessor; the reason names Manual, After, or both |
 | `BLOCKED` | somewhere behind a job that failed, under a dependency the queue can never satisfy — it will not start |
 
 `FAILED (rc=143)` is the signature of a job the scheduler killed: 143 is

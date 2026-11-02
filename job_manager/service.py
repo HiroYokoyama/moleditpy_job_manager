@@ -25,6 +25,7 @@ from .models import (
     STATE_FAILED,
     STATE_LOST,
     STATE_PENDING,
+    STATE_HELD,
     STATE_SUBMITTED,
     TERMINAL_STATES,
     HostProfile,
@@ -48,6 +49,7 @@ from .runner import (
     require_remote_path,
     runner_queue,
     set_runner_priority,
+    set_runner_hold,
     stat_host_path,
     tail_log,
     tail_remote_file,
@@ -595,7 +597,7 @@ class JobService(QObject):
             or not remote_runner.parse_entry(job.remote_job_id)[1]
         ):
             return "Priority is only available for jobs in the built-in helper queue"
-        if job.state not in (STATE_SUBMITTED, STATE_PENDING):
+        if job.state not in (STATE_SUBMITTED, STATE_PENDING, STATE_HELD):
             return "Only waiting jobs can change priority"
         return ""
 
@@ -634,6 +636,57 @@ class JobService(QObject):
                 self.message.emit(f"Set priority for {job.name} to {priority}")
             elif on_done is None:
                 fail(not_waiting(job))
+            if on_done is not None:
+                on_done(job, updated)
+
+        run_async(self.pool, work, on_success=done, on_error=fail, owner=owner)
+
+    def hold_refusal(self, job: Job, held: bool = True) -> str:
+        host = self.store.hosts.get(job.host_id)
+        if (
+            host is None
+            or not host.uses_remote_runner
+            or not remote_runner.parse_entry(job.remote_job_id)[1]
+        ):
+            return "Hold is only available for jobs in the built-in helper queue"
+        if held and job.state not in (STATE_SUBMITTED, STATE_PENDING):
+            return "Only waiting jobs can be held"
+        if not held and job.state != STATE_HELD:
+            return "Release only removes a manual hold; After conditions remain in effect"
+        return ""
+
+    def set_hold(self, job: Job, held: bool, on_done=None, on_error=None, owner=None) -> None:
+        fail = on_error or self.error.emit
+        if not isinstance(held, bool):
+            fail("held must be a boolean")
+            return
+        refusal = self.hold_refusal(job, held)
+        if refusal:
+            fail(refusal)
+            return
+        host = self.store.hosts[job.host_id]
+
+        def work():
+            transport = self.transport_for(host)
+            try:
+                return set_runner_hold(transport, host, job, held)
+            finally:
+                transport.close()
+
+        def done(updated):
+            if self.store.jobs.get(job.id) is not job:
+                fail("The job list changed while updating its hold")
+                return
+            if job.is_terminal:
+                updated = False
+            if updated:
+                job.touch(STATE_HELD if held else STATE_PENDING)
+                self.store.save_jobs()
+                self.job_updated.emit(job.id)
+                self.message.emit(f"{'Held' if held else 'Released manual hold for'} {job.name}")
+            elif on_done is None:
+                fail(not_waiting(job))
+            self.poller.prime(job.host_id)
             if on_done is not None:
                 on_done(job, updated)
 

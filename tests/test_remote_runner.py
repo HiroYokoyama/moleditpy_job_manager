@@ -111,7 +111,7 @@ class RunnerHarness(unittest.TestCase):
             )
 
         existing = []
-        for name in ("queue", "running", "done"):
+        for name in ("held", "queue", "running", "done"):
             existing += os.listdir(os.path.join(self.dir, name))
         entry = entry_name(next_sequence(existing), job_id)
 
@@ -169,7 +169,7 @@ class RunnerHarness(unittest.TestCase):
 
     def listing(self) -> dict:
         lines = []
-        for name in ("queue", "running", "done"):
+        for name in ("held", "queue", "running", "done"):
             for entry in sorted(os.listdir(os.path.join(self.dir, name))):
                 lines.append(f"{name} {entry}")
         return parse_listing("\n".join(lines))

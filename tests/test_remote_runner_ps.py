@@ -113,7 +113,7 @@ class RunnerHarness(unittest.TestCase):
         self._write(os.path.join(job_dir, "wrapper.ps1"), body + "\r\n")
 
         existing = []
-        for name in ("queue", "running", "done"):
+        for name in ("held", "queue", "running", "done"):
             existing += os.listdir(os.path.join(self.dir, name))
         entry = entry_name(next_sequence(existing), job_id, ENTRY_SUFFIX)
 
@@ -168,7 +168,7 @@ class RunnerHarness(unittest.TestCase):
 
     def listing(self) -> dict:
         lines = []
-        for name in ("queue", "running", "done"):
+        for name in ("held", "queue", "running", "done"):
             for entry in sorted(os.listdir(os.path.join(self.dir, name))):
                 lines.append(f"{name} {entry}")
         return parse_listing("\n".join(lines))

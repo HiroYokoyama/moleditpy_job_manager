@@ -180,7 +180,10 @@ physical-core and memory budgets. It runs only while work remains, keeps its
 queue in readable files on the host, and supports dependencies, pausing and
 scheduled starts. **Priority** is a number from −1000 to 1000 (default 0): higher
 numbers run first, with submission order preserved for equal values. Use
-**Set Priority...** on a waiting job to change it. A chained-lanes mode is also available.
+**Set Priority...** or the **Details** window to change it. **Hold** keeps an
+individual waiting helper job from starting; **Release** removes that manual
+hold while preserving After conditions and priority. Manual holds and After
+waits both display **HELD**, with their reasons. A chained-lanes mode is also available.
 
 Use **Wait for previous forced job** with **Force run** to serialize forced jobs on a host.
 **Tail File** beside **Tail Log** opens the existing file chooser and tail viewer.

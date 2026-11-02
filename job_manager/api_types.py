@@ -84,6 +84,8 @@ ROUTES = (
     ("GET", "/jobs/{id}/files", "list its remote directory"),
     ("POST", "/jobs/{id}/force", "start it now, ahead of the helper queue"),
     ("POST", "/jobs/{id}/priority", "set a waiting helper-queue job's numeric priority"),
+    ("POST", "/jobs/{id}/hold", "manually hold a waiting helper-queue job"),
+    ("POST", "/jobs/{id}/release", "release a manual hold; preserve After conditions"),
     ("POST", "/jobs/{id}/recheck", "look again at a LOST job"),
 )
 

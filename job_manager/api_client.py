@@ -254,6 +254,14 @@ class JobManagerClient:
         """Set a waiting helper-queue job's priority (-1000 to 1000; higher runs first)."""
         return self.request("POST", f"jobs/{job_id}/priority", body={"priority": priority})
 
+    def hold(self, job_id: str) -> Dict[str, Any]:
+        """Hold a waiting helper job without changing its dependencies."""
+        return self.request("POST", f"jobs/{job_id}/hold", body={})
+
+    def release(self, job_id: str) -> Dict[str, Any]:
+        """Release only a manual hold; After conditions remain in effect."""
+        return self.request("POST", f"jobs/{job_id}/release", body={})
+
     def force(self, job_id: str) -> Dict[str, Any]:
         """Start a job waiting in a helper queue now, ahead of the rest."""
         return self.request("POST", f"jobs/{job_id}/force", body={})
@@ -461,6 +469,14 @@ def build_parser() -> argparse.ArgumentParser:
     forget = sub.add_parser("forget", help="Stop tracking a finished job")
     forget.add_argument("job_id")
 
+    for action in ("hold", "release"):
+        action_parser = sub.add_parser(
+            action,
+            help="Hold a waiting job"
+            if action == "hold"
+            else "Release a manual hold (preserve After)",
+        )
+        action_parser.add_argument("job_id")
     force = sub.add_parser("force", help="Start a waiting job now, ahead of the helper queue")
     force.add_argument("job_id")
     priority = sub.add_parser("priority", help="Set a waiting helper-queue job's priority")
@@ -603,6 +619,8 @@ def _run(client: JobManagerClient, args: argparse.Namespace) -> int:
     elif args.subcommand == "force":
         reply = client.force(args.job_id)
         _print(reply) if raw else print(_job_line(reply.get("job", {})))
+    elif args.subcommand in ("hold", "release"):
+        _print(getattr(client, args.subcommand)(args.job_id))
     elif args.subcommand == "priority":
         _print(client.set_priority(args.job_id, args.priority))
     elif args.subcommand == "recheck":

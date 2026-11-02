@@ -116,6 +116,18 @@ class FakeService:
     def priority_refusal(self, job):
         return self.refusal
 
+    def hold_refusal(self, job, held=True):
+        return self.refusal
+
+    def set_hold(self, job, held, on_done=None, on_error=None, owner=None):
+        if self.fail_with:
+            on_error(self.fail_with)
+        else:
+            updated = self.answers.get("hold", True)
+            if updated:
+                job.state = "HELD" if held else "PENDING"
+            on_done(job, updated)
+
     def set_priority(self, job, priority, on_done=None, on_error=None, owner=None):
         if self.fail_with:
             on_error(self.fail_with)

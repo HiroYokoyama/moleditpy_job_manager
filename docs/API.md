@@ -174,6 +174,8 @@ is not one of them, so a client can find them without this page.
 | `GET` | `/jobs/{id}/files` | List its remote directory |
 | `POST` | `/jobs/{id}/force` | Start it now, ahead of the helper queue |
 | `POST` | `/jobs/{id}/priority` | Change a waiting helper job's priority; body `{"priority": 10}` |
+| `POST` | `/jobs/{id}/hold` | Manually hold a waiting helper job |
+| `POST` | `/jobs/{id}/release` | Remove only the manual hold; preserve After conditions |
 | `POST` | `/jobs/{id}/recheck` | Look again at a `LOST` job |
 
 `{id}` in a host route is the host's id or its name; a name with a space in it
@@ -181,10 +183,25 @@ is URL-encoded (`my%20box`), which the Python client does for you.
 
 `?state=` takes a state name, or `ACTIVE` / `TERMINAL` for the whole group.
 
-A job record is the stored record plus four fields the client would otherwise
+A job record is the stored record plus fields the client would otherwise
 have to derive: `active`, `terminal`, `elapsed_seconds`, `waiting_seconds`, and
 `blocked_by` (the id of a predecessor that failed and left this one unable to
 start).
+
+`display_state` and `hold_reasons` distinguish `HELD — Manual` from an After
+wait. `state` remains the recorded state: `HELD` is a manual hold; an After-only
+wait can still be recorded as `PENDING` or as the wrapper's `RUNNING` state.
+The `?state=` filter uses that recorded state. Failed dependencies are displayed
+as `BLOCKED` when applicable.
+
+Hold and Release apply only to waiting jobs in the built-in helper queue,
+including forced jobs. They do not suspend running processes or change a
+dependency. Both return `409` if the operation is unavailable or the job has
+already left the queue. Changes persist on the host when the GUI closes.
+
+Python: `client.hold(job_id)` and `client.release(job_id)`.
+CLI: `python -m job_manager.api_client hold JOB_ID` and
+`python -m job_manager.api_client release JOB_ID`.
 
 `/jobs/{id}/log` and `/jobs/{id}/files` reach the host, so they answer when it
 does — or `504` after 120 s.
