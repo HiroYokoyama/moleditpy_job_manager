@@ -31,6 +31,13 @@ def test_manual_and_after_are_independent_hold_reasons():
 
 
 class TestHoldApi(ApiTestCase):
+    def test_a_failed_dependency_remains_blocked_in_the_api(self):
+        parent = self.add_job(name="parent", state="FAILED")
+        job = self.add_job(state="PENDING", after_job_id=parent.id)
+        data = job_payload(job, self.store)
+        assert data["display_state"] == "BLOCKED"
+        assert data["blocked_by"] == parent.id
+
     def test_hold_and_release_preserve_after_and_priority(self):
         parent = self.add_job(name="parent", state="RUNNING")
         job = self.add_job(state="PENDING", after_job_id=parent.id, priority=-5)

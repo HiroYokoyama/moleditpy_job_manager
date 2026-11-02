@@ -165,3 +165,74 @@ class TestHoldDetails(DialogTestCase):
         model = self.monitor.model
         index = model.index(model.row_of(self.job.id), COLUMNS.index("State"))
         assert "Held: After: Previous check" in model.data(index, Qt.ItemDataRole.ToolTipRole)
+
+    def _select_child(self):
+        index = self.monitor.model.index(self.monitor.model.row_of(self.job.id), 0)
+        self.monitor.table.selectRow(self.monitor.proxy.mapFromSource(index).row())
+
+    def test_job_menu_holds_and_releases_the_selected_job(self):
+        self._select_child()
+        with patch("job_manager.service.set_runner_hold", return_value=True):
+            self.monitor.job_actions["hold"].trigger()
+            assert self.job.state == STATE_HELD
+            assert "hold" not in self.monitor._busy_actions
+            self.monitor.job_actions["release"].trigger()
+        assert self.job.state == "PENDING"
+        assert self.job.after_job_id == self.parent_job.id
+        assert "release" not in self.monitor._busy_actions
+
+    def test_job_menu_reports_a_raced_dispatch_and_transport_failure(self):
+        from job_manager.transport.base import TransportError
+
+        self._select_child()
+        with patch("job_manager.service.set_runner_hold", return_value=False):
+            self.monitor.job_actions["hold"].trigger()
+        assert "no longer waiting" in self.monitor.txt_log.toPlainText()
+        with patch(
+            "job_manager.service.set_runner_hold", side_effect=TransportError("host unavailable")
+        ):
+            self.monitor.job_actions["hold"].trigger()
+        assert "host unavailable" in self.monitor.txt_log.toPlainText()
+        assert "hold" not in self.monitor._busy_actions
+        assert self.job.state == "PENDING"
+
+    def test_menu_and_details_respect_cancelled_password_prompt(self):
+        self.monitor.table.clearSelection()
+        with patch.object(self.service, "set_hold") as operation:
+            self.monitor._hold_selected()
+            self._select_child()
+            with patch.object(self.monitor, "_has_credentials", return_value=False):
+                self.monitor._hold_selected()
+        operation.assert_not_called()
+        with (
+            patch("job_manager.credentials.ensure_password", return_value=False),
+            patch.object(self.service, "set_priority") as operation,
+        ):
+            self.details._apply_priority()
+        operation.assert_not_called()
+        assert not self.details._queue_busy
+
+    def test_service_refuses_invalid_hold_and_after_only_release(self):
+        errors = []
+        self.service.set_hold(self.job, "yes", on_error=errors.append)
+        self.service.set_hold(self.job, False, on_error=errors.append)
+        self.job.state = "RUNNING"
+        self.service.set_hold(self.job, True, on_error=errors.append)
+        assert len(errors) == 3
+        assert "boolean" in errors[0]
+        assert "After conditions remain" in errors[1]
+        assert "Only waiting" in errors[2]
+
+    def test_service_rejects_a_hold_reply_for_a_replaced_job_list(self):
+        callbacks, errors = {}, []
+
+        def delayed(pool, work, **handlers):
+            callbacks.update(handlers)
+
+        with patch("job_manager.service.run_async", side_effect=delayed):
+            self.service.set_hold(self.job, True, on_error=errors.append)
+        replacement = Job.from_dict(self.job.to_dict())
+        self.store.jobs[self.job.id] = replacement
+        callbacks["on_success"](True)
+        assert "job list changed" in errors[0]
+        assert replacement.state == "PENDING"
