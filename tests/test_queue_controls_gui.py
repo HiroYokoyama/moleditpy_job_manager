@@ -459,7 +459,7 @@ class TestTheWizardRemembersTheLastSubmission(DialogTestCase):
 
         again = self.dialog()
 
-        self.assertEqual(again.txt_walltime.text(), "24:00:00")
+        self.assertEqual(again.txt_walltime.text(), "")
         self.assertEqual(again.txt_queue.text(), "")
         self.assertEqual(again.txt_modules.toPlainText(), "")
         self.assertEqual(again.txt_globs.text(), "*.out, *.log, *.xyz, *.hess, *.fchk")
