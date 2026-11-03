@@ -152,20 +152,30 @@ class HostProfileForm(QWidget):
         self.txt_server_url = QLineEdit()
         self.txt_server_url.setPlaceholderText("https://compute.example.org")
         self.txt_server_key = QLineEdit()
-        self.txt_server_key.setPlaceholderText(
-            "Credential file path; private key is stored separately"
+        self.txt_server_key.setReadOnly(True)
+        self.txt_server_key.setEnabled(False)
+        self.txt_server_key.setPlaceholderText("Created automatically when you sign in")
+        self.txt_server_key.setToolTip(
+            "Managed by Sign in to Job Server; no manual path is needed."
         )
         self.txt_server_ca = QLineEdit()
         self.txt_server_ca.setPlaceholderText("Optional CA certificate file")
         self.txt_server_id = QLineEdit()
         self.txt_server_id.setReadOnly(True)
+        self.txt_server_id.setEnabled(False)
         form.addRow("Server URL", self.txt_server_url)
+        self.btn_server_sign_in = QPushButton("Sign in to Job Server...")
+        font = self.btn_server_sign_in.font()
+        font.setBold(True)
+        self.btn_server_sign_in.setFont(font)
+        self.btn_server_sign_in.setToolTip(
+            "Sign in with your username and password. Device credentials are managed automatically."
+        )
+        self.btn_server_sign_in.clicked.connect(self._server_sign_in)
+        form.addRow("", self.btn_server_sign_in)
         form.addRow("Device credential path", self.txt_server_key)
         form.addRow("CA certificate path", self.txt_server_ca)
         form.addRow("Server identity", self.txt_server_id)
-        self.btn_server_sign_in = QPushButton("Sign in / Register server device...")
-        self.btn_server_sign_in.clicked.connect(self._server_sign_in)
-        form.addRow("", self.btn_server_sign_in)
         form.addRow("", self.lbl_backend_hint)
         form.addRow("Scheduler", self.cmb_scheduler)
         self.row_distro_label = QLabel("WSL distribution")

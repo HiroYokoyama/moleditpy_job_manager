@@ -131,6 +131,7 @@ class SubmitDialog(QDialog):
         #: read-only, and a first file's numbers otherwise outlived the file.
         self._scanned_memory = ""
         self._scanned_cpus = 0
+        self._server_check_pending = False
         self._build_ui()
         self.templates = SubmissionTemplates(
             self.store,
@@ -322,6 +323,11 @@ class SubmitDialog(QDialog):
         box.accepted.connect(self._submit)
         box.rejected.connect(self.reject)
         # Outside the scroll area, so it stays put however far the body scrolls.
+        self.lbl_submit_error = QLabel("")
+        self.lbl_submit_error.setTextFormat(Qt.TextFormat.PlainText)
+        self.lbl_submit_error.setWordWrap(True)
+        self.lbl_submit_error.hide()
+        outer.addWidget(self.lbl_submit_error)
         outer.addWidget(box)
 
     def _build_remote_box(self) -> QWidget:
@@ -1351,7 +1357,87 @@ class SubmitDialog(QDialog):
         if index >= 0:
             self.cmb_preset.setCurrentIndex(index)
 
-    def _submit(self) -> None:
+    @staticmethod
+    def _server_resource_overrun(resources: dict, preset: SubmitPreset) -> str:
+        from .schedulers.base import parse_memory_mb
+
+        if not isinstance(resources, dict):
+            raise ValueError(
+                "Cannot read the server CPU and memory budgets. Check the server connection."
+            )
+        cores, memory = resources.get("cpus"), resources.get("memory_mb")
+        if type(cores) is not int or cores < 1 or type(memory) is not int or memory < 1:
+            raise ValueError(
+                "Cannot read the server CPU and memory budgets. Check the server connection."
+            )
+        wanted_memory = parse_memory_mb(preset.memory) if preset.memory else 512
+        errors = []
+        if preset.cpus_per_task > cores:
+            errors.append(
+                f"CPU request {preset.cpus_per_task} exceeds the server budget of {cores} cores."
+            )
+        if wanted_memory > memory:
+            errors.append(
+                f"Memory request {input_scan.format_memory(wanted_memory)} exceeds the server budget of {input_scan.format_memory(memory)}."
+            )
+        return "\n".join(errors) + (
+            "\nAdjust the Resources fields and submit again." if errors else ""
+        )
+
+    def _submit_notice(self, message: str) -> None:
+        self.lbl_submit_error.setText(message)
+        self.lbl_submit_error.setVisible(bool(message))
+
+    @staticmethod
+    def _server_destination(host) -> tuple:
+        return (
+            host.id,
+            host.backend,
+            host.server_url,
+            host.server_key_path,
+            host.server_ca_file,
+            host.server_id,
+        )
+
+    def _check_server_budget(self, host) -> None:
+        from .server_backend import backend_for
+        from .tasks import run_async
+
+        snapshot = copy.deepcopy(host)
+        destination = self._server_destination(snapshot)
+        self._server_check_pending = True
+        self.btn_submit.setEnabled(False)
+        self._submit_notice("Checking server budget…")
+
+        def done(resources):
+            self._server_check_pending = False
+            self.btn_submit.setEnabled(True)
+            current = self.current_host()
+            if not self.isVisible():
+                return
+            if current is None or self._server_destination(current) != destination:
+                self._submit_notice("The host changed. Submit again to check its budget.")
+                return
+            self._submit(server_resources=resources, server_destination=destination)
+
+        def failed(message):
+            self._server_check_pending = False
+            self.btn_submit.setEnabled(True)
+            if self.isVisible():
+                self._submit_notice("Cannot submit: " + message)
+
+        run_async(
+            self.service.pool,
+            lambda: backend_for(snapshot).client.request("GET", "/system/resources"),
+            on_success=done,
+            on_error=failed,
+            owner=self,
+        )
+
+    def _submit(self, *, server_resources=None, server_destination=None) -> None:
+        if self._server_check_pending:
+            return
+        self._submit_notice("")
         if (
             self.chk_scan_resources.isChecked()
             and self.selected_files()
@@ -1380,8 +1466,16 @@ class SubmitDialog(QDialog):
             QMessageBox.warning(self, "Submit", "Enter the command to run.")
             return
         overrun = self._resource_overrun(host, preset)
+        if host.is_job_server:
+            if server_destination != self._server_destination(host):
+                self._check_server_budget(host)
+                return
+            try:
+                overrun = self._server_resource_overrun(server_resources, preset)
+            except ValueError as exc:
+                overrun = str(exc)
         if overrun:
-            QMessageBox.warning(self, "Submit", overrun)
+            self._submit_notice(overrun)
             return
         remote_dir = self.remote_dir()
         if self.box_remote.isChecked() and not remote_dir:
@@ -1447,9 +1541,9 @@ class SubmitDialog(QDialog):
             return
         if batch:
             try:
-                self._submit_batch(host, preset, files)
+                self._submit_batch(host, preset, files, server_resources=server_resources)
             except ValueError as exc:
-                QMessageBox.warning(self, "Submit", str(exc))
+                self._submit_notice(str(exc))
                 return
             self.accept()
             return
@@ -1529,7 +1623,9 @@ class SubmitDialog(QDialog):
         self._remember(host, preset)
         self.accept()
 
-    def _submit_batch(self, host: HostProfile, preset: SubmitPreset, files: List[str]) -> None:
+    def _submit_batch(
+        self, host: HostProfile, preset: SubmitPreset, files: List[str], *, server_resources=None
+    ) -> None:
         """Submit each file as its own job, named after itself.
 
         Chaining is resolved fresh per file: :meth:`chain_predecessor` reads
@@ -1551,6 +1647,8 @@ class SubmitDialog(QDialog):
                 if preset.cpus_per_task <= 1 or preset.cpus_per_task == self._scanned_cpus:
                     individual.cpus_per_task = max(1, found.cores)
             overrun = self._resource_overrun(host, individual)
+            if host.is_job_server:
+                overrun = self._server_resource_overrun(server_resources, individual)
             if overrun:
                 raise ValueError(f"{os.path.basename(path)}: {overrun}")
             prepared.append((path, individual))
