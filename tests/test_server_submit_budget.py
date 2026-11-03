@@ -15,7 +15,7 @@ from job_manager.submit_dialog import SubmitDialog  # noqa: E402
 
 
 @pytest.fixture
-def submission(tmp_path, qapp, monkeypatch):
+def submission(tmp_path, monkeypatch):
     service = JobService(JobStore(str(tmp_path)))
     host = HostProfile(
         name="example", backend="job_server", server_url="https://compute.example.org"
