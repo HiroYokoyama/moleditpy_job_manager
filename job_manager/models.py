@@ -525,7 +525,7 @@ class SubmitPreset:
     name: str = "default"
     queue: str = ""
     account: str = ""
-    walltime: str = "24:00:00"
+    walltime: str = ""
     nodes: int = 1
     ntasks: int = 1
     cpus_per_task: int = 1

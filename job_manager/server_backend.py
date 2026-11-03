@@ -141,10 +141,13 @@ class JobServerBackend:
             )
         from .schedulers.base import parse_memory_mb
 
-        parts = preset.walltime.split(":")
-        if len(parts) != 3 or not all(part.isdecimal() for part in parts):
-            raise ValueError("Use HH:MM:SS walltime")
-        hours, minutes, seconds = map(int, parts)
+        if preset.walltime:
+            parts = preset.walltime.split(":")
+            if len(parts) != 3 or not all(part.isdecimal() for part in parts):
+                raise ValueError("Use HH:MM:SS walltime")
+            hours, minutes, seconds = map(int, parts)
+        else:
+            hours, minutes, seconds = 0, 0, 0
         memory = parse_memory_mb(preset.memory) if preset.memory else 512
         if memory <= 0:
             raise ValueError("Invalid memory request")
