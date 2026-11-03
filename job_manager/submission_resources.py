@@ -40,7 +40,7 @@ class SubmissionResources(QWidget):
         form = QFormLayout(page)
         self.txt_queue = QLineEdit()
         self.txt_account = QLineEdit()
-        self.txt_walltime = QLineEdit("24:00:00")
+        self.txt_walltime = QLineEdit("")
         self.spin_nodes = QSpinBox()
         self.spin_nodes.setRange(1, 1024)
         self.spin_ntasks = QSpinBox()
