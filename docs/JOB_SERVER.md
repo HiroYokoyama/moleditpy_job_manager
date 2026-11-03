@@ -20,11 +20,18 @@ SSH/local/WSL destinations work when cryptography is absent. Selecting Job Serve
 without the optional package gives an installation hint; merely loading Job
 Manager never imports it or starts a listener.
 
-Open **Hosts**, select **Job Server (HTTPS)**, enter the server origin, and click
-**Sign in / Register server device…**. Use the initial account password once;
+Open **Hosts**, select **Job Server (HTTPS)**, enter the server HTTPS URL, and click
+**Sign in to Job Server…**. Use the initial account password once;
 subsequent connections authenticate with the saved device key. Registration fills
-the server identity and selects its native Bash/PowerShell scheduler. Save the
+the server identity and selects its native Bash/PowerShell scheduler. The grayed
+credential path and identity fields are managed automatically; do not enter them
+manually. Save the
 host, then submit and monitor jobs through the ordinary Job Manager windows.
+Submit checks the server's total CPU and memory budgets before creating jobs.
+If a request exceeds either budget, the error stays in Submit with the inputs
+intact so you can adjust Resources and retry. A busy server with sufficient total
+capacity can still accept queued jobs.
+
 Resource budgets and queue administration belong to Job Server's dialogs/web UI;
 Job Manager does not start another helper queue or apply SSH settings to it.
 

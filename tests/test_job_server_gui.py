@@ -36,6 +36,11 @@ def test_server_form_hides_ssh_queue_and_restores_normal_hosts(server_service):
         dialog.cmb_backend.setCurrentIndex(dialog.cmb_backend.findData("job_server"))
         form = dialog.profile_form
         assert not form.txt_server_url.isHidden()
+        assert not form.txt_server_key.isEnabled()
+        assert form.txt_server_key.isReadOnly()
+        assert not form.txt_server_id.isEnabled()
+        assert form.btn_server_sign_in.isEnabled()
+        assert "Sign in" in form.btn_server_sign_in.text()
         assert not dialog.txt_hostname.isEnabled()
         assert not dialog.cmb_concurrency.isEnabled()
         assert dialog.queue_box.isHidden()
