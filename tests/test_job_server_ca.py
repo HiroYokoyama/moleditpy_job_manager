@@ -35,9 +35,7 @@ def test_ca_file_is_saved_automatically_for_a_connection(tmp_path, monkeypatch, 
     client.return_value.request.assert_called_once_with("GET", "/health", authenticated=False)
 
 
-def test_windows_trust_uses_default_store_for_subsequent_connections(
-    tmp_path, monkeypatch, trust
-):
+def test_windows_trust_uses_default_store_for_subsequent_connections(tmp_path, monkeypatch, trust):
     from job_manager import server_backend
 
     installed = Mock()
@@ -89,9 +87,7 @@ def test_ca_is_installed_only_after_the_fingerprint_is_confirmed(confirmed, tmp_
         patch.object(
             server_backend, "fetch_ca_for_confirmation", return_value=(CERTIFICATE, FINGERPRINT)
         ),
-        patch.object(
-            server_backend, "confirm_ca_fingerprint", return_value=confirmed
-        ) as confirm,
+        patch.object(server_backend, "confirm_ca_fingerprint", return_value=confirmed) as confirm,
         patch.object(
             server_backend,
             "install_server_ca",
