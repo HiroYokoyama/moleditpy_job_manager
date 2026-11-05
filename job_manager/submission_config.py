@@ -14,7 +14,9 @@ INPUT_FILTER = ";;".join(INPUT_FILTERS)
 
 RELAY_TITLE = "Reuse another job's file"
 
-BATCH_TEXT = "Submit each file as its own job"
+ONE_JOB_TEXT = "1 job with all {count} files"
+
+BATCH_TEXT = "{count} separate jobs, one per file"
 
 CHAIN_TEXT = "Run after the job already queued on this host"
 

@@ -28,6 +28,7 @@ from job_manager.models import (  # noqa: E402
 )
 from job_manager.service import JobService  # noqa: E402
 from job_manager.store import JobStore  # noqa: E402
+from PySide6.QtCore import QCoreApplication  # noqa: E402
 from PySide6.QtWidgets import QMessageBox  # noqa: E402
 from job_manager.submit_dialog import SubmitDialog  # noqa: E402
 
@@ -1330,6 +1331,7 @@ class TestDropOpensAJobList(DialogTestCase):
     def test_dropping_an_archive_opens_it_read_only(self):
         path, _ = self.store.clear_jobs()
         self.dialog.dropEvent(self.drop_event(path))
+        QCoreApplication.processEvents()
         self.assertTrue(self.dialog.viewing_archive())
 
     def test_dropping_an_export_offers_to_import_it(self):
@@ -1340,6 +1342,7 @@ class TestDropOpensAJobList(DialogTestCase):
             return_value=QMessageBox.StandardButton.Yes,
         ):
             self.dialog.dropEvent(self.drop_event(path))
+            QCoreApplication.processEvents()
         self.assertIn("j1", self.store.jobs)
 
     def test_a_drag_of_the_right_file_is_accepted(self):

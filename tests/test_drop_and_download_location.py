@@ -24,7 +24,7 @@ pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 from job_manager.jobs_dialog import JobsDialog  # noqa: E402
 from job_manager.service import JobService  # noqa: E402
 from job_manager.submit_dialog import SubmitDialog  # noqa: E402
-from PySide6.QtCore import QMimeData, QPoint, QPointF, QUrl, Qt  # noqa: E402
+from PySide6.QtCore import QCoreApplication, QMimeData, QPoint, QPointF, QUrl, Qt  # noqa: E402
 from PySide6.QtGui import QDragEnterEvent, QDropEvent  # noqa: E402
 
 
@@ -87,6 +87,7 @@ class TestDroppingOnTheMonitor(DropTestCase):
 
         with patch.object(dialog, "open_submit_dialog") as opened:
             dialog.dropEvent(event)
+            QCoreApplication.processEvents()
 
         opened.assert_called_once()
         self.assertEqual(opened.call_args.kwargs["files"], [path])
@@ -100,6 +101,7 @@ class TestDroppingOnTheMonitor(DropTestCase):
         with patch.object(dialog, "open_job_list") as opened:
             with patch.object(dialog, "open_submit_dialog") as submitted:
                 dialog.dropEvent(event)
+                QCoreApplication.processEvents()
 
         opened.assert_called_once_with(path)
         submitted.assert_not_called()
@@ -111,6 +113,7 @@ class TestDroppingOnTheMonitor(DropTestCase):
 
         with patch.object(dialog, "open_submit_dialog") as opened:
             dialog.dropEvent(event)
+            QCoreApplication.processEvents()
 
         self.assertEqual(opened.call_args.kwargs["files"], paths)
 
@@ -144,6 +147,7 @@ class TestDroppingOnTheMonitor(DropTestCase):
 
         with patch.object(dialog, "open_submit_dialog") as opened:
             dialog.dropEvent(event)
+            QCoreApplication.processEvents()
 
         opened.assert_not_called()
 
@@ -177,6 +181,7 @@ class TestDroppingOnTheWizard(DropTestCase):
         for _ in range(2):
             event, _mime = drop_event([path])
             dialog.dropEvent(event)
+            QCoreApplication.processEvents()
 
         self.assertEqual(dialog.selected_files(), [path])
 

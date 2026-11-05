@@ -23,6 +23,30 @@ DUPLICATE_UPLOAD_MESSAGE = (
 )
 
 
+#: How likely a dropped file is to be what ``{input}`` should name, lowest first.
+#: A script drives whatever was dropped with it; a structure usually accompanies
+#: an input deck; anything unknown (a checkpoint, a basis set) is a companion.
+_PRIMARY_RANK = {
+    **dict.fromkeys((".sh", ".slurm", ".pbs"), 0),
+    **dict.fromkeys((".inp", ".com", ".gjf", ".in"), 1),
+    ".xyz": 2,
+}
+
+
+def primary_first(paths: Sequence[str]) -> list:
+    """``paths`` with the likeliest ``{input}`` first, otherwise in their order.
+
+    The order of a drop is the file manager's, not the user's: Explorer may list
+    a checkpoint ahead of the input it belongs to, and the first file is what
+    names the job and fills ``{input}``.
+    """
+
+    def rank(path: str) -> int:
+        return _PRIMARY_RANK.get(os.path.splitext(path)[1].lower(), 3)
+
+    return sorted(paths, key=rank)
+
+
 def check_upload_names(paths: Sequence[str], *, windows: bool = False) -> None:
     """Reject collisions in the flat upload directory, before any files move."""
     names = [os.path.basename(path) for path in paths]

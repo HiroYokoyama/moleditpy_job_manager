@@ -7,6 +7,7 @@ import pytest
 
 pytest.importorskip("PySide6.QtWidgets")
 
+from PySide6.QtCore import QCoreApplication  # noqa: E402
 from PySide6.QtWidgets import QMessageBox  # noqa: E402
 
 from job_manager.job_database import read_document  # noqa: E402
@@ -116,6 +117,7 @@ class TestDatabaseMenus(DialogTestCase):
             event = TestDropOpensAJobList.drop_event(self, path)
             with patch.object(self.dialog, "open_job_list") as opened:
                 self.dialog.dropEvent(event)
+                QCoreApplication.processEvents()
             opened.assert_called_once_with(path)
 
     def test_saved_copy_is_independent_of_settings_and_live_store(self):

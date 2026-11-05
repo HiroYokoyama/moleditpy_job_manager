@@ -86,7 +86,8 @@ Detailed instructions: [Standard workflow](docs/WORKFLOW.md).
    automatically and opened in the appropriate result analyzer.
 
 Drop an input file onto the Job Monitor to open a prefilled submission. Dropping
-several files creates one job per file; hold **Shift** to submit them together.
+several files creates one job with all of them; hold **Shift** to create one job
+per file.
 For staged inputs, select **Work already on the host** and check the existing
 remote directory. Command-only jobs need no input file.
 

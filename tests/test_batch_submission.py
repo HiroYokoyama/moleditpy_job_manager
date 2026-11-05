@@ -1,25 +1,24 @@
-"""Dropping several files at once: batch by default, one job with Shift.
+"""Dropping several files at once: one job by default, a batch with Shift.
 
-The wizard's "Submit each file as its own job" checkbox is what a plain
-multi-file drop ticks, and what a Shift-held drop leaves off -- restoring the
-older "all files go to one job" behaviour for the case that still needs it
-(a Gaussian job with a companion checkpoint, say).
+A plain multi-file drop is one job's inputs (a Gaussian job with a companion
+checkpoint, say). A Shift-held drop selects the wizard's "separate jobs" choice.
 """
 
 from __future__ import annotations
 
 import os
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 
-from PySide6.QtCore import QMimeData, QUrl, Qt  # noqa: E402
+from PySide6.QtCore import QCoreApplication, QMimeData, QUrl, Qt  # noqa: E402
 from PySide6.QtGui import QDropEvent  # noqa: E402
 from PySide6.QtCore import QPointF  # noqa: E402
 
+from job_manager.input_names import primary_first  # noqa: E402
 from job_manager.jobs_dialog import JobsDialog  # noqa: E402
 from job_manager.submit_dialog import SubmitDialog  # noqa: E402
 
@@ -64,17 +63,36 @@ class TestTheSubmitDialogsBatchCheckbox(DialogTestCase):
         dialog.add_files([self.make_input("a.inp"), self.make_input("b.inp")])
         self.assertTrue(dialog.chk_batch.isVisible())
 
-    def test_a_plain_drop_of_several_files_ticks_it(self):
+    def test_a_plain_drop_of_several_files_leaves_it_unticked(self):
         dialog = self.dialog()
         paths = [self.make_input("a.inp"), self.make_input("b.inp")]
         dialog.dropEvent(make_drop_event(paths))
-        self.assertTrue(dialog.chk_batch.isChecked())
+        self.assertFalse(dialog.chk_batch.isChecked())
 
-    def test_a_shift_drop_of_several_files_leaves_it_unticked(self):
+    def test_a_shift_drop_of_several_files_ticks_it(self):
         dialog = self.dialog()
         paths = [self.make_input("a.inp"), self.make_input("b.inp")]
         dialog.dropEvent(make_drop_event(paths, Qt.KeyboardModifier.ShiftModifier))
-        self.assertFalse(dialog.chk_batch.isChecked())
+        self.assertTrue(dialog.chk_batch.isChecked())
+
+    def test_a_plain_drop_puts_the_input_ahead_of_its_companion(self):
+        dialog = self.dialog()
+        checkpoint = self.make_input("mol.gbw")
+        deck = self.make_input("mol.inp")
+        dialog.dropEvent(make_drop_event([checkpoint, deck]))
+        self.assertEqual(dialog.selected_files(), [deck, checkpoint])
+
+    def test_a_plain_drop_submits_one_job_with_every_file(self):
+        dialog = self.dialog()
+        dialog.dropEvent(make_drop_event([self.make_input("a.gbw"), self.make_input("a.inp")]))
+        dialog.txt_command.setText("orca {input} > {stem}.out")
+
+        dialog._submit()
+
+        self.assertEqual(len(self.store.jobs), 1)
+        job = next(iter(self.store.jobs.values()))
+        self.assertEqual(len(job.input_files), 2)
+        self.assertTrue(job.input_files[0].endswith("a.inp"))
 
     def test_a_single_file_drop_does_not_touch_the_checkbox(self):
         dialog = self.dialog()
@@ -108,8 +126,22 @@ class TestTheSubmitDialogsBatchCheckbox(DialogTestCase):
         dialog.add_files([self.make_input("a.inp"), self.make_input("b.inp")])
         dialog.chk_batch.setChecked(True)
         self.assertIn("2", dialog.btn_submit.text())
+        self.assertIn("2 separate jobs", dialog.chk_batch.text())
         dialog.chk_batch.setChecked(False)
+        self.assertEqual(dialog.btn_submit.text(), "Submit 1 Job (2 files)")
+        self.assertTrue(dialog.radio_one_job.isChecked())
+        self.assertIn("all 2 files", dialog.radio_one_job.text())
+
+    def test_the_submit_button_stays_plain_for_one_file(self):
+        dialog = self.dialog()
+        dialog.add_files([self.make_input("a.inp")])
         self.assertEqual(dialog.btn_submit.text(), "Submit")
+
+    def test_the_preview_names_the_file_input_will_be(self):
+        dialog = self.dialog()
+        dialog.add_files([self.make_input("a.inp"), self.make_input("a.gbw")])
+        dialog._refresh_preview()
+        self.assertIn("a.inp", dialog.lbl_preview_hint.text())
 
 
 class TestSubmittingABatch(DialogTestCase):
@@ -212,33 +244,45 @@ class TestTheMonitorsDropHandler(DialogTestCase):
         self.addCleanup(dialog.deleteLater)
         return dialog
 
-    def test_a_plain_drop_of_several_files_opens_the_wizard_batched(self):
+    def test_a_plain_drop_of_several_files_opens_the_wizard_as_one_job(self):
         dialog = self.dialog()
         called = {}
+        dialog.open_submit_dialog = lambda **kwargs: called.update(kwargs)
+        checkpoint = self.make_input("mol.gbw")
+        deck = self.make_input("mol.inp")
+        dialog.dropEvent(make_drop_event([checkpoint, deck]))
+        QCoreApplication.processEvents()
 
-        def fake_open(**kwargs):
-            called.update(kwargs)
+        self.assertFalse(called.get("batch"))
+        self.assertEqual(called.get("files"), [deck, checkpoint])
 
-        dialog.open_submit_dialog = fake_open
-        paths = [self.make_input("a.inp"), self.make_input("b.inp")]
-        dialog.dropEvent(make_drop_event(paths))
-
-        self.assertTrue(called.get("batch"))
-
-    def test_a_shift_drop_of_several_files_opens_it_ungrouped(self):
+    def test_a_shift_drop_of_several_files_opens_it_batched(self):
         dialog = self.dialog()
         called = {}
         dialog.open_submit_dialog = lambda **kwargs: called.update(kwargs)
         paths = [self.make_input("a.inp"), self.make_input("b.inp")]
         dialog.dropEvent(make_drop_event(paths, Qt.KeyboardModifier.ShiftModifier))
+        QCoreApplication.processEvents()
 
-        self.assertFalse(called.get("batch"))
+        self.assertTrue(called.get("batch"))
+
+    def test_the_drop_returns_before_the_wizard_opens(self):
+        # The drag source blocks until dropEvent returns, and the wizard is
+        # modal: opening it inside the drop froze Explorer until it closed.
+        dialog = self.dialog()
+        opened = MagicMock()
+        dialog.open_submit_dialog = opened
+        dialog.dropEvent(make_drop_event([self.make_input("a.inp")]))
+        opened.assert_not_called()
+        QCoreApplication.processEvents()
+        opened.assert_called_once()
 
     def test_a_single_file_drop_is_never_batched(self):
         dialog = self.dialog()
         called = {}
         dialog.open_submit_dialog = lambda **kwargs: called.update(kwargs)
         dialog.dropEvent(make_drop_event([self.make_input("a.inp")]))
+        QCoreApplication.processEvents()
 
         self.assertFalse(called.get("batch"))
 
@@ -256,6 +300,36 @@ class TestTheMonitorsDropHandler(DialogTestCase):
             )
         told.assert_called_once()
         opened.assert_not_called()
+
+
+class TestPrimaryFirst(unittest.TestCase):
+    def test_the_input_goes_ahead_of_a_checkpoint_and_a_structure(self):
+        self.assertEqual(
+            primary_first(["mol.gbw", "mol.xyz", "MOL.INP"]), ["MOL.INP", "mol.xyz", "mol.gbw"]
+        )
+
+    def test_a_script_drives_the_input_dropped_with_it(self):
+        self.assertEqual(primary_first(["mol.inp", "run.sh"]), ["run.sh", "mol.inp"])
+
+    def test_files_of_equal_rank_keep_their_order(self):
+        self.assertEqual(primary_first(["b.inp", "a.inp"]), ["b.inp", "a.inp"])
+
+
+class TestAJobListOpenedFromAMainWindowDrop(unittest.TestCase):
+    def test_the_drop_returns_before_the_question_is_asked(self):
+        import job_manager
+
+        window = MagicMock()
+        context = MagicMock()
+        context.get_window.return_value = window
+        with (
+            patch.object(job_manager, "_context", context),
+            patch.object(job_manager, "show_monitor"),
+        ):
+            self.assertTrue(job_manager.handle_dropped_file("/tmp/jobs.pmejdb"))
+            window.open_job_list.assert_not_called()
+            QCoreApplication.processEvents()
+        window.open_job_list.assert_called_once_with("/tmp/jobs.pmejdb")
 
 
 if __name__ == "__main__":

@@ -1661,7 +1661,9 @@ class JobsDialog(QDialog):
         path = self._dropped_job_list(event)
         if path:
             event.acceptProposedAction()
-            self.open_job_list(path)
+            # Never run a modal dialog inside dropEvent: the drag source waits
+            # for the drop to return, so Explorer froze until the dialog closed.
+            QTimer.singleShot(0, lambda: self.open_job_list(path))
             return
         # Anything else that is a real file opens the wizard prefilled.
         files = self._dropped_input_files(event)
@@ -1669,10 +1671,14 @@ class JobsDialog(QDialog):
             event.ignore()
             return
         event.acceptProposedAction()
-        # Several files dropped plainly become that many separate jobs; hold
-        # Shift for the one-job case.
-        batch = len(files) > 1 and not bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
-        self.open_submit_dialog(files=files, batch=batch)
+        # Several files dropped plainly are one job's inputs; hold Shift to make
+        # each its own job.
+        batch = len(files) > 1 and bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+        if not batch:
+            from .input_names import primary_first
+
+            files = primary_first(files)
+        QTimer.singleShot(0, lambda: self.open_submit_dialog(files=files, batch=batch))
 
     # --- the task bar and the title ------------------------------------------
 
