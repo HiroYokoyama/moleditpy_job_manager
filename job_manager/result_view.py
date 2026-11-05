@@ -61,7 +61,13 @@ def show_text_window(
                 pass
         return True
 
-    dialog = TextEditorDialog(os.path.abspath(path) if path else None, parent, open_source)
+    from . import get_context
+
+    dialog = TextEditorDialog(
+        os.path.abspath(path) if path else None,
+        parent,
+        open_source if get_context() is not None else None,
+    )
     _text_windows.append(dialog)
     dialog.finished.connect(lambda _result: _text_windows.remove(dialog))
     dialog.present()

@@ -291,7 +291,8 @@ class TestNewFile(EditorCase):
         path = os.path.join(self.tmp, "a.inp")
         with open(path, "w", encoding="utf-8") as handle:
             handle.write("x\n")
-        dialog = show_text_window(path)
+        with patch("job_manager.get_context", return_value=object()):
+            dialog = show_text_window(path)
         self.assertTrue(dialog.btn_open_in_moleditpy.isEnabled())
         target = os.path.join(self.tmp, "b.txt")
         with patch(
@@ -304,7 +305,8 @@ class TestNewFile(EditorCase):
 
 class TestTheBrowserButtons(DialogTestCase):
     def test_the_text_viewer_button_comes_first(self):
-        dialog = OutputFileSelectorDialog(self.service, make_job())
+        with patch("job_manager.get_context", return_value=object()):
+            dialog = OutputFileSelectorDialog(self.service, make_job())
         self.addCleanup(dialog.deleteLater)
         dialog.show()
         self.addCleanup(dialog.hide)

@@ -170,6 +170,12 @@ class OutputFileSelectorDialog(QDialog):
         self.btn_open.setDefault(True)
         self.btn_open.clicked.connect(self._open_selected)
         box.addButton(self.btn_open, QDialogButtonBox.ButtonRole.ActionRole)
+        from . import get_context
+
+        available = get_context() is not None
+        self.btn_open.setVisible(available)
+        self.btn_open.setDefault(available)
+        self.btn_text.setDefault(not available)
 
         self.btn_open_folder = QPushButton("Open Containing Folder")
         self.btn_open_folder.setToolTip("Show the downloaded files in the file manager.")
@@ -626,7 +632,8 @@ class OutputFileSelectorDialog(QDialog):
                 return False
             if binary:
                 self.lbl_status.setText(
-                    "This file appears to be binary. Use Open in MoleditPy to open it."
+                    "This file appears to be binary."
+                    + (" Use Open in MoleditPy to open it." if not self.btn_open.isHidden() else "")
                 )
                 return False
             if self.on_text_callback is not None:
