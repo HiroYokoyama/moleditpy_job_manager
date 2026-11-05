@@ -62,7 +62,7 @@ can have its own command and settings. More than ten files asks first. Hold
 to it, for a command that wants more than one (a checkpoint alongside an input,
 a structure and a basis set file together). The likeliest input goes first,
 since the first file names the job and fills `{input}`; **Move up / Move down**
-changes that. Dropping a single file onto an open wizard adds it to that job.
+changes that. Files dropped onto an open wizard, one or several, join that job.
 
 To run the same command on many files, add them with **Add files...** and tick
 "Submit each file as its own job". It turns itself off together with "Work

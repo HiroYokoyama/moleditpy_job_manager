@@ -605,7 +605,6 @@ class JobsDialog(QDialog):
             if not self.service.store.hosts:
                 return None
         dialog = SubmitDialog(self.service, self)
-        dialog.open_more_windows = self.open_submit_windows
         # make_independent() drops the Qt parent, so nothing else holds a window
         # that is not in exec(): it would vanish as soon as this returned.
         self._submit_windows.append(dialog)

@@ -28,7 +28,7 @@ DUPLICATE_UPLOAD_MESSAGE = (
 #: an input deck; anything unknown (a checkpoint, a basis set) is a companion.
 _PRIMARY_RANK = {
     **dict.fromkeys((".sh", ".slurm", ".pbs"), 0),
-    **dict.fromkeys((".inp", ".com", ".gjf", ".in"), 1),
+    **dict.fromkeys((".inp", ".com", ".gjf", ".in", ".nw", ".dat", ".mop", ".py", ".src"), 1),
     ".xyz": 2,
 }
 

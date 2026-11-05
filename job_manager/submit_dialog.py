@@ -7,7 +7,7 @@ import copy
 import os
 from typing import ClassVar, List, Optional, Sequence
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -133,8 +133,6 @@ class SubmitDialog(QDialog):
         self._scanned_memory = ""
         self._scanned_cpus = 0
         self._server_check_pending = False
-        #: Opens several files in a window each; set by whoever owns the windows.
-        self.open_more_windows = None
         self._build_ui()
         self.templates = SubmissionTemplates(
             self.store,
@@ -291,9 +289,9 @@ class SubmitDialog(QDialog):
             "its own -- rather than one job with every file uploaded to it.\n\n"
             "Shown only with more than one file, and not together with 'Work "
             "already on the host', which names a single file for {input}.\n\n"
-            "Dropping several files opens one window per file instead, so each "
-            "can have its own command; hold Shift while dropping to keep them as "
-            "one job."
+            "Dropping several files onto the monitor opens one window per file "
+            "instead, so each can have its own command; hold Shift while dropping "
+            "to keep them as one job. Files dropped onto this window join this job."
         )
         self.chk_batch.toggled.connect(self._on_batch_toggled)
         self.chk_batch.setVisible(False)
@@ -1195,20 +1193,8 @@ class SubmitDialog(QDialog):
             event.ignore()
             return
         event.acceptProposedAction()
-        if len(paths) == 1 or event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
-            self.add_files(primary_first(paths))
-            return
-        # Several files dropped plainly get a window each, so each can have its
-        # own command. An empty form takes the first rather than staying blank.
-        open_windows = self.open_more_windows
-        if open_windows is None:
-            self.add_files(primary_first(paths))
-            return
-        if not self.selected_files():
-            self.add_files(paths[:1])
-            paths = paths[1:]
-        # After the drop returns: the drag source is blocked until it does.
-        QTimer.singleShot(0, lambda: open_windows(paths))
+        # This form is one job, so whatever lands on it is that job's input.
+        self.add_files(primary_first(paths))
 
     def _update_file_selection(self) -> None:
         return self.file_panel._update_file_selection()

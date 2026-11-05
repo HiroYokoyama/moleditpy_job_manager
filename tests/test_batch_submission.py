@@ -104,48 +104,44 @@ class TestTheSubmitDialogsBatchCheckbox(DialogTestCase):
 class TestDroppingOnAnOpenWizard(DialogTestCase):
     def wizard(self) -> SubmitDialog:
         dialog = SubmitDialog(self.service)
-        dialog.open_more_windows = MagicMock()
         self.addCleanup(dialog.deleteLater)
         return dialog
 
-    def test_an_empty_form_takes_the_first_and_the_rest_get_windows(self):
-        dialog = self.wizard()
-        first, second, third = (self.make_input(f"{n}.inp") for n in "abc")
-
-        dialog.dropEvent(make_drop_event([first, second, third]))
-        QCoreApplication.processEvents()
-
-        self.assertEqual(dialog.selected_files(), [first])
-        dialog.open_more_windows.assert_called_once_with([second, third])
-
-    def test_a_filled_form_is_left_alone(self):
+    def test_several_files_join_the_job_already_on_the_form(self):
         dialog = self.wizard()
         existing = self.make_input("x.inp")
         dialog.add_files([existing])
-        paths = [self.make_input("a.inp"), self.make_input("b.inp")]
+        paths = [self.make_input("a.gbw"), self.make_input("a.xyz")]
 
         dialog.dropEvent(make_drop_event(paths))
-        QCoreApplication.processEvents()
 
-        self.assertEqual(dialog.selected_files(), [existing])
-        dialog.open_more_windows.assert_called_once_with(paths)
+        self.assertEqual(dialog.selected_files()[0], existing)
+        self.assertEqual(sorted(dialog.selected_files()[1:]), sorted(paths))
+        self.assertFalse(dialog.chk_batch.isChecked())
 
-    def test_shift_makes_one_job_with_the_input_first(self):
+    def test_an_empty_form_makes_one_job_with_the_input_first(self):
         dialog = self.wizard()
         checkpoint = self.make_input("mol.gbw")
         deck = self.make_input("mol.inp")
 
-        dialog.dropEvent(make_drop_event([checkpoint, deck], Qt.KeyboardModifier.ShiftModifier))
-        QCoreApplication.processEvents()
+        dialog.dropEvent(make_drop_event([checkpoint, deck]))
 
         self.assertEqual(dialog.selected_files(), [deck, checkpoint])
-        dialog.open_more_windows.assert_not_called()
         dialog.txt_command.setText("orca {input} > {stem}.out")
         dialog._submit()
         self.assertEqual(len(self.store.jobs), 1)
         job = next(iter(self.store.jobs.values()))
         self.assertTrue(job.input_files[0].endswith("mol.inp"))
         self.assertEqual(len(job.input_files), 2)
+
+    def test_shift_changes_nothing_on_the_form(self):
+        dialog = self.wizard()
+        checkpoint = self.make_input("mol.gbw")
+        deck = self.make_input("mol.inp")
+
+        dialog.dropEvent(make_drop_event([checkpoint, deck], Qt.KeyboardModifier.ShiftModifier))
+
+        self.assertEqual(dialog.selected_files(), [deck, checkpoint])
 
 
 class TestSubmittingABatch(DialogTestCase):
@@ -348,6 +344,10 @@ class TestPrimaryFirst(unittest.TestCase):
         self.assertEqual(
             primary_first(["mol.gbw", "mol.xyz", "MOL.INP"]), ["MOL.INP", "mol.xyz", "mol.gbw"]
         )
+
+    def test_every_program_input_goes_ahead_of_a_structure(self):
+        for name in ("mol.nw", "mol.dat", "mol.mop", "mol.py", "mol.src"):
+            self.assertEqual(primary_first(["mol.xyz", name]), [name, "mol.xyz"])
 
     def test_a_script_drives_the_input_dropped_with_it(self):
         self.assertEqual(primary_first(["mol.inp", "run.sh"]), ["run.sh", "mol.inp"])
