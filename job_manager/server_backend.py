@@ -33,9 +33,111 @@ def backend_for(host):
     return JobServerBackend(host)
 
 
+def server_credentials(parent):
+    from PySide6.QtWidgets import QDialog, QDialogButtonBox, QFormLayout, QLineEdit
+
+    dialog = QDialog(parent)
+    dialog.setWindowTitle("Sign in to Job Server")
+    layout = QFormLayout(dialog)
+    username, password = QLineEdit(dialog), QLineEdit(dialog)
+    username.setObjectName("username")
+    password.setObjectName("password")
+    username.setMaxLength(64)
+    password.setMaxLength(1024)
+    password.setEchoMode(QLineEdit.EchoMode.Password)
+    layout.addRow("Username", username)
+    layout.addRow("Password", password)
+    buttons = QDialogButtonBox(
+        QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, parent=dialog
+    )
+    accept = buttons.button(QDialogButtonBox.StandardButton.Ok)
+    accept.setText("Sign in")
+
+    def validate():
+        accept.setEnabled(bool(username.text().strip() and password.text()))
+
+    username.textChanged.connect(validate)
+    password.textChanged.connect(validate)
+    validate()
+    buttons.accepted.connect(dialog.accept)
+    buttons.rejected.connect(dialog.reject)
+    layout.addRow(buttons)
+    username.setFocus()
+    result = None
+    if dialog.exec() == QDialog.DialogCode.Accepted:
+        result = username.text().strip(), password.text()
+    password.clear()
+    dialog.deleteLater()
+    return result
+
+
+def install_server_ca(url, fingerprint, directory, *, windows_store=None):
+    from .job_server_client.client import JobServerClient
+    from .job_server_client.files import atomic_write
+    from .job_server_client.trust import (
+        fetch_server_ca,
+        normalize_fingerprint,
+        trust_windows_user_ca,
+    )
+
+    pem = fetch_server_ca(url, fingerprint)
+    windows_store = os.name == "nt" if windows_store is None else windows_store
+    if windows_store:
+        trust_windows_user_ca(pem, fingerprint)
+        ca_file = ""
+    else:
+        path = Path(directory) / "identity" / "ca" / (normalize_fingerprint(fingerprint) + ".pem")
+        atomic_write(path, pem)
+        ca_file = str(path)
+    JobServerClient(url, ca_file=ca_file or None, timeout=5).request(
+        "GET", "/health", authenticated=False
+    )
+    return ca_file
+
+
+def show_ca_registration(parent, url, ca_field):
+    from PySide6.QtCore import QThreadPool
+    from PySide6.QtWidgets import QInputDialog, QMessageBox
+    from .tasks import run_async
+    from .store import default_data_dir
+
+    try:
+        require_client()
+        url = validate_server_url(url)
+    except ValueError as exc:
+        QMessageBox.warning(parent, "Job Server", str(exc))
+        return
+    destination = (
+        "This CA will be added to the current Windows user's trusted roots."
+        if os.name == "nt"
+        else "This CA will be saved for this Job Server connection."
+    )
+    fingerprint, ok = QInputDialog.getText(
+        parent,
+        "Trust local server CA",
+        "Paste the full SHA-256 fingerprint shown on the server PC.\n" + destination,
+    )
+    if not ok:
+        return
+
+    def done(path):
+        ca_field.setText(path)
+        QMessageBox.information(
+            parent, "Job Server", "CA verified and trusted. You can now sign in."
+        )
+
+    run_async(
+        QThreadPool.globalInstance(),
+        lambda: install_server_ca(url, fingerprint, default_data_dir()),
+        on_success=done,
+        on_error=lambda message: QMessageBox.warning(parent, "Job Server", message),
+        owner=parent,
+    )
+
+
 def show_enrollment(parent, url, key_field, ca_file, on_done=None, *, allow_lan_http=False):
     from PySide6.QtCore import QThreadPool
-    from PySide6.QtWidgets import QInputDialog, QLineEdit, QMessageBox
+    from PySide6.QtWidgets import QMessageBox
     from .tasks import run_async
     from .store import default_data_dir
 
@@ -52,14 +154,10 @@ def show_enrollment(parent, url, key_field, ca_file, on_done=None, *, allow_lan_
     )
     username = password = ""
     if not path.exists():
-        username, ok = QInputDialog.getText(parent, "Register server device", "Username")
-        if not ok:
+        credentials = server_credentials(parent)
+        if credentials is None:
             return
-        password, ok = QInputDialog.getText(
-            parent, "Register server device", "Initial password", QLineEdit.EchoMode.Password
-        )
-        if not ok:
-            return
+        username, password = credentials
 
     def work():
         from .job_server_client.client import JobServerClient

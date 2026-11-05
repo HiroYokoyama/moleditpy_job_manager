@@ -72,7 +72,9 @@ def test_enrollment_uses_same_opt_in_for_validation_and_network(tmp_path):
     requests = []
     with (
         patch.object(server_backend, "require_client"),
-        patch("PySide6.QtWidgets.QInputDialog.getText", return_value=("fixture", True)),
+        patch.object(
+            server_backend, "server_credentials", return_value=("fixture", "synthetic-password")
+        ),
         patch("job_manager.tasks.run_async", side_effect=lambda pool, work, **kw: work()),
         patch("job_manager.job_server_client.client.JobServerClient") as client,
     ):

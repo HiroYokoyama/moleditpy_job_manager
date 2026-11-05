@@ -37,6 +37,7 @@ def test_server_form_hides_ssh_queue_and_restores_normal_hosts(server_service):
         form = dialog.profile_form
         assert not form.txt_server_url.isHidden()
         assert not form.chk_server_lan_http.isChecked()
+        assert not form.btn_server_trust.isHidden()
         form.chk_server_lan_http.setChecked(True)
         assert not form.txt_server_key.isEnabled()
         assert form.txt_server_key.isReadOnly()
@@ -58,10 +59,42 @@ def test_server_form_hides_ssh_queue_and_restores_normal_hosts(server_service):
         dialog.cmb_backend.setCurrentIndex(dialog.cmb_backend.findData("openssh"))
         assert form.txt_server_url.isHidden()
         assert form.chk_server_lan_http.isHidden()
+        assert form.btn_server_trust.isHidden()
         assert dialog.txt_hostname.isEnabled()
         dialog.reject = lambda: None
         dialog.hide()
         dialog.deleteLater()
+
+
+def test_server_credentials_use_one_dialog_and_clear_password(server_service, monkeypatch):
+    from PySide6.QtWidgets import QDialog, QLineEdit
+    from job_manager.server_backend import server_credentials
+
+    calls, passwords = [], []
+
+    def enter(dialog):
+        calls.append(dialog)
+        username = dialog.findChild(QLineEdit, "username")
+        password = dialog.findChild(QLineEdit, "password")
+        assert username is not None and password is not None
+        username.setText(" fixture-user ")
+        password.setText("synthetic-password")
+        assert password.echoMode() == QLineEdit.EchoMode.Password
+        passwords.append(password)
+        return QDialog.DialogCode.Accepted
+
+    monkeypatch.setattr(QDialog, "exec", enter)
+    assert server_credentials(None) == ("fixture-user", "synthetic-password")
+    assert len(calls) == 1
+    assert passwords[0].text() == ""
+
+
+def test_cancelled_server_login_returns_no_credentials(server_service, monkeypatch):
+    from PySide6.QtWidgets import QDialog
+    from job_manager.server_backend import server_credentials
+
+    monkeypatch.setattr(QDialog, "exec", lambda self: QDialog.DialogCode.Rejected)
+    assert server_credentials(None) is None
 
 
 def test_submit_poll_cancel_and_result_routing_never_create_shell_transport(

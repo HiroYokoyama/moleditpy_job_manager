@@ -8,8 +8,8 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE_COMMIT = "c960913565761198c689f8b04276a7fb305681eb"
-FILES = ("connection.py", "client.py", "credentials.py", "files.py", "errors.py")
+SOURCE_COMMIT = "f0d53ff1373b34e77cd833e6312ddd653e4ca9fe"
+FILES = ("trust.py", "connection.py", "client.py", "credentials.py", "files.py", "errors.py")
 
 
 def sync(source):

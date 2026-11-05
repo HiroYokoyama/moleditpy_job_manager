@@ -1,0 +1,107 @@
+"""Fingerprint-verified CA bootstrap; ordinary API connections always verify TLS."""
+
+import ctypes
+import hmac
+import os
+import re
+import ssl
+from datetime import datetime, timezone
+from urllib.parse import urlsplit
+from urllib.request import HTTPSHandler, ProxyHandler, Request, build_opener
+
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes, serialization
+
+from .connection import validate_server_url
+
+
+def normalize_fingerprint(value):
+    value = "".join(str(value).split()).replace(":", "").lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", value):
+        raise ValueError("Paste the full SHA-256 fingerprint shown on the server PC")
+    return value
+
+
+def validate_ca(pem, expected_fingerprint=None):
+    if not isinstance(pem, bytes) or len(pem) > 65536:
+        raise ValueError("Invalid CA certificate size")
+    certificates = x509.load_pem_x509_certificates(pem)
+    if len(certificates) != 1:
+        raise ValueError("Exactly one CA certificate is required")
+    certificate = certificates[0]
+    fingerprint = certificate.fingerprint(hashes.SHA256()).hex()
+    if expected_fingerprint is not None and not hmac.compare_digest(
+        fingerprint, normalize_fingerprint(expected_fingerprint)
+    ):
+        raise ValueError("CA fingerprint differs from the server PC. No trust was installed.")
+    certificate.verify_directly_issued_by(certificate)
+    if not certificate.extensions.get_extension_for_class(x509.BasicConstraints).value.ca:
+        raise ValueError("The certificate is not a CA")
+    if not certificate.extensions.get_extension_for_class(x509.KeyUsage).value.key_cert_sign:
+        raise ValueError("The CA certificate cannot sign certificates")
+    now = datetime.now(timezone.utc)
+    if not certificate.not_valid_before_utc <= now < certificate.not_valid_after_utc:
+        raise ValueError("The CA certificate is expired or not yet valid")
+    return certificate
+
+
+def fetch_server_ca(url, expected_fingerprint):
+    from .client import NoRedirect
+
+    expected_fingerprint = normalize_fingerprint(expected_fingerprint)
+    url = validate_server_url(url)
+    parts = urlsplit(url)
+    if parts.scheme != "https":
+        raise ValueError("CA bootstrap requires an HTTPS server URL")
+    # Only the explicit local/private-address exception may bootstrap trust.
+    try:
+        validate_server_url(parts._replace(scheme="http").geturl(), allow_lan_http=True)
+    except ValueError:
+        raise ValueError(
+            "CA bootstrap requires localhost or a private LAN IP. Publicly trusted HTTPS does not need local CA registration."
+        ) from None
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    opener = build_opener(NoRedirect(), ProxyHandler({}), HTTPSHandler(context=context))
+    request = Request(url + "/api/v1/tls/ca", method="GET")
+    with opener.open(request, timeout=5) as response:
+        pem = response.read(65537)
+    certificate = validate_ca(pem, expected_fingerprint)
+    return certificate.public_bytes(serialization.Encoding.PEM)
+
+
+def trust_windows_user_ca(pem, expected_fingerprint):
+    """Explicitly trust the verified public CA in CurrentUser ROOT, never LocalMachine."""
+    if os.name != "nt":
+        raise ValueError("Windows user certificate trust is available only on Windows")
+    from ctypes import wintypes
+
+    certificate = validate_ca(pem, expected_fingerprint)
+    der = certificate.public_bytes(serialization.Encoding.DER)
+    crypt = ctypes.WinDLL("crypt32", use_last_error=True)
+    crypt.CertOpenSystemStoreW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+    crypt.CertOpenSystemStoreW.restype = wintypes.HANDLE
+    crypt.CertAddEncodedCertificateToStore.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+    ]
+    crypt.CertAddEncodedCertificateToStore.restype = wintypes.BOOL
+    crypt.CertCloseStore.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    crypt.CertCloseStore.restype = wintypes.BOOL
+    store = crypt.CertOpenSystemStoreW(None, "ROOT")
+    if not store:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        buffer = ctypes.create_string_buffer(der)
+        if not crypt.CertAddEncodedCertificateToStore(
+            store, 1, ctypes.cast(buffer, ctypes.c_void_p), len(der), 3, None
+        ):
+            raise ctypes.WinError(ctypes.get_last_error())
+    finally:
+        crypt.CertCloseStore(store, 0)
