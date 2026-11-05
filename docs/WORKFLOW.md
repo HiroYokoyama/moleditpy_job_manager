@@ -956,6 +956,9 @@ The **File** menu deals with the list as a whole. The toolbar keeps **New Job**,
 **Refresh Now** and **Host Monitor** visible. Selected-job operations are in the
 **Job** menu, **Job Actions** dropdown and the row's context menu; **File Browser**,
 **Download**, **Tail Log** and **Details** also have buttons below the table.
+**File Browser** needs no download or mirror: with nothing local, it lists the job's
+directory on the host, and opening a file there downloads it first. **Download** remains the
+way to fetch several files at once or choose a folder.
 Host profiles and preferences are under **Tools ▸ Hosts...** and **Tools ▸ Settings...**.
 On a narrow window, toolbar operations that do not fit are available from the
 arrow at the toolbar's right edge.

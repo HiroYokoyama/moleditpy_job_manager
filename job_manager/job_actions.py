@@ -66,7 +66,7 @@ def create_job_actions(parent, callbacks):
             "open",
             "File Browser",
             callbacks["_open_selected_result"],
-            "Browse this job's files in the built-in file explorer.",
+            "Browse this job's files, here or on its host, and download and open any of them.",
         ),
         (
             "tail",
