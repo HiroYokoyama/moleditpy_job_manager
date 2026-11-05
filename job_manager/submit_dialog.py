@@ -7,9 +7,10 @@ import copy
 import os
 from typing import ClassVar, List, Optional, Sequence
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -66,7 +67,6 @@ from .submission_config import (
 )
 from .submission_config import (
     BATCH_TEXT as BATCH_TEXT,
-    ONE_JOB_TEXT as ONE_JOB_TEXT,
 )
 from .submission_config import (
     BESIDE_INPUT_TEXT as BESIDE_INPUT_TEXT,
@@ -111,25 +111,6 @@ from .window_utils import make_independent, set_spin_value
 from .wheel_guard import install_wheel_guard
 
 
-class _BatchRadio(QRadioButton):
-    """The "separate jobs" half of a pair, still clearable with ``setChecked(False)``.
-
-    Qt ignores that call on an auto-exclusive radio button, so it selects the
-    other button instead. The dialog's other rows clear this one when they rule
-    a batch out.
-    """
-
-    def __init__(self, text: str, other: QRadioButton) -> None:
-        super().__init__(text)
-        self._other = other
-
-    def setChecked(self, checked: bool) -> None:  # noqa: N802 - Qt's spelling
-        if checked:
-            super().setChecked(True)
-        else:
-            self._other.setChecked(True)
-
-
 class SubmitDialog(QDialog):
     """Collects everything needed for one submission and previews the script."""
 
@@ -152,6 +133,8 @@ class SubmitDialog(QDialog):
         self._scanned_memory = ""
         self._scanned_cpus = 0
         self._server_check_pending = False
+        #: Opens several files in a window each; set by whoever owns the windows.
+        self.open_more_windows = None
         self._build_ui()
         self.templates = SubmissionTemplates(
             self.store,
@@ -302,30 +285,19 @@ class SubmitDialog(QDialog):
         self.btn_file_down = self.file_panel.btn_file_down
         self.txt_add_paths = self.file_panel.txt_add_paths
         self.lbl_file_message = self.file_panel.lbl_file_message
-        self.row_batch = QWidget()
-        batch_layout = QHBoxLayout(self.row_batch)
-        batch_layout.setContentsMargins(0, 0, 0, 0)
-        self.radio_one_job = QRadioButton(ONE_JOB_TEXT)
-        self.radio_one_job.setChecked(True)
-        self.radio_one_job.setToolTip(
-            "Every file is uploaded to one job. {input} is the first file in the list."
-        )
-        self.chk_batch = _BatchRadio(BATCH_TEXT, self.radio_one_job)
+        self.chk_batch = QCheckBox(BATCH_TEXT)
         self.chk_batch.setToolTip(
             "One independent job per file, each running the command below on "
-            "its own.\n\n"
-            "Not together with 'Work already on the host', which names a single "
-            "file for {input}.\n\n"
-            "Dropping several files selects '1 job'; hold Shift while dropping to "
-            "select this instead."
+            "its own -- rather than one job with every file uploaded to it.\n\n"
+            "Shown only with more than one file, and not together with 'Work "
+            "already on the host', which names a single file for {input}.\n\n"
+            "Dropping several files opens one window per file instead, so each "
+            "can have its own command; hold Shift while dropping to keep them as "
+            "one job."
         )
         self.chk_batch.toggled.connect(self._on_batch_toggled)
-        batch_layout.addWidget(QLabel("Submit as:"))
-        batch_layout.addWidget(self.radio_one_job)
-        batch_layout.addWidget(self.chk_batch)
-        batch_layout.addStretch(1)
-        self.row_batch.setVisible(False)
-        files_layout.addWidget(self.row_batch)
+        self.chk_batch.setVisible(False)
+        files_layout.addWidget(self.chk_batch)
         layout.addWidget(files_box)
         layout.addWidget(self._build_remote_box())
         layout.addWidget(self._build_structure_relay_box())
@@ -1099,10 +1071,9 @@ class SubmitDialog(QDialog):
         """Add input files from the picker or a drop, then name the job, pick
         a command template and refresh the preview.
 
-        ``batch`` sets the "one job per file" checkbox where it is not None --
-        used by a drop (Shift decides). The file picker leaves it alone: a
-        multi-select there is building one job's input list, not a pile of
-        separate calculations.
+        ``batch`` sets the "one job per file" checkbox where it is not None.
+        The file picker and a drop leave it alone: files added to this window
+        are building one job's input list.
         """
         seen = {os.path.normcase(os.path.abspath(p)) for p in self.selected_files()}
         added = []
@@ -1224,14 +1195,20 @@ class SubmitDialog(QDialog):
             event.ignore()
             return
         event.acceptProposedAction()
-        # Several files dropped plainly are one job's inputs; hold Shift to make
-        # each its own job. A single file is unaffected.
-        batch = None
-        if len(paths) > 1:
-            batch = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
-            if not batch:
-                paths = primary_first(paths)
-        self.add_files(paths, batch=batch)
+        if len(paths) == 1 or event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            self.add_files(primary_first(paths))
+            return
+        # Several files dropped plainly get a window each, so each can have its
+        # own command. An empty form takes the first rather than staying blank.
+        open_windows = self.open_more_windows
+        if open_windows is None:
+            self.add_files(primary_first(paths))
+            return
+        if not self.selected_files():
+            self.add_files(paths[:1])
+            paths = paths[1:]
+        # After the drop returns: the drag source is blocked until it does.
+        QTimer.singleShot(0, lambda: open_windows(paths))
 
     def _update_file_selection(self) -> None:
         return self.file_panel._update_file_selection()
@@ -1263,9 +1240,9 @@ class SubmitDialog(QDialog):
         return self.chk_batch.isEnabled() and self.chk_batch.isChecked()
 
     def _update_batch_row(self) -> None:
-        """Offer the choice only where it means something: more than one file,
-        and separate jobs not with "work already on the host" (which names one
-        file for ``{input}``, which a batch has no single answer for)."""
+        """Show the batch checkbox only where it means something: more than one
+        file, and not "work already on the host" (which names one file for
+        ``{input}``, which a batch has no single answer for)."""
         files = self.selected_files()
         if self.box_remote.isChecked():
             reason = "not with work already on the host"
@@ -1274,34 +1251,23 @@ class SubmitDialog(QDialog):
         else:
             reason = ""
         allowed = len(files) > 1 and not reason
-        self.row_batch.setVisible(len(files) > 1)
+        self.chk_batch.setVisible(len(files) > 1)
         self.chk_batch.setEnabled(allowed)
-        text = BATCH_TEXT.format(count=len(files))
-        self.chk_batch.setText(text if allowed else f"{text} - {reason}")
-        self.radio_one_job.setText(ONE_JOB_TEXT.format(count=len(files)))
+        self.chk_batch.setText(BATCH_TEXT if allowed else f"{BATCH_TEXT} - {reason}")
         if not allowed and self.chk_batch.isChecked():
             self.chk_batch.blockSignals(True)
             self.chk_batch.setChecked(False)
             self.chk_batch.blockSignals(False)
-        self._update_submit_text()
-
-    def _update_submit_text(self) -> None:
-        """Say how many jobs the button makes: the choice must not be easy to miss."""
-        count = len(self.selected_files())
-        if self._batch_active():
-            text = f"Submit {count} Jobs"
-        elif count > 1 and not self.box_remote.isChecked():
-            text = f"Submit 1 Job ({count} files)"
-        else:
-            text = "Submit"
-        self.btn_submit.setText(text)
+        self.btn_submit.setText(f"Submit {len(files)} Jobs" if self._batch_active() else "Submit")
 
     def _on_batch_toggled(self, checked: bool) -> None:
         if checked and self.chk_chain.isChecked():
             # A batch runs calculations independently; chaining would
             # serialise it. Off by default, not forced.
             self.chk_chain.setChecked(False)
-        self._update_submit_text()
+        self.btn_submit.setText(
+            f"Submit {len(self.selected_files())} Jobs" if checked else "Submit"
+        )
         self._update_relay_row()
         self._refresh_preview()
 
@@ -1316,11 +1282,6 @@ class SubmitDialog(QDialog):
             self.lbl_preview_hint.setText(
                 f"{len(files)} separate jobs will be submitted, one per file, each "
                 "running this script. Shown below for the first file."
-            )
-        elif len(files) > 1 and not self.box_remote.isChecked():
-            self.lbl_preview_hint.setText(
-                f"One job: all {len(files)} files are uploaded together and {{input}} "
-                f"is {os.path.basename(files[0])}. Use Move up / Move down to change it."
             )
         else:
             self.lbl_preview_hint.setText(

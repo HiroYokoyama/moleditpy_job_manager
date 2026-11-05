@@ -16,6 +16,7 @@ from typing import Any, List, Optional
 from PySide6.QtCore import (
     QEvent,
     Qt,
+    QPoint,
     QTimer,
     Slot,
 )
@@ -140,6 +141,10 @@ BANNER_STYLE = (
 )
 
 
+#: Past this many, a drop asks before opening a submit window per file.
+MANY_SUBMIT_WINDOWS = 10
+
+
 class JobsDialog(QDialog):
     """The main Job Manager window."""
 
@@ -153,6 +158,7 @@ class JobsDialog(QDialog):
         self._title_counts = ""
         self.setWindowTitle(self._base_title)
         make_independent(self)
+        self._submit_windows: List[QDialog] = []
         apply_theme(self)
         self.resize(940, 560)
         #: Non-empty while a cleared list is being viewed read-only.
@@ -577,7 +583,11 @@ class JobsDialog(QDialog):
         remote_input: str = "",
         batch: bool = False,
         handoff: bool = False,
-    ) -> None:
+    ) -> Optional[QDialog]:
+        """Open a wizard and return it, or None when submitting is not possible.
+
+        Not modal: a drop opens one per file, and a modal one would block the rest.
+        """
         from .submit_dialog import SubmitDialog
 
         if self.viewing_reconstructed():
@@ -588,13 +598,18 @@ class JobsDialog(QDialog):
                 "This job list was rebuilt from a folder, so it is read only.\n\n"
                 "Choose File > Default List to go back to your own list before submitting.",
             )
-            return
+            return None
         if not self.service.store.hosts:
             QMessageBox.information(self, "Job Manager", "Add a host profile first (Hosts...).")
             self.open_hosts_dialog()
             if not self.service.store.hosts:
-                return
+                return None
         dialog = SubmitDialog(self.service, self)
+        dialog.open_more_windows = self.open_submit_windows
+        # make_independent() drops the Qt parent, so nothing else holds a window
+        # that is not in exec(): it would vanish as soon as this returned.
+        self._submit_windows.append(dialog)
+        dialog.finished.connect(lambda _result: self._submit_windows.remove(dialog))
         if files or name or host_id or preset or remote_dir or handoff:
             dialog.prefill(
                 files=files,
@@ -606,7 +621,29 @@ class JobsDialog(QDialog):
                 batch=batch,
                 handoff=handoff,
             )
-        dialog.exec()
+        dialog.show()
+        # A drop leaves the file manager in front.
+        dialog.raise_()
+        dialog.activateWindow()
+        return dialog
+
+    def open_submit_windows(self, files: List[str]) -> None:
+        """One wizard per file, cascaded so that each can be seen."""
+        if len(files) > MANY_SUBMIT_WINDOWS:
+            confirm = QMessageBox.question(
+                self, "Job Manager", f"Open {len(files)} submit windows, one per file?"
+            )
+            if confirm != QMessageBox.StandardButton.Yes:
+                return
+        first = None
+        for offset, path in enumerate(files):
+            dialog = self.open_submit_dialog(files=[path])
+            if dialog is None:
+                return
+            if first is None:
+                first = dialog.pos()
+            else:
+                dialog.move(first + QPoint(offset * 30, offset * 30))
 
     def _resubmit_selected(self) -> None:
         job = self.selected_job()
@@ -1671,14 +1708,15 @@ class JobsDialog(QDialog):
             event.ignore()
             return
         event.acceptProposedAction()
-        # Several files dropped plainly are one job's inputs; hold Shift to make
-        # each its own job.
-        batch = len(files) > 1 and bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
-        if not batch:
-            from .input_names import primary_first
+        # Several files dropped plainly get a window each, so each can have its
+        # own command; hold Shift to keep them as one job.
+        if len(files) > 1 and not event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            QTimer.singleShot(0, lambda: self.open_submit_windows(files))
+            return
+        from .input_names import primary_first
 
-            files = primary_first(files)
-        QTimer.singleShot(0, lambda: self.open_submit_dialog(files=files, batch=batch))
+        files = primary_first(files)
+        QTimer.singleShot(0, lambda: self.open_submit_dialog(files=files))
 
     # --- the task bar and the title ------------------------------------------
 
@@ -1794,6 +1832,9 @@ class JobsDialog(QDialog):
         super().reject()
 
     def closeEvent(self, event) -> None:
+        # Not modal, so they can outlast this window and would be left orphaned.
+        for wizard in list(self._submit_windows):
+            wizard.close()
         self._teardown()
         # Accepted, not delegated: QDialog's closeEvent calls reject(), which
         # now tears down as well -- doing both would recurse.

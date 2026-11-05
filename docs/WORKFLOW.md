@@ -56,15 +56,17 @@ opens with it already added, named after it, and with the right command
 template chosen where the extension says so unambiguously. You can also drop
 files straight onto the wizard, or add them with **Add files...**.
 
-Drop **several files at once** and they become one job with every file uploaded
-to it: a checkpoint alongside an input, a structure and a basis set file
-together. The likeliest input goes first, since the first file names the job and
-fills `{input}`; **Move up / Move down** changes that. Hold **Shift** while
-dropping to make each file its own job instead. **Submit as** under the file
-list is the same switch by hand, the Submit button states the result (`Submit 1
-Job (3 files)` or `Submit 3 Jobs`), and separate jobs turn
-off together with "Work already on the host", which names a single
-file and has no answer for a batch.
+Drop **several files at once** and each opens its own wizard window, so each
+can have its own command and settings. More than ten files asks first. Hold
+**Shift** while dropping to get one window and one job with every file uploaded
+to it, for a command that wants more than one (a checkpoint alongside an input,
+a structure and a basis set file together). The likeliest input goes first,
+since the first file names the job and fills `{input}`; **Move up / Move down**
+changes that. Dropping a single file onto an open wizard adds it to that job.
+
+To run the same command on many files, add them with **Add files...** and tick
+"Submit each file as its own job". It turns itself off together with "Work
+already on the host", which names a single file and has no answer for a batch.
 
 Dropping onto the *main* MoleditPy window is not the same thing — input
 extensions are deliberately not claimed application-wide, since that would take

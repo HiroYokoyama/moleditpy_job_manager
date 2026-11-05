@@ -111,11 +111,11 @@ class TestDroppingOnTheMonitor(DropTestCase):
         paths = [self.make_file("a.inp"), self.make_file("b.xyz")]
         event, _mime = drop_event(paths)
 
-        with patch.object(dialog, "open_submit_dialog") as opened:
+        with patch.object(dialog, "open_submit_windows") as opened:
             dialog.dropEvent(event)
             QCoreApplication.processEvents()
 
-        self.assertEqual(opened.call_args.kwargs["files"], paths)
+        opened.assert_called_once_with(paths)
 
     def test_a_drag_of_files_is_accepted(self):
         dialog = self._monitor()

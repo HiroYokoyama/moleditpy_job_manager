@@ -82,7 +82,7 @@ class TestJobActions(DialogTestCase):
             action.trigger()
         submit.assert_called_once()
         submit.return_value.prefill.assert_not_called()
-        submit.return_value.exec.assert_called_once()
+        submit.return_value.show.assert_called_once()
 
 
 class TestHostViewActions(HostMonitorTestCase):

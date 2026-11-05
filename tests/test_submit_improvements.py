@@ -466,7 +466,7 @@ def test_each_box_names_the_other_as_the_reason(service, qapp, tmp_path):
 
     dlg.box_relay.setChecked(False)
     assert dlg.chk_batch.isEnabled()
-    assert dlg.chk_batch.text() == BATCH_TEXT.format(count=2)
+    assert dlg.chk_batch.text() == BATCH_TEXT
 
 
 def test_work_already_on_the_host_explains_both(service, qapp, tmp_path):
