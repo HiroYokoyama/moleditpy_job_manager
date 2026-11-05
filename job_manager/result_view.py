@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import logging
 import os
-import codecs
 from typing import Callable, List, Optional
 
 from PySide6.QtWidgets import QWidget
 
-from . import PLUGIN_VERSION
+from .text_document import TEXT_VIEW_LIMIT as TEXT_VIEW_LIMIT
+from .text_document import _text_encoding
+from .text_document import read_text_for_view as read_text_for_view
 
 # OpenBabel accepts .txt as molecules; plain text must use our own viewer.
 #: Opened in this plugin's own text window, never handed to MoleditPy.
@@ -18,26 +19,11 @@ from . import PLUGIN_VERSION
 #: thousands of molecules on the GUI thread and stopped responding -- after
 #: first clearing the user's document to make room for a structure that was
 #: never coming.
-#: The most of a text file shown at once; the end is kept, since that is where
-#: an output file says how it finished.
 TEXT_EXTENSIONS = (".txt",)
-TEXT_VIEW_LIMIT = 5 * 1024 * 1024
 
 
 def is_text_file(path: str) -> bool:
     return os.path.splitext(path or "")[1].lower() in TEXT_EXTENSIONS
-
-
-def _text_encoding(sample: bytes) -> str:
-    for marker, encoding in (
-        (codecs.BOM_UTF32_LE, "utf-32-le"),
-        (codecs.BOM_UTF32_BE, "utf-32-be"),
-        (codecs.BOM_UTF16_LE, "utf-16-le"),
-        (codecs.BOM_UTF16_BE, "utf-16-be"),
-    ):
-        if sample.startswith(marker):
-            return encoding
-    return "utf-8"
 
 
 def is_binary_file(path: str) -> bool:
@@ -51,24 +37,21 @@ def is_binary_file(path: str) -> bool:
     return "\0" in text or controls / len(text) > 0.1
 
 
+#: A window with no Qt parent lives only as long as something holds it.
+_text_windows: list = []
+
+
 def show_text_window(
-    path: str,
+    path: Optional[str],
     parent: Optional[QWidget] = None,
     on_opened: Optional[Callable[[], None]] = None,
 ):
-    """Open ``path`` read-only in a text window, and return the window."""
-    from .text_dialog import TextDialog
-
-    path = os.path.abspath(path)
-
-    def reload() -> None:
-        try:
-            dialog.set_text(read_text_for_view(path))
-        except OSError as exc:
-            dialog.set_text(f"Could not read {path}: {exc}")
+    """Open ``path`` in a text window, or a new empty file when it is None."""
+    from .text_editor import TextEditorDialog
 
     def open_source() -> bool:
-        if not open_in_host(path):
+        # The window's path, not ``path``: Save As moves it to another file.
+        if not open_in_host(dialog.path):
             return False
         if on_opened is not None:
             try:
@@ -78,47 +61,11 @@ def show_text_window(
                 pass
         return True
 
-    # A finished result is read from the top; only a tail starts at the end.
-    dialog = TextDialog(
-        f"Job Manager {PLUGIN_VERSION} - {os.path.basename(path)}",
-        "",
-        parent,
-        on_refresh=reload,
-        follow=False,
-        auto_refresh=False,
-        on_open_in_moleditpy=open_source,
-    )
-    if is_text_file(path):
-        # OpenBabel's .txt importer treats arbitrary text as molecules and can
-        # freeze the editor. Keep this existing protection on the explicit button.
-        dialog.btn_open_in_moleditpy.setEnabled(False)
-        dialog.btn_open_in_moleditpy.setToolTip(
-            "Plain .txt files are displayed in this text viewer"
-        )
-    dialog.set_text(read_text_for_view(path))
+    dialog = TextEditorDialog(os.path.abspath(path) if path else None, parent, open_source)
+    _text_windows.append(dialog)
+    dialog.finished.connect(lambda _result: _text_windows.remove(dialog))
     dialog.present()
     return dialog
-
-
-def read_text_for_view(path: str, limit: int = TEXT_VIEW_LIMIT) -> str:
-    """The file as text, or its last ``limit`` bytes with a line saying so."""
-    size = os.path.getsize(path)
-    with open(path, "rb") as handle:
-        encoding = _text_encoding(handle.read(4))
-        offset = 0
-        if size > limit:
-            offset = size - limit
-            unit = 4 if encoding.startswith("utf-32") else 2 if encoding.startswith("utf-16") else 1
-            offset += -offset % unit
-        handle.seek(offset)
-        # The file may grow between stat and read (a running calculation).
-        data = handle.read(limit)
-    text = data.decode(encoding, errors="replace").removeprefix("\ufeff").replace("\r\n", "\n")
-    if size > limit:
-        # Cut at a line boundary, so the first line shown is a whole one.
-        text = text.split("\n", 1)[-1]
-        text = f"[Showing the last {limit // (1024 * 1024)} MB of {size:,} bytes]\n\n" + text
-    return text
 
 
 def pick_primary_result(paths: List[str], log_file: str = "") -> str:

@@ -156,20 +156,20 @@ class OutputFileSelectorDialog(QDialog):
         box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Open | QDialogButtonBox.StandardButton.Close
         )
-        self.btn_open = box.button(QDialogButtonBox.StandardButton.Open)
-        self.btn_open.setText("Open in MoleditPy")
-        self.btn_open.setDefault(True)
-        self.btn_open.clicked.connect(self._open_selected)
+        self.btn_text = box.button(QDialogButtonBox.StandardButton.Open)
+        self.btn_text.setText("Open in Text Viewer")
+        self.btn_text.setToolTip("Read the selected non-binary file in the built-in text viewer.")
+        self.btn_text.setEnabled(False)
+        self.btn_text.clicked.connect(self._open_selected_as_text)
         self.btn_close = box.button(QDialogButtonBox.StandardButton.Close)
         # The box emits rejected for a Close button; connecting clicked as well
         # would reject twice and emit finished twice.
         box.rejected.connect(self.reject)
 
-        self.btn_text = QPushButton("Open in Text Viewer")
-        self.btn_text.setToolTip("Read the selected non-binary file in the built-in text viewer.")
-        self.btn_text.setEnabled(False)
-        self.btn_text.clicked.connect(self._open_selected_as_text)
-        box.addButton(self.btn_text, QDialogButtonBox.ButtonRole.ActionRole)
+        self.btn_open = QPushButton("Open in MoleditPy")
+        self.btn_open.setDefault(True)
+        self.btn_open.clicked.connect(self._open_selected)
+        box.addButton(self.btn_open, QDialogButtonBox.ButtonRole.ActionRole)
 
         self.btn_open_folder = QPushButton("Open Containing Folder")
         self.btn_open_folder.setToolTip("Show the downloaded files in the file manager.")
