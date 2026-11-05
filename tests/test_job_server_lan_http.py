@@ -26,7 +26,7 @@ def test_private_http_requires_explicit_per_host_opt_in(address):
         "0.0.0.0",
         "100.64.0.1",
         "224.0.0.1",
-        "compute.local",
+        "compute.example",
         "192.168.1.2.evil.org",
         "[fe80::1]",
         "[::ffff:192.168.1.2]",
