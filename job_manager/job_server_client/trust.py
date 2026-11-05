@@ -6,6 +6,7 @@ import os
 import re
 import ssl
 from datetime import datetime, timezone
+from ipaddress import ip_network
 from urllib.parse import urlsplit
 from urllib.request import HTTPSHandler, ProxyHandler, Request, build_opener
 
@@ -15,11 +16,44 @@ from cryptography.hazmat.primitives import hashes, serialization
 from .connection import validate_server_url
 
 
+CA_PERMITTED_NETWORKS = tuple(
+    ip_network(value)
+    for value in (
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "fc00::/7",
+        "127.0.0.0/8",
+        "::1/128",
+    )
+)
+CA_PERMITTED_DNS_NAME = "localhost"
+
+
 def normalize_fingerprint(value):
     value = "".join(str(value).split()).replace(":", "").lower()
     if not re.fullmatch(r"[0-9a-f]{64}", value):
         raise ValueError("Paste the full SHA-256 fingerprint shown on the server PC")
     return value
+
+
+def _require_local_name_constraints(certificate):
+    """A trusted local CA must be unable to issue for public names or addresses."""
+    message = "The CA must be limited to private addresses and localhost. No trust was installed."
+    try:
+        extension = certificate.extensions.get_extension_for_class(x509.NameConstraints)
+    except x509.ExtensionNotFound:
+        raise ValueError(message) from None
+    permitted = extension.value.permitted_subtrees
+    if not extension.critical or not permitted:
+        raise ValueError(message)
+    for name in permitted:
+        if isinstance(name, x509.DNSName):
+            allowed = name.value == CA_PERMITTED_DNS_NAME
+        else:
+            allowed = isinstance(name, x509.IPAddress) and name.value in CA_PERMITTED_NETWORKS
+        if not allowed:
+            raise ValueError(message)
 
 
 def validate_ca(pem, expected_fingerprint=None):
@@ -35,8 +69,12 @@ def validate_ca(pem, expected_fingerprint=None):
     ):
         raise ValueError("CA fingerprint differs from the server PC. No trust was installed.")
     certificate.verify_directly_issued_by(certificate)
-    if not certificate.extensions.get_extension_for_class(x509.BasicConstraints).value.ca:
+    constraints = certificate.extensions.get_extension_for_class(x509.BasicConstraints).value
+    if not constraints.ca:
         raise ValueError("The certificate is not a CA")
+    if constraints.path_length != 0:
+        raise ValueError("The CA must not allow intermediate CAs")
+    _require_local_name_constraints(certificate)
     if not certificate.extensions.get_extension_for_class(x509.KeyUsage).value.key_cert_sign:
         raise ValueError("The CA certificate cannot sign certificates")
     now = datetime.now(timezone.utc)
