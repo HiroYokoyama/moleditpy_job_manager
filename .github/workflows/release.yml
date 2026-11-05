@@ -6,6 +6,11 @@ on:
       version:
         description: 'Release version (e.g. 4.0.0 — without leading v)'
         required: true
+      register:
+        description: 'Also update the public MoleditPy plugin registry'
+        type: boolean
+        required: false
+        default: true
   push:
     tags:
       - 'v*.*.*'
@@ -57,7 +62,7 @@ jobs:
         run: python scripts/release_common.py publish --version "$VERSION"
 
       - name: Trigger moleditpy-plugins registry update
-        if: success()
+        if: success() && (github.event_name != 'workflow_dispatch' || inputs.register)
         continue-on-error: true
         env:
           REGISTRY_PAT: ${{ secrets.REGISTRY_PAT }}
