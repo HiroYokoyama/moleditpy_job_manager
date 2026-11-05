@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QDialogButtonBox,
-    QGraphicsOpacityEffect,
+    QCheckBox,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -160,7 +160,7 @@ class HostMonitorDialog(QDialog):
         scroll.setWidget(self.body)
         layout.addWidget(scroll, 1)
 
-        self._empty_label = QLabel("No hosts yet. Add one under Hosts...")
+        self._empty_label = QLabel("No SSH or local hosts to show. Add one under Hosts...")
         self.grid.addWidget(self._empty_label, 0, 0)
         self._build_cards()
         self._refresh_pending = QTimer(self)
@@ -209,10 +209,20 @@ class HostMonitorDialog(QDialog):
         populate_menu(
             self.menu_bar.addMenu("&Monitor"), (self.action_refresh, None, self.action_close)
         )
-        populate_menu(self.menu_bar.addMenu("&View"), (self.action_history, self.action_dark))
+        self.action_choose_hosts = make_action(
+            self,
+            "Choose Hosts...",
+            self.choose_hosts,
+            "Choose which host cards to show.",
+        )
+        populate_menu(
+            self.menu_bar.addMenu("&View"),
+            (self.action_choose_hosts, None, self.action_history, self.action_dark),
+        )
         top = QHBoxLayout()
         self.btn_refresh = action_button(self.action_refresh, self)
         top.addWidget(self.btn_refresh)
+        top.addWidget(action_button(self.action_choose_hosts, self))
         top.addStretch(1)
         top.addWidget(QLabel("Refresh every"))
         self.spin_interval = QSpinBox()
@@ -274,6 +284,68 @@ class HostMonitorDialog(QDialog):
         for card in self.cards.values():
             card.show_jobs(by_id.get(card.host.id) or by_name.get(card.host.name, []))
 
+    def _hidden_hosts(self):
+        stored = self.service.store.get_pref("host_monitor_hidden_hosts", [])
+        return (
+            {value for value in stored if isinstance(value, str)}
+            if isinstance(stored, list)
+            else set()
+        )
+
+    def _visible_hosts(self):
+        hidden = self._hidden_hosts()
+        return [
+            host
+            for host in self.service.store.host_list()
+            if host.enabled and host.id not in hidden
+        ]
+
+    def set_visible_hosts(self, identifiers):
+        visible = set(identifiers)
+        previous = self._hidden_hosts()
+        hidden = [
+            host.id
+            for host in self.service.store.host_list()
+            if (host.enabled and host.id not in visible)
+            or (not host.enabled and host.id in previous)
+        ]
+        self.service.store.set_pref("host_monitor_hidden_hosts", hidden)
+        self._build_cards()
+
+    def choose_hosts(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Hosts shown in monitor")
+        dialog.resize(500, 400)
+        layout = QVBoxLayout(dialog)
+        scroll = QScrollArea(dialog)
+        scroll.setWidgetResizable(True)
+        body = QWidget(scroll)
+        fields = QVBoxLayout(body)
+        hidden = self._hidden_hosts()
+        choices = []
+        for host in self.service.store.host_list():
+            if not host.enabled:
+                continue
+            checkbox = QCheckBox((host.name + " — " + host.target).replace("&", "&&"))
+            checkbox.setChecked(host.id not in hidden)
+            fields.addWidget(checkbox)
+            choices.append((host.id, checkbox))
+        fields.addStretch()
+        scroll.setWidget(body)
+        layout.addWidget(scroll)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=dialog,
+        )
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.set_visible_hosts(
+                identifier for identifier, checkbox in choices if checkbox.isChecked()
+            )
+        dialog.deleteLater()
+
     def _host_signature(self) -> tuple:
         """What the cards depend on: which hosts there are, and their labels."""
         return tuple(
@@ -283,9 +355,10 @@ class HostMonitorDialog(QDialog):
                 host.target,
                 bool(host.enabled),
                 bool(host.monitor_usage),
+                bool(host.is_job_server),
                 int(host.monitor_interval or 0),
             )
-            for host in self.service.store.host_list()
+            for host in self._visible_hosts()
         )
 
     def _build_cards(self) -> None:
@@ -298,20 +371,17 @@ class HostMonitorDialog(QDialog):
             card.deleteLater()
         self.cards.clear()
         self._laid_out_for = 0
-        for host in self.service.store.host_list():
+        for host in self._visible_hosts():
             card = HostCard(host)
-            if not host.enabled:
-                card.setEnabled(False)
-                card.lbl_state.setText("disabled")
-                # HostCard paints with fixed colours, not the palette, so
-                # setEnabled() alone would look identical to an enabled card.
-                effect = QGraphicsOpacityEffect(card)
-                effect.setOpacity(0.45)
-                card.setGraphicsEffect(effect)
-            elif not host.monitor_usage:
+            if host.is_job_server or not host.monitor_usage:
                 card.show_not_sampled()
             card.restyle(self.palette(), dark=bool(self.action_dark.isChecked()))
             self.cards[host.id] = card
+        self._empty_label.setText(
+            "No hosts selected. Use Choose Hosts..."
+            if any(host.enabled for host in self.service.store.host_list())
+            else "No enabled hosts. Enable a host under Hosts..."
+        )
         self._empty_label.setVisible(not self.cards)
         self._relayout()
         self._refresh_card_jobs()

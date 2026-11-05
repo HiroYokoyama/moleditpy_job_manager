@@ -75,6 +75,32 @@ class HostMonitorTestCase(DialogTestCase):
 
 
 class TestWhatItShows(HostMonitorTestCase):
+    def test_job_server_can_be_shown_or_hidden_without_sampling_it(self):
+        server = make_host(id="job-server", backend="job_server", monitor_usage=False)
+        self.store.add_host(server)
+        dialog = self.monitor()
+        self.assertIn(server.id, dialog.cards)
+        self.assertNotIn(server.id, self.transports)
+        dialog.set_visible_hosts([self.host.id])
+        self.assertNotIn(server.id, dialog.cards)
+        self.assertEqual(self.store.get_pref("host_monitor_hidden_hosts"), [server.id])
+        server.monitor_usage = True
+        dialog.set_visible_hosts([self.host.id, server.id])
+        dialog.sampler.sample_all()
+        self.assertIn(server.id, dialog.cards)
+        self.assertNotIn(server.id, self.transports)
+        self.assertNotIn(server.id, [host.id for host in dialog.sampler.hosts()])
+
+    def test_host_visibility_is_remembered_and_new_hosts_are_visible(self):
+        dialog = self.monitor()
+        dialog.set_visible_hosts([])
+        self.assertEqual(dialog.cards, {})
+        self.assertIn("Choose Hosts", dialog._empty_label.text())
+        self.store.add_host(make_host(id="new-host", name="new workstation"))
+        reopened = self.monitor()
+        self.assertNotIn(self.host.id, reopened.cards)
+        self.assertIn("new-host", reopened.cards)
+
     def test_service_shutdown_stops_sampling_with_a_monitor_still_open(self):
         dialog = self.monitor()
         transport = self.transports[self.host.id]
@@ -1034,7 +1060,7 @@ class TestHostMonitorIndependentWindow(HostMonitorTestCase):
 
 
 class TestDisabledHosts(HostMonitorTestCase):
-    """A disabled host still gets a card, but is skipped by the timer."""
+    """Disabled hosts are hidden and are skipped by the sampler."""
 
     def _add_disabled_host(self):
         from .fakes import make_host
@@ -1050,17 +1076,18 @@ class TestDisabledHosts(HostMonitorTestCase):
         self.assertNotIn("disabled_one", ids)
         self.assertIn(self.host.id, ids)
 
-    def test_a_disabled_host_still_gets_a_card(self):
+    def test_a_disabled_host_has_no_card(self):
         self._add_disabled_host()
         dialog = self.monitor()
-        self.assertIn("disabled_one", dialog.cards)
+        self.assertNotIn("disabled_one", dialog.cards)
 
-    def test_a_disabled_host_card_is_dimmed(self):
+    def test_enabled_host_returns_without_losing_visibility_choice(self):
         self._add_disabled_host()
         dialog = self.monitor()
-        card = dialog.cards["disabled_one"]
-        self.assertFalse(card.isEnabled())
-        self.assertIsNotNone(card.graphicsEffect())
+        dialog.set_visible_hosts([self.host.id])
+        self.store.hosts["disabled_one"].enabled = True
+        dialog._sync_cards()
+        self.assertIn("disabled_one", dialog.cards)
 
     def test_an_enabled_host_card_is_not_dimmed(self):
         dialog = self.monitor()
