@@ -496,6 +496,7 @@ class HostsDialog(QDialog):
         self.spin_runner_memory.setEnabled(runner and not detect)
         # Nothing to hold or to send limits to unless there is a helper.
         self.queue_box.setVisible(runner)
+        self.profile_form.show_queue_rows(shell, runner)
 
     def _on_detect_toggled(self, checked: bool) -> None:
         """Detection is opt-in, so it only greys the fields it takes over."""
@@ -548,6 +549,7 @@ class HostsDialog(QDialog):
         backend = self.cmb_backend.currentData()
         server = backend == "job_server"
         self.profile_form.set_server_fields_visible(server)
+        self.profile_form.show_rows_for_backend(backend)
         self.chk_monitor_usage.setEnabled(not server)
         for index in range(self.cmb_scheduler.count()):
             item = self.cmb_scheduler.model().item(index)
@@ -600,8 +602,7 @@ class HostsDialog(QDialog):
         # second local path standing in for it would be the same directory
         # under two names. The host uses its own root for everything equal_path
         # buys a remote one (HostProfile.local_root), so there is nothing to
-        # fill in -- which the greyed box now says, rather than leaving it
-        # looking like a field that ought to work and does not.
+        # fill in and the row is hidden.
         self.txt_equal_path.setEnabled(backend != BACKEND_LOCAL)
         self.txt_equal_path.setToolTip(
             "Not needed for a host that is this machine: its Remote root above "
@@ -628,7 +629,7 @@ class HostsDialog(QDialog):
             if local_shell_available(kind):
                 self.lbl_backend_hint.setText(
                     "Runs the job here, with no network at all. Remote root is a "
-                    "directory on this machine; hostname and keys are not used."
+                    "directory on this machine."
                 )
             elif kind == SHELL_POWERSHELL:
                 self.lbl_backend_hint.setText(POWERSHELL_HINT)
@@ -648,7 +649,7 @@ class HostsDialog(QDialog):
             )
         elif backend == BACKEND_PARAMIKO:
             self.lbl_backend_hint.setText(
-                "Authenticates with the private key above (or ~/.ssh's default "
+                "Authenticates with the private key below (or ~/.ssh's default "
                 "keys if none is set), an ssh-agent, or a password -- and keeps "
                 "one SSH session open for the whole session, which is what the "
                 "live host panel samples through. A password is held in memory "

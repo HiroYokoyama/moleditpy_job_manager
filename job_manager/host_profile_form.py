@@ -107,6 +107,7 @@ class HostProfileForm(QWidget):
         self.cmb_scheduler.currentIndexChanged.connect(self._update_backend_hint)
 
         key_row = QWidget()
+        self.key_row = key_row
         key_layout = QHBoxLayout(key_row)
         key_layout.setContentsMargins(0, 0, 0, 0)
         self.txt_key = QLineEdit()
@@ -122,6 +123,7 @@ class HostProfileForm(QWidget):
         self.txt_remote_root = QLineEdit()
 
         equal_path_row = QWidget()
+        self.equal_path_row = equal_path_row
         equal_path_layout = QHBoxLayout(equal_path_row)
         equal_path_layout.setContentsMargins(0, 0, 0, 0)
         self.txt_equal_path = QLineEdit()
@@ -145,10 +147,14 @@ class HostProfileForm(QWidget):
 
         form.addRow("", self.chk_enabled)
         form.addRow("Display name", self.txt_name)
+        # The backend decides which of the rows below apply, so it comes first.
+        form.addRow("Backend", self.cmb_backend)
+        form.addRow("", self.lbl_backend_hint)
+        self.row_distro_label = QLabel("WSL distribution")
+        form.addRow(self.row_distro_label, self.cmb_distro)
         form.addRow("Hostname", self.txt_hostname)
         form.addRow("Username", self.txt_username)
         form.addRow("Port", self.spin_port)
-        form.addRow("Backend", self.cmb_backend)
         self.txt_server_url = QLineEdit()
         self.txt_server_url.setPlaceholderText("https://compute.example.org")
         self.chk_server_lan_http = QCheckBox("Allow trusted LAN HTTP (unencrypted)")
@@ -156,7 +162,6 @@ class HostProfileForm(QWidget):
             "Passwords, tokens and job data are readable on the network. "
             "Private IPv4/IPv6 literal addresses only; HTTPS remains recommended."
         )
-        form.addRow("", self.chk_server_lan_http)
         self.txt_server_key = QLineEdit()
         self.txt_server_key.setReadOnly(True)
         self.txt_server_key.setEnabled(False)
@@ -170,6 +175,7 @@ class HostProfileForm(QWidget):
         self.txt_server_id.setReadOnly(True)
         self.txt_server_id.setEnabled(False)
         form.addRow("Server URL", self.txt_server_url)
+        form.addRow("CA certificate path", self.txt_server_ca)
         self.btn_server_sign_in = QPushButton("Sign in to Job Server...")
         font = self.btn_server_sign_in.font()
         font.setBold(True)
@@ -178,19 +184,18 @@ class HostProfileForm(QWidget):
             "Sign in with your username and password. Device credentials are managed automatically."
         )
         self.btn_server_sign_in.clicked.connect(self._server_sign_in)
-        form.addRow("", self.btn_server_sign_in)
         self.btn_server_trust = QPushButton("Trust local server CA...")
         self.btn_server_trust.clicked.connect(self._server_trust)
+        # The order to do them in: reach the server, trust it, then sign in.
         form.addRow("", self.btn_server_trust)
+        form.addRow("", self.chk_server_lan_http)
+        form.addRow("", self.btn_server_sign_in)
         form.addRow("Device credential path", self.txt_server_key)
-        form.addRow("CA certificate path", self.txt_server_ca)
         form.addRow("Server identity", self.txt_server_id)
-        form.addRow("", self.lbl_backend_hint)
-        form.addRow("Scheduler", self.cmb_scheduler)
-        self.row_distro_label = QLabel("WSL distribution")
-        form.addRow(self.row_distro_label, self.cmb_distro)
+        self.txt_server_id.textChanged.connect(self._update_server_identity_row)
         form.addRow("Private key", key_row)
         form.addRow("Jump host", self.txt_jump)
+        form.addRow("Scheduler", self.cmb_scheduler)
         self.cmb_concurrency = QComboBox()
         # The helper first, because it is the default and the better of the two:
         # it is the only one that can schedule on cores and memory at all.
@@ -231,6 +236,7 @@ class HostProfileForm(QWidget):
 
         self.adv_box = QGroupBox("Advanced")
         adv = QFormLayout(self.adv_box)
+        self.adv_form = adv
         self.txt_login = QPlainTextEdit()
         self.txt_login.setPlaceholderText("source /etc/profile\nmodule purge")
         self.txt_login.setMaximumHeight(70)
@@ -264,6 +270,7 @@ class HostProfileForm(QWidget):
 
         self.monitor_box = QGroupBox("Monitoring")
         mon = QFormLayout(self.monitor_box)
+        self.monitor_form = mon
         self.chk_monitor_usage = QCheckBox("Sample load and memory in the Host Monitor")
         self.chk_monitor_usage.setToolTip(
             "Untick for a shared login node, such as a supercomputer's: its load is\n"
@@ -366,19 +373,53 @@ class HostProfileForm(QWidget):
         self.cmb_scheduler.setCurrentIndex(self.cmb_scheduler.findData(scheduler))
 
     def set_server_fields_visible(self, visible):
+        self._server_fields_visible = visible
         for widget in (
             self.txt_server_url,
             self.chk_server_lan_http,
-            self.txt_server_key,
             self.txt_server_ca,
-            self.txt_server_id,
             self.btn_server_sign_in,
             self.btn_server_trust,
         ):
-            widget.setVisible(visible)
-            label = self.connection_form.labelForField(widget)
-            if label:
-                label.setVisible(visible)
+            self.connection_form.setRowVisible(widget, visible)
+        # Managed by signing in, so there is nothing here to read or to fill in.
+        self.connection_form.setRowVisible(self.txt_server_key, False)
+        self._update_server_identity_row()
+
+    def _update_server_identity_row(self):
+        self.connection_form.setRowVisible(
+            self.txt_server_id,
+            getattr(self, "_server_fields_visible", False) and bool(self.txt_server_id.text()),
+        )
+
+    def show_rows_for_backend(self, backend):
+        """Show only what this backend uses; the rest would be a wall of grey boxes."""
+        server = backend == "job_server"
+        ssh = not server and backend not in (BACKEND_LOCAL, BACKEND_WSL)
+        for widget in (
+            self.txt_hostname,
+            self.txt_username,
+            self.spin_port,
+            self.key_row,
+            self.txt_jump,
+            self.equal_path_row,
+        ):
+            self.connection_form.setRowVisible(widget, ssh)
+        for widget in (self.cmb_scheduler, self.txt_remote_root, self.spin_max_concurrent):
+            self.connection_form.setRowVisible(widget, not server)
+        for widget in (self.txt_options, self.spin_connect_timeout):
+            self.adv_form.setRowVisible(widget, ssh)
+        # Nothing in Advanced reaches a Job Server, which has its own client settings.
+        self.adv_box.setVisible(not server)
+        for widget in (self.chk_monitor_usage, self.spin_monitor_interval):
+            self.monitor_form.setRowVisible(widget, not server)
+        self.chk_ask_password.setVisible(backend == BACKEND_PARAMIKO)
+
+    def show_queue_rows(self, offered, runner):
+        """The choice exists only without a real queue; the limits only for the helper."""
+        self.connection_form.setRowVisible(self.cmb_concurrency, offered)
+        for widget in (self.spin_runner_cores, self.spin_runner_memory, self.chk_detect_resources):
+            self.connection_form.setRowVisible(widget, runner)
 
     def _collect(self, host: HostProfile) -> HostProfile:
         host.server_allow_lan_http = self.chk_server_lan_http.isChecked()

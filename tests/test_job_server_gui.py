@@ -5,6 +5,13 @@ from unittest.mock import Mock, patch
 import pytest
 
 pytest.importorskip("PySide6.QtWidgets")
+from job_manager.host_profile_form import (  # noqa: E402
+    BACKEND_LOCAL,
+    BACKEND_OPENSSH,
+    BACKEND_PARAMIKO,
+    MODE_LANES,
+    MODE_RUNNER,
+)
 from job_manager.hosts_dialog import HostsDialog  # noqa: E402
 from job_manager.models import HostProfile, SubmitPreset  # noqa: E402
 from job_manager.service import JobService  # noqa: E402
@@ -136,3 +143,76 @@ def test_submit_poll_cancel_and_result_routing_never_create_shell_transport(
         assert service.download(job, into=str(tmp_path))
         backend.fetch.assert_called_once()
         service.transport_for.assert_not_called()
+
+
+def test_backend_comes_before_the_rows_it_decides(server_service):
+    service, _ = server_service
+    with patch("job_manager.server_backend.client_available", return_value=True):
+        dialog = HostsDialog(service)
+        form = dialog.profile_form
+        row = lambda widget: form.connection_form.getWidgetPosition(widget)[0]  # noqa: E731
+        assert row(form.txt_name) < row(form.cmb_backend) < row(form.lbl_backend_hint)
+        assert row(form.lbl_backend_hint) < row(form.txt_hostname)
+        assert row(form.txt_server_url) < row(form.btn_server_trust)
+        assert row(form.btn_server_trust) < row(form.btn_server_sign_in)
+
+
+def test_rows_a_backend_does_not_use_are_hidden(server_service):
+    service, _ = server_service
+    with patch("job_manager.server_backend.client_available", return_value=True):
+        dialog = HostsDialog(service)
+        form = dialog.profile_form
+        hidden = lambda widget: widget.isHidden()  # noqa: E731
+        choose = lambda data: dialog.cmb_backend.setCurrentIndex(  # noqa: E731
+            dialog.cmb_backend.findData(data)
+        )
+
+        choose("job_server")
+        for widget in (
+            form.txt_hostname,
+            form.key_row,
+            form.txt_remote_root,
+            form.cmb_scheduler,
+            form.spin_max_concurrent,
+            form.cmb_concurrency,
+            form.spin_runner_cores,
+            form.txt_server_key,
+            form.txt_server_id,
+            form.adv_box,
+            form.txt_options,
+            form.chk_monitor_usage,
+            form.chk_ask_password,
+        ):
+            assert hidden(widget)
+        assert form.connection_form.labelForField(form.txt_hostname).isHidden()
+        assert not hidden(form.txt_server_url)
+        form.txt_server_id.setText("server-identity")
+        assert not hidden(form.txt_server_id)
+
+        choose(BACKEND_LOCAL)
+        assert hidden(form.txt_hostname) and hidden(form.equal_path_row)
+        assert hidden(form.txt_server_url) and hidden(form.txt_server_id)
+        assert not hidden(form.adv_box) and hidden(form.txt_options)
+        assert not hidden(form.txt_remote_root) and not hidden(form.cmb_scheduler)
+
+        choose(BACKEND_PARAMIKO)
+        assert not hidden(form.txt_hostname) and not hidden(form.equal_path_row)
+        assert not hidden(form.chk_ask_password) and not hidden(form.txt_options)
+
+        choose(BACKEND_OPENSSH)
+        assert hidden(form.chk_ask_password)
+
+
+def test_queue_rows_follow_the_scheduler_and_queueing_mode(server_service):
+    service, _ = server_service
+    with patch("job_manager.server_backend.client_available", return_value=True):
+        dialog = HostsDialog(service)
+        form = dialog.profile_form
+        dialog.cmb_backend.setCurrentIndex(dialog.cmb_backend.findData(BACKEND_OPENSSH))
+        dialog.cmb_scheduler.setCurrentIndex(dialog.cmb_scheduler.findData("shell"))
+        dialog.cmb_concurrency.setCurrentIndex(dialog.cmb_concurrency.findData(MODE_RUNNER))
+        assert not form.spin_runner_cores.isHidden() and not form.cmb_concurrency.isHidden()
+        dialog.cmb_concurrency.setCurrentIndex(dialog.cmb_concurrency.findData(MODE_LANES))
+        assert form.spin_runner_cores.isHidden() and not form.cmb_concurrency.isHidden()
+        dialog.cmb_scheduler.setCurrentIndex(dialog.cmb_scheduler.findData("slurm"))
+        assert form.cmb_concurrency.isHidden() and form.spin_runner_cores.isHidden()
