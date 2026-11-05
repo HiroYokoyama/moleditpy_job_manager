@@ -55,7 +55,8 @@ processes before restarting; the old file-heartbeat protocol is no longer used.
 The file Text Viewer reads a file without changing it, and **Ctrl+S** there is
 Save As. **File > Edit Mode** (Ctrl+E) allows editing and makes **Ctrl+S**
 overwrite the file, keeping its encoding and line endings unless you choose others
-in the File menu. **File > New** starts a new file in Edit Mode.
+in the File menu. **File > New** starts a new file in Edit Mode. It also has Open,
+Print, Undo/Redo, Find and Replace, Go to Line, line numbers and zoom.
 
 The file Text Viewer has an **Open in MoleditPy** button. Passing the source
 file to the editor closes the viewer and its originating File Browser; cancelling

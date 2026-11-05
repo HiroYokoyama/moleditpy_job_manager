@@ -111,7 +111,7 @@ class TextDialog(QDialog):
         self._replacing = False
 
         layout = QVBoxLayout(self)
-        self.view = QPlainTextEdit()
+        self.view = self._make_view()
         self.view.setReadOnly(True)
         # The system's own fixed-width face: a log is columns, and a proportional
         # font turns a queue listing into a mess.
@@ -228,7 +228,7 @@ class TextDialog(QDialog):
         self.act_reload = self._action(file_menu, "&Reload", self._trigger_refresh, "F5")
         self.act_reload.setEnabled(self._on_refresh_callback is not None)
         file_menu.addSeparator()
-        self._action(file_menu, "&Close", self.reject)
+        self.act_close = self._action(file_menu, "&Close", self.reject)
 
         edit_menu = bar.addMenu("&Edit")
         self.menu_edit = edit_menu
@@ -243,6 +243,7 @@ class TextDialog(QDialog):
         self._action(edit_menu, "Find &Previous", lambda: self.find(True), "Shift+F3")
 
         view_menu = bar.addMenu("&View")
+        self.menu_view = view_menu
         self._action(view_menu, "Go to &Top", self.go_to_top, "Ctrl+Home")
         self._action(view_menu, "Go to &End", self.go_to_end, "Ctrl+End")
         view_menu.addSeparator()
@@ -265,6 +266,9 @@ class TextDialog(QDialog):
             action.triggered.connect(lambda _checked=False: slot())
         menu.addAction(action)
         return action
+
+    def _make_view(self) -> QPlainTextEdit:
+        return QPlainTextEdit()
 
     def _new_file(self) -> None:
         from .result_view import show_text_window

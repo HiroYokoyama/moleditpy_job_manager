@@ -896,6 +896,11 @@ uses the host's file opener and closes the browser. The wider browser keeps its
 buttons on one row with enough room for their labels. Every text window has
 **File > Save As** (Ctrl+S) and **File > New** (Ctrl+N).
 
+A file's Text Viewer shows line numbers and the cursor position, and offers **Open**
+(Ctrl+O, or drop a file on it), **Print** (Ctrl+P), **Go to Line** (Ctrl+G) and
+zoom (Ctrl++, Ctrl+-, Ctrl+0). In Edit Mode it adds Undo, Redo, Cut, Paste,
+Delete, **Replace** (Ctrl+H) and overwrite with the Insert key.
+
 A file's Text Viewer is read only until **File > Edit Mode** (Ctrl+E) is on. Then
 **Ctrl+S** overwrites the file and **Ctrl+Shift+S** is Save As; closing, reloading
 or leaving Edit Mode with unsaved changes asks first, and so does overwriting a

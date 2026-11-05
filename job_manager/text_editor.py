@@ -11,8 +11,28 @@ import dataclasses
 import os
 from typing import Callable, Optional, Tuple
 
-from PySide6.QtGui import QAction, QActionGroup, QKeySequence
-from PySide6.QtWidgets import QLabel, QMessageBox, QPushButton, QWidget
+from PySide6.QtCore import QEvent, QRect, QSize, Qt, QTimer
+from PySide6.QtGui import (
+    QAction,
+    QActionGroup,
+    QFont,
+    QKeySequence,
+    QPainter,
+    QPalette,
+    QTextCursor,
+    QTextDocument,
+)
+from PySide6.QtWidgets import (
+    QFileDialog,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QWidget,
+)
 
 from . import PLUGIN_VERSION
 from .text_dialog import TextDialog
@@ -26,8 +46,110 @@ from .text_document import (
     write_bytes,
 )
 
+from .window_utils import accept_drop_as_copy
+
 _TXT_TOOLTIP = "Plain .txt files are displayed in this text viewer"
 _OPEN_TOOLTIP = "Open the source file in MoleditPy and close this viewer"
+
+
+class _LineNumbers(QWidget):
+    """The gutter; :class:`_EditorView` paints it."""
+
+    def __init__(self, view: "_EditorView") -> None:
+        super().__init__(view)
+        self._view = view
+
+    def sizeHint(self) -> QSize:  # noqa: N802 - Qt's spelling
+        return QSize(self._view.gutter_width(), 0)
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt's spelling
+        self._view.paint_gutter(event)
+
+
+class _EditorView(QPlainTextEdit):
+    """A text box with line numbers that leaves dropped files to its window."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._gutter = _LineNumbers(self)
+        self.blockCountChanged.connect(lambda _count: self._fit_gutter())
+        self.updateRequest.connect(self._scroll_gutter)
+        self._fit_gutter()
+
+    def gutter_width(self) -> int:
+        digits = max(3, len(str(max(1, self.blockCount()))))
+        return 12 + self.fontMetrics().horizontalAdvance("9") * digits
+
+    def _fit_gutter(self) -> None:
+        self.setViewportMargins(self.gutter_width(), 0, 0, 0)
+
+    def _scroll_gutter(self, rect: QRect, dy: int) -> None:
+        if dy:
+            self._gutter.scroll(0, dy)
+        else:
+            self._gutter.update(0, rect.y(), self._gutter.width(), rect.height())
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt's spelling
+        super().resizeEvent(event)
+        area = self.contentsRect()
+        self._gutter.setGeometry(area.left(), area.top(), self.gutter_width(), area.height())
+
+    def changeEvent(self, event) -> None:  # noqa: N802 - Qt's spelling
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.FontChange:
+            self._fit_gutter()
+            area = self.contentsRect()
+            self._gutter.setGeometry(area.left(), area.top(), self.gutter_width(), area.height())
+
+    def paint_gutter(self, event) -> None:
+        painter = QPainter(self._gutter)
+        palette = self.palette()
+        painter.fillRect(event.rect(), palette.color(QPalette.ColorRole.AlternateBase))
+        painter.setPen(palette.color(QPalette.ColorRole.PlaceholderText))
+        painter.setFont(self.font())
+        block = self.firstVisibleBlock()
+        top = self.blockBoundingGeometry(block).translated(self.contentOffset()).top()
+        height = self.fontMetrics().height()
+        while block.isValid() and top <= event.rect().bottom():
+            if block.isVisible():
+                painter.drawText(
+                    0,
+                    int(top),
+                    self._gutter.width() - 6,
+                    height,
+                    Qt.AlignmentFlag.AlignRight,
+                    str(block.blockNumber() + 1),
+                )
+            top += self.blockBoundingRect(block).height()
+            block = block.next()
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt's spelling
+        if event.key() == Qt.Key.Key_Insert and not self.isReadOnly():
+            self.setOverwriteMode(not self.overwriteMode())
+            self.cursorPositionChanged.emit()
+            return
+        super().keyPressEvent(event)
+
+    # A text box takes a dragged file as its path text, and takes it as whatever
+    # the drag proposes: Shift would be a move, and Explorer would then delete the
+    # file. Ignored here, the drag reaches the window, which opens a copy.
+    def dragEnterEvent(self, event) -> None:  # noqa: N802 - Qt's spelling
+        if event.mimeData().hasUrls():
+            event.ignore()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event) -> None:  # noqa: N802 - Qt's spelling
+        if event.mimeData().hasUrls():
+            event.ignore()
+        else:
+            super().dragMoveEvent(event)
+
+    def dropEvent(self, event) -> None:  # noqa: N802 - Qt's spelling
+        if event.mimeData().hasUrls():
+            event.ignore()
+        else:
+            super().dropEvent(event)
 
 
 class TextEditorDialog(TextDialog):
@@ -58,6 +180,14 @@ class TextEditorDialog(TextDialog):
         self.lbl_format = QLabel()
         self.lbl_format.setStyleSheet("color: palette(mid);")
         self.bottom_row.insertWidget(0, self.lbl_format)
+        self.lbl_position = QLabel()
+        self.lbl_position.setStyleSheet("color: palette(mid);")
+        self.bottom_row.insertWidget(1, self.lbl_position)
+        self.bottom_row.insertSpacing(2, 12)
+        self.view.cursorPositionChanged.connect(self._show_position)
+        self._base_font = QFont(self.view.font())
+        self.layout().insertWidget(2, self._build_replace_bar())
+        self.setAcceptDrops(True)
         self.btn_save = QPushButton("Save")
         self.btn_save.setAutoDefault(False)
         self.btn_save.clicked.connect(lambda: self.save())
@@ -77,6 +207,10 @@ class TextEditorDialog(TextDialog):
     def _build_edit_menus(self) -> None:
         file_menu = self.menu_file
         first = file_menu.actions()[1]  # After New.
+        self.act_open = QAction("&Open...", self)
+        self.act_open.setShortcut(QKeySequence("Ctrl+O"))
+        self.act_open.triggered.connect(lambda _checked=False: self._choose_file())
+        file_menu.insertAction(first, self.act_open)
         self.act_edit_mode = QAction("&Edit Mode", self)
         self.act_edit_mode.setCheckable(True)
         self.act_edit_mode.setShortcut(QKeySequence("Ctrl+E"))
@@ -98,6 +232,12 @@ class TextEditorDialog(TextDialog):
         for menu in (self.menu_reopen, self.menu_save_encoding, self.menu_save_newline):
             file_menu.insertMenu(anchor, menu)
         file_menu.insertSeparator(anchor)
+        self.act_print = QAction("&Print...", self)
+        self.act_print.setShortcut(QKeySequence("Ctrl+P"))
+        self.act_print.triggered.connect(lambda _checked=False: self.print_text())
+        file_menu.insertAction(self.act_close, self.act_print)
+        file_menu.insertSeparator(self.act_close)
+        self.act_close.setShortcut(QKeySequence("Ctrl+W"))
 
         self._encoding_actions = QActionGroup(self)
         self._newline_actions = QActionGroup(self)
@@ -126,12 +266,192 @@ class TextEditorDialog(TextDialog):
             ("&Redo\tCtrl+Y", self.view.redo),
             ("Cu&t\tCtrl+X", self.view.cut),
             ("&Paste\tCtrl+V", self.view.paste),
+            ("&Delete\tDel", self._delete_selection),
         ):
             action = QAction(text, self)
             action.triggered.connect(lambda _checked=False, run=slot: run())
             edit_menu.insertAction(before, action)
             self._edit_actions.append(action)
         edit_menu.insertSeparator(before)
+        self.act_replace = QAction("R&eplace...", self)
+        self.act_replace.setShortcut(QKeySequence("Ctrl+H"))
+        self.act_replace.triggered.connect(lambda _checked=False: self.show_replace())
+        edit_menu.addAction(self.act_replace)
+        self._edit_actions.append(self.act_replace)
+        self.act_go_to_line = QAction("&Go to Line...", self)
+        self.act_go_to_line.setShortcut(QKeySequence("Ctrl+G"))
+        self.act_go_to_line.triggered.connect(lambda _checked=False: self.go_to_line())
+        edit_menu.addAction(self.act_go_to_line)
+
+        view_menu = self.menu_view
+        view_menu.addSeparator()
+        self.act_zoom_in = QAction("Zoom &In", self)
+        self.act_zoom_in.setShortcuts([QKeySequence("Ctrl++"), QKeySequence("Ctrl+=")])
+        self.act_zoom_in.triggered.connect(lambda _checked=False: self.view.zoomIn(1))
+        view_menu.addAction(self.act_zoom_in)
+        self.act_zoom_out = QAction("Zoom &Out", self)
+        self.act_zoom_out.setShortcut(QKeySequence("Ctrl+-"))
+        self.act_zoom_out.triggered.connect(lambda _checked=False: self.view.zoomOut(1))
+        view_menu.addAction(self.act_zoom_out)
+        self.act_zoom_reset = QAction("&Reset Zoom", self)
+        self.act_zoom_reset.setShortcut(QKeySequence("Ctrl+0"))
+        self.act_zoom_reset.triggered.connect(
+            lambda _checked=False: self.view.setFont(QFont(self._base_font))
+        )
+        view_menu.addAction(self.act_zoom_reset)
+
+    def _make_view(self) -> QPlainTextEdit:
+        return _EditorView()
+
+    # --- opening -------------------------------------------------------------
+
+    def _choose_file(self) -> None:
+        start = os.path.dirname(self.path) if self.path else ""
+        path, _chosen = QFileDialog.getOpenFileName(self, "Open", start, "All files (*)")
+        if path:
+            self.open_file(path)
+
+    def open_file(self, path: str) -> None:
+        """In a window of its own, so that this one's changes are not at stake."""
+        from .result_view import is_binary_file, show_text_window
+
+        try:
+            if is_binary_file(path):
+                self._show_status(f"{os.path.basename(path)} appears to be binary.")
+                return
+            show_text_window(path)
+        except OSError as exc:
+            self._show_status(f"Could not read {path}: {exc}")
+
+    def _dropped_paths(self, event) -> list:
+        mime = event.mimeData()
+        if not mime.hasUrls():
+            return []
+        paths = [url.toLocalFile() for url in mime.urls() if url.isLocalFile()]
+        return [os.path.normpath(path) for path in paths if os.path.isfile(path)]
+
+    def dragEnterEvent(self, event) -> None:  # noqa: N802 - Qt's spelling
+        if self._dropped_paths(event):
+            accept_drop_as_copy(event)
+        else:
+            event.ignore()
+
+    dragMoveEvent = dragEnterEvent
+
+    def dropEvent(self, event) -> None:  # noqa: N802 - Qt's spelling
+        paths = self._dropped_paths(event)
+        if not paths:
+            event.ignore()
+            return
+        if accept_drop_as_copy(event):
+            # After the drop returns: the drag source is blocked until it does.
+            QTimer.singleShot(0, lambda: [self.open_file(path) for path in paths])
+
+    def print_text(self) -> None:
+        try:
+            from PySide6.QtPrintSupport import QPrintDialog, QPrinter
+        except ImportError:
+            self._show_status("Printing is not available in this Qt installation.")
+            return
+        printer = QPrinter()
+        if QPrintDialog(printer, self).exec():
+            self.view.print_(printer)
+
+    # --- editing -------------------------------------------------------------
+
+    def _delete_selection(self) -> None:
+        self.view.textCursor().removeSelectedText()
+
+    def go_to_line(self) -> None:
+        document = self.view.document()
+        number, chosen = QInputDialog.getInt(
+            self,
+            "Go to Line",
+            f"Line (1 - {document.blockCount()}):",
+            self.view.textCursor().blockNumber() + 1,
+            1,
+            document.blockCount(),
+        )
+        if chosen:
+            self.view.setTextCursor(QTextCursor(document.findBlockByNumber(number - 1)))
+            self.view.centerCursor()
+            self.view.setFocus()
+
+    def _show_position(self) -> None:
+        cursor = self.view.textCursor()
+        text = f"Ln {cursor.blockNumber() + 1}, Col {cursor.positionInBlock() + 1}"
+        if self.view.overwriteMode() and not self.view.isReadOnly():
+            text += " | OVR"
+        self.lbl_position.setText(text)
+
+    def _build_replace_bar(self) -> QWidget:
+        self.replace_bar = QWidget()
+        row = QHBoxLayout(self.replace_bar)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(QLabel("Replace"))
+        self.txt_replace = QLineEdit()
+        self.txt_replace.setPlaceholderText("Replacement text")
+        self.txt_replace.returnPressed.connect(self.replace_one)
+        row.addWidget(self.txt_replace, 1)
+        self.btn_replace = QPushButton("Replace")
+        self.btn_replace.setAutoDefault(False)
+        self.btn_replace.clicked.connect(lambda: self.replace_one())
+        row.addWidget(self.btn_replace)
+        self.btn_replace_all = QPushButton("Replace All")
+        self.btn_replace_all.setAutoDefault(False)
+        self.btn_replace_all.clicked.connect(lambda: self.replace_all())
+        row.addWidget(self.btn_replace_all)
+        self.replace_bar.setVisible(False)
+        return self.replace_bar
+
+    def show_replace(self) -> None:
+        self.show_find()
+        self.replace_bar.setVisible(True)
+
+    def hide_find(self) -> None:
+        self.replace_bar.setVisible(False)
+        super().hide_find()
+
+    def _selection_matches(self, needle: str) -> bool:
+        selected = self.view.textCursor().selectedText()
+        if self.chk_case.isChecked():
+            return selected == needle
+        return selected.lower() == needle.lower()
+
+    def replace_one(self) -> None:
+        """Replace the selected match, then select the next one."""
+        needle = self.txt_find.text()
+        if self.view.isReadOnly() or not needle:
+            return
+        if self._selection_matches(needle):
+            self.view.textCursor().insertText(self.txt_replace.text())
+        self.find(False)
+
+    def replace_all(self) -> int:
+        """Replace every match as one undo step. Returns how many."""
+        needle = self.txt_find.text()
+        if self.view.isReadOnly() or not needle:
+            return 0
+        flags = QTextDocument.FindFlag(0)
+        if self.chk_case.isChecked():
+            flags |= QTextDocument.FindFlag.FindCaseSensitively
+        document = self.view.document()
+        edit = QTextCursor(document)
+        edit.beginEditBlock()
+        count = 0
+        position = 0
+        while True:
+            found = document.find(needle, position, flags)
+            if found.isNull():
+                break
+            edit.setPosition(found.selectionStart())
+            edit.setPosition(found.selectionEnd(), QTextCursor.MoveMode.KeepAnchor)
+            edit.insertText(self.txt_replace.text())
+            position = edit.position()
+            count += 1
+        edit.endEditBlock()
+        self.lbl_find.setText(f"Replaced {count}")
+        return count
 
     def _on_edit_mode_toggled(self, on: bool) -> None:
         if not on and not self._may_discard():
@@ -158,6 +478,9 @@ class TextEditorDialog(TextDialog):
         # Ctrl+S overwrites only where overwriting was asked for.
         self.act_save.setShortcut(QKeySequence("Ctrl+S") if on else QKeySequence())
         self.act_save_as.setShortcut(QKeySequence("Ctrl+Shift+S" if on else "Ctrl+S"))
+        if not on:
+            self.replace_bar.setVisible(False)
+        self._show_position()
 
     # --- the file ------------------------------------------------------------
 

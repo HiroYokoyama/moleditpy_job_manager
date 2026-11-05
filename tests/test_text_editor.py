@@ -9,7 +9,9 @@ import pytest
 
 pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 
-from PySide6.QtGui import QKeySequence  # noqa: E402
+from PySide6.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl  # noqa: E402
+from PySide6.QtGui import QDragEnterEvent, QDropEvent, QKeySequence  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 from job_manager.output_file_dialog import OutputFileSelectorDialog  # noqa: E402
@@ -308,3 +310,174 @@ class TestTheBrowserButtons(DialogTestCase):
         self.assertEqual(dialog.btn_text.text(), "Open in Text Viewer")
         self.assertEqual(dialog.btn_open.text(), "Open in MoleditPy")
         self.assertLess(dialog.btn_text.x(), dialog.btn_open.x())
+
+
+class TestEditing(EditorCase):
+    def editing(self, data: bytes = b"cat\nCAT\ncat\n") -> TextEditorDialog:
+        dialog = self.editor(data)
+        dialog.act_edit_mode.setChecked(True)
+        return dialog
+
+    def test_replace_all_is_one_undo_step(self):
+        dialog = self.editing()
+        dialog.txt_find.setText("cat")
+        dialog.txt_replace.setText("dog")
+        self.assertEqual(dialog.replace_all(), 3)
+        self.assertEqual(dialog.view.toPlainText(), "dog\ndog\ndog\n")
+        dialog.view.undo()
+        self.assertEqual(dialog.view.toPlainText(), "cat\nCAT\ncat\n")
+
+    def test_replace_all_honours_match_case(self):
+        dialog = self.editing()
+        dialog.txt_find.setText("cat")
+        dialog.chk_case.setChecked(True)
+        dialog.txt_replace.setText("dog")
+        self.assertEqual(dialog.replace_all(), 2)
+        self.assertEqual(dialog.view.toPlainText(), "dog\nCAT\ndog\n")
+
+    def test_replacing_with_text_containing_the_needle_ends(self):
+        dialog = self.editing(b"a a\n")
+        dialog.txt_find.setText("a")
+        dialog.txt_replace.setText("aa")
+        self.assertEqual(dialog.replace_all(), 2)
+        self.assertEqual(dialog.view.toPlainText(), "aa aa\n")
+
+    def test_replace_one_changes_the_match_and_moves_on(self):
+        dialog = self.editing()
+        dialog.txt_find.setText("cat")
+        dialog.txt_replace.setText("dog")
+        dialog.find(False)
+        dialog.replace_one()
+        self.assertTrue(dialog.view.toPlainText().startswith("dog\n"))
+        self.assertEqual(dialog.view.textCursor().selectedText().lower(), "cat")
+
+    def test_replace_does_nothing_when_read_only(self):
+        dialog = self.editor(b"cat\n")
+        dialog.txt_find.setText("cat")
+        dialog.txt_replace.setText("dog")
+        dialog.find(False)
+        dialog.replace_one()
+        self.assertEqual(dialog.replace_all(), 0)
+        self.assertEqual(dialog.view.toPlainText(), "cat\n")
+        self.assertFalse(dialog.act_replace.isEnabled())
+
+    def test_undo_redo_cut_paste_delete_follow_edit_mode(self):
+        dialog = self.editor()
+        self.assertTrue(all(not action.isEnabled() for action in dialog._edit_actions))
+        dialog.act_edit_mode.setChecked(True)
+        self.assertTrue(all(action.isEnabled() for action in dialog._edit_actions))
+
+    def test_delete_removes_the_selection(self):
+        dialog = self.editing(b"abc\n")
+        dialog.view.selectAll()
+        dialog._delete_selection()
+        self.assertEqual(dialog.view.toPlainText(), "")
+
+    def test_go_to_line_and_the_position_label(self):
+        dialog = self.editor(b"a\nb\nc\n")
+        with patch("job_manager.text_editor.QInputDialog.getInt", return_value=(3, True)):
+            dialog.go_to_line()
+        self.assertEqual(dialog.view.textCursor().blockNumber(), 2)
+        self.assertIn("Ln 3, Col 1", dialog.lbl_position.text())
+
+    def test_insert_toggles_overwrite_only_while_editing(self):
+        dialog = self.editor()
+        QTest.keyClick(dialog.view, Qt.Key.Key_Insert)
+        self.assertFalse(dialog.view.overwriteMode())
+        dialog.act_edit_mode.setChecked(True)
+        QTest.keyClick(dialog.view, Qt.Key.Key_Insert)
+        self.assertTrue(dialog.view.overwriteMode())
+        self.assertIn("OVR", dialog.lbl_position.text())
+
+    def test_zoom_and_its_reset(self):
+        dialog = self.editor()
+        size = dialog.view.font().pointSizeF()
+        dialog.act_zoom_in.trigger()
+        self.assertGreater(dialog.view.font().pointSizeF(), size)
+        dialog.act_zoom_reset.trigger()
+        self.assertEqual(dialog.view.font().pointSizeF(), size)
+        dialog.act_zoom_out.trigger()
+        self.assertLess(dialog.view.font().pointSizeF(), size)
+
+    def test_the_gutter_makes_room_for_the_line_numbers(self):
+        dialog = self.editor(b"x\n" * 12345)
+        dialog.show()
+        self.addCleanup(dialog.hide)
+        QApplication.processEvents()
+        self.assertGreater(dialog.view.viewportMargins().left(), 0)
+        self.assertFalse(dialog.grab().isNull())
+
+    def test_open_uses_a_new_window(self):
+        dialog = self.editor()
+        other = self.make_input("other.inp")
+        before = list(_text_windows)
+        with patch("job_manager.text_editor.QFileDialog.getOpenFileName", return_value=(other, "")):
+            dialog.act_open.trigger()
+        created = [window for window in _text_windows if window not in before]
+        self.assertEqual([window.path for window in created], [other])
+        created[0].close()
+
+    def test_a_binary_file_is_not_opened(self):
+        dialog = self.editor()
+        path = os.path.join(self.tmp, "b.gbw")
+        with open(path, "wb") as handle:
+            handle.write(b"\0\1\2\3" * 64)
+        before = list(_text_windows)
+        dialog.open_file(path)
+        self.assertEqual(_text_windows, before)
+        self.assertIn("binary", dialog.lbl_open_status.text())
+
+    def test_print_writes_through_the_dialog(self):
+        dialog = self.editor()
+        with (
+            patch("PySide6.QtPrintSupport.QPrintDialog") as printer_dialog,
+            patch.object(dialog.view, "print_") as printed,
+        ):
+            printer_dialog.return_value.exec.return_value = 1
+            dialog.print_text()
+        printed.assert_called_once()
+
+
+class TestFilesDroppedOnTheEditor(EditorCase):
+    def setUp(self):
+        super().setUp()
+        self.mime = QMimeData()
+
+    def event(self, path, kind=QDropEvent):
+        self.mime.setUrls([QUrl.fromLocalFile(path)])
+        modifiers = Qt.KeyboardModifier.ShiftModifier
+        actions = Qt.DropAction.CopyAction | Qt.DropAction.MoveAction
+        if kind is QDropEvent:
+            return QDropEvent(
+                QPointF(1, 1), actions, self.mime, Qt.MouseButton.LeftButton, modifiers
+            )
+        return kind(QPoint(1, 1), actions, self.mime, Qt.MouseButton.LeftButton, modifiers)
+
+    def test_the_text_box_does_not_take_a_file_while_editing(self):
+        dialog = self.editor()
+        dialog.act_edit_mode.setChecked(True)
+        path = self.make_input("other.inp")
+        for handler, kind in (
+            (dialog.view.dragEnterEvent, QDragEnterEvent),
+            (dialog.view.dropEvent, QDropEvent),
+        ):
+            event = self.event(path, kind)
+            event.setAccepted(False)
+            handler(event)
+            self.assertFalse(event.isAccepted())
+        self.assertFalse(dialog.is_modified())
+
+    def test_the_window_opens_a_copy_and_never_a_move(self):
+        dialog = self.editor()
+        other = self.make_input("other.inp")
+        before = list(_text_windows)
+        event = self.event(other)
+        self.assertEqual(event.proposedAction(), Qt.DropAction.MoveAction)
+
+        dialog.dropEvent(event)
+        QApplication.processEvents()
+
+        self.assertEqual(event.dropAction(), Qt.DropAction.CopyAction)
+        created = [window for window in _text_windows if window not in before]
+        self.assertEqual([window.path for window in created], [other])
+        created[0].close()
