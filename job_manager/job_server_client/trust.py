@@ -60,11 +60,11 @@ def fetch_server_ca(url, expected_fingerprint):
         raise ValueError(
             "CA bootstrap requires localhost or a private LAN IP. Publicly trusted HTTPS does not need local CA registration."
         ) from None
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    context.minimum_version = ssl.TLSVersion.TLSv1_2
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
-    opener = build_opener(NoRedirect(), ProxyHandler({}), HTTPSHandler(context=context))
+    tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    tls_context.minimum_version = ssl.TLSVersion.TLSv1_2
+    tls_context.check_hostname = False
+    tls_context.verify_mode = ssl.CERT_NONE
+    opener = build_opener(NoRedirect(), ProxyHandler({}), HTTPSHandler(context=tls_context))
     request = Request(url + "/api/v1/tls/ca", method="GET")
     with opener.open(request, timeout=5) as response:
         pem = response.read(65537)
