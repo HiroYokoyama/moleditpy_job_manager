@@ -160,7 +160,7 @@ class HostProfileForm(QWidget):
         self.chk_server_lan_http = QCheckBox("Allow trusted LAN HTTP (unencrypted)")
         self.chk_server_lan_http.setToolTip(
             "Passwords, tokens and job data are readable on the network. "
-            "Private IPv4/IPv6 literal addresses only; HTTPS remains recommended."
+            "Private IP addresses and .local names only; HTTPS remains recommended."
         )
         self.txt_server_key = QLineEdit()
         self.txt_server_key.setReadOnly(True)
@@ -409,8 +409,20 @@ class HostProfileForm(QWidget):
             self.connection_form.setRowVisible(widget, not server)
         for widget in (self.txt_options, self.spin_connect_timeout):
             self.adv_form.setRowVisible(widget, ssh)
-        # Nothing in Advanced reaches a Job Server, which has its own client settings.
-        self.adv_box.setVisible(not server)
+        # A Job Server runs Login commands in each job's script and uses nothing else here.
+        for widget in (self.chk_load_profile, self.spin_command_timeout, self.txt_submit_options):
+            self.adv_form.setRowVisible(widget, not server)
+        self.txt_login.setPlaceholderText(
+            "conda activate orca\nmodule load orca"
+            if server
+            else "source /etc/profile\nmodule purge"
+        )
+        self.txt_login.setToolTip(
+            "Run on the server PC at the start of each job, in its shell "
+            "(PowerShell on a Windows server)."
+            if server
+            else ""
+        )
         for widget in (self.chk_monitor_usage, self.spin_monitor_interval):
             self.monitor_form.setRowVisible(widget, not server)
         self.chk_ask_password.setVisible(backend == BACKEND_PARAMIKO)
@@ -436,7 +448,6 @@ class HostProfileForm(QWidget):
         if host.is_job_server:
             host.hostname = host.server_url
             host.load_profile = False
-            host.login_commands = []
             host.monitor_usage = False
         host.scheduler = self.cmb_scheduler.currentData()
         host.key_path = self.txt_key.text().strip()
@@ -481,6 +492,5 @@ class HostProfileForm(QWidget):
             host.equal_path = ""
             host.max_concurrent = 0
             host.load_profile = host.monitor_usage = host.ask_password = False
-            host.login_commands = []
             host.submit_options = ""
         return host

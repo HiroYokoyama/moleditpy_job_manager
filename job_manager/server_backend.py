@@ -280,7 +280,11 @@ class JobServerBackend:
         key = str(uuid.uuid5(uuid.NAMESPACE_URL, job.id))
         spec = {
             "name": job.name,
-            "command": "\n".join([*preset.pre_commands, preset.command_template]),
+            # The job's own script is the only place a server host can set up its
+            # environment, so its login commands run there, once for each job.
+            "command": "\n".join(
+                [*(self.host.login_commands or []), *preset.pre_commands, preset.command_template]
+            ),
             "resources": {
                 "cpus_per_task": preset.cpus_per_task,
                 "memory_mb": memory,
