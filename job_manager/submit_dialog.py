@@ -107,7 +107,7 @@ from .submission_config import (
 from .submission_resources import SubmissionResources
 from .submission_templates import SubmissionTemplates
 from .theme import apply_theme
-from .window_utils import make_independent, set_spin_value
+from .window_utils import accept_drop_as_copy, make_independent, set_spin_value
 from .wheel_guard import install_wheel_guard
 
 
@@ -1181,7 +1181,7 @@ class SubmitDialog(QDialog):
 
     def dragEnterEvent(self, event) -> None:
         if self.dropped_files(event):
-            event.acceptProposedAction()
+            accept_drop_as_copy(event)
         else:
             event.ignore()
 
@@ -1192,7 +1192,8 @@ class SubmitDialog(QDialog):
         if not paths:
             event.ignore()
             return
-        event.acceptProposedAction()
+        if not accept_drop_as_copy(event):
+            return
         # This form is one job, so whatever lands on it is that job's input.
         self.add_files(primary_first(paths))
 

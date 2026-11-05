@@ -45,6 +45,21 @@ def make_independent(dialog) -> None:
     apply_icon(dialog)
 
 
+def accept_drop_as_copy(event) -> bool:
+    """Accept a file drag as a copy. False, and refused, if the source cannot copy.
+
+    Never acceptProposedAction(): Shift during a drag from Explorer proposes a
+    move, and accepting one tells Explorer the file now lives here, so it removes
+    the original. Nothing here takes ownership of a file it is handed.
+    """
+    if not event.possibleActions() & Qt.DropAction.CopyAction:
+        event.ignore()
+        return False
+    event.setDropAction(Qt.DropAction.CopyAction)
+    event.accept()
+    return True
+
+
 def bring_to_front(window) -> None:
     """Show, restore and raise a window that may be hidden or minimised.
 

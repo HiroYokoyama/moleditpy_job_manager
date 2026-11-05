@@ -121,7 +121,7 @@ from .theme import (
     apply_theme,
 )
 from .ui_actions import action_button, action_toolbar, populate_menu
-from .window_utils import make_independent
+from .window_utils import accept_drop_as_copy, make_independent
 
 #: Job lists this window opens -- archived or not. .json covers files written
 #: before the extension existed.
@@ -1687,7 +1687,7 @@ class JobsDialog(QDialog):
 
     def dragEnterEvent(self, event) -> None:
         if self._dropped_job_list(event) or self._dropped_input_files(event):
-            event.acceptProposedAction()
+            accept_drop_as_copy(event)
         else:
             event.ignore()
 
@@ -1696,7 +1696,8 @@ class JobsDialog(QDialog):
     def dropEvent(self, event) -> None:
         path = self._dropped_job_list(event)
         if path:
-            event.acceptProposedAction()
+            if not accept_drop_as_copy(event):
+                return
             # Never run a modal dialog inside dropEvent: the drag source waits
             # for the drop to return, so Explorer froze until the dialog closed.
             QTimer.singleShot(0, lambda: self.open_job_list(path))
@@ -1706,7 +1707,8 @@ class JobsDialog(QDialog):
         if not files:
             event.ignore()
             return
-        event.acceptProposedAction()
+        if not accept_drop_as_copy(event):
+            return
         # Several files dropped plainly get a window each, so each can have its
         # own command; hold Shift to keep them as one job.
         if len(files) > 1 and not event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
