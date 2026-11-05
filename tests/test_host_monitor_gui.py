@@ -577,10 +577,12 @@ class TestTheRowMenu(DialogTestCase):
             self.assertIn(expected, labels)
 
     def test_an_action_that_cannot_run_is_disabled(self):
-        # Open Result needs downloaded files, which this job has none of.
+        # With no directory on the host and no files here, there is nothing to browse.
+        self.dialog.selected_job().remote_dir = ""
+        self.dialog._update_actions()
         entries = {action.text(): action for action in self.menu_entries()}
         self.assertFalse(entries["File Browser"].isEnabled())
-        self.assertTrue(entries["Tail Log"].isEnabled())
+        self.assertTrue(entries["Details"].isEnabled())
 
     def test_it_matches_the_buttons_exactly(self):
         # Driven from the buttons, so the two cannot disagree about what is

@@ -304,10 +304,13 @@ class TestJobsDialog(DialogTestCase):
         self.dialog.table.selectRow(0)
         self.assertTrue(self.dialog.job_actions["cancel"].isEnabled())
 
-    def test_open_result_needs_downloaded_files(self):
+    def test_file_browser_needs_a_remote_directory_or_downloaded_files(self):
         job = self.service.submit(self.host, make_preset(), "mol", [self.make_input()])
         self.dialog.model.reload()
         self.dialog.table.selectRow(0)
+        self.assertTrue(self.dialog.btn_open.isEnabled())
+        job.remote_dir = ""
+        self.dialog._update_actions()
         self.assertFalse(self.dialog.btn_open.isEnabled())
         job.downloaded_files = ["/tmp/mol.out"]
         self.dialog._update_actions()

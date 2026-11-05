@@ -482,6 +482,11 @@ class JobsDialog(QDialog):
         return bool(getattr(self.service.store, "reconstructed", False))
 
     def _can_open_result(self, job: Optional[Job]) -> bool:
+        # The browser lists the host's copy when nothing is here, so a job
+        # needs only a directory on the host, not a download or a mirror.
+        return bool(job and job.remote_dir) or self._has_local_result(job)
+
+    def _has_local_result(self, job: Optional[Job]) -> bool:
         if job is None:
             return False
         if job.downloaded_files or (job.downloaded and job.remote_dir):
@@ -1592,6 +1597,9 @@ class JobsDialog(QDialog):
     def _open_selected_result(self) -> None:
         job = self.selected_job()
         if job is None:
+            return
+        # With nothing here, the browser goes straight to the host.
+        if not self._has_local_result(job) and not self._has_credentials(job):
             return
         from .output_file_dialog import OutputFileSelectorDialog
 
