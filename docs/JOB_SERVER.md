@@ -72,3 +72,34 @@ The bundled client comes from the audited server commit recorded in
 refresh it with `python scripts/sync_job_server_client.py /path/to/server-checkout`.
 The script reads that exact Git commit and extracts only client modules/protocol
 signing; it does not import a daemon or copy server authentication/database code.
+
+## Local HTTPS and CA registration
+
+For Job Server's local HTTPS listener, copy its HTTPS LAN URL into the host's
+**Server URL** field. On the server PC, open **Settings > Create / show CA
+certificate** and copy the SHA-256 fingerprint.
+
+In the host form, choose **Trust local server CA...**, paste that fingerprint,
+and confirm. The certificate is downloaded without credentials and accepted only
+when its fingerprint matches. Redirects and environment proxies are not used for
+this bootstrap request. Normal API connections always verify the TLS certificate
+and server name.
+
+On Windows, the public CA is registered in the current user's ROOT store, which
+Python's standard TLS context reads. Other applications using that store also
+trust the CA. On Mac/Linux, the CA is saved under Job Manager's data directory and
+the connection's CA field is filled automatically. No system trust store is
+modified on those platforms. Browser trust registration is managed separately.
+Publicly trusted HTTPS, including Tailscale Serve, needs no local CA registration.
+
+Choose **Sign in to Job Server...** and enter username and password in one dialog.
+Subsequent connections use this application's saved device credential.
+
+## Host Monitor
+
+Use **Choose Hosts...** in Host Monitor to select the cards to display. The choice
+is remembered, and newly added enabled hosts appear by default. Disabled hosts
+are hidden automatically; enabling a host restores its previous visibility choice.
+Job Server hosts remain available as cards, without unsupported system-usage
+probes. Each host's usage-monitoring setting controls sampling independently of
+card visibility.
