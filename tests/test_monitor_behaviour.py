@@ -81,18 +81,6 @@ class TestWhatADoubleClickOpens(DialogTestCase):
         result.assert_called_once()
         tail.assert_not_called()
 
-    def test_a_finished_job_with_nothing_fetched_falls_back_to_the_log(self):
-        # Open Result is disabled with nothing to open, and a double click must
-        # still do something rather than nothing.
-        self.add(state=STATE_DONE)
-        with (
-            patch.object(JobsDialog, "_tail_selected") as tail,
-            patch.object(JobsDialog, "_open_selected_result") as result,
-        ):
-            self.dialog._open_double_clicked()
-        tail.assert_called_once()
-        result.assert_not_called()
-
 
 class TestARebuiltListIsReadOnly(DialogTestCase):
     def setUp(self):
@@ -146,19 +134,22 @@ class TestFileBrowserWithoutADownload(TestWhatADoubleClickOpens):
         self.add(state=STATE_DONE, remote_dir="")
         self.assertFalse(self.dialog.btn_open.isEnabled())
 
-    def test_a_double_click_still_reads_the_log(self):
+    def test_a_double_click_on_a_finished_job_opens_the_browser(self):
+        # With nothing fetched too: it lists the job's directory on the host.
         self.add(state=STATE_DONE)
+        with patch.object(self.dialog, "_tail_selected") as tail:
+            with patch.object(self.dialog, "_open_selected_result") as browse:
+                self.dialog._open_double_clicked()
+        browse.assert_called_once()
+        tail.assert_not_called()
+
+    def test_a_double_click_on_a_running_job_still_reads_the_log(self):
+        self.add(state=STATE_RUNNING)
         with patch.object(self.dialog, "_tail_selected") as tail:
             with patch.object(self.dialog, "_open_selected_result") as browse:
                 self.dialog._open_double_clicked()
         tail.assert_called_once()
         browse.assert_not_called()
-
-    def test_a_double_click_opens_a_result_that_is_here(self):
-        self.add(state=STATE_DONE, downloaded_files=["/tmp/mol.out"])
-        with patch.object(self.dialog, "_open_selected_result") as browse:
-            self.dialog._open_double_clicked()
-        browse.assert_called_once()
 
     def test_the_browser_asks_for_the_password_before_going_to_the_host(self):
         self.add(state=STATE_DONE)

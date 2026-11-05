@@ -982,8 +982,7 @@ class JobsDialog(QDialog):
         ):
             self._show_details()
             return
-        # Without a result here, the log says more about how the job ended.
-        if job.is_terminal and self._has_local_result(job) and self.job_actions["open"].isEnabled():
+        if job.is_terminal and self.job_actions["open"].isEnabled():
             self._open_selected_result()
             return
         if self.job_actions["tail"].isEnabled():
