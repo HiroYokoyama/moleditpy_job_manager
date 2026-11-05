@@ -42,7 +42,6 @@ from .runner import (
     download_host_paths,
     fetch_results,
     force_in_runner,
-    list_host_files,
     list_host_path,
     list_remote_files,
     recheck_job,
@@ -852,18 +851,6 @@ class JobService(QObject):
             transport = self.transport_for(host)
             try:
                 return list_host_path(transport, host, path, depth)
-            finally:
-                transport.close()
-
-        run_async(self.pool, work, on_success=on_done, on_error=on_error, owner=owner)
-
-    def list_host_files(self, host: HostProfile, on_done, on_error, owner=None) -> None:
-        """Every file under the host's remote root."""
-
-        def work() -> List[str]:
-            transport = self.transport_for(host)
-            try:
-                return list_host_files(transport, host)
             finally:
                 transport.close()
 

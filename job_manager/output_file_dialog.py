@@ -386,7 +386,6 @@ class OutputFileSelectorDialog(QDialog):
         primary_name = primary_output(list(names), self.job.log_file).replace("\\", "/")
         selected_item: Optional[QTreeWidgetItem] = None
         folders: dict = {}
-        gray = QColor("#8b949e")
 
         for name in names:
             if not name or name.startswith("."):
@@ -394,53 +393,11 @@ class OutputFileSelectorDialog(QDialog):
             parts = split_path(name)
             if not parts:
                 continue
-            filename = parts[-1]
             parent = ensure_folder_item(
                 self.tree, folders, parts[:-1], folder_factory(columns=len(FULL_HEADERS))
             )
-
-            mirrored_path = os.path.join(mirror_dir, *parts) if mirror_dir else ""
             local_key = "/".join(parts)
-            local_path = local_map.get(local_key)
-            if local_path is None and len(parts) == 1:
-                local_path = local_map.get(filename)
-            if local_path is not None:
-                try:
-                    size_str = format_file_size(os.path.getsize(local_path))
-                except OSError:
-                    size_str = "-"
-                location = "Local"
-                is_remote = False
-                target_data = local_path
-                tooltip = target_data
-            elif mirrored_path and os.path.isfile(mirrored_path):
-                try:
-                    size_str = format_file_size(os.path.getsize(mirrored_path))
-                except OSError:
-                    size_str = "-"
-                location = "Mirror (no download needed)"
-                is_remote = False
-                target_data = mirrored_path
-                tooltip = f"Opened directly from the host's local mirror:\n{mirrored_path}"
-            else:
-                size_str = "-"
-                location = "On Host (Not Downloaded)"
-                is_remote = True
-                target_data = name
-                tooltip = f"Remote file: {name} (download the job, or open it, to fetch it)"
-
-            item = QTreeWidgetItem([filename, size_str, describe_file_type(filename), location])
-            item.setData(0, PATH_ROLE, target_data)
-            item.setData(0, IS_REMOTE_ROLE, is_remote)
-            item.setToolTip(0, tooltip)
-            if is_remote:
-                # Greyed rather than hidden: seeing what exists but is not
-                # here yet is the point of listing the host at all.
-                for column in range(4):
-                    item.setForeground(column, gray)
-                italic = item.font(0)
-                italic.setItalic(True)
-                item.setFont(0, italic)
+            item = self._remote_file_row(name, parts, local_map, mirror_dir)
 
             if parent is None:
                 self.tree.addTopLevelItem(item)
@@ -458,6 +415,56 @@ class OutputFileSelectorDialog(QDialog):
 
         self.lbl_status.setText(f"{len(names)} remote file(s) found on host.")
         self._apply_filter(self.txt_filter.text())
+
+    @staticmethod
+    def _remote_file_row(
+        name: str, parts: Sequence[str], local_map: dict, mirror_dir: str
+    ) -> QTreeWidgetItem:
+        """The row of a file the host listed, wherever the file can be opened from."""
+        filename = parts[-1]
+        mirrored_path = os.path.join(mirror_dir, *parts) if mirror_dir else ""
+        local_path = local_map.get("/".join(parts))
+        if local_path is None and len(parts) == 1:
+            local_path = local_map.get(filename)
+        if local_path is not None:
+            try:
+                size_str = format_file_size(os.path.getsize(local_path))
+            except OSError:
+                size_str = "-"
+            location = "Local"
+            is_remote = False
+            target_data = local_path
+            tooltip = target_data
+        elif mirrored_path and os.path.isfile(mirrored_path):
+            try:
+                size_str = format_file_size(os.path.getsize(mirrored_path))
+            except OSError:
+                size_str = "-"
+            location = "Mirror (no download needed)"
+            is_remote = False
+            target_data = mirrored_path
+            tooltip = f"Opened directly from the host's local mirror:\n{mirrored_path}"
+        else:
+            size_str = "-"
+            location = "On Host (Not Downloaded)"
+            is_remote = True
+            target_data = name
+            tooltip = f"Remote file: {name} (download the job, or open it, to fetch it)"
+
+        item = QTreeWidgetItem([filename, size_str, describe_file_type(filename), location])
+        item.setData(0, PATH_ROLE, target_data)
+        item.setData(0, IS_REMOTE_ROLE, is_remote)
+        item.setToolTip(0, tooltip)
+        if is_remote:
+            # Greyed rather than hidden: seeing what exists but is not
+            # here yet is the point of listing the host at all.
+            gray = QColor("#8b949e")
+            for column in range(4):
+                item.setForeground(column, gray)
+            italic = item.font(0)
+            italic.setItalic(True)
+            item.setFont(0, italic)
+        return item
 
     def _apply_filter(self, text: str) -> None:
         """Filter tree rows based on search input while preserving folder hierarchy."""
