@@ -758,6 +758,52 @@ class JobService(QObject):
 
     # --- the host itself, outside any job -----------------------------------------
 
+    def queue_change_in_flight(self, host_id: str) -> bool:
+        return host_id in getattr(self, "_queue_writes", set())
+
+    def configure_queue(self, host, changes, on_done, on_error, owner=None) -> None:
+        from copy import deepcopy
+        from .runner import apply_queue_limits, set_queue_paused
+
+        if not hasattr(self, "_queue_writes"):
+            self._queue_writes = set()
+        self._queue_writes.add(host.id)
+        snapshot = deepcopy(host)
+        limits = {key: value for key, value in changes.items() if key != "paused"}
+        for key, value in limits.items():
+            setattr(snapshot, key, value)
+
+        def work():
+            transport = self.transport_for(snapshot)
+            try:
+                if limits:
+                    apply_queue_limits(transport, snapshot)
+                result = {}
+                if "paused" in changes:
+                    result["paused"] = set_queue_paused(transport, snapshot, changes["paused"])
+                return result
+            finally:
+                transport.close()
+
+        def done(result):
+            self._queue_writes.discard(host.id)
+            if self.store.hosts.get(host.id) is host:
+                for key, value in limits.items():
+                    setattr(host, key, value)
+                if limits:
+                    self.store.save_settings()
+            result["limits"] = {
+                key: getattr(snapshot, key)
+                for key in ("max_concurrent", "runner_cores", "runner_memory_mb", "runner_detect")
+            }
+            on_done(result)
+
+        def failed(message):
+            self._queue_writes.discard(host.id)
+            on_error(message)
+
+        run_async(self.pool, work, on_success=done, on_error=failed, owner=owner)
+
     def host_status(
         self, host: HostProfile, on_done, on_error, stats: bool = True, owner=None
     ) -> None:

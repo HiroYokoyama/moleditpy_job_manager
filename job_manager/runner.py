@@ -946,7 +946,7 @@ def apply_queue_limits(transport: Transport, host: HostProfile) -> None:
     """
     flavour = remote_runner.flavour_for(host)
     directory = remote_runner.runner_dir(effective_root(host))
-    transport.run(
+    result = transport.run(
         flavour.setup_command(
             directory,
             remote_runner.slots_for(host),
@@ -954,6 +954,11 @@ def apply_queue_limits(transport: Transport, host: HostProfile) -> None:
             host.runner_memory_mb,
         )
     )
+
+    if not result.ok:
+        raise TransportError(
+            f"Could not apply queue limits (rc={result.rc}): {result.stderr or result.stdout}"
+        )
 
 
 def cancel_in_runner(transport: Transport, host: HostProfile, job: Job) -> None:
