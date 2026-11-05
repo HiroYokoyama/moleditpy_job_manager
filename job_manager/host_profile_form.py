@@ -151,6 +151,12 @@ class HostProfileForm(QWidget):
         form.addRow("Backend", self.cmb_backend)
         self.txt_server_url = QLineEdit()
         self.txt_server_url.setPlaceholderText("https://compute.example.org")
+        self.chk_server_lan_http = QCheckBox("Allow trusted LAN HTTP (unencrypted)")
+        self.chk_server_lan_http.setToolTip(
+            "Passwords, tokens and job data are readable on the network. "
+            "Private IPv4/IPv6 literal addresses only; HTTPS remains recommended."
+        )
+        form.addRow("", self.chk_server_lan_http)
         self.txt_server_key = QLineEdit()
         self.txt_server_key.setReadOnly(True)
         self.txt_server_key.setEnabled(False)
@@ -343,6 +349,7 @@ class HostProfileForm(QWidget):
             self.txt_server_key,
             self.txt_server_ca.text().strip(),
             self._server_enrolled,
+            allow_lan_http=self.chk_server_lan_http.isChecked(),
         )
 
     def _server_enrolled(self, capabilities):
@@ -353,6 +360,7 @@ class HostProfileForm(QWidget):
     def set_server_fields_visible(self, visible):
         for widget in (
             self.txt_server_url,
+            self.chk_server_lan_http,
             self.txt_server_key,
             self.txt_server_ca,
             self.txt_server_id,
@@ -364,6 +372,7 @@ class HostProfileForm(QWidget):
                 label.setVisible(visible)
 
     def _collect(self, host: HostProfile) -> HostProfile:
+        host.server_allow_lan_http = self.chk_server_lan_http.isChecked()
         host.server_url = self.txt_server_url.text().strip()
         host.server_key_path = self.txt_server_key.text().strip()
         host.server_ca_file = self.txt_server_ca.text().strip()
@@ -413,7 +422,11 @@ class HostProfileForm(QWidget):
         if host.is_job_server:
             from .server_backend import validate_server_url
 
-            host.server_url = validate_server_url(host.server_url) if host.server_url else ""
+            host.server_url = (
+                validate_server_url(host.server_url, host.server_allow_lan_http)
+                if host.server_url
+                else ""
+            )
             host.hostname = host.server_url
             host.equal_path = ""
             host.max_concurrent = 0

@@ -15,6 +15,7 @@ from urllib.request import HTTPRedirectHandler, HTTPSHandler, ProxyHandler, Requ
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from .connection import validate_server_url
 from .auth import signing_message
 from .credentials import load_key, save_key
 
@@ -57,16 +58,11 @@ def job_path(identifier):
 
 class JobServerClient:
     def __init__(
-        self, url, key_path=None, ca_file=None, server_id=None, timeout=30, *, reuse_auth=False
+        self, url, key_path=None, ca_file=None, server_id=None, timeout=30, *, reuse_auth=False, allow_lan_http=False
     ):
-        parts = urlsplit(url)
-        if parts.username or parts.password or parts.query or parts.fragment or not parts.hostname:
-            raise ValueError("Invalid server URL")
-        if parts.scheme != "https" and not (
-            parts.scheme == "http" and parts.hostname in {"127.0.0.1", "localhost", "::1"}
-        ):
-            raise ValueError("HTTPS is required except for same-machine loopback")
-        self.url = url.rstrip("/")
+        self.url = validate_server_url(url, allow_lan_http)
+        parts = urlsplit(self.url)
+        self._direct_http = parts.scheme == "http"
         self.key_path = Path(key_path) if key_path else None
         self.server_id, self.timeout = server_id, timeout
         self._expected_server_id = server_id
@@ -94,7 +90,7 @@ class JobServerClient:
             tls_context.options,
         )
         handlers = [NoRedirect(), HTTPSHandler(context=tls_context)]
-        if self._loopback:
+        if self._loopback or self._direct_http:
             handlers.append(ProxyHandler({}))
         self.opener = build_opener(*handlers)
 

@@ -336,6 +336,7 @@ class HostProfile:
     server_id: str = ""
     server_key_path: str = ""
     server_ca_file: str = ""
+    server_allow_lan_http: bool = False
 
     @property
     def is_local(self) -> bool:

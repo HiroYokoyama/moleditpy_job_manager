@@ -38,7 +38,13 @@ Job Manager does not start another helper queue or apply SSH settings to it.
 > [!WARNING]
 > **Never expose Job Server to the public internet. Localhost, private LAN, or
 > private Tailscale only, with trusted users.** Use HTTPS for LAN/Tailscale access;
-> HTTP is accepted only on localhost. No Funnel, public reverse proxies/tunnels,
+> HTTPS is the default. Each host can explicitly enable **Allow trusted LAN HTTP**
+> for literal RFC 1918 IPv4 or IPv6 ULA addresses. Public IPs, DNS names and
+> link-local addresses are rejected. Passwords, bearer tokens and job contents
+> are unencrypted on HTTP; use only on a trusted LAN. The client bypasses HTTP
+> environment proxies and refuses redirects. The server also needs its LAN HTTP
+> option enabled and the chosen origin registered. Its listener remains loopback;
+> use a restricted private reverse proxy on the same PC. Localhost works as before. No Funnel, public reverse proxies/tunnels,
 > or router port forwarding. Jobs share the service OS account, so admission is
 > for trusted people rather than mutually untrusted tenants.
 

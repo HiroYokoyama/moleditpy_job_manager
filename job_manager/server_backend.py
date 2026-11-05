@@ -6,7 +6,7 @@ from pathlib import Path
 import importlib.util
 import re
 from importlib.metadata import PackageNotFoundError, version
-from urllib.parse import urlsplit
+from .job_server_client.connection import validate_server_url
 from urllib.parse import quote
 
 from .job_server_client.files import validate_path
@@ -29,31 +29,11 @@ def require_client():
         raise ValueError(INSTALL_HINT)
 
 
-def validate_server_url(url):
-    parts = urlsplit(url)
-    if (
-        not parts.hostname
-        or parts.username
-        or parts.password
-        or parts.query
-        or parts.fragment
-        or parts.path not in {"", "/"}
-    ):
-        raise ValueError("Use a Job Server origin without credentials, paths or query strings")
-    if parts.port is not None and not 1 <= parts.port <= 65535:
-        raise ValueError("Invalid server port")
-    if parts.scheme != "https" and not (
-        parts.scheme == "http" and parts.hostname in {"localhost", "127.0.0.1", "::1"}
-    ):
-        raise ValueError("HTTPS is required for LAN/Tailscale; HTTP is allowed only on localhost")
-    return url.rstrip("/")
-
-
 def backend_for(host):
     return JobServerBackend(host)
 
 
-def show_enrollment(parent, url, key_field, ca_file, on_done=None):
+def show_enrollment(parent, url, key_field, ca_file, on_done=None, *, allow_lan_http=False):
     from PySide6.QtCore import QThreadPool
     from PySide6.QtWidgets import QInputDialog, QLineEdit, QMessageBox
     from .tasks import run_async
@@ -61,7 +41,7 @@ def show_enrollment(parent, url, key_field, ca_file, on_done=None):
 
     try:
         require_client()
-        url = validate_server_url(url)
+        url = validate_server_url(url, allow_lan_http)
     except ValueError as exc:
         QMessageBox.warning(parent, "Job Server", str(exc))
         return
@@ -84,7 +64,7 @@ def show_enrollment(parent, url, key_field, ca_file, on_done=None):
     def work():
         from .job_server_client.client import JobServerClient
 
-        client = JobServerClient(url, path, ca_file or None)
+        client = JobServerClient(url, path, ca_file or None, allow_lan_http=allow_lan_http)
         if path.exists():
             client.authenticate()
         else:
@@ -117,11 +97,12 @@ class JobServerBackend:
 
         self.host = host
         self.client = JobServerClient(
-            validate_server_url(host.server_url),
+            validate_server_url(host.server_url, host.server_allow_lan_http),
             host.server_key_path,
             host.server_ca_file or None,
             host.server_id or None,
             reuse_auth=True,
+            allow_lan_http=host.server_allow_lan_http,
         )
 
     def submit(self, preset, job, local_files, after_id=None):
