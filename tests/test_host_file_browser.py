@@ -474,7 +474,31 @@ class TestEntryPoints(DialogTestCase):
         self.assertIn("on_open_callback", kwargs)
         browser.return_value.show.assert_called_once()
 
-    def test_a_job_server_is_not_offered(self):
+    def test_a_job_server_is_offered_with_its_virtual_job_folders(self):
         self.store.add_host(make_host(id="srv", name="srv", backend=BACKEND_JOB_SERVER))
         hosts = host_file_browser.browsable_hosts(self.service)
-        self.assertEqual([host.id for host in hosts], [self.host.id])
+        self.assertEqual({host.id for host in hosts}, {self.host.id, "srv"})
+
+    def test_server_browser_downloads_a_selected_virtual_folder_without_overwrite(self):
+        import uuid
+
+        identifier = str(uuid.UUID(int=1))
+        server = make_host(id="srv", name="srv", backend=BACKEND_JOB_SERVER)
+        listed = []
+
+        def listing(host, path, depth, done, failed, owner=None):
+            listed.append(path)
+            done([identifier + "/"])
+
+        with patch.object(self.service, "list_host_path", side_effect=listing):
+            dialog = HostFileBrowserDialog(self.service, server)
+        self.addCleanup(dialog.deleteLater)
+        self.assertEqual(listed, ["/"])
+        dialog.tree.setCurrentItem(dialog.tree.topLevelItem(0))
+        with (
+            patch("job_manager.host_file_browser.QFileDialog.getExistingDirectory", return_value=self.tmp),
+            patch.object(self.service, "download_host_paths") as download,
+        ):
+            dialog._download_selected()
+        self.assertEqual(download.call_args.args[:3], (server, ["/" + identifier], self.tmp))
+        self.assertFalse(download.call_args.kwargs["overwrite"])

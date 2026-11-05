@@ -15,7 +15,15 @@ from html import escape
 from typing import Callable, Dict, Iterable, Optional, Set
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QMessageBox, QProgressDialog, QTreeWidgetItem, QWidget
+from PySide6.QtWidgets import (
+    QDialogButtonBox,
+    QFileDialog,
+    QMessageBox,
+    QProgressDialog,
+    QPushButton,
+    QTreeWidgetItem,
+    QWidget,
+)
 
 from . import PLUGIN_VERSION
 from .file_tree import FULL_HEADERS, folder_factory
@@ -41,8 +49,8 @@ _ROOT = ""
 
 
 def browsable_hosts(service) -> list:
-    """Hosts with a shell to list files through: a Job Server has none."""
-    return [host for host in service.store.hosts.values() if not host.is_job_server]
+    """Shell hosts and authenticated Job Server virtual job folders."""
+    return list(service.store.hosts.values())
 
 
 class HostFileBrowserDialog(OutputFileSelectorDialog):
@@ -66,7 +74,7 @@ class HostFileBrowserDialog(OutputFileSelectorDialog):
             name=host.name,
             host_id=host.id,
             host_name=host.name,
-            remote_dir=effective_root(host),
+            remote_dir="/" if host.is_job_server else effective_root(host),
         )
         super().__init__(service, root_as_job, parent, **callbacks)
         self.setWindowTitle(f"Job Manager {PLUGIN_VERSION} - File Browser: {host.name}")
@@ -75,12 +83,64 @@ class HostFileBrowserDialog(OutputFileSelectorDialog):
             "A folder is read from the host when you open it. "
             "Double-click a file to view its text."
         )
+        if host.is_job_server:
+            self.lbl_headline.setText(
+                f"Job folders on <b>{escape(host.name)}</b> (Job Server 0.7 or newer). "
+                "Only jobs you may access are shown. Open a folder to list its files."
+            )
         self.txt_filter.setPlaceholderText("Filter the folders opened so far...")
         self.btn_browse_remote.setText("Refresh")
         self.btn_browse_remote.setToolTip("Read the remote root and the open folders again.")
         # There is no local folder of these files to show.
         self.btn_open_folder.parentWidget().removeButton(self.btn_open_folder)
         self.tree.itemExpanded.connect(self._on_expanded)
+        if host.is_job_server:
+            self.btn_download = QPushButton("Download...")
+            self.btn_download.clicked.connect(self._download_selected)
+            self.btn_open.parentWidget().addButton(
+                self.btn_download, QDialogButtonBox.ButtonRole.ActionRole
+            )
+
+    def _download_selected(self):
+        if self._pending or self._listing:
+            return
+        paths = [
+            item.data(0, _FOLDER_ROLE) or item.data(0, PATH_ROLE)
+            for item in self.tree.selectedItems()
+        ]
+        if not paths:
+            self.lbl_status.setText("Select a file or job folder to download.")
+            return
+        folder = QFileDialog.getExistingDirectory(
+            self, "Download into", self.service.store.download_root()
+        )
+        if not folder:
+            return
+        self._pending = [("download", path) for path in paths]
+        self.btn_download.setEnabled(False)
+
+        def done(result):
+            downloaded, skipped, _folder = result
+            self._pending = []
+            self.btn_download.setEnabled(True)
+            self.lbl_status.setText(
+                f"Downloaded {len(downloaded)} file(s); skipped {len(skipped)}."
+            )
+
+        def failed(message):
+            self._pending = []
+            self.btn_download.setEnabled(True)
+            self.lbl_status.setText(f"Download failed: {message}")
+
+        self.service.download_host_paths(
+            self.host,
+            ["/" + path for path in paths],
+            folder,
+            done,
+            failed,
+            overwrite=False,
+            owner=self,
+        )
 
     # --- the loading window ---------------------------------------------------
 
@@ -216,6 +276,8 @@ class HostFileBrowserDialog(OutputFileSelectorDialog):
         if not name.endswith("/"):
             return self._remote_file_row(relative, parts, {}, mirror_dir)
         row = folder_factory(columns=len(FULL_HEADERS))(parts[-1], parts, None)
+        if self.host.is_job_server:
+            row.setFlags(row.flags() | Qt.ItemFlag.ItemIsSelectable)
         path = "/".join(parts)
         row.setData(0, _FOLDER_ROLE, path)
         # What is inside is not known yet, and the arrow is how it gets asked for.
