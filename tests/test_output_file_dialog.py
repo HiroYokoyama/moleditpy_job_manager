@@ -75,7 +75,10 @@ class TestOutputFileSelectorDialog(unittest.TestCase):
         with open(path, "w", encoding="utf-8") as handle:
             handle.write("complete\n")
         self.job.downloaded_files = [path]
-        dialog = OutputFileSelectorDialog(self.service, self.job)
+        from unittest.mock import patch
+
+        with patch("job_manager.get_context", return_value=MagicMock()):
+            dialog = OutputFileSelectorDialog(self.service, self.job)
         self.addCleanup(dialog.deleteLater)
         dialog.show()
         self.addCleanup(dialog.hide)

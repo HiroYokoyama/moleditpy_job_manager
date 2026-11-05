@@ -349,6 +349,21 @@ class JobServerBackend:
     def files(self, job):
         return self.client.request("GET", f"/jobs/{job.remote_job_id}/files")
 
+    def list_path(self, path, depth=1):
+        from .server_files import list_path
+
+        return list_path(self.client, path, depth)
+
+    def stat_path(self, path, digest=True):
+        from .server_files import stat_path
+
+        return stat_path(self.client, path, digest)
+
+    def download_paths(self, paths, local_dir, overwrite=False):
+        from .server_files import download_paths
+
+        return download_paths(self.client, paths, local_dir, overwrite)
+
     def tail_file(self, job, relative, lines=200):
         if relative in ("", "job.log"):
             return self.tail(job, lines)

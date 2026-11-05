@@ -97,9 +97,19 @@ class TestWhatCountsAsText(TextFileCase):
 class TestOpeningAResult(DialogTestCase):
     def setUp(self):
         super().setUp()
+        host_context = patch("job_manager.get_context", return_value=MagicMock())
+        host_context.start()
+        self.addCleanup(host_context.stop)
         self.dialog = JobsDialog(self.service)
         self.addCleanup(self.dialog.deleteLater)
         self.tmp = tempfile.mkdtemp(prefix="textresult_")
+
+    def test_standalone_browser_and_text_viewer_hide_host_open_buttons(self):
+        with patch("job_manager.get_context", return_value=None):
+            _, browser, viewer = self.open_browser_text()
+        self.assertTrue(browser.btn_open.isHidden())
+        self.assertFalse(browser.btn_open.isDefault())
+        self.assertIsNone(viewer.btn_open_in_moleditpy)
 
     def open_browser_text(self, extension=".out"):
         from job_manager.tasks import gone

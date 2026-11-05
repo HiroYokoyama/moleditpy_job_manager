@@ -848,6 +848,10 @@ class JobService(QObject):
         """Names under any directory on the host, not only a job's."""
 
         def work() -> List[str]:
+            if host.is_job_server:
+                from .server_backend import backend_for
+
+                return backend_for(host).list_path(path, depth)
             transport = self.transport_for(host)
             try:
                 return list_host_path(transport, host, path, depth)
@@ -862,6 +866,10 @@ class JobService(QObject):
         """Whether a path exists on the host, and a file's size and sha256."""
 
         def work() -> dict:
+            if host.is_job_server:
+                from .server_backend import backend_for
+
+                return backend_for(host).stat_path(path, digest)
             transport = self.transport_for(host)
             try:
                 return stat_host_path(transport, host, path, digest)
@@ -892,6 +900,11 @@ class JobService(QObject):
         )
 
         def work() -> tuple:
+            if host.is_job_server:
+                from .server_backend import backend_for
+
+                downloaded, skipped = backend_for(host).download_paths(paths, local_dir, overwrite)
+                return downloaded, skipped, local_dir
             transport = self.transport_for(host)
             try:
                 downloaded, skipped = download_host_paths(

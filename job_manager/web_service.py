@@ -194,8 +194,10 @@ class WebService(QObject):
             )
 
         hosts = []
-        for host in self.service.store.host_list():
-            sampled = host.monitor_usage
+        from .host_visibility import visible_hosts
+
+        for host in visible_hosts(self.service.store):
+            sampled = host.monitor_usage and not host.is_job_server
             # A value left from before sampling was switched off would be
             # served as if it were current.
             stats = self.sampler.latest(host.id) if sampled else None
