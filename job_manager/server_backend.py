@@ -81,18 +81,23 @@ def install_server_ca(url, fingerprint, directory, *, windows_store=None):
     )
 
     pem = fetch_server_ca(url, fingerprint)
+    path = Path(directory) / "identity" / "ca" / (normalize_fingerprint(fingerprint) + ".pem")
+    atomic_write(path, pem)
     windows_store = os.name == "nt" if windows_store is None else windows_store
     if windows_store:
-        trust_windows_user_ca(pem, fingerprint)
+        try:
+            trust_windows_user_ca(pem, fingerprint)
+        except OSError as exc:
+            raise RuntimeError(
+                f"CA saved at {path}, but Windows trust registration failed: {exc}"
+            ) from exc
         ca_file = ""
     else:
-        path = Path(directory) / "identity" / "ca" / (normalize_fingerprint(fingerprint) + ".pem")
-        atomic_write(path, pem)
         ca_file = str(path)
     JobServerClient(url, ca_file=ca_file or None, timeout=5).request(
         "GET", "/health", authenticated=False
     )
-    return ca_file
+    return {"ca_file": ca_file, "saved_ca": str(path)}
 
 
 def show_ca_registration(parent, url, ca_field):
@@ -120,10 +125,12 @@ def show_ca_registration(parent, url, ca_field):
     if not ok:
         return
 
-    def done(path):
-        ca_field.setText(path)
+    def done(result):
+        ca_field.setText(result["ca_file"])
         QMessageBox.information(
-            parent, "Job Server", "CA verified and trusted. You can now sign in."
+            parent,
+            "Job Server",
+            "CA verified and trusted. You can now sign in.\nSaved CA: " + result["saved_ca"],
         )
 
     run_async(

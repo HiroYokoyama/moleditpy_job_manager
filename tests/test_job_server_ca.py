@@ -15,9 +15,11 @@ def test_ca_file_is_saved_automatically_for_a_connection(tmp_path, monkeypatch):
     client = Mock()
     monkeypatch.setattr("job_manager.job_server_client.client.JobServerClient", client)
     fingerprint = "ab" * 32
-    path = server_backend.install_server_ca(
+    result = server_backend.install_server_ca(
         "https://192.168.1.20:8767", fingerprint, tmp_path, windows_store=False
     )
+    path = result["ca_file"]
+    assert result["saved_ca"] == path
     assert Path(path).read_bytes() == certificate
     assert Path(path).parent == tmp_path / "identity" / "ca"
     assert Path(path).name == fingerprint + ".pem"
@@ -36,15 +38,13 @@ def test_windows_trust_uses_default_store_for_subsequent_connections(tmp_path, m
     client = Mock()
     monkeypatch.setattr("job_manager.job_server_client.client.JobServerClient", client)
     fingerprint = "ab" * 32
-    assert (
-        server_backend.install_server_ca(
-            "https://192.168.1.20:8767", fingerprint, tmp_path, windows_store=True
-        )
-        == ""
+    result = server_backend.install_server_ca(
+        "https://192.168.1.20:8767", fingerprint, tmp_path, windows_store=True
     )
+    assert result["ca_file"] == ""
+    assert Path(result["saved_ca"]).read_bytes() == certificate
     installed.assert_called_once_with(certificate, fingerprint)
     assert client.call_args.kwargs["ca_file"] is None
-    assert not (tmp_path / "identity").exists()
 
 
 def test_unverified_ca_is_never_saved_or_installed(tmp_path, monkeypatch):

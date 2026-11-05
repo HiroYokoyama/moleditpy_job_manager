@@ -85,7 +85,8 @@ when its fingerprint matches. Redirects and environment proxies are not used for
 this bootstrap request. Normal API connections always verify the TLS certificate
 and server name.
 
-On Windows, the public CA is registered in the current user's ROOT store, which
+The verified public CA is saved under `identity/ca/` on all platforms.
+On Windows, it is also registered in the current user's ROOT store, which
 Python's standard TLS context reads. Other applications using that store also
 trust the CA. On Mac/Linux, the CA is saved under Job Manager's data directory and
 the connection's CA field is filled automatically. No system trust store is
