@@ -115,3 +115,24 @@ are hidden automatically; enabling a host restores its previous visibility choic
 Job Server hosts remain available as cards, without unsupported system-usage
 probes. Each host's usage-monitoring setting controls sampling independently of
 card visibility.
+
+The web monitor uses the same **Choose Hosts...** selection. Hiding a card
+removes it and its job details from the published web snapshot immediately.
+
+## File Browser (Job Server 0.7 or newer)
+
+Select the server in **File Browser** to list the job folders your account may
+access. The root contains job UUIDs; opening a folder reads only that folder.
+The server's OS directories, control files and TLS material are not browsable.
+Administrators may browse all jobs; other users may browse only their own.
+
+Double-click a result to download and view it as text. **Download...** saves the
+selected file or folder into a directory you choose. Folder downloads preserve
+subfolders and empty directories, verify every file's SHA-256, skip existing
+files, and reject linked destination paths. No server ZIP is extracted locally.
+
+The common default is **Settings > Results > Download folder**. Turn off
+**Save results beside the input file** to use that default for new jobs;
+previously recorded job destinations are not moved. Temporary viewer copies
+remain in the application cache. When running standalone, the file and text
+viewers hide **Open in MoleditPy** because no host application can receive it.

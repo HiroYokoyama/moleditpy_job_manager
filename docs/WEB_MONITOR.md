@@ -76,3 +76,8 @@ the 4 s default, or under 15 MiB at 10 s.
 It is **off the first time the window opens** and remembered afterwards, so a
 listening socket is never something you get by surprise, and never something
 you have to ask for twice.
+
+The host list follows **Host Monitor > Choose Hosts...**. Hidden and disabled
+hosts, including their job details, are omitted from the web snapshot. Changing
+the selection republishes the snapshot immediately; the page reflects it on its
+next refresh. The selection persists even while the desktop monitor is closed.
