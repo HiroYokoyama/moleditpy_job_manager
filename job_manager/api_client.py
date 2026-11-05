@@ -278,6 +278,10 @@ class JobManagerClient:
 
         return f"hosts/{quote(str(host), safe='')}/{action}"
 
+    def configure_queue(self, host: str, **changes: Any) -> Dict[str, Any]:
+        """Set paused and/or helper resource limits on a host."""
+        return self.request("POST", self._host_path(host, "queue"), body=changes)
+
     def host_status(self, host: str, stats: bool = True) -> Dict[str, Any]:
         """Cores, load, memory, and on a helper queue what runs and what waits."""
         query = {} if stats else {"stats": "0"}
@@ -426,6 +430,9 @@ def build_parser() -> argparse.ArgumentParser:
     submit.add_argument("--remote-dir", default="", help="Run in a directory already on the host")
     submit.add_argument("--remote-input", default="", help="Input inside --remote-dir")
     submit.add_argument("--after", default="", dest="after_job", help="Chain behind this job id")
+    submit.add_argument("--relay-source-dir", default="")
+    submit.add_argument("--relay-file", action="append", default=[], dest="relay_filenames")
+    submit.add_argument("--extra-directive", action="append", default=[], dest="extra_directives")
     submit.add_argument("--chain-any", action="store_true", help="Chain on ending, not succeeding")
     submit.add_argument("--start-after", default="", help="Epoch second or 2026-01-31T18:30")
     submit.add_argument("--no-auto-download", action="store_true")
@@ -486,6 +493,15 @@ def build_parser() -> argparse.ArgumentParser:
     recheck = sub.add_parser("recheck", help="Look again at a LOST job")
     recheck.add_argument("job_id")
 
+    queue = sub.add_parser("host-queue", help="Pause/resume the helper queue or change its limits")
+    queue.add_argument("host")
+    mode = queue.add_mutually_exclusive_group()
+    mode.add_argument("--pause", action="store_const", const=True, default=None, dest="paused")
+    mode.add_argument("--resume", action="store_const", const=False, dest="paused")
+    queue.add_argument("--max-concurrent", type=int)
+    queue.add_argument("--cores", type=int, dest="runner_cores")
+    queue.add_argument("--memory-mb", type=int, dest="runner_memory_mb")
+
     status = sub.add_parser("host-status", help="Load, memory and the queue on a host")
     status.add_argument("host")
     status.add_argument("--no-stats", action="store_true", help="Only the queue")
@@ -520,13 +536,14 @@ def _submit_fields(args: argparse.Namespace) -> Dict[str, Any]:
         "walltime",
         "memory",
         "submit_options",
+        "relay_source_dir",
     ):
         if getattr(args, key, ""):
             fields[key] = getattr(args, key)
     for key in ("nodes", "ntasks", "cpus_per_task", "priority"):
         if getattr(args, key, None) is not None:
             fields[key] = getattr(args, key)
-    for key in ("modules", "pre_commands", "fetch_globs"):
+    for key in ("modules", "pre_commands", "fetch_globs", "extra_directives", "relay_filenames"):
         if getattr(args, key, None):
             fields[key] = list(getattr(args, key))
     if args.remote_dir:
@@ -632,6 +649,13 @@ def _run(client: JobManagerClient, args: argparse.Namespace) -> int:
             print(f"exit-code file: {reply.get('sentinel')}")
             if reply.get("runner_status"):
                 print(f"helper's record: {reply.get('runner_status')}")
+    elif args.subcommand == "host-queue":
+        changes = {
+            key: getattr(args, key)
+            for key in ("paused", "max_concurrent", "runner_cores", "runner_memory_mb")
+            if getattr(args, key) is not None
+        }
+        _print(client.configure_queue(args.host, **changes))
     elif args.subcommand == "host-status":
         _print(client.host_status(args.host, stats=not args.no_stats))
     elif args.subcommand == "host-ls":

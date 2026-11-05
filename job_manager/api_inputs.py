@@ -86,6 +86,28 @@ class ApiInputs:
             files.append(path)
         return files
 
+    def _relay(self, host: HostProfile, body: Mapping[str, Any]) -> dict:
+        source = body.get("relay_source_dir", "")
+        names = body.get("relay_filenames", [])
+        if not source and not names:
+            return {}
+        if host.is_job_server:
+            raise ApiError(400, "Job Server file relay is not supported")
+        if not isinstance(source, str) or not source.strip():
+            raise ApiError(400, "relay_source_dir is required with relay_filenames")
+        source = self._remote_path(source)
+        if not isinstance(names, list) or not names:
+            raise ApiError(400, "relay_filenames must be a non-empty list of relative file names")
+        for name in names:
+            if (
+                not isinstance(name, str)
+                or not name
+                or any(ch in name for ch in ("\\", ":", "\n", "\r", "\0"))
+                or any(part in ("", ".", "..") for part in name.split("/"))
+            ):
+                raise ApiError(400, "relay_filenames must contain relative paths without traversal")
+        return {"relay_source_dir": source, "relay_filenames": list(names)}
+
     def _preset(self, host: HostProfile, body: Mapping[str, Any]) -> SubmitPreset:
         """The resource request, from a named preset and/or explicit fields.
 

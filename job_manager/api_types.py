@@ -69,6 +69,7 @@ PRESET_FIELDS = {
 ROUTES = (
     ("GET", "/ping", "version, and how many jobs and hosts there are"),
     ("GET", "/hosts", "configured hosts"),
+    ("POST", "/hosts/{id}/queue", "pause/resume the helper queue or update resource limits"),
     ("GET", "/hosts/{id}/status", "load, memory, cores, and the helper queue; ?stats=0"),
     ("GET", "/hosts/{id}/files", "list any directory on the host; ?path=, ?depth="),
     ("GET", "/hosts/{id}/file", "is a path there, its size and sha256; ?path=, ?hash=0"),

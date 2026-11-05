@@ -159,6 +159,7 @@ is not one of them, so a client can find them without this page.
 |---|---|---|
 | `GET` | `/ping` | Version, and how many jobs and hosts there are |
 | `GET` | `/hosts` | Configured hosts: id, name, target, scheduler, enabled |
+| `POST` | `/hosts/{id}/queue` | Pause/resume the helper queue or update resource limits |
 | `GET` | `/hosts/{id}/status` | Cores, load, memory, and the helper queue; `?stats=0` |
 | `GET` | `/hosts/{id}/files` | List any directory on the host; `?path=`, `?depth=` |
 | `GET` | `/hosts/{id}/file` | Whether a path is there, its size and sha256; `?path=`, `?hash=0` |
@@ -347,6 +348,7 @@ somebody's input by accident is worse than an error.
 | `auto_download` | Fetch the results automatically when it ends |
 | `remote_dir` | Run in a directory already on the host, uploading nothing |
 | `remote_input` | The input inside `remote_dir`, when there is one |
+| `relay_source_dir`, `relay_filenames` | Copy named relative files from a directory on the same host at job start; use `after_job` if its producer is running. Unsupported on Job Server hosts |
 | `after_job` | Chain behind this job id, on the same host |
 | `chain_any` | Chain on the predecessor *ending*, not on it succeeding |
 | `start_after` | Hold until then: an epoch second, or `2026-01-31T18:30` |
@@ -363,6 +365,56 @@ later — poll `GET /jobs/{id}`, or use the client's `wait()`.
 `files` are read by MoleditPy off this machine's disk, so a relative path is
 resolved against *MoleditPy's* working directory, not the caller's. The Python
 client makes them absolute for you; anything else should send absolute paths.
+
+## API feature audit (3.6.4)
+
+`after_job` was already supported by HTTP `POST /jobs`, Python
+`submit(after_job=...)`, and CLI `submit --after JOB_ID`. It is a submission
+field, so it has no separate route. `GET /ping` now includes `submit_fields`
+so clients can discover it and the other submission options.
+
+New execution controls: remote file relay and host queue writes. The CLI also
+now exposes `--extra-directive`, which HTTP already accepted.
+
+```python
+client.configure_queue("myhost", paused=True)
+client.configure_queue("myhost", paused=False)
+client.configure_queue("myhost", max_concurrent=2, runner_cores=8, runner_memory_mb=16384)
+client.submit(host="myhost", files=["/data/next.inp"], command="mycommand {input}",
+              after_job=previous_id, relay_source_dir="/scratch/previous",
+              relay_filenames=["result.xyz"])
+```
+
+```bash
+python -m job_manager.api_client host-queue myhost --pause
+python -m job_manager.api_client host-queue myhost --resume
+python -m job_manager.api_client host-queue myhost --max-concurrent 2 --cores 8 --memory-mb 16384
+python -m job_manager.api_client submit next.inp --host myhost --command 'mycommand {input}' --after JOB_ID --relay-source-dir /scratch/previous --relay-file result.xyz
+```
+
+`POST /hosts/{id}/queue` accepts either `paused` (a JSON boolean) or one or more
+of `max_concurrent`, `runner_cores`, `runner_memory_mb` (nonnegative integers).
+Send pause and limit changes separately. Only enabled built-in helper hosts
+accept queue writes; other backends return `409`. Running jobs continue.
+The reply waits for the host. Limits are saved to the host profile after success
+and apply to future submissions too. Zero retains the helper's existing meaning
+(no slot cap; automatic core/memory budget). Host responses include these limits.
+Transfer errors return `502`; a timeout returns `504`.
+
+Relay copies files inside the generated host script after its wait conditions.
+It does not resolve `[prevfile]` tags in local input contents; send inputs with
+final filenames already filled in. Relative relay paths may contain subdirectories
+but cannot escape the new job directory.
+
+| GUI capability | HTTP coverage |
+|---|---|
+| After job/time, continue after failure, forced chain | Existing `after_job`, `start_after`, `chain_any`, `force_after_previous` submission fields |
+| Hold/release, priority, force, cancel, recheck | Existing job action routes |
+| Logs, results listing/download, host files/status | Existing read/download routes |
+| Remote file relay, queue pause/resume and budgets | Added in 3.6.4 |
+| Resubmit wizard, batch wizard | Submit new jobs using `/jobs`; no wizard or batch-specific endpoint |
+| `[prevfile]` input editing, result viewers, molecule import | GUI operations; caller prepares inputs and reads downloaded files |
+| Host/preset creation, credentials, preferences, job-list open/save/convert/archive, manual refresh | No HTTP endpoint; configured or operated through the GUI |
 
 ## Errors
 

@@ -122,6 +122,9 @@ def host_payload(host: HostProfile) -> Dict[str, Any]:
         "remote_root": host.remote_root,
         "is_local": bool(host.is_local),
         "max_concurrent": int(host.max_concurrent),
+        "runner_cores": host.runner_cores,
+        "runner_memory_mb": host.runner_memory_mb,
+        "runner_detect": bool(host.runner_detect),
     }
 
 
@@ -260,6 +263,8 @@ class JobApi:
         query: Mapping[str, str],
         body: Mapping[str, Any],
     ) -> Tuple[int, Any]:
+        if action == "queue":
+            return self._require("POST", method, lambda: self.host_queue(host_ref, body))
         if action == "status":
             return self._require("GET", method, lambda: self.host_status(host_ref, query))
         if action == "files":
@@ -291,6 +296,25 @@ class JobApi:
             "active_jobs": sum(1 for job in jobs if job.is_active),
             "hosts": len(self.store.hosts),
             "routes": route_list(),
+            "submit_fields": sorted(
+                set(PRESET_FIELDS)
+                | {
+                    "host",
+                    "command",
+                    "preset",
+                    "name",
+                    "files",
+                    "remote_dir",
+                    "remote_input",
+                    "after_job",
+                    "chain_any",
+                    "start_after",
+                    "force_run",
+                    "force_after_previous",
+                    "relay_source_dir",
+                    "relay_filenames",
+                }
+            ),
         }
 
     def hosts(self) -> Dict[str, Any]:
@@ -365,6 +389,7 @@ class JobApi:
                     f"'{after_job.name}' runs on a different host, and a job can "
                     f"only be chained behind one on the same host.",
                 )
+        relay = ApiInputs(self.store)._relay(host, body)
         job = self.service.submit(
             host,
             preset,
@@ -378,6 +403,7 @@ class JobApi:
             remote_input=remote_input,
             force_run=force_run,
             force_after_previous=force_wait,
+            **relay,
         )
         return {"job": job_payload(job, self.store)}
 
@@ -593,6 +619,30 @@ class JobApi:
         return deferred
 
     # --- the host itself ----------------------------------------------------
+
+    def host_queue(self, host_ref: str, body: Mapping[str, Any]) -> Deferred:
+        host = self._usable_host(host_ref)
+        if not host.uses_remote_runner:
+            raise ApiError(409, "Queue controls require the built-in helper queue")
+        allowed = {"paused", "max_concurrent", "runner_cores", "runner_memory_mb"}
+        if not body or set(body) - allowed:
+            raise ApiError(400, "Give paused and/or helper resource limits")
+        if "paused" in body and len(body) > 1:
+            raise ApiError(400, "Change paused separately from resource limits")
+        changes = {}
+        for key, value in body.items():
+            kind = bool if key == "paused" else int
+            changes[key] = self._coerce(value, key, kind)
+        deferred = Deferred()
+        if self.service.queue_change_in_flight(host.id):
+            raise ApiError(409, "A queue change is already in progress for this host")
+        self.service.configure_queue(
+            host,
+            changes,
+            on_done=lambda result: deferred.set_result(result),
+            on_error=deferred.set_error,
+        )
+        return deferred
 
     def host_status(self, host_ref: str, query: Mapping[str, str]) -> Deferred:
         host = self._usable_host(host_ref)

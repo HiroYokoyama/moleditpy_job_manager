@@ -146,6 +146,13 @@ class FakeService:
     def recheck(self, job, on_done=None, on_error=None, owner=None):
         self._answer("recheck", on_done, on_error, {})
 
+    def queue_change_in_flight(self, host_id):
+        return False
+
+    def configure_queue(self, host, changes, on_done, on_error):
+        self.queue_changes = (host.id, changes)
+        self._answer("configure_queue", on_done, on_error, changes)
+
     def host_status(self, host, on_done, on_error, stats=True, owner=None):
         self.status_calls = getattr(self, "status_calls", []) + [(host.id, stats)]
         self._answer("status", on_done, on_error, {"stats": None, "queue": None})

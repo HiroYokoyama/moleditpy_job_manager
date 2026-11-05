@@ -299,3 +299,31 @@ class TestTheCommandLine(ClientTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAddedHttpFeatures(ClientTestCase):
+    def test_after_and_relay_over_http(self):
+        parent = self.add_job(state="RUNNING", remote_dir="/scratch/previous")
+        in_thread(
+            lambda: self.client.submit(
+                host=self.host.id,
+                files=[self.input_path],
+                command="mycommand {input}",
+                after_job=parent.id,
+                relay_source_dir=parent.remote_dir,
+                relay_filenames=["result.xyz"],
+            )
+        )
+        options = self.service.submitted[-1][-1]
+        self.assertIs(options["after_job"], parent)
+        self.assertEqual(options["relay_filenames"], ["result.xyz"])
+        ping = in_thread(self.client.ping)
+        self.assertIn("after_job", ping["submit_fields"])
+
+    def test_queue_over_http(self):
+        from job_manager.models import MODE_RUNNER
+
+        self.host.scheduler = "shell"
+        self.host.concurrency_mode = MODE_RUNNER
+        reply = in_thread(lambda: self.client.configure_queue(self.host.id, paused=True))
+        self.assertTrue(reply["paused"])
