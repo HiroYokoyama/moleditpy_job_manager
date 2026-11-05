@@ -1,4 +1,4 @@
-"""Fingerprint-verified CA bootstrap; ordinary API connections always verify TLS."""
+"""CA bootstrap confirmed by fingerprint; ordinary API connections always verify TLS."""
 
 import ctypes
 import hmac
@@ -56,6 +56,11 @@ def _require_local_name_constraints(certificate):
             raise ValueError(message)
 
 
+def certificate_fingerprint(pem):
+    """The SHA-256 fingerprint in the form the server PC displays."""
+    return validate_ca(pem).fingerprint(hashes.SHA256()).hex().upper()
+
+
 def validate_ca(pem, expected_fingerprint=None):
     if not isinstance(pem, bytes) or len(pem) > 65536:
         raise ValueError("Invalid CA certificate size")
@@ -83,10 +88,12 @@ def validate_ca(pem, expected_fingerprint=None):
     return certificate
 
 
-def fetch_server_ca(url, expected_fingerprint):
+def fetch_server_ca(url, expected_fingerprint=None):
+    """Fetch the public CA. Without a fingerprint, the caller must have the user confirm one."""
     from .client import NoRedirect
 
-    expected_fingerprint = normalize_fingerprint(expected_fingerprint)
+    if expected_fingerprint is not None:
+        expected_fingerprint = normalize_fingerprint(expected_fingerprint)
     url = validate_server_url(url)
     parts = urlsplit(url)
     if parts.scheme != "https":

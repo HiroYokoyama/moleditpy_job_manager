@@ -77,15 +77,17 @@ signing; it does not import a daemon or copy server authentication/database code
 
 For Job Server's local HTTPS listener, copy its HTTPS LAN URL into the host's
 **Server URL** field. On the server PC, open **Settings > Create / show CA
-certificate** and copy the SHA-256 fingerprint.
+certificate** to see the SHA-256 fingerprint.
 
-In the host form, choose **Trust local server CA...**, paste that fingerprint,
-and confirm. The certificate is downloaded without credentials and accepted only
-when its fingerprint matches. Redirects and environment proxies are not used for
+In the host form, choose **Trust local server CA...**. Job Manager downloads the
+certificate without credentials and displays its fingerprint. Compare it with the
+server PC and choose **Yes** only if they match; this comparison is what detects
+interception during setup. The certificate must also be limited to private addresses
+and localhost, or it is refused. Redirects and environment proxies are not used for
 this bootstrap request. Normal API connections always verify the TLS certificate
 and server name.
 
-The verified public CA is saved under `identity/ca/` on all platforms.
+The confirmed public CA is saved under `identity/ca/` on all platforms.
 On Windows, it is also registered in the current user's ROOT store, which
 Python's standard TLS context reads. Other applications using that store also
 trust the CA. On Mac/Linux, the CA is saved under Job Manager's data directory and

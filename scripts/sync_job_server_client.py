@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE_COMMIT = "d882e8a1f0d67af1d951692b7af7afa02b7b3a0d"
+SOURCE_COMMIT = "72bda3948b3a74329a3978f59de0b578e31886b1"
 FILES = ("trust.py", "connection.py", "client.py", "credentials.py", "files.py", "errors.py")
 
 

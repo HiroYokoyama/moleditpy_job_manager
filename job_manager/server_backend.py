@@ -71,16 +71,45 @@ def server_credentials(parent):
     return result
 
 
-def install_server_ca(url, fingerprint, directory, *, windows_store=None):
+def fetch_ca_for_confirmation(url):
+    """Download the public CA, with the fingerprint to show before anything is trusted."""
+    from .job_server_client.trust import certificate_fingerprint, fetch_server_ca
+
+    pem = fetch_server_ca(url)
+    return pem, certificate_fingerprint(pem)
+
+
+def confirm_ca_fingerprint(parent, fingerprint, destination):
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QMessageBox
+
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Warning)
+    box.setWindowTitle("Trust local server CA")
+    box.setText(
+        "Compare this SHA-256 fingerprint with the one shown on the server PC.\n\n"
+        f"{fingerprint}\n\n"
+        "Trust this CA only if they match. If they differ, something else may be "
+        "answering at this address.\n\n" + destination
+    )
+    box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+    box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+    box.setDefaultButton(QMessageBox.StandardButton.No)
+    confirmed = box.exec() == QMessageBox.StandardButton.Yes
+    box.deleteLater()
+    return confirmed
+
+
+def install_server_ca(url, pem, fingerprint, directory, *, windows_store=None):
     from .job_server_client.client import JobServerClient
     from .job_server_client.files import atomic_write
     from .job_server_client.trust import (
-        fetch_server_ca,
         normalize_fingerprint,
         trust_windows_user_ca,
+        validate_ca,
     )
 
-    pem = fetch_server_ca(url, fingerprint)
+    validate_ca(pem, fingerprint)
     path = Path(directory) / "identity" / "ca" / (normalize_fingerprint(fingerprint) + ".pem")
     atomic_write(path, pem)
     windows_store = os.name == "nt" if windows_store is None else windows_store
@@ -102,7 +131,7 @@ def install_server_ca(url, fingerprint, directory, *, windows_store=None):
 
 def show_ca_registration(parent, url, ca_field):
     from PySide6.QtCore import QThreadPool
-    from PySide6.QtWidgets import QInputDialog, QMessageBox
+    from PySide6.QtWidgets import QMessageBox
     from .tasks import run_async
     from .store import default_data_dir
 
@@ -117,27 +146,35 @@ def show_ca_registration(parent, url, ca_field):
         if os.name == "nt"
         else "This CA will be saved for this Job Server connection."
     )
-    fingerprint, ok = QInputDialog.getText(
-        parent,
-        "Trust local server CA",
-        "Paste the full SHA-256 fingerprint shown on the server PC.\n" + destination,
-    )
-    if not ok:
-        return
 
     def done(result):
         ca_field.setText(result["ca_file"])
         QMessageBox.information(
             parent,
             "Job Server",
-            "CA verified and trusted. You can now sign in.\nSaved CA: " + result["saved_ca"],
+            "CA trusted. You can now sign in.\nSaved CA: " + result["saved_ca"],
+        )
+
+    def warn(message):
+        QMessageBox.warning(parent, "Job Server", message)
+
+    def fetched(result):
+        pem, fingerprint = result
+        if not confirm_ca_fingerprint(parent, fingerprint, destination):
+            return
+        run_async(
+            QThreadPool.globalInstance(),
+            lambda: install_server_ca(url, pem, fingerprint, default_data_dir()),
+            on_success=done,
+            on_error=warn,
+            owner=parent,
         )
 
     run_async(
         QThreadPool.globalInstance(),
-        lambda: install_server_ca(url, fingerprint, default_data_dir()),
-        on_success=done,
-        on_error=lambda message: QMessageBox.warning(parent, "Job Server", message),
+        lambda: fetch_ca_for_confirmation(url),
+        on_success=fetched,
+        on_error=warn,
         owner=parent,
     )
 
