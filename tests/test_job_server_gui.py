@@ -36,6 +36,8 @@ def test_server_form_hides_ssh_queue_and_restores_normal_hosts(server_service):
         dialog.cmb_backend.setCurrentIndex(dialog.cmb_backend.findData("job_server"))
         form = dialog.profile_form
         assert not form.txt_server_url.isHidden()
+        assert not form.chk_server_lan_http.isChecked()
+        form.chk_server_lan_http.setChecked(True)
         assert not form.txt_server_key.isEnabled()
         assert form.txt_server_key.isReadOnly()
         assert not form.txt_server_id.isEnabled()
@@ -49,8 +51,13 @@ def test_server_form_hides_ssh_queue_and_restores_normal_hosts(server_service):
         form._server_enrolled({"server_id": "example-server", "execution_os": "windows"})
         assert dialog.cmb_scheduler.currentData() == "windows"
         assert form._collect(HostProfile()).server_id == "example-server"
+        assert form._collect(HostProfile()).server_allow_lan_http
+        with patch("job_manager.server_backend.show_enrollment") as enroll:
+            form._server_sign_in()
+            assert enroll.call_args.kwargs == {"allow_lan_http": True}
         dialog.cmb_backend.setCurrentIndex(dialog.cmb_backend.findData("openssh"))
         assert form.txt_server_url.isHidden()
+        assert form.chk_server_lan_http.isHidden()
         assert dialog.txt_hostname.isEnabled()
         dialog.reject = lambda: None
         dialog.hide()
