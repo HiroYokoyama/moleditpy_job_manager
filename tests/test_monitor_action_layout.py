@@ -9,7 +9,7 @@ pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtGui import QKeySequence  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
-from PySide6.QtWidgets import QAbstractButton, QApplication  # noqa: E402
+from PySide6.QtWidgets import QAbstractButton, QApplication, QWidget  # noqa: E402
 
 from job_manager.jobs_dialog import COLUMNS, JobsDialog  # noqa: E402
 from job_manager.models import Job, STATE_DONE  # noqa: E402
@@ -108,3 +108,11 @@ class TestHostViewActions(HostMonitorTestCase):
         QTest.keyClick(dialog, Qt.Key.Key_W, Qt.KeyboardModifier.ControlModifier)
         self.assertTrue(dialog._torn_down)
         self.assertFalse(dialog.isVisible())
+        # The press closed the window, so its release went nowhere and Ctrl stayed
+        # down for the rest of the process: a later selectRow() extended the
+        # selection instead of replacing it.
+        released = QWidget()
+        released.show()
+        QTest.keyRelease(released, Qt.Key.Key_Control)
+        released.close()
+        self.assertEqual(QApplication.keyboardModifiers(), Qt.KeyboardModifier.NoModifier)
