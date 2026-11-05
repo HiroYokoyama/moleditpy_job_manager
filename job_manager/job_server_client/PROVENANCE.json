@@ -1,9 +1,10 @@
 {
   "repository": "https://github.com/HiroYokoyama/moleditpy_job_server",
-  "commit": "c960913565761198c689f8b04276a7fb305681eb",
+  "commit": "d882e8a1f0d67af1d951692b7af7afa02b7b3a0d",
   "upstream_license": "LGPL-3.0-or-later",
   "license": "LGPL-3.0-or-later",
   "files": {
+    "trust.py": "55a87d645134b4f8cc0a0b395a499a9bb5d1191c4b4394aceb87bd2cdc8da2a0",
     "connection.py": "0bd62e99c67c2004e667f9e20d196096c1c5c990aaed86d52f835245ebef7df3",
     "client.py": "b200fc69688c26b340098e8bdd1bb6ebd089f879ab42e24a2a95e0217f8b04d9",
     "credentials.py": "e1fb1c0f979f3255c20c32a85f4d872830e5157a0945c2e2c3e5f9b899296e75",

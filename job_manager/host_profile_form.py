@@ -179,6 +179,9 @@ class HostProfileForm(QWidget):
         )
         self.btn_server_sign_in.clicked.connect(self._server_sign_in)
         form.addRow("", self.btn_server_sign_in)
+        self.btn_server_trust = QPushButton("Trust local server CA...")
+        self.btn_server_trust.clicked.connect(self._server_trust)
+        form.addRow("", self.btn_server_trust)
         form.addRow("Device credential path", self.txt_server_key)
         form.addRow("CA certificate path", self.txt_server_ca)
         form.addRow("Server identity", self.txt_server_id)
@@ -340,6 +343,11 @@ class HostProfileForm(QWidget):
         if path:
             self.txt_equal_path.setText(path)
 
+    def _server_trust(self):
+        from .server_backend import show_ca_registration
+
+        show_ca_registration(self, self.txt_server_url.text().strip(), self.txt_server_ca)
+
     def _server_sign_in(self):
         from .server_backend import show_enrollment
 
@@ -365,6 +373,7 @@ class HostProfileForm(QWidget):
             self.txt_server_ca,
             self.txt_server_id,
             self.btn_server_sign_in,
+            self.btn_server_trust,
         ):
             widget.setVisible(visible)
             label = self.connection_form.labelForField(widget)

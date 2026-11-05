@@ -126,7 +126,7 @@ class HostSampler(QObject):
         seconds = [
             self.interval_for(host)
             for host in self.service.store.host_list()
-            if host.enabled and host.monitor_usage
+            if not host.is_job_server and host.enabled and host.monitor_usage
         ]
         return max(1, min(seconds or [self.interval_seconds()]))
 
@@ -141,7 +141,10 @@ class HostSampler(QObject):
         return [
             host
             for host in self.service.store.host_list()
-            if host.enabled and host.monitor_usage and not needs_password(self.service, host)
+            if not host.is_job_server
+            and host.enabled
+            and host.monitor_usage
+            and not needs_password(self.service, host)
         ]
 
     def latest(self, host_id: str) -> Optional[host_stats.HostStats]:
