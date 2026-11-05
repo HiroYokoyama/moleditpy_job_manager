@@ -1,5 +1,7 @@
 """A plain read-only text window, used for the log tail and the job details.
 
+Everything here can be saved as a copy; editing a file is in :mod:`text_editor`.
+
 Both were shown in the strip at the bottom of the monitor, which is four lines
 tall and shared with every status message: a two-hundred-line log arrived, and
 the part worth reading had already scrolled past. A window can be resized, kept
@@ -9,6 +11,7 @@ open beside the table, and read while the list keeps updating behind it.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Callable, Optional
 
 from PySide6.QtCore import Qt, QTimer, Signal
@@ -25,6 +28,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -38,6 +42,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .text_document import TextFormat, write_bytes
 from .theme import apply_theme
 from .window_utils import bring_to_front, make_independent
 
@@ -63,6 +68,11 @@ class _FindEdit(QLineEdit):
         super().keyPressEvent(event)
 
 
+#: Where the last Save As went, so the next one starts there. Per session: no
+#: window here is sure to have the store.
+_last_save_dir = ""
+
+
 class TextDialog(QDialog):
     """Read-only monospaced text, with an optional Reload and Auto-refresh timer."""
 
@@ -83,6 +93,7 @@ class TextDialog(QDialog):
         follow: bool = True,
         auto_refresh: bool = True,
         on_open_in_moleditpy: Optional[Callable[[], bool]] = None,
+        save_name: str = "",
     ) -> None:
         super().__init__(parent)
         #: When given, the auto-refresh choice is remembered in it. Optional so
@@ -94,6 +105,7 @@ class TextDialog(QDialog):
         self.resize(820, 560)
         self._on_refresh_callback = on_refresh
         self._on_open_in_moleditpy = on_open_in_moleditpy
+        self._save_name = save_name
         #: Set while set_text replaces the contents, so the scroll bar moving
         #: under it is not taken for the reader scrolling away from the end.
         self._replacing = False
@@ -113,6 +125,7 @@ class TextDialog(QDialog):
         layout.addWidget(self.lbl_open_status)
 
         bottom_row = QHBoxLayout()
+        self.bottom_row = bottom_row
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._trigger_auto_refresh)
@@ -154,6 +167,11 @@ class TextDialog(QDialog):
         bottom_row.addStretch(1)
 
         box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        self.button_box = box
+        self.btn_save_as = QPushButton("Save As...")
+        self.btn_save_as.setAutoDefault(False)
+        self.btn_save_as.clicked.connect(lambda: self.save_as())
+        box.addButton(self.btn_save_as, QDialogButtonBox.ButtonRole.ActionRole)
         self.btn_open_in_moleditpy = None
         if on_open_in_moleditpy is not None:
             self.btn_open_in_moleditpy = QPushButton("Open in MoleditPy")
@@ -204,12 +222,16 @@ class TextDialog(QDialog):
         bar = QMenuBar(self)
 
         file_menu = bar.addMenu("&File")
+        self.menu_file = file_menu
+        self._action(file_menu, "&New", self._new_file, "Ctrl+N")
+        self.act_save_as = self._action(file_menu, "Save &As...", self.save_as, "Ctrl+S")
         self.act_reload = self._action(file_menu, "&Reload", self._trigger_refresh, "F5")
         self.act_reload.setEnabled(self._on_refresh_callback is not None)
         file_menu.addSeparator()
         self._action(file_menu, "&Close", self.reject)
 
         edit_menu = bar.addMenu("&Edit")
+        self.menu_edit = edit_menu
         self._action(edit_menu, "&Copy", self.view.copy)
         self._action(edit_menu, "Copy &All", self.copy_all)
         self._action(edit_menu, "Select A&ll", self.view.selectAll)
@@ -243,6 +265,57 @@ class TextDialog(QDialog):
             action.triggered.connect(lambda _checked=False: slot())
         menu.addAction(action)
         return action
+
+    def _new_file(self) -> None:
+        from .result_view import show_text_window
+
+        show_text_window(None)
+
+    # --- saving ----------------------------------------------------------------
+
+    def _view_text(self) -> str:
+        """The text with lines ended by ``\\n``. Not toPlainText(), which also
+        turns every non-breaking space into a plain one."""
+        raw = self.view.document().toRawText()
+        for separator in ("\u2029", "\u2028", "\ufdd0", "\ufdd1"):
+            raw = raw.replace(separator, "\n")
+        return raw
+
+    def _suggested_save_path(self) -> str:
+        return os.path.join(_last_save_dir, self._save_name) if self._save_name else _last_save_dir
+
+    def save_as(self) -> bool:
+        path, _chosen = QFileDialog.getSaveFileName(
+            self, "Save As", self._suggested_save_path(), "All files (*);;Text files (*.txt)"
+        )
+        return self._save_to(path) if path else False
+
+    def _save_to(self, path: str) -> bool:
+        try:
+            self._write_to(path)
+        except UnicodeEncodeError as exc:
+            self._show_status(
+                f"Not saved: {exc.object[exc.start]!r} cannot be written in {exc.encoding}. "
+                "Choose another encoding or remove it."
+            )
+            return False
+        except OSError as exc:
+            self._show_status(f"Not saved: {exc}")
+            return False
+        self._saved_to(path)
+        self._show_status(f"Saved to {path}")
+        return True
+
+    def _write_to(self, path: str) -> None:
+        write_bytes(path, TextFormat().encode(self._view_text()))
+
+    def _saved_to(self, path: str) -> None:
+        global _last_save_dir
+        _last_save_dir = os.path.dirname(os.path.abspath(path))
+
+    def _show_status(self, message: str) -> None:
+        self.lbl_open_status.setText(message)
+        self.lbl_open_status.setVisible(bool(message))
 
     def copy_all(self) -> None:
         QGuiApplication.clipboard().setText(self.view.toPlainText())

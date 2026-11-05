@@ -977,6 +977,7 @@ class JobsDialog(QDialog):
                 on_refresh=lambda: self.service.tail(job),
                 auto_interval=auto_interval,
                 store=self.service.store,
+                save_name=os.path.basename(job.log_file or ""),
             )
 
             # Cleared on close so the next tail builds a live window rather
@@ -1056,6 +1057,7 @@ class JobsDialog(QDialog):
             on_refresh=lambda: self._refresh_tail_file(job, filename, dialog),
             auto_interval=auto_interval,
             store=self.service.store,
+            save_name=os.path.basename(filename or ""),
         )
         self._detail_dialogs.append(dialog)
         self.service.shutting_down.connect(dialog.close)

@@ -52,6 +52,11 @@ heartbeat writes. Window activation requests write only when requested. After
 updating from 3.3.0 or earlier, quit all existing Job Manager monitors and tray
 processes before restarting; the old file-heartbeat protocol is no longer used.
 
+The file Text Viewer reads a file without changing it, and **Ctrl+S** there is
+Save As. **File > Edit Mode** (Ctrl+E) allows editing and makes **Ctrl+S**
+overwrite the file, keeping its encoding and line endings unless you choose others
+in the File menu. **File > New** starts a new file in Edit Mode.
+
 The file Text Viewer has an **Open in MoleditPy** button. Passing the source
 file to the editor closes the viewer and its originating File Browser; cancelling
 or refusing the open leaves both windows available. Plain `.txt` files retain

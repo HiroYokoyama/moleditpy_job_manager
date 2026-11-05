@@ -893,7 +893,19 @@ MoleditPy. In **File Browser**, double-click a non-binary file to view its text,
 or use **Open in Text Viewer**. The browser and text viewer are modeless, so
 you can keep browsing while reading a file. **Open in MoleditPy** explicitly
 uses the host's file opener and closes the browser. The wider browser keeps its
-buttons on one row with enough room for their labels. A file's Text Viewer also
+buttons on one row with enough room for their labels. Every text window has
+**File > Save As** (Ctrl+S) and **File > New** (Ctrl+N).
+
+A file's Text Viewer is read only until **File > Edit Mode** (Ctrl+E) is on. Then
+**Ctrl+S** overwrites the file and **Ctrl+Shift+S** is Save As; closing, reloading
+or leaving Edit Mode with unsaved changes asks first, and so does overwriting a
+file something else has changed since it was opened. A file keeps its encoding,
+byte order mark and line endings, shown beside the buttons. **File > Save Encoding**
+and **Save Line Endings** choose others; **Reopen with Encoding** reads it again as
+another when the detection guessed wrong. A file over 5 MB shows only its end and
+cannot be edited, and Save As of an unedited file copies the whole file exactly.
+
+A file's Text Viewer also
 has **Open in MoleditPy**: it passes the original file to the editor and closes
 both the viewer and its originating File Browser. Cancelling or refusing the
 open leaves both windows open. Plain `.txt` files keep this button disabled to
