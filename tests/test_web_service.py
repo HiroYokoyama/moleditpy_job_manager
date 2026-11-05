@@ -135,6 +135,25 @@ class TestSamplingOnDemand(WebTestCase):
 
 
 class TestTheSnapshot(WebTestCase):
+    def test_hidden_hosts_are_removed_from_the_published_web_snapshot_immediately(self):
+        self.web.start()
+        dialog = self.monitor()
+        self.assertEqual(len(self.web.server.snapshot()["hosts"]), 1)
+        dialog.set_visible_hosts([])
+        self.assertEqual(self.web.snapshot()["hosts"], [])
+        self.assertEqual(self.web.server.snapshot()["hosts"], [])
+        dialog.set_visible_hosts([self.host.id])
+        self.assertEqual(len(self.web.server.snapshot()["hosts"]), 1)
+
+    def test_disabled_hosts_and_jobs_are_not_exposed_by_the_web_monitor(self):
+        self.store.add_job(Job(id="hidden-job", name="synthetic-private", host_id=self.host.id, state=STATE_RUNNING))
+        self.host.enabled = False
+        self.assertEqual(self.web.snapshot()["hosts"], [])
+
+    def test_a_malformed_hidden_host_preference_does_not_hide_every_host(self):
+        self.store.set_pref("host_monitor_hidden_hosts", "invalid")
+        self.assertEqual(len(self.web.snapshot()["hosts"]), 1)
+
     def test_it_carries_the_hosts_stats_and_active_jobs(self):
         self.store.add_job(Job(id="live", name="myjob", host_id=self.host.id, state=STATE_RUNNING))
         self.web.start()

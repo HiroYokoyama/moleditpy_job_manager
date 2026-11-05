@@ -285,20 +285,14 @@ class HostMonitorDialog(QDialog):
             card.show_jobs(by_id.get(card.host.id) or by_name.get(card.host.name, []))
 
     def _hidden_hosts(self):
-        stored = self.service.store.get_pref("host_monitor_hidden_hosts", [])
-        return (
-            {value for value in stored if isinstance(value, str)}
-            if isinstance(stored, list)
-            else set()
-        )
+        from .host_visibility import hidden_hosts
+
+        return hidden_hosts(self.service.store)
 
     def _visible_hosts(self):
-        hidden = self._hidden_hosts()
-        return [
-            host
-            for host in self.service.store.host_list()
-            if host.enabled and host.id not in hidden
-        ]
+        from .host_visibility import visible_hosts
+
+        return visible_hosts(self.service.store)
 
     def set_visible_hosts(self, identifiers):
         visible = set(identifiers)
@@ -311,6 +305,11 @@ class HostMonitorDialog(QDialog):
         ]
         self.service.store.set_pref("host_monitor_hidden_hosts", hidden)
         self._build_cards()
+        from .web_service import for_service
+
+        web = for_service(self.service, create=False)
+        if web is not None:
+            web.publish()
 
     def choose_hosts(self):
         dialog = QDialog(self)
