@@ -191,7 +191,12 @@ class TextEditorDialog(TextDialog):
         self.btn_save = QPushButton("Save")
         self.btn_save.setAutoDefault(False)
         self.btn_save.clicked.connect(lambda: self.save())
-        self.button_box.addButton(self.btn_save, self.button_box.ButtonRole.ActionRole)
+        # A tail window follows what is being appended; an opened file stays put.
+        self.chk_follow.hide()
+        self.menu_view.removeAction(self.act_follow)
+        self.btn_save_as = QPushButton("Save As...")
+        self.btn_save_as.setAutoDefault(False)
+        self.btn_save_as.clicked.connect(lambda: self.save_as())
         self._build_edit_menus()
         self.view.document().modificationChanged.connect(lambda _on: self._show_modified())
 
@@ -467,10 +472,7 @@ class TextEditorDialog(TextDialog):
     def _apply_edit_mode(self, on: bool) -> None:
         self.view.setReadOnly(not on)
         self.act_save.setEnabled(on)
-        # Enabled as well: a button box shows all its buttons again when it lays
-        # itself out anew, as it does on a style change.
-        self.btn_save.setEnabled(on)
-        self.btn_save.setVisible(on)
+        self._show_buttons_for_mode(on)
         self.menu_save_encoding.setEnabled(on)
         self.menu_save_newline.setEnabled(on)
         for action in self._edit_actions:
@@ -481,6 +483,20 @@ class TextEditorDialog(TextDialog):
         if not on:
             self.replace_bar.setVisible(False)
         self._show_position()
+
+    def _show_buttons_for_mode(self, editing: bool) -> None:
+        """Editing: Save, Save As, Close. Reading: what the viewer opens or reloads.
+
+        Taken out of the box rather than hidden: a button box shows all its
+        buttons again when it lays itself out anew, as it does on a style change.
+        """
+        reading = (self.btn_open_in_moleditpy, self.btn_refresh)
+        for button in (self.btn_save, self.btn_save_as, *reading):
+            if button is not None:
+                self.button_box.removeButton(button)
+        for button in (self.btn_save, self.btn_save_as) if editing else reading:
+            if button is not None:
+                self.button_box.addButton(button, self.button_box.ButtonRole.ActionRole)
 
     # --- the file ------------------------------------------------------------
 

@@ -38,6 +38,12 @@ def create_job_actions(parent, callbacks):
             "Open an interactive SSH terminal in a host's home directory.",
         ),
         (
+            "file_browser",
+            "File Browser",
+            callbacks["open_file_browser"],
+            "List every file under a host's remote root, and read any of them as text.",
+        ),
+        (
             "ssh_job_terminal",
             "SSH Terminal Here",
             callbacks["_open_job_ssh_terminal"],

@@ -168,11 +168,8 @@ class TextDialog(QDialog):
 
         box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         self.button_box = box
-        self.btn_save_as = QPushButton("Save As...")
-        self.btn_save_as.setAutoDefault(False)
-        self.btn_save_as.clicked.connect(lambda: self.save_as())
-        box.addButton(self.btn_save_as, QDialogButtonBox.ButtonRole.ActionRole)
         self.btn_open_in_moleditpy = None
+        self.btn_refresh = None
         if on_open_in_moleditpy is not None:
             self.btn_open_in_moleditpy = QPushButton("Open in MoleditPy")
             self.btn_open_in_moleditpy.setAutoDefault(False)
