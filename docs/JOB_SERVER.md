@@ -73,6 +73,14 @@ refresh it with `python scripts/sync_job_server_client.py /path/to/server-checko
 The script reads that exact Git commit and extracts only client modules/protocol
 signing; it does not import a daemon or copy server authentication/database code.
 
+## Login commands
+
+**Advanced > Login commands** run on the server PC at the start of each job, before the
+preset's pre-commands, as part of the job's script. Use them for setup such as
+`conda activate` or `module load`, written for the server's shell: PowerShell on Windows,
+Bash on Linux. They are not run for Host Monitor or file browsing, and **Read the login files first** does
+not apply to Job Server hosts.
+
 ## Local HTTPS and CA registration
 
 For Job Server's local HTTPS listener, copy its HTTPS LAN URL into the host's

@@ -178,7 +178,9 @@ def test_rows_a_backend_does_not_use_are_hidden(server_service):
             form.spin_runner_cores,
             form.txt_server_key,
             form.txt_server_id,
-            form.adv_box,
+            form.chk_load_profile,
+            form.spin_command_timeout,
+            form.txt_submit_options,
             form.txt_options,
             form.chk_monitor_usage,
             form.chk_ask_password,
@@ -186,13 +188,16 @@ def test_rows_a_backend_does_not_use_are_hidden(server_service):
             assert hidden(widget)
         assert form.connection_form.labelForField(form.txt_hostname).isHidden()
         assert not hidden(form.txt_server_url)
+        assert not hidden(form.adv_box) and not hidden(form.txt_login)
+        assert form.txt_login.isEnabled()
         form.txt_server_id.setText("server-identity")
         assert not hidden(form.txt_server_id)
 
         choose(BACKEND_LOCAL)
         assert hidden(form.txt_hostname) and hidden(form.equal_path_row)
         assert hidden(form.txt_server_url) and hidden(form.txt_server_id)
-        assert not hidden(form.adv_box) and hidden(form.txt_options)
+        assert hidden(form.txt_options)
+        assert not hidden(form.chk_load_profile) and not hidden(form.spin_command_timeout)
         assert not hidden(form.txt_remote_root) and not hidden(form.cmb_scheduler)
 
         choose(BACKEND_PARAMIKO)
@@ -216,3 +221,42 @@ def test_queue_rows_follow_the_scheduler_and_queueing_mode(server_service):
         assert form.spin_runner_cores.isHidden() and not form.cmb_concurrency.isHidden()
         dialog.cmb_scheduler.setCurrentIndex(dialog.cmb_scheduler.findData("slurm"))
         assert form.cmb_concurrency.isHidden() and form.spin_runner_cores.isHidden()
+
+
+def test_login_commands_are_saved_for_a_server_host(server_service):
+    service, host = server_service
+    with patch("job_manager.server_backend.client_available", return_value=True):
+        dialog = HostsDialog(service)
+        dialog.cmb_backend.setCurrentIndex(dialog.cmb_backend.findData("job_server"))
+        dialog.txt_login.setPlainText("conda activate orca\n\nmodule load orca\n")
+        assert dialog._collect(host).login_commands == ["conda activate orca", "module load orca"]
+
+
+def test_login_commands_start_each_server_job(server_service):
+    from job_manager.server_backend import JobServerBackend
+
+    _, host = server_service
+    host.login_commands = ["conda activate orca", "module load orca"]
+    preset = SubmitPreset(command_template="orca {input}", pre_commands=["export A=1"])
+    job = Mock(
+        id="example-job",
+        remote_dir_provided=False,
+        remote_input="",
+        start_after=None,
+        force_run=False,
+        auto_download=True,
+        chain_any=False,
+    )
+    job.name = "example"
+    client = Mock()
+    client.submit.return_value = {"id": "server-job", "owner_id": "owner", "state": "PENDING"}
+    client.request.return_value = {"execution_os": "linux"}
+    with patch("job_manager.job_server_client.client.JobServerClient", return_value=client):
+        JobServerBackend(host).submit(preset, job, [])
+    spec = client.submit.call_args.args[0]
+    assert spec["command"].splitlines() == [
+        "conda activate orca",
+        "module load orca",
+        "export A=1",
+        "orca {input}",
+    ]
