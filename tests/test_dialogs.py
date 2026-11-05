@@ -1789,7 +1789,8 @@ class TestSshTerminalActions(DialogTestCase):
     def test_toolbar_terminal_is_next_to_host_monitor_and_opens_home_without_job(self):
         actions = self.dialog.toolbar.actions()
         index = actions.index(self.dialog.job_actions["host_monitor"])
-        self.assertIs(actions[index - 1], self.dialog.job_actions["ssh_terminal"])
+        self.assertIs(actions[index - 2], self.dialog.job_actions["ssh_terminal"])
+        self.assertIs(actions[index - 1], self.dialog.job_actions["file_browser"])
         self.assertTrue(self.dialog.job_actions["ssh_terminal"].isEnabled())
         with patch.object(self.dialog, "_launch_ssh") as launch:
             self.dialog.btn_ssh_terminal.click()
