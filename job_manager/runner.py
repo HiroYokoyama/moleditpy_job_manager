@@ -731,6 +731,14 @@ def list_host_path(transport: Transport, host: HostProfile, path: str, depth: in
     return [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
 
 
+def list_host_files(transport: Transport, host: HostProfile) -> List[str]:
+    """Every file under the host's remote root, at any depth, relative to it."""
+    root = effective_root(host)
+    require_remote_path(transport, host, root, directory=True)
+    result = transport.run(dialect.for_host(transport.host).list_tree(root, None), timeout=300)
+    return [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+
+
 def stat_host_path(transport: Transport, host: HostProfile, path: str, digest: bool = True) -> dict:
     """Whether a path is there, what it is, and for a file its size and sha256."""
     result = transport.run(dialect.for_host(transport.host).stat(path, digest))

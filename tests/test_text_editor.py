@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import os
+import tempfile
+import unittest
 from unittest.mock import patch
 
 import pytest
 
 pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 
-from PySide6.QtCore import QMimeData, QPoint, QPointF, Qt, QUrl  # noqa: E402
+from PySide6.QtCore import QEvent, QMimeData, QPoint, QPointF, Qt, QUrl  # noqa: E402
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QKeySequence  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
@@ -481,3 +483,65 @@ class TestFilesDroppedOnTheEditor(EditorCase):
         created = [window for window in _text_windows if window not in before]
         self.assertEqual([window.path for window in created], [other])
         created[0].close()
+
+
+class TestBottomButtons(unittest.TestCase):
+    """Save As is on the bottom row only while editing, beside Save and Close."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = os.path.join(self.tmp.name, "a.txt")
+        with open(self.path, "w", encoding="utf-8") as handle:
+            handle.write("text\n")
+
+    def dialog(self):
+        dialog = TextEditorDialog(self.path, None, lambda _path: None)
+        self.addCleanup(dialog.deleteLater)
+        return dialog
+
+    @staticmethod
+    def labels(dialog):
+        return sorted(button.text() for button in dialog.button_box.buttons())
+
+    def test_reading_has_no_save_buttons(self):
+        dialog = self.dialog()
+        self.assertEqual(self.labels(dialog), ["Close", "Open in MoleditPy", "Reload"])
+        self.assertFalse(dialog.btn_save_as.isVisibleTo(dialog))
+
+    def test_editing_has_only_save_save_as_and_close(self):
+        dialog = self.dialog()
+        dialog.act_edit_mode.setChecked(True)
+        self.assertEqual(self.labels(dialog), ["Close", "Save", "Save As..."])
+        self.assertFalse(dialog.btn_open_in_moleditpy.isVisibleTo(dialog))
+
+    def test_leaving_edit_mode_brings_the_reading_buttons_back(self):
+        dialog = self.dialog()
+        dialog.act_edit_mode.setChecked(True)
+        dialog.act_edit_mode.setChecked(False)
+        self.assertEqual(self.labels(dialog), ["Close", "Open in MoleditPy", "Reload"])
+        self.assertTrue(dialog.btn_open_in_moleditpy.isVisibleTo(dialog))
+
+    def test_a_style_change_does_not_bring_a_button_back(self):
+        dialog = self.dialog()
+        dialog.act_edit_mode.setChecked(True)
+        QApplication.sendEvent(dialog.button_box, QEvent(QEvent.Type.StyleChange))
+        self.assertFalse(dialog.btn_open_in_moleditpy.isVisibleTo(dialog))
+        self.assertTrue(dialog.btn_save_as.isVisibleTo(dialog))
+
+    def test_a_new_file_starts_with_the_editing_buttons(self):
+        dialog = TextEditorDialog(None)
+        self.addCleanup(dialog.deleteLater)
+        self.assertEqual(self.labels(dialog), ["Close", "Save", "Save As..."])
+
+    def test_the_menu_still_saves_a_copy_while_reading(self):
+        self.assertTrue(self.dialog().act_save_as.isEnabled())
+
+    def test_follow_end_is_only_for_tail_windows(self):
+        dialog = self.dialog()
+        self.assertFalse(dialog.chk_follow.isVisibleTo(dialog))
+        self.assertNotIn(dialog.act_follow, dialog.menu_view.actions())
+        tail = TextDialog("title", "text")
+        self.addCleanup(tail.deleteLater)
+        self.assertTrue(tail.chk_follow.isVisibleTo(tail))
+        self.assertIn(tail.act_follow, tail.menu_view.actions())

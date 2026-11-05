@@ -224,6 +224,7 @@ class JobsDialog(QDialog):
             "_tail_selected": self._tail_selected,
             "_tail_specific_file": self._tail_specific_file,
             "_use_default_job_list": self._use_default_job_list,
+            "open_file_browser": self.open_file_browser,
             "open_host_monitor": self.open_host_monitor,
             "open_hosts_dialog": self.open_hosts_dialog,
             "open_settings": self.open_settings,
@@ -252,7 +253,7 @@ class JobsDialog(QDialog):
                 ),
             ),
             ("&View", ("refresh", "reload", "host_monitor")),
-            ("&Tools", ("hosts", "ssh_terminal", "settings")),
+            ("&Tools", ("hosts", "ssh_terminal", "file_browser", "settings")),
         ):
             menu = self.menu_bar.addMenu(label)
             populate_menu(menu, (self.job_actions[key] if key else None for key in keys))
@@ -263,12 +264,16 @@ class JobsDialog(QDialog):
     def _build_toolbar(self, layout: QVBoxLayout) -> None:
         self.toolbar = action_toolbar(
             self,
-            (self.job_actions[key] for key in ("new", "refresh", "ssh_terminal", "host_monitor")),
+            (
+                self.job_actions[key]
+                for key in ("new", "refresh", "ssh_terminal", "file_browser", "host_monitor")
+            ),
         )
         self.btn_new = self.toolbar.widgetForAction(self.job_actions["new"])
         self.btn_refresh = self.toolbar.widgetForAction(self.job_actions["refresh"])
         self.btn_host_monitor = self.toolbar.widgetForAction(self.job_actions["host_monitor"])
         self.btn_ssh_terminal = self.toolbar.widgetForAction(self.job_actions["ssh_terminal"])
+        self.btn_file_browser = self.toolbar.widgetForAction(self.job_actions["file_browser"])
         layout.addWidget(self.toolbar)
 
     def _build_banners(self, layout: QVBoxLayout) -> None:
@@ -497,6 +502,9 @@ class JobsDialog(QDialog):
         states = {
             "new": not reconstructed,
             "ssh_terminal": any(supports_ssh(host) for host in self.service.store.hosts.values()),
+            "file_browser": any(
+                not host.is_job_server for host in self.service.store.hosts.values()
+            ),
             "ssh_job_terminal": supports_ssh(job_host),
             "reload": live,
             "cancel": bool(live and job and job.is_active),
@@ -551,19 +559,23 @@ class JobsDialog(QDialog):
         if not hosts:
             QMessageBox.information(self, "SSH Terminal", "Add an SSH host under Hosts first.")
             return
+        host = self._choose_host("SSH Terminal", hosts, "last_ssh_terminal_host_id")
+        if host is not None:
+            self._launch_ssh(host)
+
+    def _choose_host(self, title: str, hosts: list, pref: str):
+        """The only host, or the one picked; None if the choice was cancelled."""
         host = hosts[0]
         if len(hosts) > 1:
-            last_host = self.service.store.get_pref("last_ssh_terminal_host_id", "")
+            last_host = self.service.store.get_pref(pref, "")
             current = next((i for i, item in enumerate(hosts) if item.id == last_host), 0)
             labels = [f"{item.name} ({item.target}:{item.port})" for item in hosts]
-            label, accepted = QInputDialog.getItem(
-                self, "SSH Terminal", "Host:", labels, current, False
-            )
+            label, accepted = QInputDialog.getItem(self, title, "Host:", labels, current, False)
             if not accepted:
-                return
+                return None
             host = hosts[labels.index(label)]
-        self.service.store.set_pref("last_ssh_terminal_host_id", host.id)
-        self._launch_ssh(host)
+        self.service.store.set_pref(pref, host.id)
+        return host
 
     def _open_job_ssh_terminal(self) -> None:
         from .ssh_terminal import supports_ssh
@@ -675,6 +687,18 @@ class JobsDialog(QDialog):
             remote_dir=job.remote_dir if job.remote_dir_provided else "",
             remote_input=job.remote_input,
         )
+
+    def open_file_browser(self) -> None:
+        """Choose a host, and browse every file under its remote root."""
+        from .host_file_browser import HostFileBrowserDialog, browsable_hosts
+
+        hosts = browsable_hosts(self.service)
+        if not hosts:
+            QMessageBox.information(self, "File Browser", "Add a host under Hosts first.")
+            return
+        host = self._choose_host("File Browser", hosts, "last_file_browser_host_id")
+        if host is not None:
+            self._show_file_chooser(HostFileBrowserDialog, host)
 
     def open_host_monitor(self) -> None:
         """Open the live host panel, or raise the one already up."""
@@ -1583,9 +1607,13 @@ class JobsDialog(QDialog):
             self.open_result_files(existing_local)
             return
 
-        dialog = OutputFileSelectorDialog(
+        self._show_file_chooser(OutputFileSelectorDialog, job)
+
+    def _show_file_chooser(self, dialog_class, subject) -> None:
+        """Open a file browser of a job or a host, wired to this window's viewers."""
+        dialog = dialog_class(
             self.service,
-            job,
+            subject,
             parent=self,
             on_open_callback=lambda path: self.open_result_files([path]),
             on_text_callback=lambda path: self.show_text_file(
