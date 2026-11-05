@@ -1,7 +1,15 @@
-"""Shared origin validation; LAN HTTP is an explicit, literal-address exception."""
+"""Shared origin validation; LAN HTTP is an explicit exception for private addresses."""
 
+import re
 from ipaddress import ip_address, ip_network
 from urllib.parse import urlsplit
+
+_MDNS_NAME = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.local")
+
+
+def is_mdns_name(host):
+    """A one-label `.local` name, as a PC announces itself on the LAN."""
+    return isinstance(host, str) and _MDNS_NAME.fullmatch(host) is not None
 
 
 def validate_server_url(url, allow_lan_http=False):
@@ -15,7 +23,7 @@ def validate_server_url(url, allow_lan_http=False):
     if parts.port is not None and not 1 <= parts.port <= 65535:
         raise ValueError("Invalid server port")
     loopback = parts.hostname in {"localhost", "127.0.0.1", "::1"}
-    lan = False
+    lan = is_mdns_name(parts.hostname)
     try:
         address = ip_address(parts.hostname)
         lan = any(address in ip_network(network) for network in (
@@ -26,5 +34,5 @@ def validate_server_url(url, allow_lan_http=False):
     if parts.scheme != "https" and not (
         parts.scheme == "http" and (loopback or (allow_lan_http and lan))
     ):
-        raise ValueError("Use HTTPS, or enable LAN HTTP for a private IPv4/IPv6 literal address")
+        raise ValueError("Use HTTPS, or enable LAN HTTP for a private IP address or a .local name")
     return parts._replace(scheme=parts.scheme.lower(), netloc=parts.netloc.lower(), path="").geturl()

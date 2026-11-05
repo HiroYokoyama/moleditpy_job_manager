@@ -160,7 +160,7 @@ class HostProfileForm(QWidget):
         self.chk_server_lan_http = QCheckBox("Allow trusted LAN HTTP (unencrypted)")
         self.chk_server_lan_http.setToolTip(
             "Passwords, tokens and job data are readable on the network. "
-            "Private IPv4/IPv6 literal addresses only; HTTPS remains recommended."
+            "Private IP addresses and .local names only; HTTPS remains recommended."
         )
         self.txt_server_key = QLineEdit()
         self.txt_server_key.setReadOnly(True)

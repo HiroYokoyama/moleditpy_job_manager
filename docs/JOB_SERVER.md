@@ -39,8 +39,9 @@ Job Manager does not start another helper queue or apply SSH settings to it.
 > **Never expose Job Server to the public internet. Localhost, private LAN, or
 > private Tailscale only, with trusted users.** Use HTTPS for LAN/Tailscale access;
 > HTTPS is the default. Each host can explicitly enable **Allow trusted LAN HTTP**
-> for literal RFC 1918 IPv4 or IPv6 ULA addresses. Public IPs, DNS names and
-> link-local addresses are rejected. Passwords, bearer tokens and job contents
+> for literal RFC 1918 IPv4 or IPv6 ULA addresses and `.local` names. Public IPs, other
+> DNS names and link-local addresses are rejected. Any LAN device can answer for a
+> `.local` name, so over HTTP a password can reach the wrong device. Passwords, bearer tokens and job contents
 > are unencrypted on HTTP; use only on a trusted LAN. The client bypasses HTTP
 > environment proxies and refuses redirects. The server also needs its LAN HTTP
 > option enabled and the chosen origin registered. Its listener remains loopback;
