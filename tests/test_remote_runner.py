@@ -396,7 +396,10 @@ class TestDependencies(RunnerHarness):
 
         self.start_runner()
 
-        self.wait_for(lambda: os.path.exists(self.marker("ran")), what="bbb to run")
+        # Two dispatches, the second only after the first has failed: five to
+        # seven seconds on the Windows runner at the best of times, and eleven
+        # with the PowerShell end-to-end tests running on the other workers.
+        self.wait_for(lambda: os.path.exists(self.marker("ran")), timeout=30.0, what="bbb to run")
 
     def test_waiting_on_a_job_that_was_never_queued_does_not_hang_the_runner(self):
         # The runner exits when the queue empties, so a job waiting for
