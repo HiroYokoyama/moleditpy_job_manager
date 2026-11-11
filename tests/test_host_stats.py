@@ -8,6 +8,8 @@ import subprocess
 import shutil
 import unittest
 
+import pytest
+
 from job_manager import host_stats
 
 from .bash_support import find_bash
@@ -253,3 +255,57 @@ class TestTheThreeLoadAverages(unittest.TestCase):
         stats = host_stats.parse(result.stdout)
         if stats.loadavg:  # Git Bash on Windows has neither source.
             self.assertEqual(len(stats.loadavg), 3, result.stdout)
+
+
+class TestJobServerResources:
+    """A Job Server's /system/resources answer, as the monitor draws it."""
+
+    def test_whole_pc_reading_and_queue(self):
+        from job_manager.host_stats import from_server
+
+        stats = from_server(
+            {
+                "cpu_percent": 37.4,
+                "memory_used_mb": 6144,
+                "memory_total_mb": 16384,
+                "running": 2,
+                "pending": 5,
+                "paused": False,
+                "cpus": 8,
+                "reserved_cpus": 6,
+            }
+        )
+        assert stats.ok
+        assert stats.load_fraction == pytest.approx(0.374)
+        assert stats.mem_used_mb == 6144
+        assert stats.queue_text == "2 running, 5 waiting"
+        assert stats.summary == "CPU 37%, 6.0/16.0 GB, 2 running, 5 waiting"
+
+    def test_paused_queue_and_an_older_server_without_whole_pc_readings(self):
+        from job_manager.host_stats import from_server
+
+        stats = from_server({"running": 0, "pending": 1, "paused": True})
+        assert stats.cpu_percent is None and stats.load_fraction == 0.0
+        assert stats.summary == "0 running, 1 waiting (queue paused)"
+
+    def test_malformed_values_are_left_out_rather_than_guessed(self):
+        from job_manager.host_stats import from_server
+
+        stats = from_server(
+            {
+                "cpu_percent": None,
+                "running": True,
+                "pending": -1,
+                "memory_total_mb": "lots",
+                "memory_used_mb": 10,
+            }
+        )
+        assert stats.cpu_percent is None and stats.mem_total_mb == 0
+        assert stats.queue_text == ""
+        assert not from_server(["not", "a", "dict"]).ok
+
+    def test_fully_used_memory_still_reads_as_full(self):
+        from job_manager.host_stats import from_server
+
+        stats = from_server({"memory_used_mb": 8192, "memory_total_mb": 8192})
+        assert stats.memory_fraction == pytest.approx(1.0, abs=1e-3)

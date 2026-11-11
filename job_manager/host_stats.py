@@ -119,6 +119,17 @@ class HostStats:
     loadavg: tuple = ()
     mem_total_mb: int = 0
     mem_free_mb: int = 0
+    #: Whole-PC CPU use in percent, where the host reports it directly (a Job
+    #: Server) rather than as a load. None everywhere else.
+    cpu_percent: Optional[float] = None
+    #: A Job Server's queue, every user's jobs included: running and waiting
+    #: counts, None where the host has no such queue.
+    queue_running: Optional[int] = None
+    queue_waiting: Optional[int] = None
+    queue_paused: bool = False
+    #: The server's advisory CPU budget and how much of it running jobs hold.
+    budget_cpus: int = 0
+    reserved_cpus: int = 0
     #: Empty when the sample was taken; otherwise why it was not.
     error: str = ""
 
@@ -154,6 +165,8 @@ class HostStats:
         cores for a host that did not report a thread count (macOS's sysctl
         branch does not).
         """
+        if self.cpu_percent is not None:
+            return min(1.0, max(0.0, self.cpu_percent / 100.0))
         denominator = self.threads or self.cores
         if not denominator or not self.load:
             return 0.0
@@ -165,6 +178,8 @@ class HostStats:
         if self.error:
             return self.error
         parts = []
+        if self.cpu_percent is not None:
+            parts.append(f"CPU {self.cpu_percent:.0f}%")
         if self.load:
             parts.append("CPU " + " ".join(f"{value:.2f}" for value in self.load))
         if self.loadavg:
@@ -180,7 +195,50 @@ class HostStats:
             # Used is unknown on a host with no MemAvailable (macOS, and some
             # containers). Saying "0.0 of 15.6 GB" would be a made-up number.
             parts.append(f"{self.mem_total_mb / 1024:.1f} GB total")
+        if self.queue_text:
+            parts.append(self.queue_text)
         return ", ".join(parts) or "no answer"
+
+    @property
+    def queue_text(self) -> str:
+        """``2 running, 3 waiting`` for a Job Server, empty for any other host."""
+        if self.queue_running is None and self.queue_waiting is None:
+            return ""
+        text = f"{self.queue_running or 0} running, {self.queue_waiting or 0} waiting"
+        return text + " (queue paused)" if self.queue_paused else text
+
+
+def _count(value) -> Optional[int]:
+    # bool is an int; a malformed answer must not read as one job.
+    return value if type(value) is int and value >= 0 else None
+
+
+def _megabytes(value) -> int:
+    return int(value) if type(value) in (int, float) and value > 0 else 0
+
+
+def from_server(resources) -> HostStats:
+    """A Job Server's ``/system/resources`` answer, as a sample.
+
+    Every field is optional: a server older than the whole-PC readings
+    reports its queue only, and that is still worth showing.
+    """
+    if not isinstance(resources, dict):
+        return HostStats(error="The server's answer was not understood")
+    cpu = resources.get("cpu_percent")
+    total = _megabytes(resources.get("memory_total_mb"))
+    used = _megabytes(resources.get("memory_used_mb"))
+    return HostStats(
+        cpu_percent=float(cpu) if type(cpu) in (int, float) and math.isfinite(cpu) else None,
+        mem_total_mb=total,
+        # Free is what the meter derives use from; zero would read as unknown.
+        mem_free_mb=max(1, total - used) if total and used else 0,
+        queue_running=_count(resources.get("running")),
+        queue_waiting=_count(resources.get("pending")),
+        queue_paused=resources.get("paused") is True,
+        budget_cpus=_count(resources.get("cpus")) or 0,
+        reserved_cpus=_count(resources.get("reserved_cpus")) or 0,
+    )
 
 
 def command_for(powershell: bool) -> str:

@@ -369,6 +369,16 @@ class HostProfile:
         return self.backend == BACKEND_JOB_SERVER
 
     @property
+    def usage_sampled(self) -> bool:
+        """Whether the Host Monitor asks this host for its load.
+
+        A Job Server answers from its own API, so the login-node concern
+        behind ``monitor_usage`` does not apply; that flag is stored False
+        for every Job Server host and is not consulted for one.
+        """
+        return True if self.is_job_server else bool(self.monitor_usage)
+
+    @property
     def uses_remote_runner(self) -> bool:
         """A queue on the host only makes sense where there is not one already.
 

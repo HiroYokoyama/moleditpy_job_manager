@@ -160,7 +160,7 @@ class HostMonitorDialog(QDialog):
         scroll.setWidget(self.body)
         layout.addWidget(scroll, 1)
 
-        self._empty_label = QLabel("No SSH or local hosts to show. Add one under Hosts...")
+        self._empty_label = QLabel("No hosts to show. Add one under Hosts...")
         self.grid.addWidget(self._empty_label, 0, 0)
         self._build_cards()
         self._refresh_pending = QTimer(self)
@@ -353,7 +353,7 @@ class HostMonitorDialog(QDialog):
                 host.name,
                 host.target,
                 bool(host.enabled),
-                bool(host.monitor_usage),
+                bool(host.usage_sampled),
                 bool(host.is_job_server),
                 int(host.monitor_interval or 0),
             )
@@ -372,7 +372,7 @@ class HostMonitorDialog(QDialog):
         self._laid_out_for = 0
         for host in self._visible_hosts():
             card = HostCard(host)
-            if host.is_job_server or not host.monitor_usage:
+            if not host.usage_sampled:
                 card.show_not_sampled()
             card.restyle(self.palette(), dark=bool(self.action_dark.isChecked()))
             self.cards[host.id] = card

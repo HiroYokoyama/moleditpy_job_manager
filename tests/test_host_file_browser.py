@@ -496,7 +496,10 @@ class TestEntryPoints(DialogTestCase):
         self.assertEqual(listed, ["/"])
         dialog.tree.setCurrentItem(dialog.tree.topLevelItem(0))
         with (
-            patch("job_manager.host_file_browser.QFileDialog.getExistingDirectory", return_value=self.tmp),
+            patch(
+                "job_manager.host_file_browser.QFileDialog.getExistingDirectory",
+                return_value=self.tmp,
+            ),
             patch.object(self.service, "download_host_paths") as download,
         ):
             dialog._download_selected()

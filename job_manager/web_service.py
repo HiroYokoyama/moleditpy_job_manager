@@ -197,7 +197,7 @@ class WebService(QObject):
         from .host_visibility import visible_hosts
 
         for host in visible_hosts(self.service.store):
-            sampled = host.monitor_usage and not host.is_job_server
+            sampled = host.usage_sampled
             # A value left from before sampling was switched off would be
             # served as if it were current.
             stats = self.sampler.latest(host.id) if sampled else None
@@ -224,7 +224,9 @@ class WebService(QObject):
                 entry["error"] = stats.error
                 entry["load_fraction"] = stats.load_fraction
                 entry["memory_fraction"] = stats.memory_fraction
-                if stats.load:
+                if stats.cpu_percent is not None:
+                    entry["load_detail"] = f"{stats.cpu_percent:.0f}%"
+                elif stats.load:
                     entry["load_detail"] = f"{stats.load[0]:.2f}"
                 if stats.mem_total_mb and stats.mem_free_mb:
                     entry["memory_detail"] = (

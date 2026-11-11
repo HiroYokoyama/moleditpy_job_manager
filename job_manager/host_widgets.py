@@ -784,7 +784,15 @@ class HostCard(QFrame):
 
         load = stats.load[0] if stats.load else 0.0
         threads = stats.threads or stats.cores
-        if threads:
+        if stats.cpu_percent is not None:
+            # A Job Server reports a percentage of the whole PC, not a load.
+            self.meter_cpu.show_value(
+                stats.load_fraction,
+                f"{stats.cpu_percent:.0f}%",
+                "whole PC",
+                f"{stats.cpu_percent:.0f}% of the server PC's CPU in use",
+            )
+        elif threads:
             self.meter_cpu.show_value(
                 stats.load_fraction,
                 f"{stats.load_fraction * 100:.0f}%",
@@ -796,7 +804,9 @@ class HostCard(QFrame):
                 0.0, f"{load:.2f}", "CPU", "the host did not report its threads"
             )
 
-        if stats.loadavg:
+        if stats.queue_text:
+            self._show_queue(stats)
+        elif stats.loadavg:
             averages = "  ".join(f"{value:.2f}" for value in stats.loadavg)
             self.lbl_load_avg.setText(f"load avg {averages}")
             self.lbl_load_avg.setToolTip(
@@ -824,6 +834,20 @@ class HostCard(QFrame):
 
         self.graph_cpu.add(stats.load_fraction)
         self.graph_memory.add(stats.memory_fraction)
+
+    def _show_queue(self, stats: host_stats.HostStats) -> None:
+        """A Job Server's queue, in the line an SSH host uses for its load
+        averages. Every user's jobs count: it is how long new work waits."""
+        text = stats.queue_text
+        if stats.budget_cpus:
+            text += f"  ·  {stats.reserved_cpus}/{stats.budget_cpus} CPUs reserved"
+        self.lbl_load_avg.setText(text)
+        self.lbl_load_avg.setToolTip(
+            "The server's whole queue, other users' jobs included. Waiting jobs start "
+            "when the server's CPU and memory budget has room."
+            + ("\nThe administrator has paused the queue." if stats.queue_paused else "")
+        )
+        self.lbl_state.setText("queue paused" if stats.queue_paused else "Job Server")
 
     def show_not_sampled(self) -> None:
         """Jobs only: the host is set not to be sampled (a shared login node)."""
