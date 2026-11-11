@@ -385,6 +385,11 @@ class JobServerBackend:
             job.rc = remote["exit_code"]
             job.last_error = remote.get("reason", "")
             job.last_server_state = remote["state"]
+            ahead = remote.get("queue_ahead")
+            # An older server sends nothing; bool is an int and is not a count.
+            job.server_queue_ahead = (
+                ahead if isinstance(ahead, int) and not isinstance(ahead, bool) else -1
+            )
             result[job.id] = remote["state"]
         return result
 

@@ -120,6 +120,13 @@ reads the server's own report, so no shell command runs there; this device must
 be signed in, otherwise the card says so. For SSH and local hosts, each host's
 usage-monitoring setting controls sampling independently of card visibility.
 
+While one of your jobs waits on Job Server 0.10 or newer, the job list's State
+column reads, for example, `PENDING (3 ahead)` or `PENDING (next in line)`: the
+number of jobs the server will start before it, in the server's own order
+(forced runs, then priority, then submission time). Details shows the same as
+**Queue position**. Job Server's web UI lists the whole queue, every user's job
+by name and owner, without their commands, files or output.
+
 The web monitor uses the same **Choose Hosts...** selection. Hiding a card
 removes it and its job details from the published web snapshot immediately.
 

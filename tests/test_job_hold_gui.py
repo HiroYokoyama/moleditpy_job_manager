@@ -236,3 +236,30 @@ class TestHoldDetails(DialogTestCase):
         callbacks["on_success"](True)
         assert "job list changed" in errors[0]
         assert replacement.state == "PENDING"
+
+
+class TestJobServerQueuePosition(DialogTestCase):
+    def test_state_column_and_details_name_the_position_only_while_waiting(self):
+        job = self.store.add_job(
+            Job(
+                id="srv",
+                host_id=self.host.id,
+                name="Server job",
+                state="PENDING",
+                server_job_id="s1",
+                server_queue_ahead=3,
+            )
+        )
+        monitor = JobsDialog(self.service)
+        self.addCleanup(monitor.deleteLater)
+        model = monitor.model
+        state = model.index(model.row_of(job.id), COLUMNS.index("State"))
+        assert model.data(state, Qt.ItemDataRole.DisplayRole) == "PENDING (3 ahead)"
+        assert "Queue position" in monitor._describe(job)
+        job.server_queue_ahead = 0
+        self.service.job_updated.emit(job.id)
+        assert model.data(state) == "PENDING (next in line)"
+        job.state = "RUNNING"
+        self.service.job_updated.emit(job.id)
+        assert model.data(state) == "RUNNING"
+        assert "Queue position" not in monitor._describe(job)

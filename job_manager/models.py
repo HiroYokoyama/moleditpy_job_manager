@@ -240,6 +240,11 @@ def _from_dict(cls: type, data: Dict[str, Any]) -> Any:
     return cls(**kwargs)
 
 
+def queue_position(ahead: int) -> str:
+    """How a waiting job's place in a Job Server queue reads to a person."""
+    return "next in line" if ahead == 0 else f"{ahead} ahead"
+
+
 @dataclass
 class HostProfile:
     """Everything needed to reach one remote machine.
@@ -621,6 +626,9 @@ class Job:
     owner_user_id: str = ""
     execution_os: str = ""
     last_server_state: str = ""
+    #: Jobs a Job Server will start before this one while it waits; -1 when
+    #: unknown or not waiting.
+    server_queue_ahead: int = -1
     #: Position by submission time in the saved job list; 0 before numbering.
     number: int = 0
     priority: int = 0

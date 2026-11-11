@@ -20,7 +20,9 @@ _SCHEMA = (
     "CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)",
     "CREATE TABLE jobs (id TEXT PRIMARY KEY, record TEXT NOT NULL, revision INTEGER NOT NULL)",
 )
-_STATE_FIELDS = frozenset({"state", "rc", "started_at", "finished_at", "last_server_state"})
+_STATE_FIELDS = frozenset(
+    {"state", "rc", "started_at", "finished_at", "last_server_state", "server_queue_ahead"}
+)
 # How long a connection waits for another one's lock. Each writer holds it for
 # a few full fsyncs, so a queue of them adds up: 2 s raised "database is locked"
 # on a Windows runner with four writers, losing a save. A reader only waits out
