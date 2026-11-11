@@ -84,6 +84,7 @@ from .models import (
     STATE_SUBMITTED,
     STATE_UPLOADING,
     Job,
+    queue_position,
 )
 from .result_view import (
     TEXT_EXTENSIONS as TEXT_EXTENSIONS,
@@ -1229,6 +1230,8 @@ class JobsDialog(QDialog):
             ("Execution OS", job.execution_os),
             ("Last server state", job.last_server_state),
         )
+        if job.state == STATE_PENDING and job.server_queue_ahead >= 0:
+            server_fields += (("Queue position", queue_position(job.server_queue_ahead)),)
         if any(value for _, value in server_fields) or (host is not None and host.is_job_server):
             rows += [("", ""), ("", "--- Job Server ---"), *server_fields]
         preset = job.preset or {}

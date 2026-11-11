@@ -34,7 +34,7 @@ FIRST_POLL_SECONDS = 5.0
 
 class _WorkerSignals(QObject):
     # host_id, {job_id: state}, {job_id: rc}, {job_id: message}
-    finished = Signal(str, dict, dict, dict)
+    finished = Signal(str, dict, dict, dict, dict)
     failed = Signal(str, str)  # host_id, message
 
 
@@ -85,7 +85,8 @@ class _PollTask(_SignalRunnable):
         # for the GUI thread to apply -- writing onto the copy lost them silently.
         exit_codes = {job.id: job.rc for job in self.jobs if job.rc is not None}
         errors = {job.id: job.last_error for job in self.jobs if job.last_error}
-        self.signals.finished.emit(self.host.id, updates, exit_codes, errors)
+        positions = {job.id: job.server_queue_ahead for job in self.jobs}
+        self.signals.finished.emit(self.host.id, updates, exit_codes, errors, positions)
 
 
 class JobPoller(QObject):
@@ -275,6 +276,7 @@ class JobPoller(QObject):
         updates: dict,
         exit_codes: Optional[dict] = None,
         errors: Optional[dict] = None,
+        positions: Optional[dict] = None,
     ) -> None:
         if self._shutting_down:
             return
@@ -303,6 +305,11 @@ class JobPoller(QObject):
         exit_codes = {k: v for k, v in (exit_codes or {}).items() if k in live}
         errors = {k: v for k, v in (errors or {}).items() if k in live}
         updates = {k: v for k, v in (updates or {}).items() if k in live}
+        # Display only: a changed position alone is not worth a write to disk.
+        for job_id, ahead in (positions or {}).items():
+            job = self.store.jobs.get(job_id)
+            if job is not None and job_id in live:
+                job.server_queue_ahead = ahead
         for job_id, code in exit_codes.items():
             job = self.store.jobs.get(job_id)
             if job is not None and job.rc != code:

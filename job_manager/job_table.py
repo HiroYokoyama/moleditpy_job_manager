@@ -29,6 +29,7 @@ from .models import (
     STATE_RUNNING,
     Job,
     assign_job_numbers,
+    queue_position,
 )
 from .service import JobService
 from .theme import (
@@ -206,6 +207,8 @@ class JobTableModel(QAbstractTableModel):
                 suffix = " — " + " / ".join(reasons) if state == STATE_HELD and reasons else ""
                 if state == STATE_FAILED and job.rc is not None:
                     suffix = f" (rc={job.rc})"
+                elif state == STATE_PENDING and job.server_queue_ahead >= 0:
+                    suffix = f" ({queue_position(job.server_queue_ahead)})"
                 return f"{state}{suffix}"
             if column == "After":
                 predecessor = self.predecessor_of(job)
