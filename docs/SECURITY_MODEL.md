@@ -170,7 +170,17 @@ returns: OpenSSH stopped showing that in 6.8, so there would be nothing to
 compare it against.)
 
 A key that *changed* (rather than being unknown) is a different matter and is
-not offered for trusting — that is the case where a warning is the point.
+not offered for trusting — that is the case where a warning is the point. Both
+backends report it as its own error, the Hosts dialog says the key changed and
+offers nothing, and the function that files a key refuses a host that already
+has a different one of that type. Removing the old key is done by hand, with
+`ssh-keygen -R`, after checking with whoever runs the host.
+
+**`known_hosts` is appended to, never rewritten.** Accepting a key adds one
+line and leaves every other byte alone: comments, hashed names, FIDO keys,
+`@cert-authority` and `@revoked` lines, and key types this plugin cannot read
+all stay as `ssh` wrote them. A key listed under `@revoked` is not treated as
+known and cannot be added. `tests/test_known_hosts.py` holds all of it.
 
 ## What runs on the remote machine
 

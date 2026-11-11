@@ -51,7 +51,8 @@ moleditpy-job-manager --host-monitor   # the Host Monitor
 ```
 
 `python -m job_manager` does the same. A second launch brings the running Job
-Manager to the front instead of starting another tracker.
+Manager to the front instead of starting another tracker, including one
+started in the same moment, which waits for the first to finish starting.
 
 Everything from [the standard workflow](WORKFLOW.md) applies unchanged: add a
 host, submit, watch the queue, fetch results. Where that guide names the menu
