@@ -46,7 +46,7 @@ from .service import JobService
 from .tasks import run_async
 from .theme import apply_theme
 from .transport import local_shell_available, paramiko_available, wsl_available
-from .transport.base import HostKeyRejected
+from .transport.base import HOST_KEY_PROBLEM_CHANGED, HOST_KEY_PROBLEM_UNKNOWN, host_key_problem
 from .transport.local import INSTALL_HINT as LOCAL_INSTALL_HINT
 from .transport.local import POWERSHELL_HINT, SHELL_POSIX, SHELL_POWERSHELL
 from .window_utils import make_independent, set_spin_value
@@ -967,10 +967,34 @@ class HostsDialog(QDialog):
         def failed(message: str) -> None:
             self.btn_test.setEnabled(True)
             self.lbl_test.setText(message.splitlines()[0] if message else "Connection failed.")
-            if "known_hosts" in message.lower() or HostKeyRejected.__name__ in message:
+            problem = host_key_problem(message)
+            if problem == HOST_KEY_PROBLEM_CHANGED:
+                self._warn_host_key_changed(host)
+            elif problem == HOST_KEY_PROBLEM_UNKNOWN:
                 self._offer_trust(host)
 
         run_async(self.service.pool, work, on_success=ok, on_error=failed, owner=self)
+
+    def _warn_host_key_changed(self, host: HostProfile) -> None:
+        """Say the key changed, and offer nothing.
+
+        The one case where a warning is the point: accepting here is what an
+        intercepted connection needs, so the old key is only ever removed by
+        hand, outside this window.
+        """
+        self.lbl_test.setText("The host key has changed. Nothing was trusted.")
+        QMessageBox.warning(
+            self,
+            "Host key changed",
+            f"{host.hostname} is presenting a different key from the one in your "
+            "known_hosts file.\n\n"
+            "Either the host was reinstalled, or something between you and it is "
+            "answering in its place. Nothing has been changed.\n\n"
+            "Ask whoever runs the host for its current fingerprint. Only once it "
+            "matches, remove the old key with\n\n"
+            f"    ssh-keygen -R {host.hostname}\n\n"
+            "and test the connection again.",
+        )
 
     def _offer_trust(self, host: HostProfile) -> None:
         """Show the key the host is offering, and file it only if it is accepted.

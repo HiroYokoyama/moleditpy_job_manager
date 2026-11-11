@@ -113,11 +113,9 @@ class FakeSSHClient:
         self.rc = 0
         FakeSSHClient.instances.append(self)
 
-    def load_system_host_keys(self):
+    def get_host_keys(self):
         self.loaded_system_keys = True
-
-    def load_host_keys(self, path):
-        self.loaded_files.append(path)
+        return _FakeHostKeys()
 
     def set_missing_host_key_policy(self, policy):
         self.policy = policy
@@ -442,7 +440,10 @@ class TestTrustHostKey(ParamikoTestCase):
             with patch("socket.create_connection", return_value=_DummySocket()):
                 fingerprint = paramiko_backend.trust_host_key("h.example.org")
         self.assertEqual(fingerprint, paramiko_backend.key_fingerprint(_FakeKey()))
-        self.assertTrue(_FakeHostKeys.saved)
+        with open(os.path.join(tmp_home, "known_hosts"), encoding="utf-8") as handle:
+            written = handle.read()
+        blob = base64.b64encode(b"ssh-ed25519 blob").decode("ascii")
+        self.assertEqual(written, f"h.example.org ssh-ed25519 {blob}\n")
 
     def test_the_fingerprint_is_the_one_ssh_would_print(self):
         """SHA256 base64, not the MD5 hex paramiko's get_fingerprint() returns.
@@ -535,11 +536,8 @@ class _StubParamiko:
     class SSHClient:
         last_kwargs = None
 
-        def load_system_host_keys(self):
-            pass
-
-        def load_host_keys(self, path):
-            pass
+        def get_host_keys(self):
+            return None
 
         def set_missing_host_key_policy(self, policy):
             pass

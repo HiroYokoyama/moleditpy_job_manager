@@ -33,6 +33,7 @@ def main() -> int:
     tray_mode = "--tray" in args
     host_view = any(arg in HOST_MONITOR_FLAGS for arg in args)
 
+    after_pid = 0
     if tray_mode:
         try:
             after_pid = int(_argument(args, "--after-pid") or 0)
@@ -40,14 +41,16 @@ def main() -> int:
             after_pid = 0
         # Before anything is built: a tray process with nothing to do should
         # not first read the job list, put an icon up and take it down again.
-        if instances.standalone_running(data_dir, after_pid):
+        lock = instances.claim_for_tray(data_dir, after_pid)
+        if lock is None:
             return 0
     else:
         # One Job Manager at a time, when it is ours to choose: a launch beside
-        # one already running brings that one's window up instead of starting
-        # a second tracker. Before the QApplication, so nothing flashes.
+        # one already running -- or still starting -- brings that one's window
+        # up instead of starting a second tracker. Before the QApplication, so
+        # nothing flashes.
         action = instances.ACTION_SHOW_HOST_MONITOR if host_view else instances.ACTION_SHOW_MONITOR
-        running = instances.defer_to_running(data_dir, action)
+        lock, running = instances.claim_or_defer(data_dir, action)
         if running is not None:
             print(
                 f"Job Manager is already running (pid {running['pid']}, {running['role']}); "
@@ -55,6 +58,16 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 0
+    try:
+        return _run(args, data_dir, tray_mode, host_view, after_pid)
+    finally:
+        # Last, after the registration has gone: a launch waiting on the lock
+        # must not find this process still listed when it gets it.
+        if lock is not None:
+            lock.release()
+
+
+def _run(args, data_dir: str, tray_mode: bool, host_view: bool, after_pid: int) -> int:
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName(f"Job Manager {PLUGIN_VERSION}")
 

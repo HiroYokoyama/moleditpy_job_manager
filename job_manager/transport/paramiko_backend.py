@@ -23,8 +23,8 @@ import os
 import threading
 from typing import Optional
 
-from .. import remote_paths
-from .base import CommandResult, HostKeyRejected, Transport, TransportError
+from .. import known_hosts, remote_paths
+from .base import CommandResult, HostKeyChanged, HostKeyRejected, Transport, TransportError
 
 try:
     import paramiko
@@ -81,6 +81,34 @@ def ssh_config_for(hostname: str) -> dict:
     return dict(config.lookup(hostname) or {})
 
 
+def load_known_hosts(store, path: Optional[str] = None) -> int:
+    """Put the user's known keys into ``store``; returns how many were taken.
+
+    One line at a time, because paramiko's own loader raises on the first
+    ``@cert-authority`` or ``@revoked`` line and takes nothing after it: a site
+    running an SSH CA could not use this backend at all. A revoked key is left
+    out, so the host presenting it is refused as unknown before anything is
+    sent to it. A certificate authority is skipped: paramiko cannot verify a
+    host certificate, and the host's plain key decides instead.
+    """
+    entry_class = getattr(getattr(paramiko, "hostkeys", None), "HostKeyEntry", None)
+    if entry_class is None:
+        return 0
+    taken = 0
+    entries = known_hosts.parse(path or known_hosts_path())
+    for entry in known_hosts.usable(entries):
+        try:
+            parsed = entry_class.from_line(entry.line)
+        except Exception:  # noqa: BLE001 - a key type paramiko does not know
+            continue
+        if parsed is None or parsed.key is None:
+            continue
+        for name in parsed.hostnames:
+            store.add(name, parsed.key.get_name(), parsed.key)
+            taken += 1
+    return taken
+
+
 class ParamikoTransport(Transport):
     """One long-lived SSHClient per host, guarded by a lock."""
 
@@ -99,13 +127,7 @@ class ParamikoTransport(Transport):
         if paramiko is None:
             raise TransportError(INSTALL_HINT)
         client = paramiko.SSHClient()
-        client.load_system_host_keys()
-        user_known_hosts = known_hosts_path()
-        if os.path.exists(user_known_hosts):
-            try:
-                client.load_host_keys(user_known_hosts)
-            except (OSError, ValueError):
-                logging.warning("Job Manager: could not parse %s", user_known_hosts)
+        load_known_hosts(client.get_host_keys())
         client.set_missing_host_key_policy(paramiko.RejectPolicy())
 
         host = self.host
@@ -145,9 +167,9 @@ class ParamikoTransport(Transport):
         except paramiko.SSHException as exc:
             client.close()
             message = str(exc)
-            if "not found in known_hosts" in message or isinstance(
-                exc, paramiko.BadHostKeyException
-            ):
+            if isinstance(exc, paramiko.BadHostKeyException):
+                raise HostKeyChanged(host.hostname, message) from exc
+            if "not found in known_hosts" in message:
                 raise HostKeyRejected(host.hostname, message) from exc
             raise TransportError(f"SSH connection failed: {message}") from exc
         except OSError as exc:
@@ -328,21 +350,20 @@ def add_host_key(key, hostname: str, port: int = 22) -> str:
     """Append ``key`` to ``known_hosts``; returns its fingerprint.
 
     Only called after the user has been shown that fingerprint and agreed to
-    it -- see :func:`read_host_key`.
+    it -- see :func:`read_host_key`. One line is appended and nothing else in
+    the file is touched; a host that already has a different key of this type
+    is refused, never replaced.
     """
     if paramiko is None:
         raise TransportError(INSTALL_HINT)
-    path = known_hosts_path()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    host_keys = paramiko.HostKeys()
-    if os.path.exists(path):
-        try:
-            host_keys.load(path)
-        except (OSError, ValueError):
-            logging.warning("Job Manager: could not parse %s before adding a key", path)
-    entry = hostname if int(port or 22) == 22 else f"[{hostname}]:{int(port)}"
-    host_keys.add(entry, key.get_name(), key)
-    host_keys.save(path)
+    blob = base64.b64encode(key.asbytes()).decode("ascii")
+    try:
+        known_hosts.append(known_hosts_path(), hostname, int(port or 22), key.get_name(), blob)
+    except known_hosts.KnownHostConflict as exc:
+        # Reached when the caller asked about a host that was never unknown.
+        raise HostKeyChanged(hostname, str(exc)) from exc
+    except OSError as exc:
+        raise TransportError(f"Could not write {known_hosts_path()}: {exc}") from exc
     return key_fingerprint(key)
 
 

@@ -22,7 +22,15 @@ import tempfile
 from typing import List, Optional
 
 from .. import remote_paths
-from .base import CommandResult, HostKeyRejected, Transport, TransportError
+from .base import (
+    HOST_KEY_PROBLEM_CHANGED,
+    CommandResult,
+    HostKeyChanged,
+    HostKeyRejected,
+    Transport,
+    TransportError,
+    host_key_problem,
+)
 
 #: ControlMaster multiplexing needs a unix socket; OpenSSH-for-Windows has none.
 SUPPORTS_MULTIPLEXING = os.name != "nt"
@@ -77,12 +85,25 @@ class OpenSSHTransport(Transport):
                 opts += ["-o", option]
         return opts
 
+    def _target(self) -> str:
+        """The destination, refused when ssh or scp would read it as an option.
+
+        It is passed where both still parse options, so a hostname or user
+        beginning with "-" -- "-oProxyCommand=..." -- would run a local command.
+        """
+        host = self.host
+        target = host.target
+        parts = (target, host.hostname or "", host.username or "")
+        if not target or any(part.startswith("-") for part in parts):
+            raise TransportError(f"Not a valid SSH destination: {target!r}")
+        return target
+
     def _ssh_argv(self, cmd: str) -> List[str]:
         host = self.host
         argv = [self.ssh_exe] + self._common_options()
         if host.port and int(host.port) != 22:
             argv += ["-p", str(int(host.port))]
-        argv += [host.target, "--", cmd]
+        argv += [self._target(), "--", cmd]
         return argv
 
     def _scp_argv(self, source: str, destination: str) -> List[str]:
@@ -118,6 +139,8 @@ class OpenSSHTransport(Transport):
         if proc.returncode == 255 or "Host key verification failed" in stderr:
             lowered = stderr.lower()
             if "host key verification failed" in lowered or "known_hosts" in lowered:
+                if host_key_problem(stderr) == HOST_KEY_PROBLEM_CHANGED:
+                    raise HostKeyChanged(self.host.hostname, stderr.strip())
                 raise HostKeyRejected(self.host.hostname, stderr.strip())
             if "permission denied" in lowered or "authentication" in lowered:
                 raise TransportError(
@@ -162,6 +185,7 @@ class OpenSSHTransport(Transport):
         return self._scp_sftp
 
     def _remote_spec(self, remote_path: str, *, download: bool = False) -> str:
+        target = self._target()
         if not self._scp_uses_sftp():
             if download:
                 # Legacy scp checks the received basename with fnmatch() on
@@ -176,14 +200,14 @@ class OpenSSHTransport(Transport):
                     )
                 basename = re.sub(r"([^a-zA-Z0-9_@%+=:,.-])", r"\\\1", name)
                 parent = remote_paths.quote(directory) if directory else ("" if separator else ".")
-                return f"{self.host.target}:{parent}/{basename}"
-            return f"{self.host.target}:{remote_paths.quote(remote_path)}"
+                return f"{target}:{parent}/{basename}"
+            return f"{target}:{remote_paths.quote(remote_path)}"
         path = str(remote_path)
         if download:
             # The SFTP download side performs glob expansion even though the
             # caller supplied one literal file, e.g. calculation[1].out.
             path = "".join("\\" + char if char in "\\*?[]" else char for char in path)
-        return f"{self.host.target}:{path}"
+        return f"{target}:{path}"
 
     def upload(self, local_path: str, remote_path: str) -> None:
         argv = self._scp_argv(local_path, self._remote_spec(remote_path))
@@ -218,13 +242,13 @@ class OpenSSHTransport(Transport):
                         "exit",
                         "-o",
                         f"ControlPath={control_path}",
-                        self.host.target,
+                        self._target(),
                     ],
                     capture_output=True,
                     timeout=10,
                     creationflags=_NO_WINDOW,
                 )
-            except (OSError, subprocess.SubprocessError):
+            except (OSError, subprocess.SubprocessError, TransportError):
                 logging.debug("Job Manager: ControlMaster exit failed", exc_info=True)
         if self._control_dir and os.path.isdir(self._control_dir):
             # rmtree, not rmdir: a host that stopped answering leaves its

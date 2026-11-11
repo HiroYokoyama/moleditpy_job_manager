@@ -27,6 +27,49 @@ class HostKeyRejected(TransportError):
         self.hostname = hostname
 
 
+#: Opens every :class:`HostKeyChanged` message. Only text crosses from a worker
+#: thread to the window, so this is what tells the two refusals apart there.
+HOST_KEY_CHANGED = "The host key has changed"
+
+HOST_KEY_PROBLEM_CHANGED = "changed"
+HOST_KEY_PROBLEM_UNKNOWN = "unknown"
+
+
+class HostKeyChanged(HostKeyRejected):
+    """The host presented a key other than the one on file. Never offered for trusting."""
+
+    def __init__(self, hostname: str, detail: str = "") -> None:
+        message = (
+            f"{HOST_KEY_CHANGED} for {hostname}: it is not the key in known_hosts. "
+            "The host may have been reinstalled, or the connection may be intercepted."
+        )
+        super().__init__(hostname, f"{message}\n{detail}" if detail else message)
+
+
+def host_key_problem(message: str) -> str:
+    """Which host-key refusal an error message describes, or "" for neither.
+
+    Changed is looked for first: ssh's changed-key warning names the
+    known_hosts file, and its unknown-key refusal in batch mode does not, so
+    matching on that file name alone offered trust for exactly the wrong one.
+    """
+    lowered = (message or "").lower()
+    if (
+        HOST_KEY_CHANGED.lower() in lowered
+        or "identification has changed" in lowered
+        or "has changed and you have requested strict checking" in lowered
+        or "offending " in lowered
+    ):
+        return HOST_KEY_PROBLEM_CHANGED
+    if (
+        "host key verification failed" in lowered
+        or "known_hosts" in lowered
+        or "unknown host key" in lowered
+    ):
+        return HOST_KEY_PROBLEM_UNKNOWN
+    return ""
+
+
 @dataclass
 class CommandResult:
     """Outcome of one remote command."""
