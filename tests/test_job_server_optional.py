@@ -50,7 +50,10 @@ class TestOptionalServerClient(unittest.TestCase):
         self.assertIsNot(first.client, second.client)
         self.assertEqual(client_type.call_count, 2)
         self.assertTrue(
-            all(call.kwargs == {"reuse_auth": True, "allow_lan_http": False} for call in client_type.call_args_list)
+            all(
+                call.kwargs == {"reuse_auth": True, "allow_lan_http": False}
+                for call in client_type.call_args_list
+            )
         )
 
     def test_server_fetch_preserves_inputs_and_empty_patterns_download_results(self):

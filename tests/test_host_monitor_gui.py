@@ -75,21 +75,57 @@ class HostMonitorTestCase(DialogTestCase):
 
 
 class TestWhatItShows(HostMonitorTestCase):
-    def test_job_server_can_be_shown_or_hidden_without_sampling_it(self):
+    def test_job_server_is_sampled_through_its_api_and_can_be_hidden(self):
+        # Stored False, as the Hosts dialog saves every Job Server host.
         server = make_host(id="job-server", backend="job_server", monitor_usage=False)
         self.store.add_host(server)
-        dialog = self.monitor()
-        self.assertIn(server.id, dialog.cards)
+        requests = []
+
+        class Client:
+            def request(self, method, path):
+                requests.append((method, path))
+                return {
+                    "cpu_percent": 25.0,
+                    "memory_used_mb": 4096,
+                    "memory_total_mb": 16384,
+                    "running": 2,
+                    "pending": 3,
+                    "paused": False,
+                    "cpus": 8,
+                    "reserved_cpus": 6,
+                }
+
+        backend = unittest.mock.Mock(client=Client())
+        with unittest.mock.patch("job_manager.server_backend.backend_for", return_value=backend):
+            dialog = self.monitor()
+            self.assertIn(server.id, [host.id for host in dialog.sampler.hosts()])
+        # Never a shell command: a Job Server has none to offer.
         self.assertNotIn(server.id, self.transports)
+        self.assertEqual(requests[0], ("GET", "/system/resources"))
+        card = dialog.cards[server.id]
+        self.assertIn("2 running, 3 waiting", card.lbl_load_avg.text())
+        self.assertIn("6/8 CPUs reserved", card.lbl_load_avg.text())
+        self.assertEqual(card.lbl_state.text(), "Job Server")
+        self.assertIn("3 waiting", card.toolTip())
+
         dialog.set_visible_hosts([self.host.id])
         self.assertNotIn(server.id, dialog.cards)
         self.assertEqual(self.store.get_pref("host_monitor_hidden_hosts"), [server.id])
-        server.monitor_usage = True
-        dialog.set_visible_hosts([self.host.id, server.id])
-        dialog.sampler.sample_all()
-        self.assertIn(server.id, dialog.cards)
-        self.assertNotIn(server.id, self.transports)
-        self.assertNotIn(server.id, [host.id for host in dialog.sampler.hosts()])
+
+    def test_job_server_that_cannot_sign_in_says_why(self):
+        server = make_host(id="job-server", backend="job_server")
+        self.store.add_host(server)
+
+        class Client:
+            def request(self, method, path):
+                raise ValueError(
+                    "Sign in and register this device first: credential file is missing"
+                )
+
+        backend = unittest.mock.Mock(client=Client())
+        with unittest.mock.patch("job_manager.server_backend.backend_for", return_value=backend):
+            dialog = self.monitor()
+        self.assertIn("Sign in and register this device", dialog.cards[server.id].lbl_state.text())
 
     def test_host_visibility_is_remembered_and_new_hosts_are_visible(self):
         dialog = self.monitor()

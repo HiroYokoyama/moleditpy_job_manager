@@ -112,9 +112,13 @@ Subsequent connections use this application's saved device credential.
 Use **Choose Hosts...** in Host Monitor to select the cards to display. The choice
 is remembered, and newly added enabled hosts appear by default. Disabled hosts
 are hidden automatically; enabling a host restores its previous visibility choice.
-Job Server hosts remain available as cards, without unsupported system-usage
-probes. Each host's usage-monitoring setting controls sampling independently of
-card visibility.
+A Job Server host's card shows the server PC's CPU and memory use and the
+server's queue: how many jobs run, how many wait, how much of the CPU budget
+running jobs reserve, and whether an administrator paused the queue. The counts
+include other users' jobs, since they decide how long new work waits. The card
+reads the server's own report, so no shell command runs there; this device must
+be signed in, otherwise the card says so. For SSH and local hosts, each host's
+usage-monitoring setting controls sampling independently of card visibility.
 
 The web monitor uses the same **Choose Hosts...** selection. Hiding a card
 removes it and its job details from the published web snapshot immediately.

@@ -201,13 +201,18 @@ class OutputFileSelectorDialog(QDialog):
         self.setMinimumWidth(sum(button.minimumWidth() for button in buttons) + spacing * 4 + 24)
 
     def _load_files(self) -> None:
-        """Scan local files first; if none exist, fetch remote listing."""
+        """Show what is here at once, then merge in what the host has.
+
+        Downloaded files used to stop the host from being asked at all, so a
+        job fetched with a pattern showed only those files and the rest of its
+        directory stayed out of sight until Browse Host Files... was pressed.
+        """
         local_files = self._get_existing_local_files()
         if local_files:
             self._populate_tree_local(local_files)
-        elif self.job.remote_dir:
+        if self.job.remote_dir:
             self._fetch_remote_listing()
-        else:
+        elif not local_files:
             self.lbl_status.setText("No local files or remote directory recorded for this job.")
 
     def _get_existing_local_files(self) -> List[str]:
@@ -328,6 +333,9 @@ class OutputFileSelectorDialog(QDialog):
             self.tree.setCurrentItem(selected_item)
         elif self._all_items:
             self.tree.setCurrentItem(self._all_items[0])
+        # This window's own pick, not the user's: the host's listing may
+        # choose a better primary output when it arrives.
+        self._auto_key = self._item_key(self.tree.currentItem())
 
         self.lbl_status.setText(f"{len(paths)} file(s) available locally.")
         self.btn_open_folder.setEnabled(True)
@@ -348,7 +356,10 @@ class OutputFileSelectorDialog(QDialog):
 
         def on_error(msg: str) -> None:
             self.btn_browse_remote.setEnabled(True)
-            self.lbl_status.setText(f"Could not list remote files: {msg}")
+            # The local rows stay: an offline host must not empty the window.
+            shown = sum(1 for item in self._all_items if not item.data(0, IS_REMOTE_ROLE))
+            prefix = f"{shown} file(s) available locally. " if shown else ""
+            self.lbl_status.setText(f"{prefix}Could not list remote files: {msg}")
 
         self.service.list_remote_results(self.job, on_ok, on_error, owner=self)
 
@@ -375,6 +386,11 @@ class OutputFileSelectorDialog(QDialog):
     def _populate_tree_remote(self, names: Sequence[str]) -> None:
         """Populate the tree with remote files under the host's folder structure,
         merging in any already-downloaded local files."""
+        # The listing arrives after the local rows were drawn; whatever the
+        # user picked meanwhile stays picked.
+        kept = self._item_key(self.tree.currentItem())
+        if kept == getattr(self, "_auto_key", ""):
+            kept = ""
         self.tree.clear()
         self._all_items.clear()
 
@@ -391,7 +407,19 @@ class OutputFileSelectorDialog(QDialog):
 
         primary_name = primary_output(list(names), self.job.log_file).replace("\\", "/")
         selected_item: Optional[QTreeWidgetItem] = None
+        kept_item: Optional[QTreeWidgetItem] = None
         folders: dict = {}
+        listed: set = set()
+
+        def place(item: QTreeWidgetItem, parts: Sequence[str]) -> None:
+            parent = ensure_folder_item(
+                self.tree, folders, parts[:-1], folder_factory(columns=len(FULL_HEADERS))
+            )
+            if parent is None:
+                self.tree.addTopLevelItem(item)
+            else:
+                parent.addChild(item)
+            self._all_items.append(item)
 
         for name in names:
             if not name or name.startswith("."):
@@ -399,28 +427,61 @@ class OutputFileSelectorDialog(QDialog):
             parts = split_path(name)
             if not parts:
                 continue
-            parent = ensure_folder_item(
-                self.tree, folders, parts[:-1], folder_factory(columns=len(FULL_HEADERS))
-            )
             local_key = "/".join(parts)
+            listed.add(local_key)
             item = self._remote_file_row(name, parts, local_map, mirror_dir)
-
-            if parent is None:
-                self.tree.addTopLevelItem(item)
-            else:
-                parent.addChild(item)
-            self._all_items.append(item)
-
+            place(item, parts)
             if local_key == primary_name:
                 selected_item = item
+            if kept and local_key == kept:
+                kept_item = item
 
-        if selected_item is not None:
-            self.tree.setCurrentItem(selected_item)
-        elif self._all_items:
-            self.tree.setCurrentItem(self._all_items[0])
+        # Downloaded files the host no longer lists (its directory cleaned up,
+        # or a file renamed there) are still here and still openable.
+        used = {path for item in self._all_items for path in [item.data(0, PATH_ROLE)]}
+        local_only = 0
+        for relative, path in sorted(local_map.items()):
+            parts = split_path(relative)
+            if not parts or "/".join(parts) in listed or path in used:
+                continue
+            local_only += 1
+            item = QTreeWidgetItem(
+                [parts[-1], self._size_of(path), describe_file_type(parts[-1]), "Local"]
+            )
+            item.setData(0, PATH_ROLE, path)
+            item.setData(0, IS_REMOTE_ROLE, False)
+            item.setToolTip(0, path)
+            place(item, parts)
+            if kept and "/".join(parts) == kept:
+                kept_item = item
 
-        self.lbl_status.setText(f"{len(names)} remote file(s) found on host.")
+        current = kept_item or selected_item or (self._all_items[0] if self._all_items else None)
+        if current is not None:
+            self.tree.setCurrentItem(current)
+
+        here = sum(1 for item in self._all_items if not item.data(0, IS_REMOTE_ROLE))
+        status = f"{len(listed)} file(s) on host, {here} available here"
+        if local_only:
+            status += f" ({local_only} no longer on the host)"
+        self.lbl_status.setText(status + ".")
         self._apply_filter(self.txt_filter.text())
+
+    @staticmethod
+    def _size_of(path: str) -> str:
+        try:
+            return format_file_size(os.path.getsize(path))
+        except OSError:
+            return "-"
+
+    @staticmethod
+    def _item_key(item: Optional[QTreeWidgetItem]) -> str:
+        """A row's place in the tree, the same whether it was drawn as a local
+        file or as a host file."""
+        parts = []
+        while item is not None:
+            parts.append(item.text(0))
+            item = item.parent()
+        return "/".join(reversed(parts))
 
     @staticmethod
     def _remote_file_row(

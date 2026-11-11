@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 import unittest
 from unittest.mock import MagicMock
@@ -543,3 +544,78 @@ class TestAPendingDownloadIsNotLeftConnected(unittest.TestCase):
 
         self.assertEqual(len(dlg._pending), 2)
         self.assertEqual(len(service.calls), 1)
+
+
+class TestHostListingBesideDownloads(unittest.TestCase):
+    """Downloaded files no longer stop the host from being listed."""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.temp_dir, ignore_errors=True)
+        self.local = os.path.join(self.temp_dir, "downloads", "job1")
+        os.makedirs(self.local)
+        self.downloaded = os.path.join(self.local, "result.out")
+        with open(self.downloaded, "w", encoding="utf-8") as handle:
+            handle.write("result\n")
+        self.service = MagicMock()
+        self.service.store.hosts = {}
+        self.service.store.directory = self.temp_dir
+        self.service.store.download_root.return_value = os.path.join(self.temp_dir, "downloads")
+        self.job = Job(
+            id="job1",
+            host_id="host1",
+            name="job",
+            remote_dir="/opt/jobs/job1",
+            local_dir=self.local,
+            downloaded_files=[self.downloaded],
+        )
+
+    def open(self, listing=None, error=None):
+        def listed(job, on_ok, on_error, owner=None):
+            self.calls += 1
+            if error:
+                on_error(error)
+            elif listing is not None:
+                on_ok(listing)
+
+        self.calls = 0
+        self.service.list_remote_results.side_effect = listed
+        dialog = OutputFileSelectorDialog(self.service, self.job)
+        self.addCleanup(dialog.deleteLater)
+        return dialog
+
+    def rows(self, dialog):
+        return {item.text(0): item for item in dialog._all_items}
+
+    def test_host_files_are_listed_next_to_downloaded_ones(self):
+        dialog = self.open(["result.out", "result.gbw", "scratch/trajectory.xyz"])
+        self.assertEqual(self.calls, 1)
+        rows = self.rows(dialog)
+        self.assertFalse(rows["result.out"].data(0, IS_REMOTE_ROLE))
+        self.assertEqual(rows["result.out"].data(0, PATH_ROLE), self.downloaded)
+        self.assertTrue(rows["result.gbw"].data(0, IS_REMOTE_ROLE))
+        self.assertTrue(rows["trajectory.xyz"].data(0, IS_REMOTE_ROLE))
+        self.assertIn("3 file(s) on host, 1 available here", dialog.lbl_status.text())
+
+    def test_a_download_the_host_no_longer_has_stays_listed(self):
+        dialog = self.open(["other.out"])
+        rows = self.rows(dialog)
+        self.assertEqual(rows["result.out"].data(0, PATH_ROLE), self.downloaded)
+        self.assertIn("1 no longer on the host", dialog.lbl_status.text())
+
+    def test_an_unreachable_host_keeps_the_local_rows(self):
+        dialog = self.open(error="host is offline")
+        self.assertIn("result.out", self.rows(dialog))
+        self.assertIn("1 file(s) available locally", dialog.lbl_status.text())
+        self.assertIn("host is offline", dialog.lbl_status.text())
+
+    def test_a_row_picked_before_the_listing_arrives_stays_picked(self):
+        extra = os.path.join(self.local, "notes.txt")
+        with open(extra, "w", encoding="utf-8") as handle:
+            handle.write("notes\n")
+        self.job.downloaded_files.append(extra)
+        dialog = self.open()  # the listing has not answered yet
+        notes = self.rows(dialog)["notes.txt"]
+        dialog.tree.setCurrentItem(notes)
+        dialog._populate_tree_remote(["result.out", "notes.txt", "result.gbw"])
+        self.assertEqual(dialog.tree.currentItem().text(0), "notes.txt")

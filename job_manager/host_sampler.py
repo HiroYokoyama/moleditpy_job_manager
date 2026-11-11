@@ -126,7 +126,7 @@ class HostSampler(QObject):
         seconds = [
             self.interval_for(host)
             for host in self.service.store.host_list()
-            if not host.is_job_server and host.enabled and host.monitor_usage
+            if host.enabled and host.usage_sampled
         ]
         return max(1, min(seconds or [self.interval_seconds()]))
 
@@ -141,10 +141,7 @@ class HostSampler(QObject):
         return [
             host
             for host in self.service.store.host_list()
-            if not host.is_job_server
-            and host.enabled
-            and host.monitor_usage
-            and not needs_password(self.service, host)
+            if host.enabled and host.usage_sampled and not needs_password(self.service, host)
         ]
 
     def latest(self, host_id: str) -> Optional[host_stats.HostStats]:
@@ -153,7 +150,14 @@ class HostSampler(QObject):
     def _transport_for(self, host: HostProfile):
         transport = self._transports.get(host.id)
         if transport is None:
-            transport = self.service.transport_for(host)
+            if host.is_job_server:
+                from .server_backend import backend_for
+
+                # Kept like a shell transport, so the signed-in token is
+                # reused between ticks instead of a new sign-in every time.
+                transport = backend_for(host)
+            else:
+                transport = self.service.transport_for(host)
             self._transports[host.id] = transport
         return transport
 
@@ -184,7 +188,6 @@ class HostSampler(QObject):
 
     def _sample(self, host: HostProfile) -> None:
         self._busy.add(host.id)
-        command = host_stats.command_for(host.scheduler == SCHEDULER_WINDOWS)
         host_id = host.id
         # Resolved on the GUI thread: concurrent workers reading/writing
         # self._transports without a lock would be a data race.
@@ -195,16 +198,28 @@ class HostSampler(QObject):
             self.sample_failed.emit(host_id, str(exc), 0)
             return
 
-        def work() -> str:
-            result = transport.run(command, timeout=max(15, int(host.connect_timeout or 10)))
-            result.check("sample host usage")
-            return result.stdout
+        if host.is_job_server:
+            parse = host_stats.from_server
 
-        def ok(text: str) -> None:
+            def work():
+                # The server's own reading, every user's queue included. No
+                # shell is involved: a Job Server offers none.
+                return transport.client.request("GET", "/system/resources")
+
+        else:
+            parse = host_stats.parse
+            command = host_stats.command_for(host.scheduler == SCHEDULER_WINDOWS)
+
+            def work():
+                result = transport.run(command, timeout=max(15, int(host.connect_timeout or 10)))
+                result.check("sample host usage")
+                return result.stdout
+
+        def ok(answer) -> None:
             self._busy.discard(host_id)
             self._backoff.pop(host_id, None)
             self._skip_ticks.pop(host_id, None)
-            parsed = host_stats.parse(text)
+            parsed = parse(answer)
             self._latest[host_id] = parsed
             self.sampled.emit(host_id, parsed)
 

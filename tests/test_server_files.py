@@ -165,7 +165,9 @@ def test_service_routes_server_browser_operations_without_a_shell(monkeypatch, t
     backend.stat_path.return_value = {"type": "file"}
     backend.download_paths.return_value = (["synthetic.txt"], [])
     monkeypatch.setattr("job_manager.server_backend.backend_for", lambda host: backend)
-    monkeypatch.setattr("job_manager.service.run_async", lambda pool, work, **kw: kw["on_success"](work()))
+    monkeypatch.setattr(
+        "job_manager.service.run_async", lambda pool, work, **kw: kw["on_success"](work())
+    )
     service = SimpleNamespace(pool=None)
     host = SimpleNamespace(is_job_server=True)
     done = Mock()

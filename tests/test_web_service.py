@@ -146,7 +146,11 @@ class TestTheSnapshot(WebTestCase):
         self.assertEqual(len(self.web.server.snapshot()["hosts"]), 1)
 
     def test_disabled_hosts_and_jobs_are_not_exposed_by_the_web_monitor(self):
-        self.store.add_job(Job(id="hidden-job", name="synthetic-private", host_id=self.host.id, state=STATE_RUNNING))
+        self.store.add_job(
+            Job(
+                id="hidden-job", name="synthetic-private", host_id=self.host.id, state=STATE_RUNNING
+            )
+        )
         self.host.enabled = False
         self.assertEqual(self.web.snapshot()["hosts"], [])
 
