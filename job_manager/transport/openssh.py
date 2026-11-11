@@ -185,6 +185,7 @@ class OpenSSHTransport(Transport):
         return self._scp_sftp
 
     def _remote_spec(self, remote_path: str, *, download: bool = False) -> str:
+        target = self._target()
         if not self._scp_uses_sftp():
             if download:
                 # Legacy scp checks the received basename with fnmatch() on
@@ -199,14 +200,14 @@ class OpenSSHTransport(Transport):
                     )
                 basename = re.sub(r"([^a-zA-Z0-9_@%+=:,.-])", r"\\\1", name)
                 parent = remote_paths.quote(directory) if directory else ("" if separator else ".")
-                return f"{self._target()}:{parent}/{basename}"
-            return f"{self._target()}:{remote_paths.quote(remote_path)}"
+                return f"{target}:{parent}/{basename}"
+            return f"{target}:{remote_paths.quote(remote_path)}"
         path = str(remote_path)
         if download:
             # The SFTP download side performs glob expansion even though the
             # caller supplied one literal file, e.g. calculation[1].out.
             path = "".join("\\" + char if char in "\\*?[]" else char for char in path)
-        return f"{self._target()}:{path}"
+        return f"{target}:{path}"
 
     def upload(self, local_path: str, remote_path: str) -> None:
         argv = self._scp_argv(local_path, self._remote_spec(remote_path))
