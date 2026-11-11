@@ -129,10 +129,59 @@ def install_server_ca(url, pem, fingerprint, directory, *, windows_store=None):
     return {"ca_file": ca_file, "saved_ca": str(path)}
 
 
-def show_ca_registration(parent, url, ca_field):
+def _run_with_loading(parent, text, work, on_success, on_error, *, after_cancel=None):
+    """Run ``work`` with a loading window over ``parent``.
+
+    Signing in can take seconds -- a TLS handshake, the challenge, the
+    server's password check -- and nothing on screen said anything was
+    happening, so the button looked dead and was pressed again. Cancel stops
+    the waiting, not the work: a device the server has already registered is
+    still recorded through ``after_cancel``, so a second attempt does not
+    register another one.
+    """
     from PySide6.QtCore import QThreadPool
-    from PySide6.QtWidgets import QMessageBox
+    from PySide6.QtWidgets import QWidget
+
+    from .loading_dialog import close_loading_dialog, open_loading_dialog
     from .tasks import run_async
+
+    state = {"cancelled": False, "dialog": None}
+
+    def cancel():
+        state["cancelled"] = True
+        finish()
+
+    def finish():
+        dialog, state["dialog"] = state["dialog"], None
+        if dialog is not None:
+            close_loading_dialog(dialog)
+
+    if isinstance(parent, QWidget):
+        state["dialog"] = open_loading_dialog(parent, "Job Server", text, cancel)
+
+    def succeeded(result):
+        finish()
+        if not state["cancelled"]:
+            on_success(result)
+        elif after_cancel is not None:
+            after_cancel(result)
+
+    def failed(message):
+        finish()
+        if not state["cancelled"]:
+            on_error(message)
+
+    run_async(
+        QThreadPool.globalInstance(),
+        work,
+        on_success=succeeded,
+        on_error=failed,
+        owner=parent,
+    )
+
+
+def show_ca_registration(parent, url, ca_field):
+    from PySide6.QtWidgets import QMessageBox
     from .store import default_data_dir
 
     try:
@@ -162,27 +211,27 @@ def show_ca_registration(parent, url, ca_field):
         pem, fingerprint = result
         if not confirm_ca_fingerprint(parent, fingerprint, destination):
             return
-        run_async(
-            QThreadPool.globalInstance(),
+        _run_with_loading(
+            parent,
+            "Trusting the server's CA...",
             lambda: install_server_ca(url, pem, fingerprint, default_data_dir()),
-            on_success=done,
-            on_error=warn,
-            owner=parent,
+            done,
+            warn,
+            # Already trusted by then; the field must still name it.
+            after_cancel=lambda result: ca_field.setText(result["ca_file"]),
         )
 
-    run_async(
-        QThreadPool.globalInstance(),
+    _run_with_loading(
+        parent,
+        f"Fetching the CA certificate from {url}...",
         lambda: fetch_ca_for_confirmation(url),
-        on_success=fetched,
-        on_error=warn,
-        owner=parent,
+        fetched,
+        warn,
     )
 
 
 def show_enrollment(parent, url, key_field, ca_file, on_done=None, *, allow_lan_http=False):
-    from PySide6.QtCore import QThreadPool
     from PySide6.QtWidgets import QMessageBox
-    from .tasks import run_async
     from .store import default_data_dir
 
     try:
@@ -214,21 +263,25 @@ def show_enrollment(parent, url, key_field, ca_file, on_done=None, *, allow_lan_
         return client.request("GET", "/capabilities")
 
     def done(capabilities):
-        key_field.setText(str(path))
-        if on_done:
-            on_done(capabilities)
+        recorded(capabilities)
         QMessageBox.information(
             parent,
             "Job Server",
             "Device authenticated. Subsequent connections use this credential file.",
         )
 
-    run_async(
-        QThreadPool.globalInstance(),
+    def recorded(capabilities):
+        key_field.setText(str(path))
+        if on_done:
+            on_done(capabilities)
+
+    _run_with_loading(
+        parent,
+        f"Signing in to {url}..." if path.exists() else f"Registering this device with {url}...",
         work,
-        on_success=done,
-        on_error=lambda message: QMessageBox.warning(parent, "Job Server", message),
-        owner=parent,
+        done,
+        lambda message: QMessageBox.warning(parent, "Job Server", message),
+        after_cancel=recorded,
     )
 
 
