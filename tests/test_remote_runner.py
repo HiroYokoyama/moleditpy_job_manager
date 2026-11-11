@@ -40,7 +40,7 @@ from job_manager.remote_runner import (
 )
 
 from .bash_support import bash_path, find_bash
-from .runner_support import kill_dispatched_jobs
+from .runner_support import REAL_PROCESS_TIMEOUT, kill_dispatched_jobs
 
 BASH = find_bash()
 
@@ -146,7 +146,16 @@ class RunnerHarness(unittest.TestCase):
         os.makedirs(os.path.join(self.dir, "lock"), exist_ok=True)
         return process
 
-    def wait_for(self, predicate, timeout: float = 10.0, what: str = "condition"):
+    def wait_for(self, predicate, timeout: float = REAL_PROCESS_TIMEOUT, what: str = "condition"):
+        """Wait until ``predicate`` holds; fail as soon as it no longer can.
+
+        The bound is not how long the thing is expected to take. A wait returns
+        the moment the condition is true and fails the moment the runner has
+        exited without it, so the only wait that reaches the bound is a runner
+        that is alive and stuck. Ten seconds was instead a guess at how fast a
+        loaded CI machine starts a dozen processes, and it was wrong whenever
+        the xdist schedule put these tests beside the other real-shell ones.
+        """
         deadline = time.time() + timeout
         while time.time() < deadline:
             if predicate():
@@ -215,12 +224,8 @@ class TestItRunsWhatIsQueued(RunnerHarness):
 
         self.start_runner()
 
-        # Three dispatches one after another, each forking a dozen processes:
-        # under a full parallel suite Git Bash on Windows took longer than the
-        # usual ten seconds for the third, with the runner alive and ccc next.
         self.wait_for(
             lambda: len(self.listing()) == 3 and all(v == "done" for v in self.listing().values()),
-            timeout=30.0,
             what="all three to finish",
         )
         with open(self.marker("order"), encoding="utf-8") as handle:
@@ -396,10 +401,7 @@ class TestDependencies(RunnerHarness):
 
         self.start_runner()
 
-        # Two dispatches, the second only after the first has failed: five to
-        # seven seconds on the Windows runner at the best of times, and eleven
-        # with the PowerShell end-to-end tests running on the other workers.
-        self.wait_for(lambda: os.path.exists(self.marker("ran")), timeout=30.0, what="bbb to run")
+        self.wait_for(lambda: os.path.exists(self.marker("ran")), what="bbb to run")
 
     def test_waiting_on_a_job_that_was_never_queued_does_not_hang_the_runner(self):
         # The runner exits when the queue empties, so a job waiting for

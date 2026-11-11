@@ -44,7 +44,7 @@ from job_manager.remote_runner_ps import (
     store_version_command,
 )
 
-from .runner_support import kill_dispatched_jobs
+from .runner_support import REAL_PROCESS_TIMEOUT, kill_dispatched_jobs
 
 POWERSHELL = shutil.which("pwsh") or shutil.which("powershell")
 
@@ -148,7 +148,8 @@ class RunnerHarness(unittest.TestCase):
         os.makedirs(os.path.join(self.dir, "lock"), exist_ok=True)
         return process
 
-    def wait_for(self, predicate, timeout: float = 15.0, what: str = "condition"):
+    def wait_for(self, predicate, timeout: float = REAL_PROCESS_TIMEOUT, what: str = "condition"):
+        """See the bash harness: a bound to give up at, not an expected duration."""
         deadline = time.time() + timeout
         while time.time() < deadline:
             if predicate():
