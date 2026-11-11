@@ -335,6 +335,8 @@ def _take_tracking_back() -> bool:
         from .store import default_data_dir
 
         directory = default_data_dir()
+        # A tray process the last MoleditPy started may not have registered yet.
+        instances.wait_while_starting(directory)
         for data in instances.live_instances(directory):
             if data.get("role") == instances.ROLE_TRAY:
                 took_over = True

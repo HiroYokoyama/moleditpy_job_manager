@@ -11,6 +11,13 @@ and that is accepted -- it is the host that decides to start twice.)
 
 The random socket token distinguishes reused ports and PIDs. Everything uses
 the standard library; the socket only proves liveness and cannot execute actions.
+
+Reading the registry and then registering is not one step: a monitor registers
+only after its window, its service and its tray icon exist, a second or more
+after it looked. Two launches started together each found nobody and both
+became trackers. :class:`SingleInstanceLock` closes that: an operating-system
+lock the one standalone monitor or tray process holds from before it looks
+until it exits, and that the system drops for a process that dies.
 """
 
 from __future__ import annotations
@@ -40,6 +47,15 @@ CONNECT_TIMEOUT_SECONDS = 2.5
 ACTION_SHOW_MONITOR = "show_monitor"
 ACTION_SHOW_HOST_MONITOR = "show_host_monitor"
 ACTION_STOP = "stop"
+
+LOCK_NAME = "standalone.lock"
+#: How long a launch waits on a lock holder that neither registers nor exits.
+CLAIM_TIMEOUT_SECONDS = 20.0
+#: A tray process may be waiting out the shutdown of the monitor that started it.
+TRAY_CLAIM_TIMEOUT_SECONDS = 30.0
+CLAIM_POLL_SECONDS = 0.2
+#: How long a MoleditPy starting up gives a tray process that is still starting.
+STARTING_WAIT_SECONDS = 3.0
 
 
 class LivenessServer:
@@ -83,6 +99,94 @@ class LivenessServer:
         self._closed.set()
         self._socket.close()
         self._thread.join(timeout=1.0)
+
+
+def _lock_handle(handle) -> None:
+    """Take the lock or raise OSError. Never waits."""
+    if sys.platform == "win32":
+        import msvcrt
+
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _unlock_handle(handle) -> None:
+    if sys.platform == "win32":
+        import msvcrt
+
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+class SingleInstanceLock:
+    """Held by the one standalone monitor or tray process, for as long as it lives.
+
+    A lock on an open file rather than a file that exists: the system releases
+    it when the process ends however it ends, so a crash leaves nothing behind
+    for the next launch to mistake for a running tracker. Nothing is written to
+    the file -- on Windows a locked byte cannot be read by anyone else.
+    """
+
+    def __init__(self, directory: str) -> None:
+        self.path = os.path.join(instances_dir(directory), LOCK_NAME)
+        self._handle = None
+        #: The lock could not be tried at all (a read-only data directory):
+        #: the launch goes ahead on the registry alone, as it did before.
+        self.unavailable = False
+
+    @property
+    def held(self) -> bool:
+        return self._handle is not None
+
+    def acquire(self) -> bool:
+        """True when this process now holds it, or when it cannot be tried."""
+        if self._handle is not None:
+            return True
+        try:
+            os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            # Not inherited: the tray process this one starts on its way out
+            # must take the lock itself, not be born holding its parent's.
+            handle = open(self.path, "a+b")  # noqa: SIM115 - kept open on purpose
+        except OSError:
+            logging.debug("Job Manager: no single-instance lock", exc_info=True)
+            self.unavailable = True
+            return True
+        try:
+            _lock_handle(handle)
+        except OSError:
+            handle.close()
+            return False
+        self._handle = handle
+        return True
+
+    def release(self) -> None:
+        handle, self._handle = self._handle, None
+        if handle is None:
+            return
+        try:
+            _unlock_handle(handle)
+        except OSError:
+            logging.debug("Job Manager: single-instance lock not unlocked", exc_info=True)
+        handle.close()
+
+
+def standalone_lock_held(directory: str) -> bool:
+    """Some other process holds the lock: a standalone or tray, running or starting."""
+    lock = SingleInstanceLock(directory)
+    if not os.path.exists(lock.path):
+        return False
+    if not lock.acquire():
+        return True
+    lock.release()
+    return False
 
 
 def _pid_running(pid: int) -> bool:
@@ -367,6 +471,88 @@ def defer_to_running(directory: str, action: str, timeout: float = 5.0) -> Optio
     return None
 
 
+def claim_or_defer(
+    directory: str,
+    action: str,
+    timeout: float = CLAIM_TIMEOUT_SECONDS,
+    poll: float = CLAIM_POLL_SECONDS,
+) -> "tuple[Optional[SingleInstanceLock], Optional[Dict[str, Any]]]":
+    """What a launch by hand does first: become the one tracker, or ask the one there.
+
+    Returns ``(lock, None)`` when this launch should start -- holding the lock,
+    so a launch a moment behind it waits instead of starting too -- and
+    ``(None, instance)`` when a running Job Manager took ``action``.
+
+    ``(None, None)`` is the holder that never registered and never let go: it
+    is hung, and the launch starts beside it as it always has.
+    """
+    lock = SingleInstanceLock(directory)
+    deadline = time.monotonic() + timeout
+    while True:
+        if lock.acquire():
+            # No standalone is running or starting. A MoleditPy may be.
+            target = defer_to_running(directory, action)
+            if target is not None:
+                lock.release()
+                return None, target
+            return lock, None
+        # Held by another launch. It answers once it has registered.
+        for data in live_instances(directory):
+            if data.get("role") not in (ROLE_STANDALONE, ROLE_TRAY):
+                continue
+            pid = int(data["pid"])
+            send_request(directory, pid, action)
+            if wait_until_taken(directory, pid):
+                return None, data
+            withdraw_request(directory, pid)
+            break
+        if time.monotonic() >= deadline:
+            return None, None
+        time.sleep(poll)
+
+
+def claim_for_tray(
+    directory: str,
+    after_pid: int = 0,
+    timeout: float = TRAY_CLAIM_TIMEOUT_SECONDS,
+    poll: float = CLAIM_POLL_SECONDS,
+) -> Optional[SingleInstanceLock]:
+    """The lock for a tray process, or None when another tracker makes it unnecessary.
+
+    The process handing over may be a standalone monitor, which holds the lock
+    until it has exited: that is waited out. Any other holder registers within
+    moments, and this process then has nothing to do.
+    """
+    lock = SingleInstanceLock(directory)
+    deadline = time.monotonic() + timeout
+    while True:
+        if standalone_running(directory, after_pid):
+            return None
+        if lock.acquire() or time.monotonic() >= deadline:
+            return lock
+        time.sleep(poll)
+
+
+def wait_while_starting(
+    directory: str, timeout: float = STARTING_WAIT_SECONDS, poll: float = 0.1
+) -> None:
+    """Give a standalone or tray process that holds the lock time to register.
+
+    For a MoleditPy opened straight after another was closed: the tray process
+    that one started is not in the registry yet, so it could not be asked to
+    stop, and both would track.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not standalone_lock_held(directory):
+            return
+        if any(
+            data.get("role") in (ROLE_STANDALONE, ROLE_TRAY) for data in live_instances(directory)
+        ):
+            return
+        time.sleep(poll)
+
+
 def _allow_foreground(pid: int) -> None:
     """Let ``pid`` bring its window to the front when it answers us.
 
@@ -394,16 +580,21 @@ __all__ = [
     "ROLE_MOLEDITPY",
     "ROLE_STANDALONE",
     "ROLE_TRAY",
+    "SingleInstanceLock",
+    "claim_for_tray",
+    "claim_or_defer",
     "defer_to_running",
     "live_instances",
     "pick_target",
     "register_instance",
     "request_pending",
     "send_request",
+    "standalone_lock_held",
     "standalone_running",
     "take_request",
     "unregister_instance",
     "wait_until_gone",
     "wait_until_taken",
+    "wait_while_starting",
     "withdraw_request",
 ]
