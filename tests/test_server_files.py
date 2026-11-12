@@ -177,3 +177,56 @@ def test_service_routes_server_browser_operations_without_a_shell(monkeypatch, t
     done.assert_called_with({"type": "file"})
     JobService.download_host_paths(service, host, [JOB], str(tmp_path), done, pytest.fail)
     done.assert_called_with((["synthetic.txt"], [], str(tmp_path)))
+
+
+def test_a_job_id_that_is_not_in_canonical_form_is_refused():
+    with pytest.raises(ValueError, match="job UUID"):
+        list_path(Client(), JOB.replace("-", ""))
+
+
+@pytest.mark.parametrize(
+    "listed, message",
+    [
+        ([("top.txt", "file"), ("top.txt", "file")], "duplicated"),
+        ([("link", "symlink")], "Unsupported"),
+    ],
+)
+def test_a_listing_with_duplicates_or_unknown_types_is_refused(listed, message):
+    client = Client()
+    client.tree[JOB] = listed
+    with pytest.raises(ValueError, match=message):
+        list_path(client, JOB)
+
+
+def test_a_listing_split_across_pages_is_read_to_the_end():
+    client = Client()
+    pages = {
+        0: {"entries": [{"name": "a", "path": JOB + "/a", "type": "file"}], "next_offset": 1},
+        1: {"entries": [{"name": "b", "path": JOB + "/b", "type": "file"}], "next_offset": None},
+    }
+    client.request = lambda method, route: pages[
+        int(parse_qs(urlsplit(route).query)["offset"][0])
+    ]
+    assert list_path(client, JOB) == ["a", "b"]
+
+
+def test_a_tree_larger_than_the_limit_is_refused():
+    client = Client()
+    client.tree[JOB] = [("one", "directory"), ("two", "directory")]
+    client.tree[JOB + "/one"] = [(f"f{i}", "file") for i in range(25000)]
+    client.tree[JOB + "/two"] = [(f"f{i}", "file") for i in range(25000)]
+    with pytest.raises(ValueError, match="too large"):
+        list_path(client, JOB, 2)
+
+
+def test_a_folder_whose_place_is_taken_by_a_file_is_skipped(tmp_path):
+    (tmp_path / JOB).write_text("in the way")
+    downloaded, skipped = download_paths(Client(), [JOB], tmp_path)
+    assert downloaded == [] and "not a directory" in skipped[0][1]
+
+
+def test_a_job_reported_as_a_file_is_refused(tmp_path):
+    client = Client()
+    del client.tree[JOB]
+    with pytest.raises(ValueError, match="invalid file path"):
+        download_paths(client, [JOB], tmp_path)
