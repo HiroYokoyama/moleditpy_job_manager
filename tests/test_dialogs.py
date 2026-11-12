@@ -475,6 +475,31 @@ class TestHostsDialog(DialogTestCase):
         self.dialog._test_connection()
         self.assertIn("no route", self.dialog.lbl_test.text())
 
+    def test_a_changed_host_key_is_warned_about_and_nothing_is_trusted(self):
+        changed = "\n".join(
+            [
+                "@    WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED!     @",
+                "Host key for myhost has changed and you have requested strict checking.",
+                "Host key verification failed.",
+            ]
+        )
+
+        def refused(host):
+            raise RuntimeError(changed)
+
+        self.service.transport_for = refused
+        with (
+            patch("job_manager.hosts_dialog.QMessageBox.warning") as warned,
+            patch.object(self.dialog, "_offer_trust") as offered,
+        ):
+            self.dialog._test_connection()
+        warned.assert_called_once()
+        self.assertIn("different key", warned.call_args.args[2])
+        offered.assert_not_called()
+        self.assertEqual(
+            self.dialog.lbl_test.text(), "The host key has changed. Nothing was trusted."
+        )
+
     def test_blank_name_falls_back(self):
         self.dialog.txt_name.setText("")
         host = self.dialog._save_current()

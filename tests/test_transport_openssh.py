@@ -301,3 +301,15 @@ class TestProtocolSpecificPaths(unittest.TestCase):
                 self.assertEqual(transport._scp_uses_sftp(), modern)
                 self.assertEqual(transport._scp_uses_sftp(), modern)
                 self.assertEqual(run.call_count, 1)
+
+
+class TestCloseWhenTheMasterCannotBeReached(unittest.TestCase):
+    def test_a_failing_exit_request_still_removes_the_control_directory(self):
+        host = make_host()
+        with patch("job_manager.transport.openssh.SUPPORTS_MULTIPLEXING", True):
+            transport = OpenSSHTransport(host)
+            control = transport._control_path() and transport._control_dir
+            with patch("subprocess.run", side_effect=OSError("ssh is gone")):
+                transport.close()
+        self.assertIsNone(transport._control_dir)
+        self.assertFalse(os.path.isdir(control))
