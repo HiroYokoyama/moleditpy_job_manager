@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -238,3 +241,101 @@ def test_only_credentials_job_manager_made_are_deleted(tmp_path):
     with patch("job_manager.store.default_data_dir", return_value=str(tmp_path / "data")):
         server_backend._forget_credential(elsewhere)
     assert elsewhere.exists()
+
+
+def test_device_id_reads_a_real_credential_and_tolerates_a_broken_one(tmp_path):
+    pytest.importorskip("cryptography")
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from job_manager.job_server_client.credentials import save_key
+
+    good = tmp_path / "good.key"
+    save_key(good, "device-1", "server-1", Ed25519PrivateKey.generate())
+    if os.name != "nt":
+        good.chmod(0o600)
+    assert server_backend._device_id(good) == "device-1"
+    broken = tmp_path / "broken.key"
+    broken.write_text("not a credential")
+    assert server_backend._device_id(broken) is None
+    assert server_backend._device_id(tmp_path / "missing.key") is None
+
+
+def test_forget_credential_deletes_its_own_and_survives_an_os_error(tmp_path):
+    identity = tmp_path / "identity"
+    identity.mkdir()
+    own = identity / "own.key"
+    own.write_text("x")
+    with patch("job_manager.store.default_data_dir", return_value=str(tmp_path)):
+        server_backend._forget_credential(own)
+        assert not own.exists()
+        own.write_text("x")
+        with patch.object(Path, "unlink", side_effect=PermissionError("in use")):
+            server_backend._forget_credential(own)  # Does not raise.
+    assert own.exists()
+
+
+def test_an_invalid_server_url_warns_and_starts_nothing(parent, tmp_path):
+    held = Held()
+    field, _ = enrolled_field(tmp_path)
+    with (
+        patch.object(server_backend, "require_client"),
+        patch("job_manager.tasks.run_async", held),
+        patch("PySide6.QtWidgets.QMessageBox.warning") as warned,
+    ):
+        server_backend.show_enrollment(parent, "ftp://example", field, "", MagicMock())
+    warned.assert_called_once()
+    assert held.calls == []
+
+
+def test_an_accepted_sign_in_reads_capabilities_without_a_password(parent, tmp_path):
+    held = Held()
+    field, old = enrolled_field(tmp_path)
+    start(held, parent, field, tmp_path)
+    client = MagicMock()
+    client.request.return_value = {"server_id": "s", "execution_os": "linux"}
+    with patch("job_manager.job_server_client.client.JobServerClient", return_value=client) as made:
+        assert held.calls[0][0]() == {"server_id": "s", "execution_os": "linux"}
+    assert made.call_args.args[1] == old  # The existing credential, not a new one.
+    client.authenticate.assert_called_once()
+    client.enroll.assert_not_called()
+
+
+def test_sign_in_again_carries_on_when_the_old_device_cannot_be_revoked(parent, tmp_path):
+    from job_manager.job_server_client.client import ClientError
+
+    held = Held()
+    field, _ = enrolled_field(tmp_path)
+    start(held, parent, field, tmp_path, again=True)
+    client = MagicMock()
+
+    def request(method, path, *args, **kwargs):
+        if path.endswith("/revoke"):
+            raise ClientError(404, {"message": "Device not found"})
+        return {"server_id": "s", "execution_os": "linux"}
+
+    client.request.side_effect = request
+    with (
+        patch("job_manager.job_server_client.client.JobServerClient", return_value=client),
+        patch.object(server_backend, "_device_id", return_value="old-device"),
+    ):
+        assert held.calls[0][0]()["server_id"] == "s"
+
+
+@pytest.mark.parametrize(
+    "error, rejected",
+    [
+        ("client-401", True),
+        ("client-403", True),
+        ("client-404", True),
+        ("client-500", False),
+        (ValueError("Server identity or protocol changed"), True),
+        (ValueError("Other"), False),
+        (OSError("refused"), False),
+    ],
+)
+def test_which_errors_count_as_a_refused_sign_in(error, rejected):
+    from job_manager.job_server_client.client import ClientError
+
+    if isinstance(error, str):
+        error = ClientError(int(error.split("-")[1]), {"message": "x"})
+    assert server_backend._credential_rejected(error) is rejected
