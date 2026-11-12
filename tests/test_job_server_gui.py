@@ -63,6 +63,12 @@ def test_server_form_hides_ssh_queue_and_restores_normal_hosts(server_service):
         with patch("job_manager.server_backend.show_enrollment") as enroll:
             form._server_sign_in()
             assert enroll.call_args.kwargs == {"allow_lan_http": True}
+        assert not form.btn_server_sign_in_again.isHidden()  # A credential exists.
+        with patch("job_manager.server_backend.show_enrollment") as enroll:
+            form.btn_server_sign_in_again.click()
+            assert enroll.call_args.kwargs == {"allow_lan_http": True, "again": True}
+        form.txt_server_key.clear()
+        assert form.btn_server_sign_in_again.isHidden()
         dialog.cmb_backend.setCurrentIndex(dialog.cmb_backend.findData("openssh"))
         assert form.txt_server_url.isHidden()
         assert form.chk_server_lan_http.isHidden()
