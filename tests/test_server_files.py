@@ -204,9 +204,7 @@ def test_a_listing_split_across_pages_is_read_to_the_end():
         0: {"entries": [{"name": "a", "path": JOB + "/a", "type": "file"}], "next_offset": 1},
         1: {"entries": [{"name": "b", "path": JOB + "/b", "type": "file"}], "next_offset": None},
     }
-    client.request = lambda method, route: pages[
-        int(parse_qs(urlsplit(route).query)["offset"][0])
-    ]
+    client.request = lambda method, route: pages[int(parse_qs(urlsplit(route).query)["offset"][0])]
     assert list_path(client, JOB) == ["a", "b"]
 
 
