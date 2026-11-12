@@ -230,7 +230,53 @@ def show_ca_registration(parent, url, ca_field):
     )
 
 
-def show_enrollment(parent, url, key_field, ca_file, on_done=None, *, allow_lan_http=False):
+#: Statuses with which a server refuses a device credential it no longer knows:
+#: revoked, its account disabled or deleted, or the server set up again.
+_REJECTED_STATUSES = {401, 403, 404}
+
+
+def _credential_rejected(exc):
+    from .job_server_client.client import ClientError
+
+    if isinstance(exc, ClientError):
+        return exc.status in _REJECTED_STATUSES
+    return isinstance(exc, ValueError) and "Server identity" in str(exc)
+
+
+def _device_id(path):
+    """The device a credential file belongs to, or None when it cannot be read."""
+    try:
+        from .job_server_client.credentials import load_key
+
+        return load_key(path)["device_id"]
+    except Exception:
+        return None
+
+
+def _forget_credential(path):
+    """Delete a replaced credential, but only one Job Manager created itself."""
+    from .store import default_data_dir
+
+    try:
+        path = Path(path).resolve()
+        if path.parent == (Path(default_data_dir()) / "identity").resolve():
+            path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def show_enrollment(
+    parent, url, key_field, ca_file, on_done=None, *, allow_lan_http=False, again=False
+):
+    """Sign in with this host's device credential, or register a new one.
+
+    ``again`` registers a new device with the username and password even when a
+    credential exists, for a device the server has revoked or forgotten. The
+    old credential is replaced only once the new one works, and the server is
+    asked to revoke the old device, so nothing is left signed in by accident.
+    A sign-in the server refuses offers the same, rather than leaving deleting
+    and re-adding the host as the only way back.
+    """
     from PySide6.QtWidgets import QMessageBox
     from .store import default_data_dir
 
@@ -240,26 +286,41 @@ def show_enrollment(parent, url, key_field, ca_file, on_done=None, *, allow_lan_
     except ValueError as exc:
         QMessageBox.warning(parent, "Job Server", str(exc))
         return
+    text = key_field.text().strip()
+    current = Path(text).expanduser() if text else None
+    register = again or current is None or not current.exists()
     path = (
-        Path(key_field.text().strip()).expanduser()
-        if key_field.text().strip()
-        else Path(default_data_dir()) / "identity" / (str(uuid.uuid4()) + ".key")
+        Path(default_data_dir()) / "identity" / (str(uuid.uuid4()) + ".key")
+        if again or current is None
+        else current
     )
+    previous = current if again and current is not None and current.exists() else None
     username = password = ""
-    if not path.exists():
+    if register:
         credentials = server_credentials(parent)
         if credentials is None:
             return
         username, password = credentials
+    state = {"rejected": False}
 
     def work():
         from .job_server_client.client import JobServerClient
 
         client = JobServerClient(url, path, ca_file or None, allow_lan_http=allow_lan_http)
-        if path.exists():
-            client.authenticate()
-        else:
-            client.enroll(username, password)
+        if not register:
+            try:
+                client.authenticate()
+            except Exception as exc:
+                state["rejected"] = _credential_rejected(exc)
+                raise
+            return client.request("GET", "/capabilities")
+        client.enroll(username, password)
+        old_device = _device_id(previous) if previous else None
+        if old_device:
+            try:
+                client.request("POST", f"/me/devices/{quote(old_device, safe='')}/revoke")
+            except Exception:
+                pass  # Already revoked, or a server set up again: nothing to revoke.
         return client.request("GET", "/capabilities")
 
     def done(capabilities):
@@ -267,20 +328,48 @@ def show_enrollment(parent, url, key_field, ca_file, on_done=None, *, allow_lan_
         QMessageBox.information(
             parent,
             "Job Server",
-            "Device authenticated. Subsequent connections use this credential file.",
+            "Signed in again. This device is registered anew and the old credential was replaced."
+            if again
+            else "Device authenticated. Subsequent connections use this credential file.",
         )
 
     def recorded(capabilities):
         key_field.setText(str(path))
+        if previous is not None and previous != path:
+            _forget_credential(previous)
         if on_done:
             on_done(capabilities)
 
+    def failed(message):
+        if (
+            state["rejected"]
+            and QMessageBox.question(
+                parent,
+                "Job Server",
+                f"The server no longer accepts this device's sign-in:\n{message}\n\n"
+                "It may have been revoked, or the server set up again. Sign in again with "
+                "your username and password?",
+            )
+            == QMessageBox.StandardButton.Yes
+        ):
+            show_enrollment(
+                parent,
+                url,
+                key_field,
+                ca_file,
+                on_done,
+                allow_lan_http=allow_lan_http,
+                again=True,
+            )
+            return
+        QMessageBox.warning(parent, "Job Server", message)
+
     _run_with_loading(
         parent,
-        f"Signing in to {url}..." if path.exists() else f"Registering this device with {url}...",
+        f"Registering this device with {url}..." if register else f"Signing in to {url}...",
         work,
         done,
-        lambda message: QMessageBox.warning(parent, "Job Server", message),
+        failed,
         after_cancel=recorded,
     )
 

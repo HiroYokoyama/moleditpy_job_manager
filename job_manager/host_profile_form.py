@@ -183,16 +183,24 @@ class HostProfileForm(QWidget):
         self.btn_server_sign_in.setToolTip(
             "Sign in with your username and password. Device credentials are managed automatically."
         )
-        self.btn_server_sign_in.clicked.connect(self._server_sign_in)
+        self.btn_server_sign_in.clicked.connect(lambda: self._server_sign_in())
+        self.btn_server_sign_in_again = QPushButton("Sign in again...")
+        self.btn_server_sign_in_again.setToolTip(
+            "Register this device again with your username and password, for example after "
+            "it was revoked or the server was set up again. Replaces the old credential."
+        )
+        self.btn_server_sign_in_again.clicked.connect(lambda: self._server_sign_in(again=True))
         self.btn_server_trust = QPushButton("Trust local server CA...")
         self.btn_server_trust.clicked.connect(self._server_trust)
         # The order to do them in: reach the server, trust it, then sign in.
         form.addRow("", self.btn_server_trust)
         form.addRow("", self.chk_server_lan_http)
         form.addRow("", self.btn_server_sign_in)
+        form.addRow("", self.btn_server_sign_in_again)
         form.addRow("Device credential path", self.txt_server_key)
         form.addRow("Server identity", self.txt_server_id)
         self.txt_server_id.textChanged.connect(self._update_server_identity_row)
+        self.txt_server_key.textChanged.connect(self._update_server_identity_row)
         form.addRow("Private key", key_row)
         form.addRow("Jump host", self.txt_jump)
         form.addRow("Scheduler", self.cmb_scheduler)
@@ -355,16 +363,19 @@ class HostProfileForm(QWidget):
 
         show_ca_registration(self, self.txt_server_url.text().strip(), self.txt_server_ca)
 
-    def _server_sign_in(self):
+    def _server_sign_in(self, again=False):
         from .server_backend import show_enrollment
 
+        options = {"allow_lan_http": self.chk_server_lan_http.isChecked()}
+        if again:
+            options["again"] = True
         show_enrollment(
             self,
             self.txt_server_url.text().strip(),
             self.txt_server_key,
             self.txt_server_ca.text().strip(),
             self._server_enrolled,
-            allow_lan_http=self.chk_server_lan_http.isChecked(),
+            **options,
         )
 
     def _server_enrolled(self, capabilities):
@@ -387,9 +398,13 @@ class HostProfileForm(QWidget):
         self._update_server_identity_row()
 
     def _update_server_identity_row(self):
+        visible = getattr(self, "_server_fields_visible", False)
         self.connection_form.setRowVisible(
-            self.txt_server_id,
-            getattr(self, "_server_fields_visible", False) and bool(self.txt_server_id.text()),
+            self.txt_server_id, visible and bool(self.txt_server_id.text())
+        )
+        # Only a host that has signed in before has a sign-in to replace.
+        self.connection_form.setRowVisible(
+            self.btn_server_sign_in_again, visible and bool(self.txt_server_key.text().strip())
         )
 
     def show_rows_for_backend(self, backend):
