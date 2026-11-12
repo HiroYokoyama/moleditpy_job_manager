@@ -505,3 +505,134 @@ class TestEntryPoints(DialogTestCase):
             dialog._download_selected()
         self.assertEqual(download.call_args.args[:3], (server, ["/" + identifier], self.tmp))
         self.assertFalse(download.call_args.kwargs["overwrite"])
+
+
+class TestServerDownloadOutcomes(DialogTestCase):
+    def setUp(self):
+        super().setUp()
+        import uuid
+
+        self.identifier = str(uuid.UUID(int=1))
+        self.server = make_host(id="srv", name="srv", backend=BACKEND_JOB_SERVER)
+        with patch.object(
+            self.service,
+            "list_host_path",
+            side_effect=lambda h, p, d, done, failed, owner=None: done([self.identifier + "/"]),
+        ):
+            self.dialog = HostFileBrowserDialog(self.service, self.server)
+        self.addCleanup(self.dialog.deleteLater)
+
+    def download(self, folder=None, **reply):
+        """Download the selection into ``folder``, the service answering with ``reply``."""
+
+        def answer(host, paths, into, done, failed, overwrite, owner):
+            if "result" in reply:
+                done(reply["result"])
+            elif "error" in reply:
+                failed(reply["error"])
+
+        with (
+            patch(
+                "job_manager.host_file_browser.QFileDialog.getExistingDirectory",
+                return_value=self.tmp if folder is None else folder,
+            ),
+            patch.object(self.service, "download_host_paths", side_effect=answer) as call,
+        ):
+            self.dialog._download_selected()
+        return call
+
+    def select(self):
+        self.dialog.tree.setCurrentItem(self.dialog.tree.topLevelItem(0))
+
+    def test_nothing_selected_asks_for_a_selection(self):
+        self.dialog.tree.clearSelection()
+        self.download().assert_not_called()
+        self.assertIn("Select a file", self.dialog.lbl_status.text())
+
+    def test_a_busy_browser_starts_no_download(self):
+        self.select()
+        self.dialog._pending = [("fetch", "x")]
+        self.download().assert_not_called()
+
+    def test_a_cancelled_folder_choice_starts_no_download(self):
+        self.select()
+        self.download(folder="").assert_not_called()
+        self.assertEqual(self.dialog._pending, [])
+
+    def test_a_finished_download_reports_its_counts(self):
+        self.select()
+        self.download(result=(["a", "b"], [("c", "exists")], self.tmp))
+        self.assertIn("Downloaded 2 file(s); skipped 1", self.dialog.lbl_status.text())
+        self.assertTrue(self.dialog.btn_download.isEnabled())
+        self.assertEqual(self.dialog._pending, [])
+
+    def test_a_failed_download_is_reported_and_the_button_comes_back(self):
+        self.select()
+        self.download(error="refused")
+        self.assertIn("Download failed: refused", self.dialog.lbl_status.text())
+        self.assertTrue(self.dialog.btn_download.isEnabled())
+
+
+class TestOpeningEdges(BrowserTestCase):
+    def test_a_folder_opened_while_a_file_is_fetched_stays_closed(self):
+        self.folders.update({"": ["job1/"], "job1": ["b.out"]})
+        dialog = self.browser()
+        dialog._pending = [("fetch", "b.out")]
+        folder = self.top(dialog, "job1")
+        folder.setExpanded(True)
+        self.assertFalse(folder.isExpanded())
+        self.assertEqual(self.asked, [""])
+
+    def test_a_folder_already_being_read_is_not_asked_for_twice(self):
+        self.folders[""] = ["job1/"]
+        dialog = self.browser()
+        self.held = []
+        dialog._list_folder("job1")
+        dialog._list_folder("job1")
+        self.assertEqual([path for path, _, _ in self.held], ["job1"])
+
+    def test_a_file_is_not_opened_while_a_folder_is_read(self):
+        self.folders[""] = ["b.out"]
+        dialog = self.browser()
+        dialog._listing.add("job1")
+        with patch.object(self.service, "stat_host_path") as stat:
+            dialog._download_and_open(self.first(dialog), "b.out")
+        stat.assert_not_called()
+
+    def test_an_unsafe_name_is_refused_before_anything_is_fetched(self):
+        dialog = self.browser()
+        with patch.object(self.service, "stat_host_path") as stat:
+            dialog._download_and_open(None, "../escape.out")
+        stat.assert_not_called()
+        self.assertIn("Unsafe remote filename", dialog.lbl_status.text())
+
+    def run_fetch(self, dialog, result, cancel=False):
+        def downloaded(host, paths, folder, done, failed, overwrite, owner):
+            if cancel:
+                dialog._cancel_fetch()
+            done(result)
+
+        with (
+            patch.object(
+                self.service,
+                "stat_host_path",
+                side_effect=lambda h, p, d, ok, err, owner=None: ok({"size": 1}),
+            ),
+            patch.object(self.service, "download_host_paths", side_effect=downloaded),
+        ):
+            dialog._download_and_open(self.first(dialog), "b.out", as_text=True)
+
+    def test_a_download_that_brings_nothing_reports_why(self):
+        self.folders[""] = ["b.out"]
+        dialog = self.browser()
+        self.run_fetch(dialog, ([], [("b.out", "already exists")], self.tmp))
+        self.assertIn("Could not download b.out: already exists", dialog.lbl_status.text())
+        self.assertTrue(dialog.btn_open.isEnabled())
+
+    def test_a_download_finishing_after_a_cancel_opens_nothing(self):
+        self.folders[""] = ["b.out"]
+        on_text = MagicMock()
+        dialog = self.browser(on_text=on_text)
+        self.run_fetch(dialog, (["b.out"], [], self.tmp), cancel=True)
+        on_text.assert_not_called()
+        self.assertEqual(dialog.lbl_status.text(), "Cancelled.")
