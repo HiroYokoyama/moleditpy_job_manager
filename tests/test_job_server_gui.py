@@ -266,3 +266,13 @@ def test_login_commands_start_each_server_job(server_service):
         "export A=1",
         "orca {input}",
     ]
+
+
+def test_trust_button_hands_the_url_and_ca_field_to_the_registration(server_service):
+    _, host = server_service
+    with patch("job_manager.server_backend.client_available", return_value=True):
+        form = HostsDialog(server_service[0]).profile_form
+        form.txt_server_url.setText(" " + host.server_url + " ")
+        with patch("job_manager.server_backend.show_ca_registration") as register:
+            form.btn_server_trust.click()
+        register.assert_called_once_with(form, host.server_url, form.txt_server_ca)

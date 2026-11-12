@@ -1521,3 +1521,41 @@ class TestTheLinkSurvivesARestart(HostMonitorTestCase):
         ):
             window.btn_renew.click()
         self.assertNotEqual(self.web().server.token, before)
+
+
+class TestChoosingHosts(HostMonitorTestCase):
+    def setUp(self):
+        super().setUp()
+        self.store.add_host(make_host(id="second", name="second"))
+        self.store.add_host(make_host(id="off", name="off", enabled=False))
+
+    def run_chooser(self, accept, untick=()):
+        from PySide6.QtWidgets import QCheckBox, QDialog
+
+        seen = {}
+
+        def exec_(dialog):
+            for box in dialog.findChildren(QCheckBox):
+                seen[box.text()] = box.isChecked()
+                if any(box.text().startswith(name + " ") for name in untick):
+                    box.setChecked(False)
+            return QDialog.DialogCode.Accepted if accept else QDialog.DialogCode.Rejected
+
+        dialog = self.monitor()
+        with unittest.mock.patch.object(QDialog, "exec", exec_):
+            dialog.choose_hosts()
+        return seen
+
+    def test_only_enabled_hosts_are_offered_ticked_when_shown(self):
+        seen = self.run_chooser(accept=False)
+        self.assertEqual(len(seen), 2)  # The disabled host is not offered.
+        self.assertTrue(all(seen.values()))
+
+    def test_unticking_a_host_hides_it(self):
+        self.run_chooser(accept=True, untick=("second",))
+        self.assertEqual(self.store.get_pref("host_monitor_hidden_hosts"), ["second"])
+
+    def test_cancelling_changes_nothing(self):
+        before = self.store.get_pref("host_monitor_hidden_hosts")
+        self.run_chooser(accept=False, untick=("second",))
+        self.assertEqual(self.store.get_pref("host_monitor_hidden_hosts"), before)

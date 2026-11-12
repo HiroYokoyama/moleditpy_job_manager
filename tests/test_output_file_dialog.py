@@ -619,3 +619,25 @@ class TestHostListingBesideDownloads(unittest.TestCase):
         dialog.tree.setCurrentItem(notes)
         dialog._populate_tree_remote(["result.out", "notes.txt", "result.gbw"])
         self.assertEqual(dialog.tree.currentItem().text(0), "notes.txt")
+
+
+class TestRowsForFilesThatVanish(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.temp_dir, ignore_errors=True)
+        self.job = Job(id=new_id(), name="example", host_id="h1", remote_dir="/opt/run")
+
+    def test_hidden_and_empty_names_from_the_host_are_left_out(self):
+        dialog = OutputFileSelectorDialog(MagicMock(), self.job)
+        self.addCleanup(dialog.deleteLater)
+        dialog._populate_tree_remote(["", ".hidden", "/", "result.out"])
+        self.assertEqual([item.text(0) for item in dialog._all_items], ["result.out"])
+
+    def test_a_file_gone_before_its_size_is_read_shows_a_dash(self):
+        missing = os.path.join(self.temp_dir, "gone.out")
+        self.assertEqual(OutputFileSelectorDialog._size_of(missing), "-")
+        row = OutputFileSelectorDialog._remote_file_row(
+            "gone.out", ["gone.out"], {"gone.out": missing}, ""
+        )
+        self.assertEqual(row.text(1), "-")
+        self.assertFalse(row.data(0, IS_REMOTE_ROLE))

@@ -3,7 +3,7 @@
 import os
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -377,3 +377,45 @@ class TestHousekeeping(ServiceTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestJobServerRouting(ServiceTestCase):
+    """A Job Server host reads through its backend, never an SSH transport."""
+
+    def setUp(self):
+        super().setUp()
+        from job_manager.models import BACKEND_JOB_SERVER
+
+        self.server = make_host(id="server1", name="myserver", backend=BACKEND_JOB_SERVER)
+        self.store.add_host(self.server)
+        self.job = Job(id="sj1", name="sjob", host_id="server1", remote_job_id="abc")
+        self.backend = MagicMock()
+        patcher = patch("job_manager.server_backend.backend_for", return_value=self.backend)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.service.transport_for = lambda host: self.fail("SSH transport used")
+
+    def test_fetching_one_file_goes_to_the_job_cache(self):
+        self.backend.fetch_file.side_effect = lambda job, name, target: target
+        fetched, errors = [], []
+        self.service.fetch_file_to_cache(self.job, "out/result.txt", fetched.append, errors.append)
+        self.assertEqual(errors, [])
+        name, target = self.backend.fetch_file.call_args.args[1:]
+        self.assertEqual(name, "out/result.txt")
+        self.assertEqual(target, os.path.join(self.store.cache_dir("sj1"), "out", "result.txt"))
+        self.assertEqual(fetched, [target])
+
+    def test_the_log_tail_comes_from_the_backend(self):
+        self.backend.tail.return_value = "SCF converged\n"
+        received = []
+        self.service.log_ready.connect(received.append)
+        self.service.tail(self.job, 50)
+        self.backend.tail.assert_called_once_with(self.job, 50)
+        self.assertEqual(received, ["SCF converged\n"])
+
+    def test_a_file_tail_comes_from_the_backend(self):
+        self.backend.tail_file.return_value = "last lines\n"
+        received = []
+        self.service.tail_file(self.job, "job.out", 20, on_done=received.append)
+        self.backend.tail_file.assert_called_once_with(self.job, "job.out", 20)
+        self.assertEqual(received, ["last lines\n"])

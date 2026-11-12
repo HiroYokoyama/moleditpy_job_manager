@@ -699,3 +699,67 @@ class TestFullReadTransportRegressions(ParamikoTestCase):
         self.assertEqual(transport._expand_remote("~/jobs/a.inp"), "C:/Users/example/jobs/a.inp")
         self.client.sftp.normalize.assert_called_once_with(".")
         self.assertFalse(any("printf" in command for command in self.client.commands))
+
+
+class TestFailuresAlongTheWay(ParamikoTestCase):
+    def test_a_changed_host_key_is_reported_as_changed(self):
+        from job_manager.transport.base import HostKeyChanged
+
+        transport = self.cls(self.host)
+        original = FakeSSHClient.connect
+
+        def refuse(client, **kwargs):
+            client.connect_error = FakeBadHostKeyException("key mismatch")
+            original(client, **kwargs)
+
+        with patch.object(FakeSSHClient, "connect", refuse):
+            with self.assertRaises(HostKeyChanged):
+                transport.run("true")
+        self.assertTrue(self.client.closed)
+
+    def test_a_failed_download_is_wrapped(self):
+        transport = self.cls(self.host)
+        tmp = tempfile.mkdtemp(prefix="paramiko_")
+        with patch.object(FakeSFTP, "get", side_effect=OSError("no such file")):
+            with self.assertRaisesRegex(TransportError, "Download of /r/b.out failed"):
+                transport.download("/r/b.out", os.path.join(tmp, "b.out"))
+
+    def test_a_failed_probe_still_closes_its_socket(self):
+        from job_manager.transport import paramiko_backend
+
+        sock = _DummySocket()
+        closed = []
+        sock.close = lambda: closed.append(True)
+        self.fake.Transport = lambda s: (_ for _ in ()).throw(FakeSSHException("banner"))
+        with patch("socket.create_connection", return_value=sock):
+            with self.assertRaises(TransportError):
+                paramiko_backend.read_host_key("h.example.org", 2222)
+        self.assertEqual(closed, [True])
+
+    def test_an_unwritable_known_hosts_is_reported(self):
+        from job_manager import known_hosts
+        from job_manager.transport import paramiko_backend
+
+        with patch.object(known_hosts, "append", side_effect=OSError("read-only")):
+            with self.assertRaisesRegex(TransportError, "Could not write"):
+                paramiko_backend.add_host_key(_FakeKey(), "h.example.org")
+
+    def test_a_key_type_paramiko_cannot_read_is_skipped(self):
+        from job_manager.transport import paramiko_backend
+
+        handle, path = tempfile.mkstemp(suffix="_known_hosts")
+        os.close(handle)
+        self.addCleanup(os.remove, path)
+        blob = base64.b64encode(b"key").decode("ascii")
+        with open(path, "w", encoding="utf-8") as stream:
+            stream.write(f"myhost ssh-unknown {blob}\n")
+
+        class Entry:
+            @staticmethod
+            def from_line(line):
+                raise ValueError("unknown key type")
+
+        self.fake.hostkeys = types.SimpleNamespace(HostKeyEntry=Entry)
+        store = _FakeHostKeys()
+        self.assertEqual(paramiko_backend.load_known_hosts(store, path), 0)
+        self.assertEqual(store.entries, [])

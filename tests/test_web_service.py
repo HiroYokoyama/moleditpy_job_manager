@@ -7,6 +7,7 @@ import socket
 import threading
 import unittest
 import urllib.request
+from unittest.mock import patch
 
 import pytest
 
@@ -199,3 +200,21 @@ class TestTheSnapshot(WebTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheLoadDetail(WebTestCase):
+    def entry_for(self, stats):
+        with patch.object(self.web.sampler, "latest", return_value=stats):
+            return self.web.snapshot()["hosts"][0]
+
+    def test_a_cpu_percentage_is_shown_when_there_is_one(self):
+        from job_manager.host_stats import HostStats
+
+        entry = self.entry_for(HostStats(cpu_percent=42.4, load=(1.5, 1.0, 0.5), threads=4))
+        self.assertEqual(entry["load_detail"], "42%")
+
+    def test_otherwise_the_one_minute_load_average_is_shown(self):
+        from job_manager.host_stats import HostStats
+
+        entry = self.entry_for(HostStats(load=(1.5, 1.0, 0.5), threads=4))
+        self.assertEqual(entry["load_detail"], "1.50")
