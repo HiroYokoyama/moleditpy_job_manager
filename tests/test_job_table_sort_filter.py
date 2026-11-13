@@ -16,7 +16,13 @@ pytest.importorskip("PySide6.QtWidgets", reason="PySide6 is not installed")
 from PySide6.QtCore import Qt  # noqa: E402
 
 from job_manager.jobs_dialog import COLUMNS, JobsDialog  # noqa: E402
-from job_manager.models import STATE_RUNNING, Job  # noqa: E402
+from job_manager.models import (  # noqa: E402
+    STATE_DONE,
+    STATE_FAILED,
+    STATE_PENDING,
+    STATE_RUNNING,
+    Job,
+)
 
 from .test_dialogs import DialogTestCase  # noqa: E402
 
@@ -64,6 +70,61 @@ class TestFilteringTheTable(DialogTestCase):
         self.dialog.table.selectRow(0)
         self.dialog.txt_filter.setText("xenon")
         self.assertIsNone(self.dialog.selected_job())
+
+
+class TestFilteringByState(DialogTestCase):
+    def setUp(self):
+        super().setUp()
+        for job_id, name, state in (
+            ("a", "running", STATE_RUNNING),
+            ("b", "waiting", STATE_PENDING),
+            ("c", "done", STATE_DONE),
+            ("d", "failed", STATE_FAILED),
+        ):
+            self.store.add_job(Job(id=job_id, name=name, host_name="myhost", state=state))
+        self.dialog = JobsDialog(self.service)
+        self.addCleanup(self.dialog.deleteLater)
+
+    def visible_names(self):
+        return {
+            self.dialog.proxy.index(row, COLUMNS.index("Name")).data()
+            for row in range(self.dialog.proxy.rowCount())
+        }
+
+    def choose(self, name):
+        self.dialog.cmb_state_filter.setCurrentText(name)
+        self.assertEqual(self.dialog.cmb_state_filter.currentText(), name)
+
+    def test_all_jobs_is_the_default(self):
+        self.assertEqual(self.dialog.cmb_state_filter.currentText(), "All jobs")
+        self.assertEqual(self.visible_names(), {"running", "waiting", "done", "failed"})
+
+    def test_each_choice_shows_its_states(self):
+        expected = {
+            "Running and waiting": {"running", "waiting"},
+            "Running": {"running"},
+            "Waiting": {"waiting"},
+            "Finished": {"done"},
+            "Failed or cancelled": {"failed"},
+            "All jobs": {"running", "waiting", "done", "failed"},
+        }
+        for choice, names in expected.items():
+            self.choose(choice)
+            self.assertEqual(self.visible_names(), names, choice)
+
+    def test_state_and_text_filters_combine(self):
+        self.choose("Running and waiting")
+        self.dialog.txt_filter.setText("wait")
+        self.assertEqual(self.visible_names(), {"waiting"})
+
+    def test_a_chained_job_that_can_never_start_counts_as_waiting(self):
+        self.store.add_job(
+            Job(id="e", name="chained", host_name="myhost", state=STATE_PENDING, after_job_id="d")
+        )
+        self.dialog.model.reload()
+        self.assertEqual(self.dialog.model.display_state(self.store.jobs["e"]), "BLOCKED")
+        self.choose("Waiting")
+        self.assertEqual(self.visible_names(), {"waiting", "chained"})
 
 
 class TestSortingTheTable(DialogTestCase):
