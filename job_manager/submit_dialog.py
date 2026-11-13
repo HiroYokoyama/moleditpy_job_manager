@@ -669,6 +669,9 @@ class SubmitDialog(QDialog):
             for preset in self.store.presets_for_host(host.id):
                 self.cmb_preset.addItem(preset.name, preset.id)
         self.cmb_preset.blockSignals(False)
+        # A Job Server job may reserve no cores, for a script that only waits;
+        # a queue system rejects a request for none.
+        self.spin_cpus.setMinimum(0 if host is not None and host.is_job_server else 1)
         if self.cmb_preset.count() > 1:
             self.cmb_preset.setCurrentIndex(1)
         self._on_preset_changed()
@@ -916,7 +919,9 @@ class SubmitDialog(QDialog):
         self.txt_walltime.setText(preset.walltime)
         set_spin_value(self.spin_nodes, int(preset.nodes or 1), extend=True)
         set_spin_value(self.spin_ntasks, int(preset.ntasks or 1), extend=True)
-        set_spin_value(self.spin_cpus, int(preset.cpus_per_task or 1), extend=True)
+        cpus = preset.cpus_per_task
+        cpus = 1 if cpus is None else int(cpus)
+        set_spin_value(self.spin_cpus, max(cpus, self.spin_cpus.minimum()), extend=True)
         self.txt_memory.setText(preset.memory)
         self.spin_priority.setValue(preset.priority)
         self.txt_modules.setPlainText("\n".join(preset.modules or []))

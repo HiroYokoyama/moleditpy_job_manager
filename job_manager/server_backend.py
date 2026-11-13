@@ -265,6 +265,75 @@ def _forget_credential(path):
         pass
 
 
+def show_sign_out(parent, url, key_field, ca_file, on_done=None, *, allow_lan_http=False):
+    """Revoke this device on the server, then forget its credential here.
+
+    The credential goes even when the server cannot be reached: signing out is
+    what the user asked for, and an administrator can still revoke the device.
+    """
+    from PySide6.QtWidgets import QMessageBox
+
+    text = key_field.text().strip()
+    if not text:
+        return
+    if (
+        QMessageBox.question(
+            parent,
+            "Job Server",
+            "Sign out of this Job Server?\n\nThis device is revoked on the server and its "
+            "credential deleted. Jobs on this host cannot be checked or fetched until you "
+            "sign in again.",
+        )
+        != QMessageBox.StandardButton.Yes
+    ):
+        return
+    path = Path(text).expanduser()
+
+    def work():
+        from .job_server_client.client import JobServerClient
+
+        device = _device_id(path)
+        if device is None:
+            return False
+        client = JobServerClient(
+            validate_server_url(url, allow_lan_http),
+            path,
+            ca_file or None,
+            allow_lan_http=allow_lan_http,
+        )
+        client.request("POST", f"/me/devices/{quote(device, safe='')}/revoke")
+        return True
+
+    def forget():
+        _forget_credential(path)
+        key_field.clear()
+        if on_done:
+            on_done()
+
+    def done(revoked):
+        forget()
+        QMessageBox.information(
+            parent,
+            "Job Server",
+            "Signed out. This device was revoked on the server."
+            if revoked
+            else "Signed out on this computer.",
+        )
+
+    def failed(message):
+        forget()
+        QMessageBox.warning(
+            parent,
+            "Job Server",
+            f"Signed out on this computer, but the server could not be told:\n{message}\n\n"
+            "An administrator can revoke this device in Users & Devices.",
+        )
+
+    _run_with_loading(
+        parent, f"Signing out of {url}...", work, done, failed, after_cancel=lambda _=None: forget()
+    )
+
+
 def show_enrollment(
     parent, url, key_field, ca_file, on_done=None, *, allow_lan_http=False, again=False
 ):
@@ -414,8 +483,12 @@ class JobServerBackend:
         else:
             hours, minutes, seconds = 0, 0, 0
         memory = parse_memory_mb(preset.memory) if preset.memory else 512
-        if memory <= 0:
+        # "0" asks for no memory at all, for a job that only waits; anything
+        # else that reads as zero is a typo.
+        if memory <= 0 and not re.fullmatch(r"\s*0+(\.0+)?\s*[A-Za-z]*\s*", str(preset.memory)):
             raise ValueError("Invalid memory request")
+        if preset.cpus_per_task < 0:
+            raise ValueError("Invalid CPU request")
         names = [Path(path).name for path in local_files]
         if len(set(name.casefold() for name in names)) != len(names):
             raise ValueError("Input files must have distinct basenames")
@@ -474,16 +547,52 @@ class JobServerBackend:
             job.rc = remote["exit_code"]
             job.last_error = remote.get("reason", "")
             job.last_server_state = remote["state"]
+            state = (
+                "HELD"
+                if remote["state"] == "PENDING" and remote.get("held") is True
+                else remote["state"]
+            )
             ahead = remote.get("queue_ahead")
             # An older server sends nothing; bool is an int and is not a count.
             job.server_queue_ahead = (
                 ahead if isinstance(ahead, int) and not isinstance(ahead, bool) else -1
             )
-            result[job.id] = remote["state"]
+            result[job.id] = state
         return result
 
     def cancel(self, job):
         return self.client.request("POST", f"/jobs/{job.remote_job_id}/cancel")
+
+    def _waiting_change(self, path, body):
+        """POST a change to a waiting job; False when it has stopped waiting (409)."""
+        from .job_server_client.client import ClientError
+
+        try:
+            self.client.request("POST", path, body)
+        except ClientError as exc:
+            if exc.status == 409:
+                return False
+            if exc.status == 404 and "/admin/" not in path and path.endswith("/hold"):
+                raise ValueError(
+                    "This Job Server is too old to hold jobs; update it to 0.13 or later"
+                ) from exc
+            if exc.status == 403:
+                raise ValueError("Only a Job Server administrator can do this") from exc
+            raise
+        return True
+
+    def hold(self, job, held):
+        return self._waiting_change(f"/jobs/{job.remote_job_id}/hold", {"held": bool(held)})
+
+    def force(self, job):
+        return self._waiting_change(
+            f"/admin/jobs/{job.remote_job_id}/force-run", {"force_run": True}
+        )
+
+    def set_priority(self, job, priority):
+        return self._waiting_change(
+            f"/admin/jobs/{job.remote_job_id}/priority", {"priority": int(priority)}
+        )
 
     def tail(self, job, lines=100):
         info = self.client.request("GET", f"/jobs/{job.remote_job_id}/log?limit=1")

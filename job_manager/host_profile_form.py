@@ -184,19 +184,23 @@ class HostProfileForm(QWidget):
             "Sign in with your username and password. Device credentials are managed automatically."
         )
         self.btn_server_sign_in.clicked.connect(lambda: self._server_sign_in())
-        self.btn_server_sign_in_again = QPushButton("Sign in again...")
-        self.btn_server_sign_in_again.setToolTip(
-            "Register this device again with your username and password, for example after "
-            "it was revoked or the server was set up again. Replaces the old credential."
+        # Signed in, the one thing left to do is sign out: a second "sign in"
+        # button beside the first read as a choice between two of the same.
+        # A device the server stopped accepting is offered a fresh sign-in
+        # when the next sign-in fails, so it needs no button of its own.
+        self.btn_server_sign_out = QPushButton("Sign out...")
+        self.btn_server_sign_out.setToolTip(
+            "Revoke this device on the server and delete its credential. "
+            "Sign in again with your username and password to use this host."
         )
-        self.btn_server_sign_in_again.clicked.connect(lambda: self._server_sign_in(again=True))
+        self.btn_server_sign_out.clicked.connect(lambda: self._server_sign_out())
         self.btn_server_trust = QPushButton("Trust local server CA...")
         self.btn_server_trust.clicked.connect(self._server_trust)
         # The order to do them in: reach the server, trust it, then sign in.
         form.addRow("", self.btn_server_trust)
         form.addRow("", self.chk_server_lan_http)
         form.addRow("", self.btn_server_sign_in)
-        form.addRow("", self.btn_server_sign_in_again)
+        form.addRow("", self.btn_server_sign_out)
         form.addRow("Device credential path", self.txt_server_key)
         form.addRow("Server identity", self.txt_server_id)
         self.txt_server_id.textChanged.connect(self._update_server_identity_row)
@@ -378,6 +382,18 @@ class HostProfileForm(QWidget):
             **options,
         )
 
+    def _server_sign_out(self):
+        from .server_backend import show_sign_out
+
+        show_sign_out(
+            self,
+            self.txt_server_url.text().strip(),
+            self.txt_server_key,
+            self.txt_server_ca.text().strip(),
+            lambda: self.txt_server_id.clear(),
+            allow_lan_http=self.chk_server_lan_http.isChecked(),
+        )
+
     def _server_enrolled(self, capabilities):
         self.txt_server_id.setText(capabilities["server_id"])
         scheduler = "windows" if capabilities["execution_os"] == "windows" else "shell"
@@ -389,7 +405,6 @@ class HostProfileForm(QWidget):
             self.txt_server_url,
             self.chk_server_lan_http,
             self.txt_server_ca,
-            self.btn_server_sign_in,
             self.btn_server_trust,
         ):
             self.connection_form.setRowVisible(widget, visible)
@@ -402,10 +417,9 @@ class HostProfileForm(QWidget):
         self.connection_form.setRowVisible(
             self.txt_server_id, visible and bool(self.txt_server_id.text())
         )
-        # Only a host that has signed in before has a sign-in to replace.
-        self.connection_form.setRowVisible(
-            self.btn_server_sign_in_again, visible and bool(self.txt_server_key.text().strip())
-        )
+        signed_in = bool(self.txt_server_key.text().strip())
+        self.connection_form.setRowVisible(self.btn_server_sign_in, visible and not signed_in)
+        self.connection_form.setRowVisible(self.btn_server_sign_out, visible and signed_in)
 
     def show_rows_for_backend(self, backend):
         """Show only what this backend uses; the rest would be a wall of grey boxes."""
