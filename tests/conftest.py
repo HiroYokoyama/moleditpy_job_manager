@@ -38,6 +38,11 @@ tempfile.tempdir = _SESSION_TMP
 for _name in ("TMP", "TEMP", "TMPDIR"):
     os.environ[_name] = _SESSION_TMP
 
+# Git for Windows' /etc/profile.d/aliases.sh probes for winpty programs, a
+# subshell each, whenever TERM is xterm*. Every bash -lc a test starts paid
+# that -- about 90 ms of a 380 ms login, on every poll.
+os.environ["TERM"] = "dumb"
+
 os.environ["MOLEDITPY_JOB_MANAGER_DIR"] = tempfile.mkdtemp(prefix="data_")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 

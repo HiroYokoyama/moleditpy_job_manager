@@ -79,10 +79,22 @@ jobs:
       - name: Verify coverage dependencies and Bash execution
         run: python -c "from PySide6.QtWidgets import QApplication; import paramiko, cryptography; from tests.bash_support import BASH; assert BASH, 'No usable Bash; helper tests would skip'"
 
+      # A Git Bash login shell takes 0.4 s, and the end-to-end tests start one
+      # for nearly every command, so login time was most of this job. An empty
+      # prompt file replaces git-prompt.sh's own setup (about 90 ms), and
+      # TERM=dumb skips aliases.sh's winpty probes (about 90 ms more).
+      - name: Shorten Git Bash login for the suite
+        shell: bash
+        run: mkdir -p ~/.config/git && touch ~/.config/git/git-prompt.sh
+
       - name: Run the suite on Windows
         timeout-minutes: 20
         env:
           QT_QPA_PLATFORM: offscreen
+          TERM: dumb
+          # sys.monitoring instead of a trace function: the same line
+          # coverage at a fraction of the overhead on Python 3.12.
+          COVERAGE_CORE: sysmon
           PYTHONFAULTHANDLER: "1"
           JOB_MANAGER_QT_DIAGNOSTICS: "1"
         run: python -m pytest tests/ -v --tb=short -n auto -rs --timeout=300 --timeout-method=thread --cov=job_manager --cov-report=term-missing --cov-report=xml:coverage.xml
