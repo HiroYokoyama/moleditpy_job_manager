@@ -339,3 +339,53 @@ def test_which_errors_count_as_a_refused_sign_in(error, rejected):
     if isinstance(error, str):
         error = ClientError(int(error.split("-")[1]), {"message": "x"})
     assert server_backend._credential_rejected(error) is rejected
+
+
+@pytest.mark.parametrize("reachable", [True, False])
+def test_sign_out_revokes_the_device_and_always_forgets_it_here(parent, tmp_path, reachable):
+    from PySide6.QtWidgets import QMessageBox
+
+    held = Held()
+    identity = tmp_path / "identity"
+    identity.mkdir()
+    key = identity / "device.key"
+    key.write_text("synthetic")
+    field = MagicMock()
+    field.text.return_value = str(key)
+    on_done = MagicMock()
+    with (
+        patch("job_manager.tasks.run_async", held),
+        patch("job_manager.loading_dialog.open_loading_dialog", return_value=MagicMock()),
+        patch("job_manager.loading_dialog.close_loading_dialog"),
+        patch("job_manager.store.default_data_dir", return_value=str(tmp_path)),
+        patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes),
+        patch.object(QMessageBox, "information") as told,
+        patch.object(QMessageBox, "warning") as warned,
+    ):
+        server_backend.show_sign_out(parent, URL, field, "", on_done)
+        work, on_success, on_error = held.calls[0]
+        if reachable:
+            on_success(True)
+        else:
+            on_error("server unreachable")
+    assert not key.exists()
+    field.clear.assert_called_once()
+    on_done.assert_called_once()
+    assert (told if reachable else warned).called
+
+
+def test_sign_out_asks_first_and_does_nothing_when_declined(parent, tmp_path):
+    from PySide6.QtWidgets import QMessageBox
+
+    key = tmp_path / "device.key"
+    key.write_text("synthetic")
+    field = MagicMock()
+    field.text.return_value = str(key)
+    held = Held()
+    with (
+        patch("job_manager.tasks.run_async", held),
+        patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.No),
+    ):
+        server_backend.show_sign_out(parent, URL, field, "", MagicMock())
+    assert held.calls == [] and key.exists()
+    field.clear.assert_not_called()

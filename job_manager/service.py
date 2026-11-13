@@ -525,7 +525,10 @@ class JobService(QObject):
         host = self.store.hosts.get(job.host_id)
         if host is None:
             return f"Host profile for {job.name} no longer exists"
-        if not host.uses_remote_runner or not remote_runner.parse_entry(job.remote_job_id)[1]:
+        if host.is_job_server:
+            if job.state == STATE_HELD:
+                return f"{job.name} is held: release it first; a hold outranks force run."
+        elif not host.uses_remote_runner or not remote_runner.parse_entry(job.remote_job_id)[1]:
             return (
                 f"{job.name} is not in a helper queue. Force run starts a job ahead of "
                 "the helper queue on a host with no queue system of its own; a cluster's "
@@ -565,6 +568,10 @@ class JobService(QObject):
         host = self.store.hosts[job.host_id]
 
         def work() -> bool:
+            if host.is_job_server:
+                from .server_backend import backend_for
+
+                return backend_for(host).force(job)
             transport = self.transport_for(host)
             try:
                 return force_in_runner(transport, host, job)
@@ -580,7 +587,11 @@ class JobService(QObject):
                 job.touch()
                 self.store.save_jobs()
                 self.job_updated.emit(job.id)
-                self.message.emit(f"Started {job.name} ahead of the queue")
+                self.message.emit(
+                    f"Asked the Job Server to start {job.name} past its budget"
+                    if host.is_job_server
+                    else f"Started {job.name} ahead of the queue"
+                )
             elif on_done is None:
                 fail(not_waiting(job))
             self.poller.prime(job.host_id)
@@ -591,12 +602,11 @@ class JobService(QObject):
 
     def priority_refusal(self, job: Job) -> str:
         host = self.store.hosts.get(job.host_id)
-        if (
-            host is None
-            or not host.uses_remote_runner
-            or not remote_runner.parse_entry(job.remote_job_id)[1]
+        if host is None or not (
+            host.is_job_server
+            or (host.uses_remote_runner and remote_runner.parse_entry(job.remote_job_id)[1])
         ):
-            return "Priority is only available for jobs in the built-in helper queue"
+            return "Priority is only available for jobs in the built-in helper queue or on a Job Server"
         if job.state not in (STATE_SUBMITTED, STATE_PENDING, STATE_HELD):
             return "Only waiting jobs can change priority"
         return ""
@@ -617,6 +627,10 @@ class JobService(QObject):
         host = self.store.hosts[job.host_id]
 
         def work():
+            if host.is_job_server:
+                from .server_backend import backend_for
+
+                return backend_for(host).set_priority(job, priority)
             transport = self.transport_for(host)
             try:
                 return set_runner_priority(transport, host, job, priority)
@@ -643,12 +657,11 @@ class JobService(QObject):
 
     def hold_refusal(self, job: Job, held: bool = True) -> str:
         host = self.store.hosts.get(job.host_id)
-        if (
-            host is None
-            or not host.uses_remote_runner
-            or not remote_runner.parse_entry(job.remote_job_id)[1]
+        if host is None or not (
+            host.is_job_server
+            or (host.uses_remote_runner and remote_runner.parse_entry(job.remote_job_id)[1])
         ):
-            return "Hold is only available for jobs in the built-in helper queue"
+            return "Hold is only available for jobs in the built-in helper queue or on a Job Server"
         if held and job.state not in (STATE_SUBMITTED, STATE_PENDING):
             return "Only waiting jobs can be held"
         if not held and job.state != STATE_HELD:
@@ -667,6 +680,10 @@ class JobService(QObject):
         host = self.store.hosts[job.host_id]
 
         def work():
+            if host.is_job_server:
+                from .server_backend import backend_for
+
+                return backend_for(host).hold(job, held)
             transport = self.transport_for(host)
             try:
                 return set_runner_hold(transport, host, job, held)
