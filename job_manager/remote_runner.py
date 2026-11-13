@@ -376,7 +376,8 @@ total_memory() {{
   case "$m" in ''|*[!0-9]*) echo 0 ;; *) echo "$m" ;; esac
 }}
 
-header() {{ sed -n "s|^$2 *||p" "$1" 2>/dev/null | head -n 1; }}
+# One sed that stops at the first match; the braces and ;}} keep BSD sed happy.
+header() {{ sed -n "/^$2/{{s|^$2 *||p;q;}}" "$1" 2>/dev/null; }}
 
 job_priority() {{
   entry=${{1##*/}}
@@ -429,10 +430,13 @@ used_memory() {{
 
 # Where a job id currently is, as "<dir> <entry>". Nothing printed if the job
 # was never queued here at all.
+# A glob, not ls | grep | head: that was three processes per directory, and
+# under Git Bash each one costs tens of milliseconds on every dispatch pass.
 find_entry() {{
   for d in held queue running done; do
-    e=$(ls -1 "$d" 2>/dev/null | grep -- "_$1\\.sh$" | head -n 1)
-    if [ -n "$e" ]; then echo "$d $e"; return 0; fi
+    for e in "$d"/job_*_"$1".sh; do
+      if [ -e "$e" ]; then echo "$d ${{e#*/}}"; return 0; fi
+    done
   done
   return 1
 }}
