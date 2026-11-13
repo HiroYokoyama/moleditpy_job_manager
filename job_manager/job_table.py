@@ -20,11 +20,18 @@ from PySide6.QtWidgets import (
 
 from .models import (
     STATE_BLOCKED,
+    STATE_CANCELLED,
+    STATE_COMPLETING,
     STATE_DONE,
+    STATE_DOWNLOADING,
     STATE_FAILED,
     STATE_LOST,
+    STATE_NEW,
     STATE_PENDING,
     STATE_HELD,
+    STATE_QUEUED,
+    STATE_SUBMITTED,
+    STATE_UPLOADING,
     hold_reasons,
     STATE_RUNNING,
     Job,
@@ -268,6 +275,31 @@ class JobTableModel(QAbstractTableModel):
         return None
 
 
+_RUNNING = frozenset({STATE_RUNNING, STATE_COMPLETING, STATE_DOWNLOADING})
+_WAITING = frozenset(
+    {
+        STATE_NEW,
+        STATE_UPLOADING,
+        STATE_SUBMITTED,
+        STATE_PENDING,
+        STATE_HELD,
+        STATE_QUEUED,
+        STATE_BLOCKED,
+    }
+)
+
+#: The state filter's choices, as the Job Server's dashboard offers them, and
+#: the State-column values each one shows. None shows every job.
+JOB_STATE_FILTERS = {
+    "All jobs": None,
+    "Running and waiting": _RUNNING | _WAITING,
+    "Running": _RUNNING,
+    "Waiting": _WAITING,
+    "Finished": frozenset({STATE_DONE}),
+    "Failed or cancelled": frozenset({STATE_FAILED, STATE_CANCELLED, STATE_LOST}),
+}
+
+
 class JobFilterProxyModel(QSortFilterProxyModel):
     """Sits between the table and :class:`JobTableModel`: click a header to
     sort, type to filter, without changing what the model itself holds.
@@ -279,6 +311,7 @@ class JobFilterProxyModel(QSortFilterProxyModel):
     def __init__(self, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
         self._search = ""
+        self._states: Optional[frozenset] = None
         self.setSortCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
 
     def set_search_text(self, text: str) -> None:
@@ -286,6 +319,13 @@ class JobFilterProxyModel(QSortFilterProxyModel):
         if text == self._search:
             return
         self._search = text
+        self.invalidateFilter()
+
+    def set_state_filter(self, name: str) -> None:
+        states = JOB_STATE_FILTERS.get(name)
+        if states == self._states:
+            return
+        self._states = states
         self.invalidateFilter()
 
     def lessThan(self, left: QModelIndex, right: QModelIndex) -> bool:
@@ -308,9 +348,16 @@ class JobFilterProxyModel(QSortFilterProxyModel):
             return str(left_value) < str(right_value)
 
     def filterAcceptsRow(self, source_row: int, source_parent: QModelIndex) -> bool:
+        model = self.sourceModel()
+        if self._states is not None:
+            # What the State column says, so a chained job the queue calls
+            # PENDING but that can never start is still found under Waiting
+            # as BLOCKED rather than slipping between choices.
+            job = model.job_at(source_row)
+            if job is None or model.display_state(job) not in self._states:
+                return False
         if not self._search:
             return True
-        model = self.sourceModel()
         for column in range(model.columnCount()):
             value = model.index(source_row, column, source_parent).data(Qt.ItemDataRole.DisplayRole)
             if value and self._search in str(value).lower():

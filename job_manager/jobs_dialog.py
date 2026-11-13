@@ -22,6 +22,7 @@ from PySide6.QtCore import (
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
     QDialog,
     QFileDialog,
     QHBoxLayout,
@@ -56,6 +57,9 @@ from .job_table import (
 )
 from .job_table import (
     COLUMNS as COLUMNS,
+)
+from .job_table import (
+    JOB_STATE_FILTERS as JOB_STATE_FILTERS,
 )
 from .job_table import (
     JobFilterProxyModel as JobFilterProxyModel,
@@ -310,6 +314,11 @@ class JobsDialog(QDialog):
         self.txt_filter.setClearButtonEnabled(True)
         self.txt_filter.textChanged.connect(self._apply_job_filter)
         filter_row.addWidget(self.txt_filter, 1)
+        self.cmb_state_filter = QComboBox()
+        self.cmb_state_filter.addItems(list(JOB_STATE_FILTERS))
+        self.cmb_state_filter.setToolTip("Show jobs by state")
+        self.cmb_state_filter.currentTextChanged.connect(self._apply_state_filter)
+        filter_row.addWidget(self.cmb_state_filter)
         layout.addLayout(filter_row)
 
     def _build_table(self, layout: QVBoxLayout) -> None:
@@ -418,6 +427,9 @@ class JobsDialog(QDialog):
 
     def _apply_job_filter(self, text: str) -> None:
         self.proxy.set_search_text(text)
+
+    def _apply_state_filter(self, name: str) -> None:
+        self.proxy.set_state_filter(name)
 
     def selected_job(self) -> Optional[Job]:
         rows = self.table.selectionModel().selectedRows() if self.table.selectionModel() else []

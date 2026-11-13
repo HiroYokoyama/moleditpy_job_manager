@@ -71,6 +71,13 @@ class RunnerHarness(unittest.TestCase):
         with open(self.script_path, "w", encoding="utf-8", newline="\n") as handle:
             handle.write(build_runner_script(bash_path(self.dir), poll_seconds=POLL))
         self.processes = []
+        # A fixed budget, so the runner never probes the machine. Probing is
+        # a dozen processes per dispatch pass, and under xdist on the Windows
+        # runner it left jobs queued until the wait gave up -- one test at a
+        # time, each fixed on its own, until the next one in the file failed
+        # the same way. Tests about budgets set their own.
+        self.set_limit(CORES_NAME, 4)
+        self.set_limit(MEMORY_NAME, 0)
 
     def _cleanup(self):
         for process in self.processes:
