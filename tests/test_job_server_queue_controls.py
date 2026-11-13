@@ -2,7 +2,10 @@
 
 import pytest
 
-from job_manager.job_server_client.client import ClientError
+# The Job Server client is optional; a run without its dependency skips these.
+pytest.importorskip("cryptography")
+
+from job_manager.job_server_client.client import ClientError  # noqa: E402
 from job_manager.models import BACKEND_JOB_SERVER, HostProfile, Job, SubmitPreset
 from job_manager.server_backend import JobServerBackend
 
