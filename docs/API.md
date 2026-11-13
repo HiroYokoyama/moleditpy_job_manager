@@ -160,7 +160,7 @@ is not one of them, so a client can find them without this page.
 | `GET` | `/ping` | Version, and how many jobs and hosts there are |
 | `GET` | `/hosts` | Configured hosts: id, name, target, scheduler, enabled |
 | `POST` | `/hosts/{id}/queue` | Pause/resume the helper queue or update resource limits |
-| `GET` | `/hosts/{id}/status` | Cores, load, memory, and the helper queue; `?stats=0` |
+| `GET` | `/hosts/{id}/status` | Cores, load, memory, and the helper or Job Server queue; `?stats=0` |
 | `GET` | `/hosts/{id}/files` | List any directory on the host; `?path=`, `?depth=` |
 | `GET` | `/hosts/{id}/file` | Whether a path is there, its size and sha256; `?path=`, `?hash=0` |
 | `POST` | `/hosts/{id}/download` | Fetch files by path from anywhere on the host |
@@ -173,9 +173,9 @@ is not one of them, so a client can find them without this page.
 | `POST` | `/jobs/{id}/download` | Fetch its results |
 | `GET` | `/jobs/{id}/log` | Tail its log; `?lines=`, `?file=` |
 | `GET` | `/jobs/{id}/files` | List its remote directory |
-| `POST` | `/jobs/{id}/force` | Start it now, ahead of the helper queue |
-| `POST` | `/jobs/{id}/priority` | Change a waiting helper job's priority; body `{"priority": 10}` |
-| `POST` | `/jobs/{id}/hold` | Manually hold a waiting helper job |
+| `POST` | `/jobs/{id}/force` | Start a waiting helper or Job Server job now, past the queue |
+| `POST` | `/jobs/{id}/priority` | Change a waiting helper or Job Server job's priority; body `{"priority": 10}` |
+| `POST` | `/jobs/{id}/hold` | Manually hold a waiting helper or Job Server job |
 | `POST` | `/jobs/{id}/release` | Remove only the manual hold; preserve After conditions |
 | `POST` | `/jobs/{id}/recheck` | Look again at a `LOST` job |
 
@@ -195,10 +195,16 @@ wait can still be recorded as `PENDING` or as the wrapper's `RUNNING` state.
 The `?state=` filter uses that recorded state. Failed dependencies are displayed
 as `BLOCKED` when applicable.
 
-Hold and Release apply only to waiting jobs in the built-in helper queue,
-including forced jobs. They do not suspend running processes or change a
-dependency. Both return `409` if the operation is unavailable or the job has
-already left the queue. Changes persist on the host when the GUI closes.
+Hold and Release apply to waiting jobs in the built-in helper queue, including
+forced jobs, and to waiting Job Server jobs (Job Server 0.13 or later). They do
+not suspend running processes or change a dependency. Both return `409` if the
+operation is unavailable or the job has already left the queue. Changes persist
+on the host when the GUI closes.
+
+On a Job Server, force run and priority are administrator operations: an account
+without that role gets an error saying so. A held Job Server job does not start
+even when forced; release it first. Force run there does not skip an After
+condition: the job starts once the job it waits for has finished.
 
 Python: `client.hold(job_id)` and `client.release(job_id)`.
 CLI: `python -m job_manager.api_client hold JOB_ID` and
@@ -246,7 +252,11 @@ strictly first in, first out: `ahead` is how many jobs start before that one.
 
 `queue.kind` is `helper` on a host with the helper queue, `none` on one with no
 queue at all, and `scheduler` on a cluster, whose own queue decides the order
-and is not read here. `jobs` is this plugin's own active jobs on the host either
+and is not read here. On a Job Server it is `job_server`: the server's whole
+queue as counts (`running`, `waiting`), its budget (`budget_cpus`,
+`budget_memory_mb`) and what is reserved (`cores_in_use`, `memory_in_use_mb`).
+Its `stats` carry `cpu_percent` instead of `load` and `loadavg`, which a Job
+Server does not report. `jobs` is this plugin's own active jobs on the host either
 way.
 
 A host whose profile has *Sample load and memory in the Host Monitor* switched off — a shared login

@@ -484,9 +484,11 @@ def build_parser() -> argparse.ArgumentParser:
             else "Release a manual hold (preserve After)",
         )
         action_parser.add_argument("job_id")
-    force = sub.add_parser("force", help="Start a waiting job now, ahead of the helper queue")
+    force = sub.add_parser(
+        "force", help="Start a waiting helper or Job Server job now, past the queue"
+    )
     force.add_argument("job_id")
-    priority = sub.add_parser("priority", help="Set a waiting helper-queue job's priority")
+    priority = sub.add_parser("priority", help="Set a waiting helper or Job Server job's priority")
     priority.add_argument("job_id")
     priority.add_argument("priority", type=int)
 

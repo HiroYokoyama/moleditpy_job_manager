@@ -100,3 +100,32 @@ def test_a_typo_that_reads_as_zero_is_still_refused():
     backend.host = HostProfile(id="h", name="myhost", backend=BACKEND_JOB_SERVER)
     with pytest.raises(ValueError, match="memory"):
         backend.submit(SubmitPreset(command_template="mycommand", memory="eight"), Job(id="a"), [])
+
+
+def test_host_status_asks_a_job_server_not_a_shell(monkeypatch):
+    from types import SimpleNamespace
+
+    from job_manager import service as service_module
+    from job_manager.service import JobService
+
+    host = HostProfile(id="h", name="myhost", backend=BACKEND_JOB_SERVER)
+    asked = []
+
+    class Backend:
+        client = SimpleNamespace(
+            request=lambda method, path: asked.append(path) or {"cpu_percent": 12.5, "pending": 1}
+        )
+
+    monkeypatch.setattr("job_manager.server_backend.backend_for", lambda h: Backend())
+    monkeypatch.setattr(
+        service_module,
+        "run_async",
+        lambda pool, work, on_success, on_error, **kw: on_success(work()),
+    )
+    service = JobService.__new__(JobService)
+    service.pool = None
+    reports = []
+    service.host_status(host, reports.append, pytest.fail)
+    assert asked == ["/system/resources"]
+    assert reports[0]["stats"]["cpu_percent"] == 12.5
+    assert reports[0]["server"]["pending"] == 1

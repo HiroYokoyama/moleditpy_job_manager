@@ -115,6 +115,43 @@ class TestHostStatus(HostApiCase):
             self.call("GET", f"/hosts/{self.box.id}/status")
         self.assertEqual(caught.exception.status, 502)
 
+    def test_a_job_server_reports_its_own_queue_and_load(self):
+        from job_manager.models import BACKEND_JOB_SERVER
+        from job_manager.service import server_status
+
+        server = self.store.add_host(
+            HostProfile(name="myserver", backend=BACKEND_JOB_SERVER, server_url="https://myhost")
+        )
+        waiting = self.add_job(server, name="waiting", state=STATE_PENDING, server_queue_ahead=2)
+        running = self.add_job(server, name="running", state=STATE_RUNNING)
+        resources = {
+            "cpus": 16, "memory_mb": 65536, "reserved_cpus": 8, "reserved_memory_mb": 8192,
+            "running": 3, "pending": 4, "paused": False, "cpu_percent": 52.0,
+            "cpu_cores": 16, "cpu_threads": 32, "memory_total_mb": 65536, "memory_used_mb": 16384,
+        }  # fmt: skip
+        self.service.answers["status"] = server_status(resources)
+        _, reply = self.call("GET", f"/hosts/{server.id}/status")
+        queue = reply["queue"]
+        self.assertEqual(queue["kind"], "job_server")
+        self.assertEqual((queue["running"], queue["waiting"]), (3, 4))
+        self.assertEqual((queue["budget_cpus"], queue["cores_in_use"]), (16, 8))
+        self.assertEqual(reply["stats"]["cpu_percent"], 52.0)
+        self.assertEqual((reply["stats"]["cores"], reply["stats"]["threads"]), (16, 32))
+        self.assertEqual(reply["stats"]["mem_free_mb"], 49152)
+        places = {entry["id"]: entry for entry in reply["jobs"]}
+        self.assertEqual(places[waiting.id]["position"], 3)
+        self.assertEqual(places[running.id]["queue"], "running")
+
+    def test_an_older_or_odd_server_answer_leaves_fields_unknown(self):
+        from job_manager.service import server_status
+
+        report = server_status({"cpus": 4, "cpu_cores": True, "memory_total_mb": "8"})
+        self.assertIsNone(report["stats"]["cores"])
+        self.assertIsNone(report["stats"]["mem_free_mb"])
+        self.assertIsNone(server_status({}, stats=False)["stats"])
+        with self.assertRaises(ValueError):
+            server_status(None)
+
 
 class TestHostFiles(HostApiCase):
     def test_listing_a_directory(self):

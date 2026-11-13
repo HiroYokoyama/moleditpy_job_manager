@@ -668,7 +668,27 @@ class JobApi:
         tracked = [job for job in self.store.job_list() if job.host_id == host.id and job.is_active]
         detail = report.get("queue")
         places: Dict[str, Dict[str, Any]] = {}
-        if detail is not None:
+        server = report.get("server")
+        if host.is_job_server and isinstance(server, dict):
+            # The server's whole queue, every user's jobs included, as counts and
+            # reservations; this plugin's own jobs carry their place below.
+            queue = {
+                "kind": "job_server",
+                "paused": server.get("paused") is True,
+                "budget_cpus": server.get("cpus"),
+                "budget_memory_mb": server.get("memory_mb"),
+                "cores_in_use": server.get("reserved_cpus"),
+                "memory_in_use_mb": server.get("reserved_memory_mb"),
+                "running": server.get("running"),
+                "waiting": server.get("pending"),
+            }
+            for job in tracked:
+                ahead = job.server_queue_ahead
+                if job.state == "RUNNING":
+                    places[job.id] = {"queue": "running"}
+                elif isinstance(ahead, int) and ahead >= 0:
+                    places[job.id] = {"queue": "waiting", "position": ahead + 1, "ahead": ahead}
+        elif detail is not None:
             for item in detail.get("running", []):
                 known = self.store.jobs.get(item["job_id"])
                 item["name"] = known.name if known is not None else ""
