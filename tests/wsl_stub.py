@@ -51,7 +51,16 @@ def main(argv: list) -> int:
     # bash that ships with Git for Windows.
     translating_path = command.startswith("wslpath -a -u ")
     command = command.replace("wslpath -a -u ", "cygpath -a -m ")
-    proc = subprocess.run([bash, flag, command], capture_output=True, text=True)
+    env = None
+    if flag == "-lc":
+        # A WSL login shell is cheap; Git Bash's reads /etc/profile and costs
+        # 0.4 s, on every one of the twenty-odd commands a queued job makes.
+        # What the login gave these commands is Git's tools on PATH, so that
+        # is given directly instead.
+        flag = "-c"
+        env = dict(os.environ)
+        env["PATH"] = os.path.dirname(bash) + os.pathsep + env.get("PATH", "")
+    proc = subprocess.run([bash, flag, command], capture_output=True, text=True, env=env)
     output = proc.stdout
     if translating_path and proc.returncode == 0:
         # Git Bash can remount /tmp between login shells. A drive path keeps
