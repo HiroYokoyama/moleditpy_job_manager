@@ -117,7 +117,7 @@ class TestHostStatus(HostApiCase):
 
     def test_a_job_server_reports_its_own_queue_and_load(self):
         from job_manager.models import BACKEND_JOB_SERVER
-        from job_manager.service import server_status
+        from job_manager.host_stats import server_status
 
         server = self.store.add_host(
             HostProfile(name="myserver", backend=BACKEND_JOB_SERVER, server_url="https://myhost")
@@ -143,7 +143,7 @@ class TestHostStatus(HostApiCase):
         self.assertEqual(places[running.id]["queue"], "running")
 
     def test_an_older_or_odd_server_answer_leaves_fields_unknown(self):
-        from job_manager.service import server_status
+        from job_manager.host_stats import server_status
 
         report = server_status({"cpus": 4, "cpu_cores": True, "memory_total_mb": "8"})
         self.assertIsNone(report["stats"]["cores"])

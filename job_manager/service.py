@@ -837,7 +837,7 @@ class JobService(QObject):
                 # A Job Server offers no shell: it reports its own load and queue.
                 from .server_backend import backend_for
 
-                return server_status(
+                return host_stats.server_status(
                     backend_for(host).client.request("GET", "/system/resources"), stats
                 )
             transport = self.transport_for(host)
@@ -971,35 +971,3 @@ class JobService(QObject):
         shutdown_pool(self.pool, after_clear=lambda: host_sampler.shutdown_for(self))
         self.deleteLater()
         logging.debug("Job Manager: service shut down")
-
-
-def _whole(value):
-    """An int from a server reading, or None for anything else (bool included)."""
-    return value if isinstance(value, int) and not isinstance(value, bool) else None
-
-
-def server_status(resources, stats: bool = True) -> dict:
-    """A Job Server's ``/system/resources`` answer in ``host_status``'s shape.
-
-    Every field is optional: an older server reports fewer of them.
-    """
-    if not isinstance(resources, dict):
-        raise ValueError("The Job Server's answer was not understood")
-    report: dict = {"stats": None, "queue": None, "server": resources}
-    if stats:
-        total = _whole(resources.get("memory_total_mb"))
-        used = _whole(resources.get("memory_used_mb"))
-        cpu = resources.get("cpu_percent")
-        report["stats"] = {
-            "cores": _whole(resources.get("cpu_cores")),
-            "threads": _whole(resources.get("cpu_threads")),
-            "cpu_percent": cpu
-            if isinstance(cpu, (int, float)) and not isinstance(cpu, bool)
-            else None,
-            "load": None,
-            "loadavg": None,
-            "mem_total_mb": total,
-            "mem_free_mb": total - used if total is not None and used is not None else None,
-            "mem_used_mb": used,
-        }
-    return report
