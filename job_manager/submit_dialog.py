@@ -706,7 +706,11 @@ class SubmitDialog(QDialog):
         prefilled host from Resubmit/handoff still wins, applied after this)."""
         self.cmb_host.blockSignals(True)
         self.cmb_host.clear()
+        # A host switched off in the Hosts dialog is skipped here, as it is
+        # by the monitor: it is kept only so it need not be set up again.
         for host in self.store.host_list():
+            if not host.enabled:
+                continue
             self.cmb_host.addItem(f"{host.name} ({host.target})", host.id)
         remembered = self.cmb_host.findData(self.store.get_pref("last_host_id", "") or "")
         if remembered >= 0:
@@ -1602,7 +1606,19 @@ class SubmitDialog(QDialog):
             return
         host = self.current_host()
         if host is None:
-            QMessageBox.warning(self, "Submit", "Add a host profile first.")
+            QMessageBox.warning(
+                self,
+                "Submit",
+                "Every host is disabled. Enable one in the Hosts dialog."
+                if self.store.host_list()
+                else "Add a host profile first.",
+            )
+            return
+        if not host.enabled:
+            # Disabled in the Hosts dialog while this window was open.
+            QMessageBox.warning(
+                self, "Submit", f"{host.name} is disabled. Enable it in the Hosts dialog."
+            )
             return
         files = self.selected_files()
         missing = [path for path in files if not os.path.isfile(path)]
