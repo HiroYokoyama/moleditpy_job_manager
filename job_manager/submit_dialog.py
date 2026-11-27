@@ -311,10 +311,6 @@ class SubmitDialog(QDialog):
         # The glyph carries the state: a highlighted button alone did not read as on/off.
         self.btn_default_preset.toggled.connect(self._label_default_star)
         self._label_default_star(False)
-        self.btn_default_preset.setToolTip(
-            "This host's default preset. A new submission opens on it when Settings "
-            "says to start from the host's default preset."
-        )
         self.btn_default_preset.clicked.connect(self._toggle_default_preset)
         preset_row = QWidget()
         preset_layout = QHBoxLayout(preset_row)
@@ -1017,6 +1013,22 @@ class SubmitDialog(QDialog):
         self.btn_default_preset.setChecked(
             bool(host and preset_id and self.store.default_preset_id(host.id) == preset_id)
         )
+        self.btn_default_preset.setToolTip(self._default_star_tip())
+
+    #: Said wherever the star is used while Settings does not open on it.
+    STAR_NEEDS_SETTING = (
+        "New submissions open on it only when Settings > Submit > "
+        "\"New submission starts from\" is set to the host's default preset."
+    )
+
+    def _star_in_use(self) -> bool:
+        return self.store.get_pref("submit_start_from", "empty") == "default"
+
+    def _default_star_tip(self) -> str:
+        tip = "Make this preset the host's default."
+        if self._star_in_use():
+            return tip + " New submissions to this host open on it."
+        return tip + " " + self.STAR_NEEDS_SETTING + " It is not set to that now."
 
     def _label_default_star(self, checked: bool) -> None:
         self.btn_default_preset.setText(("★" if checked else "☆") + " Default")
@@ -1028,6 +1040,13 @@ class SubmitDialog(QDialog):
             self.btn_default_preset.setChecked(False)
             return
         self.store.set_default_preset(host.id, preset_id if checked else "")
+        if checked and not self._star_in_use():
+            # The star is saved either way; without the setting it does nothing
+            # visible, which read as the star not working.
+            self.service.message.emit(
+                f"{self.cmb_preset.currentText()} is {host.name}'s default preset. "
+                + self.STAR_NEEDS_SETTING
+            )
 
     def _on_preset_changed(self) -> None:
         preset = self.store.presets.get(self.cmb_preset.currentData())

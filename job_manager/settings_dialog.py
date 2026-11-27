@@ -129,7 +129,8 @@ class SettingsDialog(QDialog):
         self.cmb_start_from.setCurrentIndex(max(0, found))
         self.cmb_start_from.setToolTip(
             "What the submit window fills in when it opens or the host changes. "
-            "Resubmit always starts from the job's own settings."
+            "A preset starred with ★ Default is used only with the host's "
+            "default preset chosen here. Resubmit always starts from the job's own settings."
         )
         self.cmb_start_from.currentIndexChanged.connect(
             lambda _index: self.store.set_pref(
